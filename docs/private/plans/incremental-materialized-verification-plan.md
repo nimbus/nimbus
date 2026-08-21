@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: run the IMV2 pre-PR review, publish and merge its task pull
-request, then start IMV3 from refreshed main under `MERKLE_REQUIRED`.
+Next action: implement and prove the storage-owned IMV3 deterministic Merkle
+treap from merged main under the `MERKLE_REQUIRED` verdict.
 
 ## Outcome
 
@@ -113,8 +113,8 @@ IMV0 runs first after promotion and creates the proof root and the
 |---|---|---|---|
 | IMV0 | Pin the execution baseline, create the proof root, author the 16-condition verifier red, and capture full-verification fail-before cost. No production behavior changes. | `done` | PR #302. Work `58e46b675`, fix `14227dc59`; proof `97949afa2`, refresh `6e643ada8`. Verifier: `Summary: 3 passed, 13 failed`. |
 | IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `done` | PR #303 merged as `9c807015a`. Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`; Nimbus autoreview and hosted checks clean. |
-| IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `in_progress` | Work `7fec8c579`; proof `2e6b30cc3`. Verdict: `MERKLE_REQUIRED`. Verifier: `Summary: 7 passed, 9 failed`. Pre-PR review, hosted checks, and merge remain. |
-| IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `todo` | |
+| IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `done` | PR #304 merged as `a7667ec8f`. Work `7fec8c579`; proof `2e6b30cc3`. Verdict: `MERKLE_REQUIRED`. Verifier: `Summary: 7 passed, 9 failed`; Nimbus autoreview clean. |
+| IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `in_progress` | Branch `codex/imv3-deterministic-merkle-treap` starts from merged main `a7667ec8f`. |
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `todo` | |
 | IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `todo` | |
 | IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `todo` | |
@@ -788,3 +788,5 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV2 | measured | Completed all 36 required matrix coordinates. Twenty-eight churn states are exact. Eight broad stress rungs retain `resource_limited_setup` evidence under the 120-second inter-batch setup budget. The decisive 100,000-document, 1 KiB, 0.1% rung exceeds the full-verifier latency and memory limits. |
 | 2026-08-21 | IMV2 | implemented | Work `7fec8c579` adds isolated full-verifier samples, bounded resource accounting, the deterministic benchmark-only SHA-256 treap, paired write-overhead measurements, and checkpointed stable JSON. Proof `2e6b30cc3` records the raw matrix and literal `MERKLE_REQUIRED` verdict. The verifier reports `Summary: 7 passed, 9 failed`. |
 | 2026-08-21 | IMV2 | reviewed | Nimbus pre-PR autoreview found no actionable defect. It independently checked the treap operations, percentile calculations, censoring rule, decisive raw rows, and verifier assertions. The clean attestation is stored for the substantive diff. |
+| 2026-08-21 | IMV2 | completed | PR #304 merged as `a7667ec8f` with the literal `MERKLE_REQUIRED` verdict. The hosted matrix had no failures when the merge completed; long-running jobs continued after merge. |
+| 2026-08-21 | IMV3 | started | Created `codex/imv3-deterministic-merkle-treap` from merged main `a7667ec8f`. IMV3 is the only `in_progress` task. |
