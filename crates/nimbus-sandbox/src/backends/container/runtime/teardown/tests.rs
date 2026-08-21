@@ -458,6 +458,33 @@ fn persist_teardown_observation(
 }
 
 #[test]
+fn an_unpublished_exit_receipt_is_not_terminality() {
+    let fixture = TeardownFixture::reserved("unpublished-exit-receipt");
+    let manifest = fixture.manifest();
+    let host_runtime = effects::HostContainerExecutionTeardownRuntime;
+
+    // Publish the way conmon does: the receipt appears first, and the exit code
+    // arrives afterwards.
+    std::fs::write(&manifest.conmon_layout.exit_status_file, b"")
+        .expect("an empty exit receipt should persist");
+    assert!(
+        !host_runtime
+            .execution_is_terminal(&manifest)
+            .expect("an unfinished publication must not fail the predicate"),
+        "a receipt without an exit code is not an observation of terminality"
+    );
+
+    std::fs::write(&manifest.conmon_layout.exit_status_file, b"0\n")
+        .expect("an exact exit receipt should persist");
+    assert!(
+        host_runtime
+            .execution_is_terminal(&manifest)
+            .expect("a published receipt should be observable"),
+        "once the code lands the receipt proves terminality"
+    );
+}
+
+#[test]
 fn container_drain_persists_barrier_and_retains_runtime_and_network() {
     let fixture = TeardownFixture::reserved("drain-retains-network");
     let command = fixture.command(SandboxExecutionTeardownOperation::Drain, "drain-a", 1);

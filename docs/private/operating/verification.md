@@ -191,6 +191,17 @@ let pid = wait_for_receipt(&receipt, timeout, read_pid)
 is the whole message. Do not use it for a pidfile, an exit-status file, or any
 other receipt that carries content.
 
+An inspection cannot wait, so it names the middle state instead.
+`read_exit_receipt` answers `Absent`, `Unpublished`, or `Published`, and a
+caller that cannot conclude from `Unpublished` reports "not yet" rather than
+failing. Every such caller here already re-drives, so "not yet" converges.
+Use it anywhere a receipt is read without a wait that already proved it
+readable. `read_exit_code` stays correct after such a wait.
+
+A receipt whose bytes are present but do not parse is corruption, not a race,
+and it stays a loud error. Conmon writes a short decimal in one call, so a
+reader sees either no bytes or every byte; empty is the only intermediate state.
+
 Two rules follow for a test fixture that publishes a receipt:
 
 - Read the receipt before you stop the writer. A stop that lands inside the

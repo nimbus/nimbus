@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::backends::conmon::lifecycle::read_exit_code;
+use crate::backends::conmon::lifecycle::read_exit_receipt;
 use crate::backends::poll::poll_until_deadline;
 use crate::error::{Result, SandboxError};
 
@@ -1805,14 +1805,16 @@ pub(super) fn validate_runner_authority_roots(manifest: &ContainerSandboxManifes
 }
 
 fn wait_for_container_runner_exit(manifest: &ContainerSandboxManifest) -> Result<i32> {
+    // Wait for the exit code, not for the receipt. Conmon creates the file and
+    // then writes into it, so waiting on existence and reading afterwards makes
+    // a healthy exit report an empty parse.
     poll_until_deadline(None, Duration::from_millis(200), || {
-        Ok(manifest
-            .conmon_layout
-            .exit_status_file
-            .exists()
-            .then_some(()))
-    })?;
-    read_exit_code(&manifest.conmon_layout.exit_status_file)
+        read_exit_receipt(&manifest.conmon_layout.exit_status_file)
+            .map(|receipt| receipt.exit_code())
+    })?
+    .ok_or_else(|| SandboxError::OperationFailed {
+        message: "a deadline-free exit-receipt wait returned without an exit code".to_owned(),
+    })
 }
 
 fn read_runner_manifest_pointer(bundle_dir: &Path) -> Result<PathBuf> {

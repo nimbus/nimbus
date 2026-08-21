@@ -162,8 +162,16 @@ pub(crate) fn observe_runtime_status_with_evidence(
     probe: RuntimeStatusProbe<'_>,
     running_status: impl FnOnce() -> Result<(SandboxStatus, Vec<u8>)>,
 ) -> Result<DetectedRuntimeStatus> {
-    if inspect_runtime_artifact_presence(probe.exit_status_file, "exit-status receipt")? {
-        let exit_code = read_exit_code(probe.exit_status_file)?;
+    // An exit receipt decides the status only once it carries a code. Conmon
+    // creates the receipt and then writes into it, so an empty receipt means
+    // the exit code has not arrived, and the observation that follows this one
+    // reads it. Failing here instead would report a parse error against a
+    // conmon mid-publication.
+    if let ExitReceipt::Published {
+        exit_code,
+        evidence,
+    } = read_exit_receipt(probe.exit_status_file)?
+    {
         return Ok(DetectedRuntimeStatus {
             status: if probe.shutdown_requested || exit_code == 0 {
                 SandboxStatus::Stopped
@@ -174,14 +182,9 @@ pub(crate) fn observe_runtime_status_with_evidence(
             provider_state: RuntimeStateObservation::Present("exit-receipt".to_owned()),
             provider_command_evidence: None,
             pidfile_evidence: None,
-            running_evidence: std::fs::read(probe.exit_status_file).map_err(|error| {
-                SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to read sandbox exit-status evidence {}: {error}",
-                        probe.exit_status_file.display()
-                    ),
-                }
-            })?,
+            // The bytes that proved the code are the evidence. Re-reading the
+            // path would sample it a second time and could disagree.
+            running_evidence: evidence,
         });
     }
 
@@ -712,6 +715,78 @@ pub(crate) fn wait_for_receipt<T>(
     .or_else(|| read(path).ok())
 }
 
+/// What an exit receipt says right now.
+///
+/// Conmon publishes an exit receipt in two steps: it creates the file, and then
+/// it writes the code into it. Between those steps the receipt is visible and
+/// empty, so presence alone cannot separate "the container has not exited" from
+/// "the container exited and its code is still on the way". Naming that middle
+/// state is what keeps an inspection from reporting a parse failure against a
+/// conmon that did nothing wrong.
+///
+/// A short decimal reaches the file in one write, so a reader observes either
+/// no bytes or every byte. Empty is therefore the only intermediate state, and
+/// a receipt holding bytes that do not parse is corruption rather than a race.
+/// [`read_exit_receipt`] still reports that as an error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ExitReceipt {
+    /// No receipt exists, so the container has not exited.
+    Absent,
+    /// The receipt exists but does not carry an exit code yet.
+    Unpublished,
+    /// The receipt carries `exit_code`, proved by `evidence`.
+    Published { exit_code: i32, evidence: Vec<u8> },
+}
+
+impl ExitReceipt {
+    /// The exit code, when this receipt carries one.
+    ///
+    /// Absent and unpublished both answer `None`, because neither is an
+    /// observation of how the container exited.
+    pub(crate) fn exit_code(&self) -> Option<i32> {
+        match self {
+            Self::Published { exit_code, .. } => Some(*exit_code),
+            Self::Absent | Self::Unpublished => None,
+        }
+    }
+}
+
+/// Read `path` as an exit receipt, without treating an unfinished publication
+/// as a failure.
+///
+/// Prefer this over [`read_exit_code`] anywhere the caller inspects a receipt
+/// it did not first prove readable. `read_exit_code` remains correct after a
+/// wait that already established publication.
+pub(crate) fn read_exit_receipt(path: &Path) -> Result<ExitReceipt> {
+    if !inspect_runtime_artifact_presence(path, "exit-status receipt")? {
+        return Ok(ExitReceipt::Absent);
+    }
+    let exit_status = match std::fs::read(path) {
+        Ok(exit_status) => exit_status,
+        // A teardown can remove the receipt between the presence check and the
+        // read. That is absence observed late, not a failure to read.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ExitReceipt::Absent);
+        }
+        Err(error) => {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to read sandbox exit status {}: {error}",
+                    path.display()
+                ),
+            });
+        }
+    };
+    if exit_status.iter().all(u8::is_ascii_whitespace) {
+        return Ok(ExitReceipt::Unpublished);
+    }
+    let (exit_code, evidence) = parse_exit_code_evidence(path, exit_status)?;
+    Ok(ExitReceipt::Published {
+        exit_code,
+        evidence,
+    })
+}
+
 pub(crate) fn read_exit_code(path: &Path) -> Result<i32> {
     read_exit_code_evidence(path).map(|(exit_code, _evidence)| exit_code)
 }
@@ -723,6 +798,10 @@ pub(crate) fn read_exit_code_evidence(path: &Path) -> Result<(i32, Vec<u8>)> {
             path.display()
         ),
     })?;
+    parse_exit_code_evidence(path, exit_status)
+}
+
+fn parse_exit_code_evidence(path: &Path, exit_status: Vec<u8>) -> Result<(i32, Vec<u8>)> {
     let rendered =
         std::str::from_utf8(&exit_status).map_err(|error| SandboxError::OperationFailed {
             message: format!(
@@ -1065,6 +1144,119 @@ mod tests {
             error.to_string().contains("last ambiguous observation")
                 && error.to_string().contains("temporarily unavailable"),
             "the timeout must retain the exact last provider diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn an_exit_receipt_separates_absent_from_created_but_unwritten() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let receipt = temp_dir.path().join("exit");
+
+        assert_eq!(
+            read_exit_receipt(&receipt).expect("an absent receipt should read"),
+            ExitReceipt::Absent,
+            "no receipt means the container has not exited"
+        );
+
+        // Publish the way conmon does: the receipt appears first, and the exit
+        // code arrives afterwards.
+        std::fs::write(&receipt, b"").expect("receipt should be created empty");
+        assert_eq!(
+            read_exit_receipt(&receipt).expect("an empty receipt should read, not fail"),
+            ExitReceipt::Unpublished,
+            "an empty receipt is an unfinished publication, not a parse failure"
+        );
+        assert!(
+            read_exit_code(&receipt).is_err(),
+            "and reading it as a code is what used to blame conmon for the window"
+        );
+
+        std::fs::write(&receipt, b"\n  ").expect("receipt should hold only whitespace");
+        assert_eq!(
+            read_exit_receipt(&receipt).expect("a whitespace receipt should read"),
+            ExitReceipt::Unpublished,
+            "trailing separators alone still carry no code"
+        );
+
+        std::fs::write(&receipt, b"137\n").expect("receipt should be filled");
+        assert_eq!(
+            read_exit_receipt(&receipt).expect("a published receipt should read"),
+            ExitReceipt::Published {
+                exit_code: 137,
+                evidence: b"137\n".to_vec(),
+            },
+            "a receipt that carries a code reports it with the bytes that proved it"
+        );
+    }
+
+    #[test]
+    fn an_exit_receipt_holding_bytes_that_do_not_parse_stays_an_error() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let receipt = temp_dir.path().join("exit");
+        std::fs::write(&receipt, b"not-an-exit-code").expect("receipt should hold garbage");
+
+        let error = read_exit_receipt(&receipt)
+            .expect_err("content that is present and unparseable is corruption, not a race");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to parse sandbox exit status"),
+            "corruption must stay loud and name the receipt: {error}"
+        );
+    }
+
+    #[test]
+    fn an_unpublished_exit_receipt_does_not_decide_the_runtime_status() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let exit_status_file = temp_dir.path().join("exit");
+        let pidfile = temp_dir.path().join("missing-pidfile");
+        let state_command = CommandSpec::new("/bin/sh").args([
+            "-c",
+            "printf '%s\n' 'container `fixture` does not exist: open `/run/crun/fixture/status`: No such file or directory' >&2; exit 1",
+        ]);
+        std::fs::write(&exit_status_file, b"").expect("receipt should be created empty");
+
+        let observed = observe_runtime_status(
+            RuntimeStatusProbe {
+                exit_status_file: &exit_status_file,
+                state_command: &state_command,
+                runtime_id: "fixture",
+                pidfile: &pidfile,
+                shutdown_requested: false,
+                current_status: SandboxStatus::Ready,
+            },
+            || Ok(SandboxStatus::Ready),
+        )
+        .expect("an unfinished publication must not fail the observation");
+        assert_ne!(
+            observed.provider_state,
+            RuntimeStateObservation::Present("exit-receipt".to_owned()),
+            "a receipt without a code cannot be the source of the status"
+        );
+
+        std::fs::write(&exit_status_file, b"0\n").expect("receipt should be filled");
+        let observed = observe_runtime_status(
+            RuntimeStatusProbe {
+                exit_status_file: &exit_status_file,
+                state_command: &state_command,
+                runtime_id: "fixture",
+                pidfile: &pidfile,
+                shutdown_requested: false,
+                current_status: SandboxStatus::Ready,
+            },
+            || Ok(SandboxStatus::Ready),
+        )
+        .expect("a published receipt should be observable");
+        assert_eq!(
+            observed.provider_state,
+            RuntimeStateObservation::Present("exit-receipt".to_owned()),
+            "once the code lands the receipt decides the status"
+        );
+        assert_eq!(observed.status, SandboxStatus::Stopped);
+        assert_eq!(
+            observed.running_evidence,
+            b"0\n".to_vec(),
+            "the evidence must be the bytes that proved the code, not a second sample"
         );
     }
 

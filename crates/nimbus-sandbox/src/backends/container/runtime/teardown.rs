@@ -9,7 +9,7 @@ use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::backends::conmon::lifecycle::read_exit_code;
+use crate::backends::conmon::lifecycle::read_exit_receipt;
 use crate::backends::conmon::runtime_process::{
     RuntimeProcessIdentityObservation, RuntimeProcessSignal, RuntimeProcessSignalOutcome,
 };
@@ -1127,9 +1127,13 @@ impl ContainerSandboxBackend {
         reason: &str,
         host_terminal_evidence_sha256: Option<&str>,
     ) -> crate::Result<SandboxExecutionTeardownObservation> {
-        if manifest.conmon_layout.exit_status_file.exists() {
-            manifest.last_exit_code =
-                Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
+        // Record the exit code when conmon has published one. A receipt still
+        // mid-publication must not fail a stop that has already concluded, and
+        // `last_exit_code` already represents "not known".
+        if let Some(exit_code) =
+            read_exit_receipt(&manifest.conmon_layout.exit_status_file)?.exit_code()
+        {
+            manifest.last_exit_code = Some(exit_code);
         }
         let evidence = teardown_evidence_with_host_terminal(
             reason,
