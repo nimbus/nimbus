@@ -1,10 +1,10 @@
 use nimbus_storage::{
     LogicalLeafKey, LogicalLeafKind, MaterializedVerificationIndex,
-    VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF,
+    VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, VERIFICATION_INDEX_MAX_DEPTH,
+    VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF,
 };
 
 const MILLION_LEAVES: usize = 1_000_000;
-const MAXIMUM_MEASURED_DEPTH: usize = 128;
 
 #[test]
 #[ignore = "the million-leaf verification root runs in its dedicated plan gate"]
@@ -27,10 +27,10 @@ fn verification_root_million_leaf_depth_and_memory_meet_imv2_limits() {
 
     assert_eq!(index.len(), MILLION_LEAVES);
     assert!(
-        index.max_depth() <= MAXIMUM_MEASURED_DEPTH,
+        index.max_depth() <= VERIFICATION_INDEX_MAX_DEPTH,
         "deterministic treap depth {} exceeds the measured safety bound {}",
         index.max_depth(),
-        MAXIMUM_MEASURED_DEPTH
+        VERIFICATION_INDEX_MAX_DEPTH
     );
     assert!(
         index.resident_bytes_per_leaf() <= VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF,

@@ -86,8 +86,9 @@ pub use materialized_position::materialized_position_golden_fixture;
 pub use materialized_verification::{
     LogicalLeafKey, LogicalLeafKind, MATERIALIZED_VERIFICATION_ROOT_VERSION,
     MaterializedVerificationIndex, VERIFICATION_INDEX_ALLOCATOR_BYTES_PER_LEAF,
-    VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF,
-    VERIFICATION_INDEX_NODE_BYTES, VerificationPosition, VerificationRootVersion,
+    VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, VERIFICATION_INDEX_MAX_DEPTH,
+    VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF, VERIFICATION_INDEX_NODE_BYTES,
+    VerificationPosition, VerificationRootVersion,
 };
 pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest};
 pub use memory::{

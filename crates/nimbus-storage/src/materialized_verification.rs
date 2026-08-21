@@ -5,13 +5,14 @@ use nimbus_core::{Error, Result, SequenceNumber};
 use sha2::{Digest, Sha256};
 
 pub const MATERIALIZED_VERIFICATION_ROOT_VERSION: u16 = 1;
+pub const VERIFICATION_INDEX_MAX_DEPTH: usize = 128;
 
 /// The approved million-leaf resident-memory budget is 192 bytes per logical
 /// leaf.
 ///
-/// A node is 144 bytes on supported targets. The IMV2 measurement adds a
-/// conservative 16-byte allocator allowance, for a budgeted total of 160
-/// bytes. The remaining 32 bytes cover the index and free-list allocation
+/// A node is 148 bytes on supported targets. The IMV2 measurement assigns a
+/// conservative 16-byte allocator allowance, for a budgeted total of 164
+/// bytes. The remaining 28 bytes cover the index and free-list allocation
 /// share at that measurement rung without weakening the limit.
 pub const VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF: usize = 192;
 pub const VERIFICATION_INDEX_NODE_BYTES: usize = size_of::<TreapNode>();
@@ -151,6 +152,7 @@ struct TreapNode {
     subtree_hash: Hash,
     left: Option<u32>,
     right: Option<u32>,
+    subtree_depth: u16,
 }
 
 impl TreapNode {
@@ -164,6 +166,7 @@ impl TreapNode {
             subtree_hash: [0; HASH_BYTES],
             left: None,
             right: None,
+            subtree_depth: 1,
         }
     }
 }
@@ -252,8 +255,13 @@ impl MaterializedVerificationIndex {
             }
             stack.push(node_index);
         }
-        if let Some(root) = index.root {
-            index.recompute_subtree(root);
+        index.recompute_all();
+        if index.max_depth() > VERIFICATION_INDEX_MAX_DEPTH {
+            return Err(Error::ResourceExhausted(format!(
+                "materialized verification index depth {} exceeds the safety limit {}",
+                index.max_depth(),
+                VERIFICATION_INDEX_MAX_DEPTH
+            )));
         }
         Ok(index)
     }
@@ -278,9 +286,25 @@ impl MaterializedVerificationIndex {
         }
 
         let node = TreapNode::new(self.version, key, value);
-        let node_index = self.allocate_node(node)?;
+        let (node_index, reused) = self.allocate_node(node)?;
         self.root = Some(self.insert_index(self.root, node_index));
         self.len += 1;
+        if self.max_depth() > VERIFICATION_INDEX_MAX_DEPTH {
+            let (root, removed) = self.remove_index(self.root, &key);
+            self.root = root;
+            self.len -= 1;
+            debug_assert_eq!(removed, Some(node_index));
+            if reused {
+                self.free_nodes.push(node_index);
+            } else {
+                debug_assert_eq!(node_index as usize + 1, self.nodes.len());
+                self.nodes.pop();
+            }
+            return Err(Error::ResourceExhausted(format!(
+                "materialized verification index depth would exceed the safety limit {}",
+                VERIFICATION_INDEX_MAX_DEPTH
+            )));
+        }
         Ok(true)
     }
 
@@ -318,22 +342,9 @@ impl MaterializedVerificationIndex {
     }
 
     pub fn max_depth(&self) -> usize {
-        let Some(root) = self.root else {
-            return 0;
-        };
-        let mut maximum = 0;
-        let mut stack = vec![(root, 1_usize)];
-        while let Some((node_index, depth)) = stack.pop() {
-            maximum = maximum.max(depth);
-            let node = &self.nodes[node_index as usize];
-            if let Some(left) = node.left {
-                stack.push((left, depth + 1));
-            }
-            if let Some(right) = node.right {
-                stack.push((right, depth + 1));
-            }
-        }
-        maximum
+        self.root
+            .map(|root| self.nodes[root as usize].subtree_depth as usize)
+            .unwrap_or(0)
     }
 
     pub fn resident_bytes(&self) -> usize {
@@ -349,10 +360,10 @@ impl MaterializedVerificationIndex {
         self.resident_bytes().div_ceil(self.len)
     }
 
-    fn allocate_node(&mut self, node: TreapNode) -> Result<u32> {
+    fn allocate_node(&mut self, node: TreapNode) -> Result<(u32, bool)> {
         if let Some(node_index) = self.free_nodes.pop() {
             self.nodes[node_index as usize] = node;
-            return Ok(node_index);
+            return Ok((node_index, true));
         }
         let node_index = u32::try_from(self.nodes.len()).map_err(|_| {
             Error::ResourceExhausted(
@@ -360,7 +371,7 @@ impl MaterializedVerificationIndex {
             )
         })?;
         self.nodes.push(node);
-        Ok(node_index)
+        Ok((node_index, false))
     }
 
     fn insert_index(&mut self, root: Option<u32>, node_index: u32) -> u32 {
@@ -463,14 +474,25 @@ impl MaterializedVerificationIndex {
         (left.priority, left.key) < (right.priority, right.key)
     }
 
-    fn recompute_subtree(&mut self, node_index: u32) -> Hash {
-        let left = self.nodes[node_index as usize]
-            .left
-            .map(|child| self.recompute_subtree(child));
-        let right = self.nodes[node_index as usize]
-            .right
-            .map(|child| self.recompute_subtree(child));
-        self.set_subtree_hash(node_index, left, right)
+    fn recompute_all(&mut self) {
+        let Some(root) = self.root else {
+            return;
+        };
+        let mut stack = vec![(root, false)];
+        while let Some((node_index, visited)) = stack.pop() {
+            if visited {
+                self.recompute_node(node_index);
+                continue;
+            }
+            stack.push((node_index, true));
+            let node = &self.nodes[node_index as usize];
+            if let Some(right) = node.right {
+                stack.push((right, false));
+            }
+            if let Some(left) = node.left {
+                stack.push((left, false));
+            }
+        }
     }
 
     fn recompute_node(&mut self, node_index: u32) {
@@ -491,6 +513,15 @@ impl MaterializedVerificationIndex {
     ) -> Hash {
         let empty = empty_hash(self.version);
         let node = &self.nodes[node_index as usize];
+        let subtree_depth = 1 + node
+            .left
+            .map(|child| self.nodes[child as usize].subtree_depth)
+            .unwrap_or(0)
+            .max(
+                node.right
+                    .map(|child| self.nodes[child as usize].subtree_depth)
+                    .unwrap_or(0),
+            );
         let hash = hash_parts(
             self.version,
             NODE_DOMAIN,
@@ -502,6 +533,7 @@ impl MaterializedVerificationIndex {
             ],
         );
         self.nodes[node_index as usize].subtree_hash = hash;
+        self.nodes[node_index as usize].subtree_depth = subtree_depth;
         hash
     }
 }
@@ -537,6 +569,54 @@ mod tests {
         (0..count)
             .map(|rank| (key(rank), format!("value-{rank}").into_bytes()))
             .collect()
+    }
+
+    fn adversarial_chain_keys(required: usize) -> Vec<LogicalLeafKey> {
+        let candidates = (0..20_000_u64)
+            .map(|rank| {
+                let mut raw = [0; HASH_BYTES];
+                raw[HASH_BYTES - 8..].copy_from_slice(&rank.to_be_bytes());
+                LogicalLeafKey(raw)
+            })
+            .collect::<Vec<_>>();
+        let priorities = candidates
+            .iter()
+            .map(|key| {
+                hash_parts(
+                    VerificationRootVersion::current(),
+                    PRIORITY_DOMAIN,
+                    &[key.as_bytes()],
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut tails = Vec::<Hash>::new();
+        let mut tail_indices = Vec::<usize>::new();
+        let mut previous = vec![None; candidates.len()];
+        for (index, priority) in priorities.iter().copied().enumerate() {
+            let position = tails.partition_point(|tail| tail < &priority);
+            if position > 0 {
+                previous[index] = Some(tail_indices[position - 1]);
+            }
+            if position == tails.len() {
+                tails.push(priority);
+                tail_indices.push(index);
+            } else {
+                tails[position] = priority;
+                tail_indices[position] = index;
+            }
+        }
+        assert!(
+            tails.len() >= required,
+            "candidate corpus must contain a chain"
+        );
+        let mut cursor = Some(tail_indices[required - 1]);
+        let mut selected = Vec::with_capacity(required);
+        while let Some(index) = cursor {
+            selected.push(candidates[index]);
+            cursor = previous[index];
+        }
+        selected.reverse();
+        selected
     }
 
     #[test]
@@ -654,8 +734,8 @@ mod tests {
 
     #[test]
     fn memory_derivation_stays_inside_the_approved_limit() {
-        assert_eq!(VERIFICATION_INDEX_NODE_BYTES, 144);
-        assert_eq!(VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, 160);
+        assert_eq!(VERIFICATION_INDEX_NODE_BYTES, 148);
+        assert_eq!(VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, 164);
     }
 
     #[test]
@@ -711,5 +791,33 @@ mod tests {
         assert_eq!(position.version(), VerificationRootVersion::current());
         assert_eq!(position.applied_sequence(), SequenceNumber(41));
         assert_eq!(position.root_hash(), &index.root_hash());
+    }
+
+    #[test]
+    fn adversarial_depth_is_rejected_and_incremental_insert_rolls_back() {
+        let keys = adversarial_chain_keys(VERIFICATION_INDEX_MAX_DEPTH + 1);
+        assert!(matches!(
+            MaterializedVerificationIndex::from_leaves(
+                keys.iter().copied().map(|key| (key, b"value"))
+            ),
+            Err(Error::ResourceExhausted(_))
+        ));
+
+        let mut index = MaterializedVerificationIndex::new();
+        for key in keys.iter().take(VERIFICATION_INDEX_MAX_DEPTH) {
+            index
+                .upsert(*key, b"value")
+                .expect("a tree at the safety limit should build");
+        }
+        assert_eq!(index.max_depth(), VERIFICATION_INDEX_MAX_DEPTH);
+        let root_before = index.root_hash();
+        let len_before = index.len();
+        assert!(matches!(
+            index.upsert(keys[VERIFICATION_INDEX_MAX_DEPTH], b"value"),
+            Err(Error::ResourceExhausted(_))
+        ));
+        assert_eq!(index.root_hash(), root_before);
+        assert_eq!(index.len(), len_before);
+        assert_eq!(index.max_depth(), VERIFICATION_INDEX_MAX_DEPTH);
     }
 }
