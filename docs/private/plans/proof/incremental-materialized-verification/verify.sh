@@ -204,7 +204,7 @@ else
     && test_ok nimbus-storage apply_gap_invalidates_verification_index \
     && test_ok nimbus-storage local_provider_apply_paths_publish_only_post_apply_deltas \
     && test_ok nimbus-storage document_insert_update_delete_deltas_match_full_rebuilds \
-    && test_ok nimbus-storage hidden_lineage_document_write_does_not_enter_active_root \
+    && test_ok nimbus-storage hidden_lineage_document_write_matches_provider_activation \
     && test_ok nimbus-storage schema_scheduler_and_lifecycle_records_have_safe_verification_effects \
     && test_ok nimbus-storage snapshot_restore_invalidates_local_verification_generations \
     && test_ok nimbus-storage replacement_generation_is_never_current_during_update \
