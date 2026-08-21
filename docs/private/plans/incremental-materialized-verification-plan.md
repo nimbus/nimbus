@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: finish IMV6 autoreview, hosted provider qualification, and merge
-from `codex/imv6-provider-parity-faults-observability`.
+Next action: publish IMV6, require hosted provider qualification, and merge
+`codex/imv6-provider-parity-faults-observability`.
 
 ## Outcome
 
@@ -117,7 +117,7 @@ IMV0 runs first after promotion and creates the proof root and the
 | IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `done` | PR #305 merged as `04b32d8b5`. Work `139a50928`, hardening `70cbe14fc` and `a6a60a4dc`; proof `030802c52`, refresh `74917387b`. Nine focused tests and the million-leaf gate pass. Verifier: `Summary: 8 passed, 8 failed`; Nimbus autoreview clean. |
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `done` | PR #306 merged as `2a862829c`; archive-gate correction PR #307 merged as `eb2997083b`. Verifier: `Summary: 9 passed, 7 failed`. |
 | IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `done` | PR #308 merged as `ccddcf846`. Work `a7c678351`; hardening `395459752` and `3acdd45fd`; proof is in `imv5.md`. Verifier: `Summary: 11 passed, 5 failed`; Nimbus autoreview clean. |
-| IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `in_progress` | Work `3567ba656` adds provider-root parity, persistent-tamper failure, hard session bounds, fixed metrics, and operator controls. Proof is in `imv6.md`; verifier `Summary: 14 passed, 2 failed`; final `make ci` passes. Review, hosted provider qualification, and merge remain. |
+| IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `in_progress` | Work `3567ba656` adds provider-root parity, persistent-tamper failure, hard session bounds, fixed metrics, and operator controls. Proof is in `imv6.md`; verifier `Summary: 14 passed, 2 failed`; final `make ci` and Nimbus autoreview pass. Hosted provider qualification and merge remain. |
 | IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `todo` | |
 | IMV9 | After the final pull request merges, archive this plan, retain its proof root, and remove its active index entry. | `todo` | |
 
@@ -813,3 +813,4 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV6 | started | Created `codex/imv6-provider-parity-faults-observability` from merged main `ccddcf846`. IMV6 is the only `in_progress` task. |
 | 2026-08-21 | IMV6 | implemented | Work `3567ba656` adds the shared six-provider root corpus, same-sequence provider-tamper failure, retained failed-scrub witnesses, process-restart recovery, hard count and byte bounds, fixed metrics, and force-full and cache-clear controls. Local provider and storage-harness lanes pass. PostgreSQL, MySQL, and libSQL remain `UNVERIFIED` locally because their fixture variables are absent. The proof records `Summary: 14 passed, 2 failed`. Required CI, review, hosted qualification, and publication remain. |
 | 2026-08-21 | IMV6 | verified | Final `make ci` passes the 517-test runtime lane, 7,586-test non-runtime lane, JavaScript checks, and proof helpers. An earlier load-sensitive parked-runtime wall-clock test passed three isolated reruns and the complete rerun. Review, hosted provider qualification, and publication remain. |
+| 2026-08-21 | IMV6 | reviewed | Nimbus pre-PR autoreview reports no accepted or actionable finding. It confirms failed-scrub witness retention, hard registry bounds, fixed metrics, local administration controls, and the test-only provider tamper hook. Hosted provider qualification and publication remain. |

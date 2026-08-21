@@ -121,6 +121,10 @@ That exact ignored test passed three isolated reruns. The complete rerun passed
 its 517-test runtime lane, 7,586-test non-runtime lane, JavaScript checks, and
 proof helpers.
 
+The Nimbus pre-PR autoreview reports no accepted or actionable finding. It
+confirms the retained-witness rule, hard registry bounds, fixed metrics, local
+administration boundary, and test-only provider tamper hook.
+
 The fixed verifier reports:
 
 ```text
