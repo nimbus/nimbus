@@ -467,3 +467,4 @@ Numeric query and index semantics residual:
 | 2026-08-19 | RR31 | routed | Accepted IMVR2 from the Fable plan review. RR31 stays deferred until IMV1 supplies the normalized logical value tree. No implementation started. |
 | 2026-08-19 | meta | corrected | Named RR31 beside RR30 in the resume pointer and the baseline line. No implementation started. |
 | 2026-08-20 | meta | rebased | Refreshed the RR30 and RR31 baseline to `137cc632a` after 17 merged commits. Neither residual changed status. No implementation started. |
+| 2026-08-20 | RR31 | input-captured | IMV1 work `0da288204` preserved current numeric index bytes and recorded the integer-versus-float collision, large-integer risk, and adapter consequences in `rr31-numeric-index-semantics.md`. RR31 remains deferred until IMV1 merges. |
