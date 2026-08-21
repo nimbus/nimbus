@@ -6792,6 +6792,7 @@ dependencies = [
  "futures",
  "hkdf",
  "hyper 0.14.32",
+ "libc",
  "libsql",
  "loom",
  "mysql_async",
