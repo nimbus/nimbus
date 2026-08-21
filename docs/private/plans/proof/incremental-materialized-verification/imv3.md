@@ -24,7 +24,8 @@ artifact and recovery binding.
 
 The index supports batch build, insert, update, delete, root read, maximum
 depth, and resident-memory accounting. Deleted node slots enter a free list
-and later inserts reuse them.
+and later inserts reuse them. Batch hashing is iterative. Incremental insertion
+rolls back and returns an error before the enforced depth exceeds 128.
 
 ## Dependency screen
 
@@ -42,21 +43,22 @@ Nimbus therefore retains the concept-owned implementation.
 
 ## Acceptance evidence
 
-The focused unit lane reports eight passed tests. It includes all four named
+The focused unit lane reports nine passed tests. It includes all four named
 acceptance tests and a generated corpus with 16 histories and 500 mixed
 operations per history. Each checkpoint compares the incremental root with a
-full rebuild.
+full rebuild. A chosen-key chain also proves that batch construction rejects
+excess depth and incremental insertion rolls back without changing the root.
 
 The dedicated million-leaf lane reports:
 
 ```text
-verification_root leaves=1000000 max_depth=55 resident_bytes_per_leaf=145 budgeted_bytes_per_leaf=160
+verification_root leaves=1000000 max_depth=55 resident_bytes_per_leaf=149 budgeted_bytes_per_leaf=164
 test result: ok. 1 passed; 0 failed
 ```
 
-The node layout is 144 bytes. IMV2 assigns 16 conservative allocator bytes per
-leaf, for 160 budgeted bytes and 32 bytes of headroom below the approved
-192-byte limit. The measured arena allocation uses 145 resident bytes per live
+The node layout is 148 bytes. IMV2 assigns 16 conservative allocator bytes per
+leaf, for 164 budgeted bytes and 28 bytes of headroom below the approved
+192-byte limit. The measured arena allocation uses 149 resident bytes per live
 leaf after fixed index overhead.
 
 Commands:

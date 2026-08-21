@@ -191,7 +191,7 @@ else
     && test_ok nimbus-storage verification_root_version_separates_formats \
     && ignored_integration_test_ok nimbus-storage generated_history verification_root \
     && grok "$PROOF/imv3.md" "max_depth=55" \
-    && grok "$PROOF/imv3.md" "budgeted_bytes_per_leaf=160" \
+    && grok "$PROOF/imv3.md" "budgeted_bytes_per_leaf=164" \
     && grok "$PROOF/imv3.md" "Dependency screen"; then
     ok "8. deterministic versioned incremental root contract passes"
   else
