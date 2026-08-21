@@ -66,9 +66,9 @@ cargo bench -p nimbus-engine --bench materialized-verification -- --quick --outp
 ```
 
 The retained JSON measures 10,000 documents with 1 KiB payloads and zero
-churn. The successful run took 0.807184791 seconds wall time and 0.805851
-seconds process CPU time. It made 2,438,248 allocations and allocated
-1,693,703,373 bytes. Peak RSS was 307,445,760 bytes. The verifier reported
+churn. The successful run took 0.853579667 seconds wall time and 0.837885
+seconds process CPU time. It made 2,438,245 allocations and allocated
+1,693,703,153 bytes. Peak RSS was 372,359,168 bytes. The verifier reported
 10,000 authoritative documents and no mismatch.
 
 The current verifier has no byte-read counter. The JSON therefore records
