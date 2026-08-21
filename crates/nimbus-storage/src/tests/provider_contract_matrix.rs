@@ -52,6 +52,7 @@ pub(crate) enum Dimension {
     DurableRecovery,
     WriteIsolation,
     PositionParity,
+    VerificationRootParity,
 }
 
 /// The matrix position of one (provider, dimension) pair.
@@ -97,7 +98,7 @@ const PROVIDERS: [Provider; 6] = [
     Provider::Libsql,
 ];
 
-const DIMENSIONS: [Dimension; 7] = [
+const DIMENSIONS: [Dimension; 8] = [
     Dimension::AtomicEffects,
     Dimension::CommitterFencing,
     Dimension::ConditionalAdmission,
@@ -105,14 +106,15 @@ const DIMENSIONS: [Dimension; 7] = [
     Dimension::DurableRecovery,
     Dimension::WriteIsolation,
     Dimension::PositionParity,
+    Dimension::VerificationRootParity,
 ];
 
 /// The reason every single-process backend carries for `CommitterFencing`.
 const NO_LEASE_TO_FENCE: &str =
     "impl_unsupported_fenced_durable_apply!: no committer lease, so no stale owner to fence";
 
-/// The closed matrix. Forty-two cells, no omissions, no defaults.
-const MATRIX: [(Provider, Dimension, Cell); 42] = [
+/// The closed matrix. Forty-eight cells, no omissions, no defaults.
+const MATRIX: [(Provider, Dimension, Cell); 48] = [
     // redb
     (
         Provider::Redb,
@@ -150,6 +152,11 @@ const MATRIX: [(Provider, Dimension, Cell); 42] = [
         Provider::Redb,
         Dimension::PositionParity,
         Cell::Qualified("redb_materialized_position_matches_the_provider_independent_reference"),
+    ),
+    (
+        Provider::Redb,
+        Dimension::VerificationRootParity,
+        Cell::Qualified("redb_materialized_verification_root_is_provider_independent"),
     ),
     // in-memory
     (
@@ -189,6 +196,11 @@ const MATRIX: [(Provider, Dimension, Cell); 42] = [
         Dimension::PositionParity,
         Cell::Qualified("memory_materialized_position_matches_the_provider_independent_reference"),
     ),
+    (
+        Provider::Memory,
+        Dimension::VerificationRootParity,
+        Cell::Qualified("memory_materialized_verification_root_is_provider_independent"),
+    ),
     // SQLite
     (
         Provider::Sqlite,
@@ -226,6 +238,11 @@ const MATRIX: [(Provider, Dimension, Cell); 42] = [
         Provider::Sqlite,
         Dimension::PositionParity,
         Cell::Qualified("sqlite_materialized_position_matches_the_provider_independent_reference"),
+    ),
+    (
+        Provider::Sqlite,
+        Dimension::VerificationRootParity,
+        Cell::Qualified("sqlite_materialized_verification_root_is_provider_independent"),
     ),
     // PostgreSQL
     (
@@ -267,6 +284,11 @@ const MATRIX: [(Provider, Dimension, Cell); 42] = [
             "postgres_materialized_position_matches_the_provider_independent_reference",
         ),
     ),
+    (
+        Provider::Postgres,
+        Dimension::VerificationRootParity,
+        Cell::Qualified("postgres_materialized_verification_root_is_provider_independent"),
+    ),
     // MySQL
     (
         Provider::MySql,
@@ -304,6 +326,11 @@ const MATRIX: [(Provider, Dimension, Cell); 42] = [
         Provider::MySql,
         Dimension::PositionParity,
         Cell::Qualified("mysql_materialized_position_matches_the_provider_independent_reference"),
+    ),
+    (
+        Provider::MySql,
+        Dimension::VerificationRootParity,
+        Cell::Qualified("mysql_materialized_verification_root_is_provider_independent"),
     ),
     // libSQL replica
     (
@@ -346,6 +373,11 @@ const MATRIX: [(Provider, Dimension, Cell); 42] = [
         Provider::Libsql,
         Dimension::PositionParity,
         Cell::Qualified("libsql_materialized_position_matches_the_provider_independent_reference"),
+    ),
+    (
+        Provider::Libsql,
+        Dimension::VerificationRootParity,
+        Cell::Qualified("libsql_materialized_verification_root_is_provider_independent"),
     ),
 ];
 
@@ -492,6 +524,7 @@ impl Dimension {
             Self::DurableRecovery => "durable-recovery",
             Self::WriteIsolation => "write-isolation",
             Self::PositionParity => "position-parity",
+            Self::VerificationRootParity => "verification-root-parity",
         }
     }
 
@@ -505,6 +538,7 @@ impl Dimension {
             Self::DurableRecovery => profile.durable_recovery,
             Self::WriteIsolation => profile.write_isolation,
             Self::PositionParity => profile.position_parity,
+            Self::VerificationRootParity => profile.verification_root_parity,
         }
     }
 }

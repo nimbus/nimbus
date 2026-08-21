@@ -55,6 +55,9 @@ pub struct SemanticContractProfile {
     /// The materialized position is provider independent: the same record
     /// history yields the same position on every backend.
     pub position_parity: SemanticQualification,
+    /// The derived verification root is provider independent: the same
+    /// canonical leaf corpus yields the same root on every backend.
+    pub verification_root_parity: SemanticQualification,
 }
 
 impl SemanticContractProfile {
@@ -71,6 +74,7 @@ impl SemanticContractProfile {
         durable_recovery: SemanticQualification::Qualified,
         write_isolation: SemanticQualification::Qualified,
         position_parity: SemanticQualification::Qualified,
+        verification_root_parity: SemanticQualification::Qualified,
     };
 
     /// A single-process local backend.

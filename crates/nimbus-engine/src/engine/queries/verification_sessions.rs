@@ -2,8 +2,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use nimbus_core::{TenantEventRecord, TenantId};
-use nimbus_storage::{MaterializedDeltaApplyOutcome, MaterializedVerificationTracker};
+use nimbus_core::{Error, Result, TenantEventRecord, TenantId};
+use nimbus_storage::{
+    MaterializedDeltaApplyOutcome, MaterializedVerificationMetrics,
+    MaterializedVerificationMetricsSnapshot, MaterializedVerificationObservation,
+    MaterializedVerificationTracker,
+};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::verification::{BootstrapFingerprint, ConsistencyEscalationReason, SnapshotFingerprint};
@@ -53,6 +57,7 @@ pub(super) struct VerificationSession {
     pub authoritative: MaterializedVerificationTracker,
     pub shadow: MaterializedVerificationTracker,
     pub embedded_replica: MaterializedVerificationTracker,
+    pub requires_full_scrub: bool,
 }
 
 impl VerificationSession {
@@ -165,6 +170,7 @@ struct RegistryState {
 pub(crate) struct VerificationSessionRegistry {
     state: StdMutex<RegistryState>,
     config: VerificationSessionConfig,
+    metrics: MaterializedVerificationMetrics,
 }
 
 impl Default for VerificationSessionRegistry {
@@ -178,6 +184,7 @@ impl VerificationSessionRegistry {
         Self {
             state: StdMutex::new(RegistryState::default()),
             config,
+            metrics: MaterializedVerificationMetrics::default(),
         }
     }
 
@@ -189,7 +196,7 @@ impl VerificationSessionRegistry {
         &self,
         tenant_id: &TenantId,
         now: Instant,
-    ) -> Arc<AsyncMutex<Option<VerificationSession>>> {
+    ) -> Result<Arc<AsyncMutex<Option<VerificationSession>>>> {
         let mut state = self
             .state
             .lock()
@@ -199,7 +206,26 @@ impl VerificationSessionRegistry {
         if let Some(entry) = state.entries.get_mut(tenant_id) {
             entry.last_used_at = now;
             entry.access_order = access_order;
-            return Arc::clone(&entry.slot);
+            return Ok(Arc::clone(&entry.slot));
+        }
+
+        let mut evictions = 0;
+        while state.entries.len() >= self.config.max_sessions {
+            let candidate = state
+                .entries
+                .iter()
+                .filter(|(_, entry)| Arc::strong_count(&entry.slot) == 1)
+                .min_by_key(|(_, entry)| (entry.access_order, entry.last_used_at))
+                .map(|(tenant_id, _)| tenant_id.clone());
+            let Some(candidate) = candidate else {
+                return Err(Error::ResourceExhausted(format!(
+                    "materialized verification has {} active sessions; the limit is {}",
+                    state.entries.len(),
+                    self.config.max_sessions
+                )));
+            };
+            state.entries.remove(&candidate);
+            evictions += 1;
         }
 
         let slot = Arc::new(AsyncMutex::new(None));
@@ -212,8 +238,10 @@ impl VerificationSessionRegistry {
                 access_order,
             },
         );
-        self.evict_to_bounds(&mut state, tenant_id);
-        slot
+        evictions += self.evict_to_bounds(&mut state, tenant_id);
+        self.metrics.record_evictions(evictions);
+        self.record_registry_usage(&state);
+        Ok(slot)
     }
 
     pub(super) fn record_usage(
@@ -241,20 +269,35 @@ impl VerificationSessionRegistry {
 
         if resident_index_bytes > self.config.max_resident_index_bytes {
             state.entries.remove(tenant_id);
+            self.metrics.record_evictions(1);
+            self.record_registry_usage(&state);
             return;
         }
-        self.evict_to_bounds(&mut state, tenant_id);
+        let evictions = self.evict_to_bounds(&mut state, tenant_id);
+        self.metrics.record_evictions(evictions);
+        self.record_registry_usage(&state);
     }
 
-    pub(crate) fn invalidate(&self, tenant_id: &TenantId) {
-        self.state
+    pub(crate) fn invalidate(&self, tenant_id: &TenantId) -> bool {
+        let mut state = self
+            .state
             .lock()
-            .expect("verification session registry lock should not be poisoned")
-            .entries
-            .remove(tenant_id);
+            .expect("verification session registry lock should not be poisoned");
+        let removed = state.entries.remove(tenant_id).is_some();
+        self.record_registry_usage(&state);
+        removed
     }
 
-    fn evict_to_bounds(&self, state: &mut RegistryState, protected_tenant: &TenantId) {
+    pub(super) fn record_verification(&self, observation: MaterializedVerificationObservation) {
+        self.metrics.record(observation);
+    }
+
+    pub(crate) fn metrics_snapshot(&self) -> MaterializedVerificationMetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
+    fn evict_to_bounds(&self, state: &mut RegistryState, protected_tenant: &TenantId) -> usize {
+        let mut evictions = 0;
         loop {
             let total_bytes = state.entries.values().fold(0usize, |total, entry| {
                 total.saturating_add(entry.resident_index_bytes)
@@ -274,10 +317,23 @@ impl VerificationSessionRegistry {
                 .min_by_key(|(_, entry)| (entry.access_order, entry.last_used_at))
                 .map(|(tenant_id, _)| tenant_id.clone());
             let Some(candidate) = candidate else {
+                if state.entries.remove(protected_tenant).is_some() {
+                    evictions += 1;
+                }
                 break;
             };
             state.entries.remove(&candidate);
+            evictions += 1;
         }
+        evictions
+    }
+
+    fn record_registry_usage(&self, state: &RegistryState) {
+        let resident_index_bytes = state.entries.values().fold(0usize, |total, entry| {
+            total.saturating_add(entry.resident_index_bytes)
+        });
+        self.metrics
+            .set_registry_usage(state.entries.len(), resident_index_bytes);
     }
 }
 
@@ -319,6 +375,7 @@ mod tests {
             authoritative: tracker.clone(),
             shadow: tracker.clone(),
             embedded_replica: tracker,
+            requires_full_scrub: false,
         }
     }
 
@@ -336,15 +393,35 @@ mod tests {
         let tenant_b = TenantId::new("tenant-b").expect("tenant should validate");
         let tenant_c = TenantId::new("tenant-c").expect("tenant should validate");
 
-        drop(registry.acquire(&tenant_a, now));
-        drop(registry.acquire(&tenant_b, now));
-        drop(registry.acquire(&tenant_b, now));
-        drop(registry.acquire(&tenant_c, now));
+        drop(
+            registry
+                .acquire(&tenant_a, now)
+                .expect("tenant A should admit"),
+        );
+        drop(
+            registry
+                .acquire(&tenant_b, now)
+                .expect("tenant B should admit"),
+        );
+        drop(
+            registry
+                .acquire(&tenant_b, now)
+                .expect("tenant B should reuse"),
+        );
+        drop(
+            registry
+                .acquire(&tenant_c, now)
+                .expect("tenant C should admit"),
+        );
 
         let state = registry.state.lock().expect("registry should lock");
         assert!(!state.entries.contains_key(&tenant_a));
         assert!(state.entries.contains_key(&tenant_b));
         assert!(state.entries.contains_key(&tenant_c));
+        drop(state);
+        let metrics = registry.metrics_snapshot();
+        assert_eq!(metrics.sessions_current, 2);
+        assert_eq!(metrics.evictions_total, 1);
     }
 
     #[test]
@@ -360,15 +437,82 @@ mod tests {
         let tenant_a = TenantId::new("tenant-a").expect("tenant should validate");
         let tenant_b = TenantId::new("tenant-b").expect("tenant should validate");
 
-        let slot_a = registry.acquire(&tenant_a, now);
+        let slot_a = registry
+            .acquire(&tenant_a, now)
+            .expect("tenant A should admit");
         registry.record_usage(&tenant_a, &slot_a, 60, now);
         drop(slot_a);
-        let slot_b = registry.acquire(&tenant_b, now);
+        let slot_b = registry
+            .acquire(&tenant_b, now)
+            .expect("tenant B should admit");
         registry.record_usage(&tenant_b, &slot_b, 60, now);
 
         let state = registry.state.lock().expect("registry should lock");
         assert!(!state.entries.contains_key(&tenant_a));
         assert!(state.entries.contains_key(&tenant_b));
+        drop(state);
+        let metrics = registry.metrics_snapshot();
+        assert_eq!(metrics.sessions_current, 1);
+        assert_eq!(metrics.resident_index_bytes_current, 60);
+        assert_eq!(metrics.resident_index_bytes_peak, 60);
+        assert_eq!(metrics.evictions_total, 1);
+    }
+
+    #[test]
+    fn verification_session_limit_refuses_when_every_slot_is_active() {
+        let config = VerificationSessionConfig {
+            max_sessions: 1,
+            max_resident_index_bytes: usize::MAX,
+            max_idle: Duration::MAX,
+            max_anchor_age: Duration::MAX,
+        };
+        let registry = VerificationSessionRegistry::new(config);
+        let now = Instant::now();
+        let tenant_a = TenantId::new("tenant-a").expect("tenant should validate");
+        let tenant_b = TenantId::new("tenant-b").expect("tenant should validate");
+
+        let active = registry
+            .acquire(&tenant_a, now)
+            .expect("first tenant should admit");
+        let error = registry
+            .acquire(&tenant_b, now)
+            .expect_err("a second active tenant must not exceed the count bound");
+
+        assert!(matches!(error, Error::ResourceExhausted(_)));
+        assert_eq!(registry.metrics_snapshot().sessions_current, 1);
+        drop(active);
+    }
+
+    #[test]
+    fn verification_session_byte_limit_does_not_retain_an_over_budget_active_result() {
+        let config = VerificationSessionConfig {
+            max_sessions: usize::MAX,
+            max_resident_index_bytes: 100,
+            max_idle: Duration::MAX,
+            max_anchor_age: Duration::MAX,
+        };
+        let registry = VerificationSessionRegistry::new(config);
+        let now = Instant::now();
+        let tenant_a = TenantId::new("tenant-a").expect("tenant should validate");
+        let tenant_b = TenantId::new("tenant-b").expect("tenant should validate");
+
+        let slot_a = registry
+            .acquire(&tenant_a, now)
+            .expect("tenant A should admit");
+        registry.record_usage(&tenant_a, &slot_a, 60, now);
+        let slot_b = registry
+            .acquire(&tenant_b, now)
+            .expect("tenant B should admit");
+        registry.record_usage(&tenant_b, &slot_b, 60, now);
+
+        let state = registry.state.lock().expect("registry should lock");
+        assert!(state.entries.contains_key(&tenant_a));
+        assert!(!state.entries.contains_key(&tenant_b));
+        drop(state);
+        let metrics = registry.metrics_snapshot();
+        assert_eq!(metrics.sessions_current, 1);
+        assert_eq!(metrics.resident_index_bytes_current, 60);
+        assert_eq!(metrics.evictions_total, 1);
     }
 
     #[test]

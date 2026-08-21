@@ -42,6 +42,44 @@ async fn tenant_consistency_route_returns_green_report_for_live_state() {
         report["bootstrap"]["bootstrap_cut_sequence"],
         report["authoritative"]["durable_head"]
     );
+    assert_eq!(report["metrics"]["full_scrub_total"], serde_json::json!(1));
+
+    let warm = api
+        .tenant_consistency_report("demo")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("warm consistency report should parse");
+    assert_eq!(warm["mode"], serde_json::json!("incremental"));
+    assert_eq!(warm["metrics"]["incremental_total"], serde_json::json!(1));
+
+    let forced = api
+        .tenant_consistency_full_scrub("demo")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("forced consistency report should parse");
+    assert_eq!(forced["mode"], serde_json::json!("full_scrub"));
+    assert_eq!(
+        forced["escalation_reason"],
+        serde_json::json!("operator_forced")
+    );
+
+    assert_eq!(
+        api.clear_tenant_consistency_session("demo").await.status(),
+        StatusCode::NO_CONTENT
+    );
+    let after_clear = api
+        .tenant_consistency_report("demo")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("post-clear consistency report should parse");
+    assert_eq!(after_clear["mode"], serde_json::json!("full_scrub"));
+    assert_eq!(
+        after_clear["escalation_reason"],
+        serde_json::json!("cold_start")
+    );
 }
 
 #[tokio::test]

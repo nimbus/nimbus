@@ -1501,7 +1501,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_duplicate_invalidates_verification_index() {
+    fn corrupt_index_never_reports_success() {
         let (record, _, _) = inserted_document_record(1);
         let mut tracker = MaterializedVerificationTracker::from_snapshot(&empty_snapshot())
             .expect("tracker should build");
@@ -1517,6 +1517,46 @@ mod tests {
             MaterializedDeltaApplyOutcome::Invalidated
         );
         assert!(!tracker.is_valid());
+        assert_eq!(tracker.position(), None);
+    }
+
+    #[test]
+    fn full_scrub_detects_state_tamper_at_same_sequence() {
+        let (record, _, document) = inserted_document_record(1);
+        let store = crate::MemoryTenantStore::new();
+        store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("record should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect("record should apply");
+
+        let expected_snapshot = store
+            .export_materialized_journal_snapshot()
+            .expect("expected snapshot should export");
+        let expected = MaterializedVerificationTracker::from_snapshot(&expected_snapshot)
+            .expect("expected tracker should build")
+            .position()
+            .expect("expected tracker should be valid");
+
+        let mut tampered = document;
+        tampered
+            .fields
+            .insert("title".to_string(), serde_json::json!("tampered"));
+        store
+            .tamper_document_for_testing(tampered)
+            .expect("test state should tamper");
+
+        let actual_snapshot = store
+            .export_materialized_journal_snapshot()
+            .expect("tampered snapshot should export");
+        let actual = MaterializedVerificationTracker::from_snapshot(&actual_snapshot)
+            .expect("tampered tracker should build")
+            .position()
+            .expect("tampered tracker should be valid");
+
+        assert_eq!(actual.applied_sequence(), expected.applied_sequence());
+        assert_ne!(actual.root_hash(), expected.root_hash());
     }
 
     #[test]

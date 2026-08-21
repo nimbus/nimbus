@@ -1523,3 +1523,17 @@ fn sqlite_materialized_position_matches_the_provider_independent_reference() {
         crate::tests::contract_scenarios::reference_materialized_position()
     );
 }
+
+#[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_materialized_verification_root_is_provider_independent() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("root.sqlite3"))
+        .expect("sqlite tenant store should open");
+    assert_eq!(
+        crate::tests::contract_scenarios::exercise_materialized_verification_root_is_provider_independent(
+            &store
+        ),
+        crate::tests::contract_scenarios::reference_materialized_verification_root()
+    );
+}

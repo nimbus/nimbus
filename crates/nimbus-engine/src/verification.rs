@@ -1,7 +1,8 @@
 use nimbus_core::{Document, Result};
 use nimbus_storage::{
     CanonicalMaterializedState, DurableJournalBootstrap, MaterializedJournalSnapshot,
-    MaterializedPosition, MaterializedVerificationTracker, TableIdentitySnapshotEntry,
+    MaterializedPosition, MaterializedVerificationMetricsSnapshot, MaterializedVerificationTracker,
+    TableIdentitySnapshotEntry,
 };
 use serde::Serialize;
 
@@ -22,6 +23,7 @@ pub enum ConsistencyEscalationReason {
     RetentionGap,
     IndexInvalidated,
     RootMismatch,
+    OperatorForced,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -98,6 +100,7 @@ pub struct ConsistencyVerificationReport {
     pub embedded_replica: SnapshotFingerprint,
     pub bootstrap: BootstrapFingerprint,
     pub mismatches: Vec<ConsistencyMismatch>,
+    pub metrics: MaterializedVerificationMetricsSnapshot,
 }
 
 pub(crate) fn verification_root_fingerprint(

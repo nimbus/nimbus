@@ -1181,13 +1181,71 @@ async fn consistency_verification_root_mismatch_escalates_to_full_scrub() {
     let rebuilt = engine
         .verify_consistency_async(tenant_id)
         .await
-        .expect("a failed scrub should discard and rebuild its session");
+        .expect("a failed scrub should require one confirming full scrub");
     assert!(rebuilt.ok, "{rebuilt:#?}");
     assert_eq!(rebuilt.mode, crate::ConsistencyVerificationMode::FullScrub);
     assert_eq!(
         rebuilt.escalation_reason,
-        Some(crate::ConsistencyEscalationReason::ColdStart)
+        Some(crate::ConsistencyEscalationReason::RootMismatch)
     );
+}
+
+#[tokio::test]
+async fn consistency_full_scrub_rejects_persistent_same_sequence_provider_tamper() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_memory_persistence(data_dir.path()).expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("same-sequence-tamper").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+        )
+        .await
+        .expect("insert should succeed");
+    let anchored = engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("full verification should establish a session");
+    let mut tampered = engine
+        .export_durable_journal_bootstrap_async(tenant_id.clone())
+        .await
+        .expect("provider snapshot should export")
+        .snapshot
+        .documents
+        .into_iter()
+        .next()
+        .expect("inserted document should exist");
+    tampered.fields.insert("rank".to_string(), json!(999));
+    engine
+        .tamper_materialized_document_for_testing(&tenant_id, tampered)
+        .await
+        .expect("provider state should tamper");
+
+    for _ in 0..2 {
+        let report = engine
+            .verify_consistency_full_scrub_async(tenant_id.clone())
+            .await
+            .expect("forced scrub should return a failed report");
+        assert!(!report.ok, "{report:#?}");
+        assert_eq!(report.mode, crate::ConsistencyVerificationMode::FullScrub);
+        assert_eq!(
+            report.anchor.position.applied_sequence(),
+            anchored.anchor.position.applied_sequence()
+        );
+        assert!(
+            report
+                .mismatches
+                .iter()
+                .any(|mismatch| { mismatch.invariant == "full_scrub_matches_incremental_root" })
+        );
+    }
 }
 
 #[tokio::test]
@@ -1214,6 +1272,42 @@ async fn consistency_verification_session_does_not_cross_tenant_incarnation() {
         .verify_consistency_async(tenant_id)
         .await
         .expect("replacement tenant should verify");
+    assert!(report.ok, "{report:#?}");
+    assert_eq!(report.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        report.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::ColdStart)
+    );
+}
+
+#[tokio::test]
+async fn consistency_verification_process_restart_requires_full_scrub() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let tenant_id = TenantId::new("verification-restart").expect("tenant id should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+        )
+        .await
+        .expect("insert should succeed");
+    engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("first process should establish a session");
+    engine.quiesce().await;
+    drop(engine);
+
+    let reopened = Arc::new(Engine::new(data_dir.path()).expect("engine should reopen"));
+    let report = reopened
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("reopened engine should verify");
     assert!(report.ok, "{report:#?}");
     assert_eq!(report.mode, crate::ConsistencyVerificationMode::FullScrub);
     assert_eq!(

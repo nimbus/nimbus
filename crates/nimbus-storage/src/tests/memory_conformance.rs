@@ -1,6 +1,8 @@
 use super::contract_scenarios::{
     exercise_durable_recovery_replays_unapplied_records, exercise_journal_progress_round_trip,
-    exercise_materialized_position_is_provider_independent, reference_materialized_position,
+    exercise_materialized_position_is_provider_independent,
+    exercise_materialized_verification_root_is_provider_independent,
+    reference_materialized_position, reference_materialized_verification_root,
 };
 use super::*;
 use crate::{DurableJournal, TenantPointRead, TenantPointWrite, TenantRangeScan};
@@ -359,6 +361,26 @@ fn memory_materialized_position_matches_the_provider_independent_reference() {
     assert_eq!(
         exercise_materialized_position_is_provider_independent(&store),
         reference_materialized_position()
+    );
+}
+
+#[test]
+fn redb_materialized_verification_root_is_provider_independent() {
+    let directory = tempdir().expect("temporary directory should create");
+    let store =
+        TenantStore::open(directory.path().join("root.redb")).expect("redb store should open");
+    assert_eq!(
+        exercise_materialized_verification_root_is_provider_independent(&store),
+        reference_materialized_verification_root()
+    );
+}
+
+#[test]
+fn memory_materialized_verification_root_is_provider_independent() {
+    let store = MemoryTenantStore::new();
+    assert_eq!(
+        exercise_materialized_verification_root_is_provider_independent(&store),
+        reference_materialized_verification_root()
     );
 }
 

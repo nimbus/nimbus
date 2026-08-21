@@ -53,8 +53,8 @@ pub(crate) use machines::{
     create_machine, delete_machine, restart_machine, start_machine, stop_machine, update_machine,
 };
 pub(crate) use metadata::{
-    encryption_status, examples_redirect, health, license_status, runtime_diagnostics,
-    tenant_consistency_report, tenant_engine_diagnostics,
+    clear_tenant_consistency_session, encryption_status, examples_redirect, health, license_status,
+    runtime_diagnostics, tenant_consistency_report, tenant_engine_diagnostics,
 };
 pub(crate) use queries::{
     bootstrap_journal, query_documents, query_documents_paginated, read_journal,

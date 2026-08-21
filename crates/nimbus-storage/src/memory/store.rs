@@ -103,6 +103,27 @@ impl MemoryTenantStore {
             .map_err(|_| Error::Internal("memory tenant read lock is poisoned".to_string()))
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn tamper_document_for_testing(&self, document: nimbus_core::Document) -> Result<()> {
+        let mut state = self.write_state()?;
+        let table_id = state
+            .active_tables
+            .get(&document.table)
+            .cloned()
+            .ok_or_else(|| {
+                Error::Internal(format!(
+                    "test table identity does not exist: {}",
+                    document.table
+                ))
+            })?;
+        let documents = state.documents.get_mut(&table_id).ok_or_else(|| {
+            Error::Internal(format!("test table identity does not exist: {table_id}"))
+        })?;
+        documents.insert(document.id.clone(), document);
+        state.revision = state.revision.wrapping_add(1);
+        Ok(())
+    }
+
     pub(super) fn write_state(&self) -> Result<RwLockWriteGuard<'_, MemoryState>> {
         self.state
             .write()

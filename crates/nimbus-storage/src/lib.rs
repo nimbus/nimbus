@@ -43,6 +43,7 @@ pub mod tenant_incarnation;
 pub mod traits;
 mod trigger_invocation_transition;
 pub mod usage_store;
+mod verification_metrics;
 
 pub use async_storage::{
     EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
@@ -180,6 +181,10 @@ pub use traits::{
 };
 pub use trigger_invocation_transition::TriggerInvocationTransitionStore;
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
+pub use verification_metrics::{
+    MaterializedVerificationMetricMode, MaterializedVerificationMetrics,
+    MaterializedVerificationMetricsSnapshot, MaterializedVerificationObservation,
+};
 
 #[cfg(test)]
 mod tests;
