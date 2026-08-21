@@ -141,9 +141,10 @@ extension-registry seam before the second concern edits `extensions.rs`.
   allocator, provider effects, or local network state store. It also owns the
   storage artifacts the archived storage-integrity campaign deferred to it:
   immutable external epoch lineages, journal-format seals, and reader-first
-  format rollout across a mixed-version reader fleet. Storage already publishes
-  one canonical `MaterializedPosition` and a provider semantic-qualification
-  profile for those protocols to build on.
+  format rollout across a mixed-version reader fleet, committed object-root
+  authority, and automatic distributed sweep policy.
+  Storage already publishes one canonical `MaterializedPosition` and a provider
+  semantic-qualification profile for those protocols to build on.
 - `nimbus-fips-iroh-ed25519-retrofit-plan.md` - `draft`. Owns a future
   aws-lc-rs/PQ TLS posture, NodeSigner seam, and CMVP-triggered identity-key
   retrofit. Promote only after the current FIPS and iroh identity facts are
@@ -201,6 +202,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   verifier against the ratified latency, write-cost, and memory gates. IMV3
   through IMV6 add a process-local Merkle root only when IMV2 requires it.
   `MaterializedPosition` remains the canonical artifact binding.
+- `blob-lifecycle-integrity-plan.md` - `proposed`.
+  Fixes shared-hash data loss on S3 and Convex storage. `BlobGc` gets one
+  live-root cut, intent pins, and grace. It also gets an automatic local sweep
+  and a manual command. BLI3 closes multipart clause cardinality. BLI5 adds the
+  SIC1 retained-blob erratum.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
   retry-amplification admission signal from
