@@ -58,14 +58,17 @@ prevents an older waiter from moving the session clock backward.
 
 A root mismatch cannot become a successful full-scrub report. Nimbus compares
 the prior roots with each other and compares each same-sequence prior root with
-the rebuilt root. It retains the failed prior session, so a repeated request
-does not silently reset the failure. A retention gap cannot reconstruct an
-expected root. Nimbus discards that assurance and starts a new full anchor from
-actual state.
+the rebuilt root. Any failed scrub discards its session. The next request must
+scrub again, so a persistent provider or replay mismatch cannot become a warm
+success. A session-only index fault can recover through a clean full rebuild.
+A retention gap also discards the old assurance and starts a new full anchor
+from actual state.
 
 An unrelated provider error remains an error. It is not relabeled as a
 retention rebuild. A failed operation can discard its disposable session, but
 the registry records the remaining zero-byte state before returning the error.
+Tenant deletion invalidates the registry entry. A replacement tenant with the
+same ID cannot inherit a session from an older incarnation.
 
 ## Bounds
 
@@ -89,11 +92,12 @@ owns the bounded metrics and operator controls.
 
 ## Acceptance evidence
 
-The consistency-verification lane reports 6 passed tests. It proves the cold
+The consistency-verification lane reports 7 passed tests. It proves the cold
 full mode, warm incremental mode, stable anchor identity, and an unchanged
 zero-event recheck. It also proves mismatch failure, retention-gap rebuild,
 expired-anchor advance before a scrub, and single-cut alignment during a
-concurrent write.
+concurrent write. A lifecycle regression proves that a replacement tenant
+starts with a cold scrub.
 
 The session lane reports 3 passed tests. It proves count-based LRU eviction,
 byte-based LRU eviction, and the exact idle and anchor deadlines. The storage
