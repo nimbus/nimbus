@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: publish IMV4 for hosted verification, merge it, and advance the
-ledger to IMV5 bounded verification sessions.
+Next action: merge PR #306 after hosted verification, then advance the ledger
+to IMV5 bounded verification sessions.
 
 ## Outcome
 
@@ -799,3 +799,4 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV4 | hardened | Autoreview found no finding at its configured threshold. Its lower-priority notes exposed two future-session risks. Hardening `fafbf4339` keeps replacement generations non-current for the complete mutation window. A provider-backed follow-up corrects the hidden-lineage assumption: document and schema writes activate the referenced identity, move a prior active identity to deleting, and change the covered state. The focused lane now passes 22 tests. Final review and publication remain. |
 | 2026-08-21 | IMV4 | reviewed | Final autoreview found one proof defect below its display threshold: condition 9 used the removed hidden-lineage test name, so Cargo could return success without a match. The verifier now runs the provider-backed activation test and reports `Summary: 9 passed, 7 failed`. No runtime finding remains. |
 | 2026-08-21 | IMV4 | verified | `make ci` passed format, workspace Clippy, dependency, runtime, and IMV storage checks. Its non-runtime lane ran 7,564 tests: 7,563 passed, 110 skipped, and one MongoDB report test exited before listener readiness. That unchanged test passed three isolated reruns. Hosted CI remains the merge source of truth. |
+| 2026-08-21 | IMV4 | published | Opened PR #306 from `codex/imv4-materialized-writer-deltas`. Hosted checks and merge remain. |
