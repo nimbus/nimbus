@@ -65,7 +65,7 @@ static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
 #[derive(Debug)]
 struct Arguments {
-    output: PathBuf,
+    output: Option<PathBuf>,
     quick: bool,
 }
 
@@ -143,8 +143,7 @@ fn main() -> Result<()> {
         quick: arguments.quick,
         measurements,
     };
-    write_report(&arguments.output, &report)?;
-    println!("wrote {}", arguments.output.display());
+    write_report(arguments.output.as_deref(), &report)?;
     Ok(())
 }
 
@@ -271,15 +270,16 @@ fn parse_arguments() -> Result<Arguments> {
             }
         }
     }
-    Ok(Arguments {
-        output: output.ok_or_else(|| {
-            Error::InvalidInput("materialized-verification requires --output <path>".to_string())
-        })?,
-        quick,
-    })
+    Ok(Arguments { output, quick })
 }
 
-fn write_report(path: &Path, report: &BenchmarkReport) -> Result<()> {
+fn write_report(path: Option<&Path>, report: &BenchmarkReport) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(report)
+        .map_err(|error| Error::Serialization(error.to_string()))?;
+    let Some(path) = path else {
+        println!("{}", String::from_utf8_lossy(&bytes));
+        return Ok(());
+    };
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -297,14 +297,14 @@ fn write_report(path: &Path, report: &BenchmarkReport) -> Result<()> {
             ))
         })?;
     }
-    let bytes = serde_json::to_vec_pretty(report)
-        .map_err(|error| Error::Serialization(error.to_string()))?;
     fs::write(&path, bytes).map_err(|error| {
         Error::Internal(format!(
             "failed to write benchmark report {}: {error}",
             path.display()
         ))
-    })
+    })?;
+    println!("wrote {}", path.display());
+    Ok(())
 }
 
 fn reset_allocation_counters() {
