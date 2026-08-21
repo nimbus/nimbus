@@ -121,9 +121,10 @@ That exact ignored test passed three isolated reruns. The complete rerun passed
 its 517-test runtime lane, 7,586-test non-runtime lane, JavaScript checks, and
 proof helpers.
 
-The Nimbus pre-PR autoreview reports no accepted or actionable finding. It
-confirms the retained-witness rule, hard registry bounds, fixed metrics, local
-administration boundary, and test-only provider tamper hook.
+Both Nimbus pre-PR autoreviews report no accepted or actionable finding. The
+first confirms the retained-witness rule, hard registry bounds, fixed metrics,
+local administration boundary, and test-only provider tamper hook. The second
+also confirms the overlap-safe invalidator invariant after the hosted fix.
 
 The first hosted run qualified PostgreSQL and MySQL. The libSQL verification
 root test also passed, but four PPSC recovery cases failed. The new invalidator
