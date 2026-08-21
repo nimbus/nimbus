@@ -3,9 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: run the Nimbus pre-PR autoreview for IMV1 work `0da288204` and
-proof `ce2ea3d8e`. Resolve accepted findings, publish the IMV1 pull request, and
-wait for its merge before IMV2 starts.
+Next action: publish the reviewed IMV1 branch, open its pull request, and wait
+for the merge before IMV2 starts.
 
 ## Outcome
 
@@ -113,7 +112,7 @@ IMV0 runs first after promotion and creates the proof root and the
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | IMV0 | Pin the execution baseline, create the proof root, author the 16-condition verifier red, and capture full-verification fail-before cost. No production behavior changes. | `done` | PR #302. Work `58e46b675`, fix `14227dc59`; proof `97949afa2`, refresh `6e643ada8`. Verifier: `Summary: 3 passed, 13 failed`. |
-| IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `in_progress` | Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`. Pre-PR review and PR merge remain. |
+| IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `in_progress` | Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`; Nimbus autoreview clean. PR merge remains. |
 | IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `todo` | |
 | IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `todo` | |
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `todo` | |
@@ -782,3 +781,4 @@ Append rows at the end. This section stays last.
 | 2026-08-20 | IMV0 | completed | PR #302 contains the retained 36-rung full-verifier harness from work `58e46b675` and the safe default Cargo benchmark output from `14227dc59`. Proof commits `97949afa2` and `6e643ada8` record both feature graphs, three review-only digest probes, the quick cost baseline, and `Summary: 3 passed, 13 failed`. The closing allowlist, format, Clippy, docs, patch, and writing gates pass. Nimbus autoreview is clean. No production path or package changed, and no review-only probe remains. |
 | 2026-08-20 | IMV1 | started | Advanced mandatory canonical-value, codec, float, PITR, opaque-position, and cross-graph golden work. IMV1 is the only `in_progress` task. |
 | 2026-08-20 | IMV1 | implemented | Work `0da288204` adds the version 2 streaming codec, shared logical-value consumers, total floats, GeoPoint admission, opaque positions, PITR preflight, cross-graph golden tests, governing specification, and SIC4 erratum. Proof `ce2ea3d8e` records `Summary: 6 passed, 10 failed`. The full workspace run passed 7,538 of 7,539 tests; its unchanged MongoDB report failure passed three isolated reruns. Pre-PR autoreview and PR merge remain. |
+| 2026-08-20 | IMV1 | reviewed | Nimbus pre-PR autoreview found no actionable defect. It confirmed prefix-free codec framing, Cargo-graph-independent ordering, byte-preserving index derivation, and pre-write position validation. The approved negative-zero normalization remains explicit. PR publication and merge remain. |
