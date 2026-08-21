@@ -102,6 +102,12 @@ Summary: 11 passed, 5 failed
 The five remaining failures are the planned provider, fault, metrics, closeout,
 and documentation conditions in IMV6 and IMV7.
 
+The required local CI gate passed format, workspace Clippy, dependency,
+runtime, and IMV-focused checks. Its non-runtime lane ran 7,572 tests. It passed
+7,571 and skipped 110. The unchanged MongoDB CRUD report test failed once
+during listener startup. It is outside the IMV5 paths and passed three isolated
+reruns. Hosted CI remains the merge source of truth.
+
 Commands:
 
 ```text
@@ -111,4 +117,6 @@ cargo test -p nimbus-storage materialized_verification -- --nocapture
 cargo clippy -p nimbus-engine -p nimbus-storage --all-targets -- -D warnings
 cargo fmt --all --check
 bash docs/private/plans/proof/incremental-materialized-verification/verify.sh
+make ci
+cargo test -p nimbus-server --test mongodb_spec spec_executor_crud_execution_report -- --exact --nocapture
 ```
