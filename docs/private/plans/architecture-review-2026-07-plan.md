@@ -2,6 +2,11 @@
 
 Status: `active`
 Owner: this plan
+Baseline: main @ `137cc632a1c8585545d200ea49f44bd236478175` for RR30 and RR31.
+Proof root: `proof/architecture-review-2026-07/`.
+Next action: Keep RR31 deferred until IMV1 merges, then run its numeric index
+and query semantics audit. Keep RR30 deferred until IMV1 and BLI3 merge, then
+run its storage semantic-type audit.
 Provenance: full-workspace architecture review, 2026-07-06 (six parallel
 subsystem mappings + second-pass gap/hygiene sweeps + extraction/identity
 inventory). Review artifact:
@@ -195,7 +200,7 @@ Recorded so later reviews do not re-flag these:
 
 ## Band Ledgers
 
-Status values: `todo` | `in_progress` | `done (evidence)` |
+Status values: `todo` | `in_progress` | `deferred(<dependency>)` | `done (evidence)` |
 `no-action (reason)` | `blocked (reason)`. Update the cell when the item
 moves; one evidence line per completed item (test name/count or commit).
 
@@ -313,6 +318,10 @@ private-fence regression discovered by the required docs-site completion gate.
 RR27 through RR29 record three release-readiness findings verified on
 2026-07-23 after the original remediation branch landed.
 
+RR30 owns the storage semantic-type residual routed from the 2026-08-19 IMV
+and BLI review. RR31 owns the cross-adapter numeric query and index semantics
+residual from the same review.
+
 | ID | Item | Where | Severity / verdict | Status |
 | --- | --- | --- | --- | --- |
 | RR1 | Make DynamoDB single-item put/update/delete condition evaluation and read-modify-write atomic. | `nimbus-dynamodb/src/commands/{item,transact}.rs` | high / confirmed | done (`concurrent_add_updates_retry_from_a_fresh_snapshot_without_lost_writes` plus single-item stream rollback; workspace 4,674/4,674) |
@@ -344,6 +353,8 @@ RR27 through RR29 record three release-readiness findings verified on
 | RR27 | Bind Convex WebSocket reauthentication to the URL-selected silo verifier from the same deployment snapshot that admitted the socket. | `nimbus-convex/src/silo_auth.rs`, server Convex registry/socket-auth/subscription seams | high / confirmed by fail-before cross-silo bearer acceptance | done (`ConvexSiloAuthAuthority` and `ConvexSocketAdmission` make the selected trust domain a snapshot-bound capability; four silo-auth unit tests plus the cross-silo rejection and existing identity WebSocket tests are green) |
 | RR28 | Restore the required Convex silo in the deploy-admin authorization fixture so the test reaches the security boundary it asserts. | `nimbus-server/src/tests/local_server_security.rs` | low / confirmed by fail-before 400 response | done (`deploy_admin_requires_local_admin_header_even_with_deploy_bearer` now reaches the valid deploy path and passes without weakening its authorization assertions) |
 | RR29 | Bind the Cloud Functions runtime-owner conformance fixture to its explicit HTTP tenant. | `nimbus-server/src/tests/runtime_owner_conformance.rs` | low / confirmed by fail-before 409 response | done (`cloud_functions_passes_runtime_owner_lifecycle_conformance` exercises the lifecycle contract through a valid trusted tenant binding and passes unchanged assertions) |
+| RR30 | Own IMVR1. After IMV1 and BLI3 merge, inventory storage durable outcomes and provider-capability types. Classify each type as an opaque validated value, a closed enum with no invalid state, or a repair. Preserve valid closed enums. Add a nonterminal repair row for every constructible invalid state before closing the audit. Acceptance: `rr30-storage-semantic-types.md` records every type, construction path, owner, verdict, and test or source-gate obligation with no unowned repair. | `crates/nimbus-engine/src/{engine/mutations/durable_outcome.rs,persistence/**}`, `crates/nimbus-storage/src/{async_storage/traits.rs,diagnostics.rs,traits/**}` | architecture / confirmed residual | deferred(IMV1 and BLI3 merged) |
+| RR31 | Own IMVR2. After IMV1 merges, inventory numeric equality and ordering across Nimbus, Convex, Firestore, MongoDB, and DynamoDB query and index paths. Define one engine-owned query and index semantics contract. Do not infer stored index meaning from request transport. Preserve one universal encoding only if conformance proves the covered contracts identical. Add a nonterminal repair row for each incompatible path. Acceptance: `rr31-numeric-index-semantics.md` records every index creation path, query path, equality rule, ordering rule, large-integer bound, selected semantics, and test obligation. No adapter can silently use an incompatible index. | `crates/nimbus-core/src/{query.rs,schema.rs}`, `crates/nimbus-storage/src/index/**`, `crates/nimbus-engine/src/engine/queries/**`, Convex, Firestore, MongoDB, and DynamoDB adapter query tests | architecture / confirmed residual | deferred(IMV1 merged) |
 
 Completion gate: every RR row is `done` or `no-action (reason)` with focused
 evidence, `cargo fmt --all --check`, `make clippy`, `make ci`, both docs gates,
@@ -435,3 +446,24 @@ Single band (substitute the band ID):
 ```text
 /goal Complete Band GR of docs/private/plans/architecture-review-2026-07-plan.md: implement GR1-GR8 to each item's acceptance line, run focused tests per item plus the full workspace suite for GR2/GR3/GR7 (fail-closed blast radius), update each Status cell to done with one evidence line, and finish with cargo fmt --all --check, make clippy, and make ci green. Decide rather than ask; mark wrong items no-action with a reason and truly blocked items blocked with the blocker recorded. The goal is met when all eight GR ledger rows are done/no-action/blocked with evidence and make ci is green — or stop after 25 turns.
 ```
+
+Storage semantic-type residual:
+
+```text
+/goal Execute RR30 in docs/private/plans/architecture-review-2026-07-plan.md after IMV1 and BLI3 merge. Inventory every storage durable-outcome and provider-capability type plus each public construction path. Classify each type as an opaque validated value, a closed enum with no invalid state, or a repair. Preserve valid closed enums. Write proof/architecture-review-2026-07/rr30-storage-semantic-types.md with the type, owner, construction paths, verdict, and required test or source gate. Add one nonterminal child row for every repair before marking RR30 done. Stop when the inventory has no unowned repair and the docs gate passes.
+```
+
+Numeric query and index semantics residual:
+
+```text
+/goal Execute RR31 in docs/private/plans/architecture-review-2026-07-plan.md after IMV1 merges. Read docs/private/adapters/convex/ai-guidelines.md first. Inventory numeric equality and ordering across Nimbus, Convex, Firestore, MongoDB, and DynamoDB index creation and query paths. Define one engine-owned semantics contract and never infer stored index meaning from request transport. Write proof/architecture-review-2026-07/rr31-numeric-index-semantics.md with every path, equality rule, ordering rule, large-integer bound, selected semantics, and test obligation. Add one nonterminal child row for every incompatible path before marking RR31 done. Stop when no adapter can silently use an incompatible index and the docs gate passes.
+```
+
+## Execution log
+
+| Date | Item | Action | Evidence |
+| --- | --- | --- | --- |
+| 2026-08-19 | RR30 | routed | Accepted IMVR1 from the IMV and BLI plan review. RR30 stays deferred until IMV1 and BLI3 merge. No implementation started. |
+| 2026-08-19 | RR31 | routed | Accepted IMVR2 from the Fable plan review. RR31 stays deferred until IMV1 supplies the normalized logical value tree. No implementation started. |
+| 2026-08-19 | meta | corrected | Named RR31 beside RR30 in the resume pointer and the baseline line. No implementation started. |
+| 2026-08-20 | meta | rebased | Refreshed the RR30 and RR31 baseline to `137cc632a` after 17 merged commits. Neither residual changed status. No implementation started. |

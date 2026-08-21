@@ -46,8 +46,11 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   (storage write-path unification, EgressGateway pairing, decision-log
   fail-closed), seam repairs, consolidations, decompositions, test-infra and
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
-  workload-identity decision records. Review-driven refactor and cleanup work
-  should route through this plan's band ledgers while it is active.
+  workload-identity decision records. RR30 owns the deferred storage
+  semantic-type audit that IMV and BLI routed. RR31 owns the deferred
+  cross-adapter numeric query and index semantics audit. Review-driven refactor
+  and cleanup work should route through this plan's band ledgers while it is
+  active.
 - `nimbus-runtime-tenant-isolation-plan.md` - `complete` in PR #227. Canonical
   runtime-owner identity, routing-versus-reuse-authority separation,
   owner-partitioned
@@ -192,6 +195,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   duration policies, explicit temporal-validation observations, clock-source
   guards, and structural gates that leave unproved distributed clock authority
   disabled under the horizontal-scaling plan.
+- `incremental-materialized-verification-plan.md` - `proposed`. This plan owns
+  repeated materialized-state checks. IMV1 repairs the portable digest and
+  streams it from one normalized logical value tree. IMV2 measures the full
+  verifier against the ratified latency, write-cost, and memory gates. IMV3
+  through IMV6 add a process-local Merkle root only when IMV2 requires it.
+  `MaterializedPosition` remains the canonical artifact binding.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
   retry-amplification admission signal from
