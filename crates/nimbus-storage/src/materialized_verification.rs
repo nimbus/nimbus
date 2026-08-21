@@ -784,15 +784,13 @@ fn deltas_for_validated_record(
                 SchemaChangeEvent::SetTable {
                     table_id, current, ..
                 } => {
-                    let identity =
-                        table_identity_for_write(&current.table, table_id, table_identities, true)?;
-                    if let Some(identity) = identity {
-                        deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
-                            LogicalLeafKind::TableIdentity,
-                            canonical_table_identity_identity(&identity)?,
-                            canonical_table_identity_value(&identity)?,
-                        )?));
-                    }
+                    append_default_table_identity_deltas(
+                        &current.table,
+                        table_id,
+                        table_identities,
+                        true,
+                        &mut deltas,
+                    )?;
                     deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
                         LogicalLeafKind::Schema,
                         canonical_schema_identity(current)?,
@@ -837,23 +835,13 @@ fn append_document_deltas(
 ) -> Result<()> {
     for write in writes {
         let allow_create = write.previous.is_none() && write.current.is_some();
-        let Some(identity) = table_identity_for_write(
+        append_default_table_identity_deltas(
             &write.table,
             &write.table_id,
             table_identities,
             allow_create,
-        )?
-        else {
-            // Canonical snapshots contain documents only for active table
-            // identities. Hidden and deleting lineage writes therefore do not
-            // change the root-covered document set.
-            continue;
-        };
-        deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
-            LogicalLeafKind::TableIdentity,
-            canonical_table_identity_identity(&identity)?,
-            canonical_table_identity_value(&identity)?,
-        )?));
+            deltas,
+        )?;
         if let Some(current) = &write.current {
             deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
                 LogicalLeafKind::Document,
@@ -875,12 +863,13 @@ fn append_document_deltas(
     Ok(())
 }
 
-fn table_identity_for_write(
+fn append_default_table_identity_deltas(
     table: &nimbus_core::TableName,
     table_id: &TableId,
     table_identities: &mut HashMap<TableId, TableIdentitySnapshotEntry>,
     allow_create: bool,
-) -> Result<Option<TableIdentitySnapshotEntry>> {
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
     if let Some(identity) = table_identities.get(table_id) {
         if identity.table != *table {
             return Err(Error::Internal(format!(
@@ -888,17 +877,65 @@ fn table_identity_for_write(
                 table, table_id, identity.table
             )));
         }
-        return Ok(identity.is_active().then(|| identity.clone()));
+        if identity.is_active() {
+            append_table_identity_upsert(identity, deltas)?;
+            return Ok(());
+        }
+        if identity.state == nimbus_core::TableState::Deleting {
+            return Err(Error::Internal(format!(
+                "materialized write references deleting table identity {}",
+                table_id
+            )));
+        }
     }
-    if !allow_create {
+    if !table_identities.contains_key(table_id) && !allow_create {
         return Err(Error::Internal(format!(
             "materialized write for unknown table identity {} cannot be exact",
             table_id
         )));
     }
+
+    if let Some(previous_active) = table_identities
+        .values()
+        .find(|identity| identity.table == *table && identity.is_active())
+        .cloned()
+    {
+        deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+            LogicalLeafKind::TableIdentity,
+            &canonical_table_identity_identity(&previous_active)?,
+        )?));
+        let deleting = TableIdentitySnapshotEntry {
+            namespace: crate::table_identity::deleting_table_namespace(&previous_active.table_id),
+            table: previous_active.table,
+            table_id: previous_active.table_id.clone(),
+            state: nimbus_core::TableState::Deleting,
+        };
+        append_table_identity_upsert(&deleting, deltas)?;
+        table_identities.insert(deleting.table_id.clone(), deleting);
+    }
+
+    if let Some(staged_hidden) = table_identities.get(table_id).cloned() {
+        deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+            LogicalLeafKind::TableIdentity,
+            &canonical_table_identity_identity(&staged_hidden)?,
+        )?));
+    }
     let identity = TableIdentitySnapshotEntry::default_namespace(table.clone(), table_id.clone());
-    table_identities.insert(table_id.clone(), identity.clone());
-    Ok(Some(identity))
+    append_table_identity_upsert(&identity, deltas)?;
+    table_identities.insert(table_id.clone(), identity);
+    Ok(())
+}
+
+fn append_table_identity_upsert(
+    identity: &TableIdentitySnapshotEntry,
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
+    deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+        LogicalLeafKind::TableIdentity,
+        canonical_table_identity_identity(identity)?,
+        canonical_table_identity_value(identity)?,
+    )?));
+    Ok(())
 }
 
 fn append_scheduled_execution_delta(
@@ -987,7 +1024,7 @@ mod tests {
 
     use nimbus_core::{
         Document, DocumentId, Schema, TableId, TableLifecycleEvent, TableName, TableSchema,
-        TableState, Timestamp, WriteOp, WriteOpType,
+        Timestamp, WriteOp, WriteOpType,
     };
     use serde_json::json;
 
@@ -1325,28 +1362,23 @@ mod tests {
     }
 
     #[test]
-    fn hidden_lineage_document_write_does_not_enter_active_root() {
+    fn hidden_lineage_document_write_matches_provider_activation() {
+        let store = crate::TenantStore::create_in_memory().expect("store should open");
+        let (initial_record, initial_table_id, _) = inserted_document_record(1);
+        store
+            .append_durable_records_batch(std::slice::from_ref(&initial_record))
+            .expect("initial write should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&initial_record))
+            .expect("initial write should apply");
         let table = TableName::new("tasks").expect("table should be valid");
-        let active_id = TableId::from_str("active-table").expect("table id should be valid");
         let hidden_id = TableId::from_str("hidden-table").expect("table id should be valid");
-        let identities = vec![
-            TableIdentitySnapshotEntry::default_namespace(table.clone(), active_id),
-            TableIdentitySnapshotEntry {
-                namespace: crate::table_identity::hidden_table_namespace(&hidden_id),
-                table: table.clone(),
-                table_id: hidden_id.clone(),
-                state: TableState::Hidden,
-            },
-        ];
-        let checkpoint = MaterializedJournalSnapshot {
-            version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
-            applied_sequence: SequenceNumber(1),
-            durable_head: SequenceNumber(1),
-            table_identities: identities.clone(),
-            schema: Schema::default(),
-            documents: Vec::new(),
-            scheduled_execution_ids: Vec::new(),
-        };
+        store
+            .stage_hidden_table_identity(&table, &hidden_id)
+            .expect("hidden identity should stage");
+        let checkpoint = store
+            .export_materialized_journal_snapshot()
+            .expect("checkpoint should export");
         let hidden_document = Document::with_id_at(
             DocumentId::from_key("hidden-task").expect("document id should be valid"),
             table.clone(),
@@ -1354,11 +1386,11 @@ mod tests {
             Timestamp(10),
         );
         let record = TenantEventRecord::new(
-            SequenceNumber(2),
+            SequenceNumber(checkpoint.applied_sequence.0 + 1),
             Timestamp(11),
             vec![WriteOp {
                 table,
-                table_id: hidden_id,
+                table_id: hidden_id.clone(),
                 op_type: WriteOpType::Insert,
                 doc_id: hidden_document.id.clone(),
                 resource_path_binding: None,
@@ -1369,12 +1401,29 @@ mod tests {
             None,
         )
         .expect("hidden write record should build");
-        let expected = MaterializedJournalSnapshot {
-            applied_sequence: SequenceNumber(2),
-            durable_head: SequenceNumber(2),
-            table_identities: identities,
-            ..checkpoint.clone()
-        };
+        store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("hidden write should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect("hidden write should apply");
+        let expected = store
+            .export_materialized_journal_snapshot()
+            .expect("applied snapshot should export");
+        assert!(
+            expected
+                .table_identities
+                .iter()
+                .any(|identity| { identity.table_id == hidden_id && identity.is_active() })
+        );
+        assert!(expected.table_identities.iter().any(|identity| {
+            identity.table_id == initial_table_id
+                && identity.state == nimbus_core::TableState::Deleting
+        }));
+        assert!(!expected.table_identities.iter().any(|identity| {
+            identity.table_id == hidden_id && identity.state == nimbus_core::TableState::Hidden
+        }));
+        assert_eq!(expected.documents.len(), 2);
 
         let mut tracker = MaterializedVerificationTracker::from_snapshot(&checkpoint)
             .expect("checkpoint tracker should build");
