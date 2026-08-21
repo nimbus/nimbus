@@ -88,10 +88,7 @@ impl CanonicalMaterializedState {
         write_tag(writer, 0x10)?;
         write_len(writer, self.table_identities.len())?;
         for identity in &self.table_identities {
-            write_string(writer, &identity.namespace)?;
-            write_string(writer, identity.table.as_str())?;
-            write_string(writer, identity.table_id.as_str())?;
-            write_string(writer, identity.state.as_str())?;
+            write_table_identity(writer, identity)?;
         }
 
         write_tag(writer, 0x20)?;
@@ -109,7 +106,7 @@ impl CanonicalMaterializedState {
         write_tag(writer, 0x40)?;
         write_len(writer, self.scheduled_execution_ids.len())?;
         for execution_id in &self.scheduled_execution_ids {
-            write_string(writer, execution_id)?;
+            write_scheduled_execution(writer, execution_id)?;
         }
         Ok(())
     }
@@ -121,6 +118,58 @@ impl CanonicalMaterializedState {
             .map_err(|error| Error::Serialization(error.to_string()))?;
         Ok(bytes)
     }
+}
+
+pub(crate) fn canonical_table_identity_identity(
+    identity: &TableIdentitySnapshotEntry,
+) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| {
+        write_string(writer, &identity.namespace)?;
+        write_string(writer, identity.table.as_str())
+    })
+}
+
+pub(crate) fn canonical_table_identity_value(
+    identity: &TableIdentitySnapshotEntry,
+) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_table_identity(writer, identity))
+}
+
+pub(crate) fn canonical_schema_identity(table: &TableSchema) -> Result<Vec<u8>> {
+    canonical_schema_identity_for_name(table.table.as_str())
+}
+
+pub(crate) fn canonical_schema_identity_for_name(table: &str) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_string(writer, table))
+}
+
+pub(crate) fn canonical_schema_value(table: &TableSchema) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_table_schema(writer, table))
+}
+
+pub(crate) fn canonical_document_identity(document: &Document) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| {
+        write_string(writer, document.table.as_str())?;
+        write_string(writer, document.id.as_str())
+    })
+}
+
+pub(crate) fn canonical_document_value(document: &Document) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_document(writer, document))
+}
+
+pub(crate) fn canonical_scheduled_execution_identity(execution_id: &str) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_string(writer, execution_id))
+}
+
+pub(crate) fn canonical_scheduled_execution_value(execution_id: &str) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_scheduled_execution(writer, execution_id))
+}
+
+fn canonical_bytes(write: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write(&mut bytes).map_err(|error| Error::Serialization(error.to_string()))?;
+    Ok(bytes)
 }
 
 /// Where a materialized artifact sits: the applied sequence plus the digest of
@@ -248,6 +297,20 @@ fn write_document(writer: &mut impl Write, document: &Document) -> io::Result<()
         }
     }
     Ok(())
+}
+
+fn write_table_identity(
+    writer: &mut impl Write,
+    identity: &TableIdentitySnapshotEntry,
+) -> io::Result<()> {
+    write_string(writer, &identity.namespace)?;
+    write_string(writer, identity.table.as_str())?;
+    write_string(writer, identity.table_id.as_str())?;
+    write_string(writer, identity.state.as_str())
+}
+
+fn write_scheduled_execution(writer: &mut impl Write, execution_id: &str) -> io::Result<()> {
+    write_string(writer, execution_id)
 }
 
 fn write_table_schema(writer: &mut impl Write, table: &TableSchema) -> io::Result<()> {

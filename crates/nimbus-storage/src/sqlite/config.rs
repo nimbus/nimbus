@@ -640,6 +640,7 @@ impl SqliteTenantStore {
             read_connections: Arc::new(Mutex::new(Vec::new())),
             writer_slot: Arc::new(Mutex::new(None)),
             schema_cache: Arc::new(RwLock::new(Schema::default())),
+            materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             retention_floor: RetentionFloor::new(),
         };
         let pooled_open_started = std::time::Instant::now();

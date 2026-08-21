@@ -9,8 +9,8 @@
 
 use super::*;
 use nimbus_storage::{
-    ObjectChecksums, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
-    ObjectManifestAttributes,
+    MaterializedDeltaApplyOutcome, MaterializedVerificationTracker, ObjectChecksums,
+    ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectManifestAttributes,
 };
 
 fn manifest_for(key: &str, etag: &str) -> ObjectManifest {
@@ -44,6 +44,53 @@ async fn engine_with_tenant(data_dir: &TempDir, tenant: &str) -> (Arc<Engine>, T
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
     (engine, tenant_id)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn object_manifest_commit_updates_verification_root() {
+    let data_dir = tempdir().expect("object root tempdir should build");
+    let (engine, tenant_id) = engine_with_tenant(&data_dir, "object-meta-root").await;
+    let runtime = engine
+        .registered_runtime_for_testing(&tenant_id)
+        .expect("tenant runtime should resolve");
+    let before = engine
+        .export_durable_journal_bootstrap_async(tenant_id.clone())
+        .await
+        .expect("baseline snapshot should export");
+    let mut tracker = MaterializedVerificationTracker::from_snapshot(&before.snapshot)
+        .expect("baseline root should build");
+    let meta = engine
+        .tenant_object_meta(tenant_id.clone())
+        .await
+        .expect("object meta handle should resolve");
+
+    let commit = meta
+        .put_manifest_unconditional(manifest_for("root/manifest.txt", "\"etag-root\""))
+        .await
+        .expect("manifest put should commit");
+    let record = runtime
+        .store
+        .read_durable_journal_from(commit.sequence)
+        .expect("object record should read")
+        .into_iter()
+        .find(|record| record.sequence == commit.sequence)
+        .expect("object record should exist");
+    let MaterializedDeltaApplyOutcome::Advanced(incremental) =
+        tracker.apply_applied_record(&record)
+    else {
+        panic!("the applied object record should produce exact deltas");
+    };
+    let after = engine
+        .export_durable_journal_bootstrap_async(tenant_id.clone())
+        .await
+        .expect("post-commit snapshot should export");
+    let rebuilt = MaterializedVerificationTracker::from_snapshot(&after.snapshot)
+        .expect("post-commit root should build")
+        .position()
+        .expect("post-commit root should be valid");
+
+    assert_eq!(incremental.applied_sequence(), commit.sequence);
+    assert_eq!(incremental.root_hash(), rebuilt.root_hash());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

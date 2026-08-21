@@ -209,6 +209,21 @@ pub(super) struct WriterEffects {
     pub(super) outcome: Outcome,
 }
 
+/// One writer's contract with a bounded materialized-verification session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VerificationEffect {
+    /// The route exposes its successfully applied `TenantEventRecord`, whose
+    /// canonical deltas can advance a session root.
+    ExactAppliedRecord,
+    /// The route changes covered state without an exact journal payload. A
+    /// live session must discard its root and rebuild from materialized state.
+    Invalidate,
+    /// The route advances durability only. It must not advance an applied root.
+    DurableOnly,
+    /// The route does not change a state family covered by the root.
+    NoMaterializedState,
+}
+
 /// Every storage writer, client and internal.
 pub(super) const MATRIX: &[WriterEffects] = &[
     // Queued journal route, unfenced batch.
@@ -1123,4 +1138,261 @@ pub(super) const MATRIX: &[WriterEffects] = &[
         watermark: WatermarkEffect::NotAdvanced,
         outcome: Outcome::Unit,
     },
+];
+
+/// Verification ownership for every row in [`MATRIX`], in the same order.
+///
+/// This is separate from `WriterEffects` because it is a session-consumer
+/// decision, not another physical commit effect. Exact name-and-order parity
+/// is tested so adding or renaming a writer cannot silently omit this contract.
+pub(super) const VERIFICATION_MATRIX: &[(&str, VerificationEffect)] = &[
+    (
+        "apply_prepared_write_batch",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "fenced_apply_prepared_write_batch",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "compact_retained_versions",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "replace_table_schema",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "fenced_replace_table_schema",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "delete_table_schema",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "fenced_delete_table_schema",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "insert_scheduled_job",
+        VerificationEffect::NoMaterializedState,
+    ),
+    ("claim_due_jobs", VerificationEffect::NoMaterializedState),
+    (
+        "complete_scheduled_job",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "cancel_scheduled_job",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "record_scheduled_job_result",
+        VerificationEffect::NoMaterializedState,
+    ),
+    ("save_cron_job", VerificationEffect::NoMaterializedState),
+    ("delete_cron_job", VerificationEffect::NoMaterializedState),
+    (
+        "recover_running_jobs",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "materialize_trigger_invocations",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "fenced_materialize_trigger_invocations",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "save_trigger_invocation",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "fenced_save_trigger_invocation",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "apply_execution_unit_batch_with_origin",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    ("insert_once", VerificationEffect::ExactAppliedRecord),
+    (
+        "insert_with_indexes_once_at",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "update_validated_once",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "update_with_indexes_validated_once_at",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "delete_validated_once",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "delete_with_indexes_validated_once_at",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "append_durable_records_batch",
+        VerificationEffect::DurableOnly,
+    ),
+    (
+        "apply_durable_records_batch",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "replay_durable_records_batch",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "fenced_append_and_apply_durable_records_batch_cancellable",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "recover_durable_journal",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    ("insert", VerificationEffect::ExactAppliedRecord),
+    (
+        "insert_with_indexes",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "insert_with_indexes_once",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    ("update_validated", VerificationEffect::ExactAppliedRecord),
+    (
+        "update_with_indexes_validated",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "update_with_indexes_validated_once",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "delete_validated_returning_document",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "delete_with_indexes_validated_returning_document",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "delete_with_indexes_validated_once",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "apply_execution_unit_batch",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "fenced_append_and_apply_durable_records_batch",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "import_point_in_time_restore_archive",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "fenced_import_point_in_time_restore_archive",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "apply_mutation_with_mode",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "persist_assigned_batch_once",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "MutationExecutionUnit",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "commit_object_meta_write_in_actor",
+        VerificationEffect::ExactAppliedRecord,
+    ),
+    (
+        "ensure_committer_lease_for_assignment",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "enqueue_trigger_commit_batch",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "activate_hidden_table_identity",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "upsert_resource_path_binding",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "materialize_snapshot_to_replica_cache",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "record_monthly_active_user",
+        VerificationEffect::NoMaterializedState,
+    ),
+];
+
+/// Snapshot and replica-reconciliation writers outside the SIC `SqlStoreCore`
+/// census. These paths do not create a new client mutation route, but a live
+/// verification session must still account for them.
+pub(super) const VERIFICATION_OUT_OF_BAND_WRITERS: &[(&str, &str, VerificationEffect)] = &[
+    (
+        "store/journal_snapshot.rs",
+        "restore_materialized_journal_from_snapshot",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "store/journal_snapshot.rs",
+        "rebuild_materialized_journal_from_snapshot",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "memory/journal.rs",
+        "restore_materialized_journal_from_snapshot",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "memory/journal.rs",
+        "rebuild_materialized_journal_from_snapshot",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "sqlite/journal.rs",
+        "restore_materialized_journal_from_snapshot",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "sqlite/journal.rs",
+        "rebuild_materialized_journal_from_snapshot",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "sqlite/replica_cache.rs",
+        "reconcile_replica_durable_records_batch",
+        VerificationEffect::DurableOnly,
+    ),
+    (
+        "libsql.rs",
+        "refresh_local_cache_from_snapshot",
+        VerificationEffect::Invalidate,
+    ),
+    (
+        "libsql.rs",
+        "catch_up_local_cache_from_remote_durable_journal",
+        VerificationEffect::Invalidate,
+    ),
 ];

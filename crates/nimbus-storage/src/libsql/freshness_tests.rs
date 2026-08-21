@@ -156,6 +156,30 @@ fn apply_empty_records_through(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn libsql_replica_refresh_invalidates_stale_verification_root() {
+    let refresh_override: TestRefreshOverride =
+        Arc::new(|store| apply_empty_records_through(store, SequenceNumber(1)));
+    let replica = test_replica(refresh_override).await;
+    let store = replica.store.clone();
+    let generation = store.materialized_verification_generation();
+
+    store.note_required_cache_sequence_with_cause(
+        SequenceNumber(1),
+        LibsqlReplicaRefreshCause::CommitBarrier,
+    );
+    let refresh_store = store.clone();
+    tokio::task::spawn_blocking(move || refresh_store.ensure_local_cache_current())
+        .await
+        .expect("refresh task should join")
+        .expect("refresh should succeed");
+
+    assert!(
+        !store.materialized_verification_generation_is_current(generation),
+        "a successful replica reconciliation must invalidate a root built from the old cache"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn freshness_barrier_waits_for_background_refresh_completion() {
     let gate = RefreshGate::new();
     let calls = Arc::new(AtomicU64::new(0));

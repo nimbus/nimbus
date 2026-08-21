@@ -78,6 +78,7 @@ impl SqliteTenantStore {
     ) -> Result<()> {
         snapshot.validate()?;
         self.ensure_materialized_journal_restore_target_is_empty()?;
+        self.materialized_verification.invalidate();
 
         let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")

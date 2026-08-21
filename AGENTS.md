@@ -137,11 +137,11 @@ Do not create a fourth client document mutation path.
 
 That three-route invariant is not an inventory of every storage writer.
 Schema, scheduler, trigger, and point-in-time-restore work can use internal
-committer jobs. Object manifests use the raw `TenantPointWrite` seam on the
-read executor. LibSQL replica refresh reconciles the local replica cache
-through storage directly. Changes to SQLite writer ownership or concurrency
-must account for these non-client writers. The three client routes are not the
-only transactions that can open a writer.
+committer jobs. Object metadata writes use a sequenced internal committer and
+the shared durable-batch core. LibSQL replica refresh reconciles the local
+replica cache through storage directly. Changes to SQLite writer ownership or
+concurrency must account for these non-client writers. The three client routes
+are not the only transactions that can open a writer.
 
 Name all three paths in every audit. An audit of only
 `apply_mutation_with_mode*` can miss defects in the other two paths. This
