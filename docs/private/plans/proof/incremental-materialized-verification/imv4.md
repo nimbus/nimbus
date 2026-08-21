@@ -102,6 +102,12 @@ each report one passed test. The durable-journal lane reports 9 passed tests.
 The full default-feature storage lane reports 359 passed tests and 3 expected
 ignored tests. It includes all local provider and physical-durability tests.
 
+The required local CI gate passed format, workspace Clippy, dependency,
+runtime, and IMV storage checks. Its non-runtime lane ran 7,564 tests. It
+passed 7,563 and skipped 110. One MongoDB specification report test exited
+before its listener became ready. The test is outside the IMV4 paths. It passed
+three isolated reruns. Hosted CI remains the merge source of truth.
+
 The unqualified engine mutation command first selected four remote-provider
 tests and reported 251 passed and 4 failed. Each failure named a missing fixture
 environment variable. The runbook-safe command then omitted those fixtures and
@@ -128,4 +134,5 @@ cargo test -p nimbus-storage --features libsql libsql_replica_refresh_invalidate
 cargo test -p nimbus-engine object_manifest_commit_updates_verification_root -- --nocapture
 NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-engine mutation -- --nocapture
 bash docs/private/plans/proof/incremental-materialized-verification/verify.sh
+make ci
 ```
