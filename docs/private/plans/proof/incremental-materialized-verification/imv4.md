@@ -36,9 +36,14 @@ an unbounded document family that the event does not enumerate. Index and
 trigger events do not change a root-covered state family.
 
 The tracker retains the validated table-identity map from its bootstrap cut.
-Writes to hidden or deleting lineages do not enter the active-document root.
-An unknown identity can enter the map only through a creation event. A table ID
-and logical-name disagreement invalidates the tracker.
+The exact decoder mirrors the provider's default-table transition. A write to a
+staged hidden identity removes that hidden leaf. It moves the prior active
+identity to deleting and installs the referenced identity as active. It then
+changes the document leaf.
+
+A deleting identity cannot accept a write. An unknown
+identity can enter the map only through a creation event. A table ID and
+logical-name disagreement invalidates the tracker.
 
 Redb, memory, and SQLite snapshot restore publish an opaque process-local
 generation change. Their rebuild and PITR paths compose through the checked
@@ -84,7 +89,10 @@ contiguous advance, failed apply, duplicate replay, corrupt duplicate, and gap
 invalidation. It also covers durable-before-apply separation, local-provider
 apply order, document and schema delta parity, lifecycle invalidation, and local
 replacement generations. Two review regressions cover hidden-lineage writes and
-the complete replacement mutation window.
+the complete replacement mutation window. The hidden-lineage regression stages
+a real redb identity and applies a durable record. It exports the provider
+snapshot and proves incremental root parity for the active, hidden, deleting,
+and document effects.
 
 The writer-ownership lane reports 6 passed tests. Its scan finds 52
 `SqlStoreCore` methods, 26 direct writers, 44 writers in the core, and 54 matrix
