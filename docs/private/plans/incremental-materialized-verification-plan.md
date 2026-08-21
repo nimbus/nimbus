@@ -588,7 +588,7 @@ The completion gate requires `Summary: 16 passed, 0 failed`.
 - Verification:
   `cargo test -p nimbus-storage durable_journal -- --nocapture`.
   `cargo test -p nimbus-storage commit_path_ownership -- --nocapture`.
-  `cargo test -p nimbus-engine mutation -- --nocapture`.
+  `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-engine mutation -- --nocapture`.
   `rg -n 'Object metadata|Object manifests|TenantPointWrite' AGENTS.md`.
 
 ### IMV5 Bounded verification sessions
@@ -795,3 +795,4 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV3 | reviewed | The final Nimbus pre-PR autoreview found no actionable defect. It confirmed batch and incremental shape equivalence, bottom-up hash and depth maintenance, rollback and free-list safety, domain framing, iterative batch hashing, and the 148-byte layout. |
 | 2026-08-21 | IMV3 | completed | PR #305 merged as `04b32d8b5`. IMV3 is terminal and the `MERKLE_REQUIRED` path advances to writer-owned deltas. |
 | 2026-08-21 | IMV4 | started | Created `codex/imv4-materialized-writer-deltas` from merged main `04b32d8b5`. IMV4 is the only `in_progress` task. |
+| 2026-08-21 | IMV4 | implemented | Work `644825f1c` adds the session-owned post-apply tracker, private canonical deltas, exact document, schema, and scheduler updates, fail-closed lifecycle and gap handling, local replacement generations, libSQL refresh invalidation, and object-route proof. The checked inventory classifies all 54 SIC writer rows plus nine snapshot and replica paths. Focused lanes pass, and the verifier reports `Summary: 9 passed, 7 failed`. Review and publication remain. |

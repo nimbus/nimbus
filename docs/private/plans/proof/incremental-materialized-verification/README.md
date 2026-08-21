@@ -16,7 +16,11 @@ complete.
 - `imv0.md` records the baseline, dirty-state attribution, resolved Cargo
   features, review-only probe results, and quick full-verifier measurement.
 - `imv0-raw.json` is the retained machine-readable quick measurement.
-- `imv2-raw.json` and `imv2-verdict.md` will own the continuation decision.
+- `imv2-raw.json` and `imv2-verdict.md` own the continuation decision.
+- `imv3.md` records the deterministic root contract, dependency screen, and
+  million-leaf memory and depth evidence.
+- `imv4.md` records the writer inventory, applied-delta contract, replacement
+  invalidation, and focused acceptance results.
 - Later task proofs stay beside these files and remain inputs to `verify.sh`.
 
 The execution baseline is
