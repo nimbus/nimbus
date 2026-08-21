@@ -85,7 +85,9 @@ pub use libsql::{
 pub use materialized_position::materialized_position_golden_fixture;
 pub use materialized_verification::{
     LogicalLeafKey, LogicalLeafKind, MATERIALIZED_VERIFICATION_ROOT_VERSION,
-    MaterializedVerificationIndex, VERIFICATION_INDEX_ALLOCATOR_BYTES_PER_LEAF,
+    MaterializedDeltaApplyOutcome, MaterializedVerificationGeneration,
+    MaterializedVerificationIndex, MaterializedVerificationInvalidator,
+    MaterializedVerificationTracker, VERIFICATION_INDEX_ALLOCATOR_BYTES_PER_LEAF,
     VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, VERIFICATION_INDEX_MAX_DEPTH,
     VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF, VERIFICATION_INDEX_NODE_BYTES,
     VerificationPosition, VerificationRootVersion,

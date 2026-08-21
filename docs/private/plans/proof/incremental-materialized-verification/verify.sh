@@ -200,8 +200,20 @@ else
 
   if test_ok nimbus-storage root_advances_with_applied_sequence \
     && test_ok nimbus-storage failed_apply_does_not_advance_root \
+    && test_ok nimbus-storage replay_duplicate_keeps_root \
+    && test_ok nimbus-storage apply_gap_invalidates_verification_index \
+    && test_ok nimbus-storage local_provider_apply_paths_publish_only_post_apply_deltas \
+    && test_ok nimbus-storage document_insert_update_delete_deltas_match_full_rebuilds \
+    && test_ok nimbus-storage hidden_lineage_document_write_matches_provider_activation \
+    && test_ok nimbus-storage schema_scheduler_and_lifecycle_records_have_safe_verification_effects \
+    && test_ok nimbus-storage snapshot_restore_invalidates_local_verification_generations \
+    && test_ok nimbus-storage replacement_generation_is_never_current_during_update \
     && test_ok nimbus-engine object_manifest_commit_updates_verification_root \
-    && test_ok nimbus-engine durable_head_ahead_of_apply_does_not_advance_verification_root; then
+    && test_ok nimbus-storage durable_head_ahead_of_apply_does_not_advance_verification_root \
+    && test_ok nimbus-storage libsql_replica_refresh_invalidates_stale_verification_root --features libsql \
+    && test_ok nimbus-storage all_storage_writers_declare_their_materialized_verification_effect \
+    && test_ok nimbus-storage materialized_serving_surfaces_have_no_verification_root_authority \
+    && grok AGENTS.md 'Object metadata writes use a sequenced internal committer'; then
     ok "9. every materialized writer updates or invalidates after apply"
   else
     no "9. writer-owned deltas" "IMV4 writer tests are absent or failing"

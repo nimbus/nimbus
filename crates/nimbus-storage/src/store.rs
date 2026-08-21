@@ -24,8 +24,10 @@ use redb::{Database, ReadTransaction, TableDefinition};
 use self::scan::ScanMetrics;
 #[cfg(test)]
 pub(crate) use self::scan::ScanStats;
-use crate::RetentionFloor;
 use crate::simulation::FaultInjector;
+use crate::{
+    MaterializedVerificationGeneration, MaterializedVerificationInvalidator, RetentionFloor,
+};
 
 pub use crate::materialized_position::{
     CanonicalMaterializedState, MATERIALIZED_POSITION_VERSION, MaterializedPosition,
@@ -97,7 +99,21 @@ pub struct TenantStore {
     pub(crate) fault_injector: Arc<dyn FaultInjector>,
     pub(crate) id_source: Arc<dyn IdSource>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
+    pub(crate) materialized_verification: MaterializedVerificationInvalidator,
     scan_metrics: Arc<ScanMetrics>,
+}
+
+impl TenantStore {
+    pub fn materialized_verification_generation(&self) -> MaterializedVerificationGeneration {
+        self.materialized_verification.generation()
+    }
+
+    pub fn materialized_verification_generation_is_current(
+        &self,
+        generation: MaterializedVerificationGeneration,
+    ) -> bool {
+        self.materialized_verification.is_current(generation)
+    }
 }
 
 #[derive(Clone, Copy)]

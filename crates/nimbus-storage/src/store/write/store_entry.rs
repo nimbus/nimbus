@@ -58,6 +58,7 @@ impl TenantStore {
             fault_injector,
             id_source,
             retention_floor: RetentionFloor::new(),
+            materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }
@@ -123,6 +124,7 @@ impl TenantStore {
             fault_injector,
             id_source,
             retention_floor: RetentionFloor::new(),
+            materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }
@@ -159,6 +161,7 @@ impl TenantStore {
             fault_injector,
             id_source,
             retention_floor: RetentionFloor::new(),
+            materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }
@@ -202,6 +205,7 @@ impl TenantStore {
             fault_injector,
             id_source,
             retention_floor: RetentionFloor::new(),
+            materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
     }

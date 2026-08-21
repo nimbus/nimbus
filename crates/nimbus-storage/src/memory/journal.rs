@@ -482,6 +482,7 @@ impl MemoryTenantStore {
                         .to_string(),
                 ));
             }
+            let _verification_update = self.materialized_verification.begin_update()?;
             state.restore_snapshot(snapshot)
         })
     }

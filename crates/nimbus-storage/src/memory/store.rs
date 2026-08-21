@@ -5,9 +5,11 @@ use nimbus_core::{
     WallClock,
 };
 
-use crate::TenantWriteCommit;
 use crate::async_storage::BlockingWriteStore;
 use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
+use crate::{
+    MaterializedVerificationGeneration, MaterializedVerificationInvalidator, TenantWriteCommit,
+};
 
 use super::state::MemoryState;
 
@@ -16,6 +18,7 @@ pub struct MemoryTenantStore {
     pub(super) state: Arc<RwLock<MemoryState>>,
     pub(super) clock: Arc<dyn WallClock>,
     pub(super) fault_injector: Arc<dyn FaultInjector>,
+    pub(super) materialized_verification: MaterializedVerificationInvalidator,
 }
 
 impl Default for MemoryTenantStore {
@@ -45,6 +48,7 @@ impl MemoryTenantStore {
             state: Arc::new(RwLock::new(MemoryState::with_id_source(id_source))),
             clock,
             fault_injector,
+            materialized_verification: MaterializedVerificationInvalidator::default(),
         }
     }
 
@@ -58,6 +62,7 @@ impl MemoryTenantStore {
             state: Arc::new(RwLock::new(self.read_state()?.clone())),
             clock: self.clock.clone(),
             fault_injector: self.fault_injector.clone(),
+            materialized_verification: MaterializedVerificationInvalidator::default(),
         })
     }
 
@@ -67,6 +72,17 @@ impl MemoryTenantStore {
 
     pub fn check_fault(&self, point: FaultPoint) -> Result<()> {
         self.fault_injector.check(point)
+    }
+
+    pub fn materialized_verification_generation(&self) -> MaterializedVerificationGeneration {
+        self.materialized_verification.generation()
+    }
+
+    pub fn materialized_verification_generation_is_current(
+        &self,
+        generation: MaterializedVerificationGeneration,
+    ) -> bool {
+        self.materialized_verification.is_current(generation)
     }
 
     /// Fault check naming the durable journal records this boundary is making

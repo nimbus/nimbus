@@ -1,8 +1,27 @@
-use std::cmp::Ordering;
-use std::mem::size_of;
+//! Owns the complete process-local materialized-verification concept: versioned
+//! Merkle structure, canonical journal-delta decoder, session tracker, and its
+//! contract tests. Keeping these parts together makes one format and one
+//! fail-closed transition boundary reviewable as a unit.
 
-use nimbus_core::{Error, Result, SequenceNumber};
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::mem::size_of;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+use nimbus_core::{
+    Error, Result, SchemaChangeEvent, SequenceNumber, TableId, TenantEventKind, TenantEventRecord,
+    WriteOp,
+};
 use sha2::{Digest, Sha256};
+
+use crate::materialized_position::{
+    canonical_document_identity, canonical_document_value, canonical_scheduled_execution_identity,
+    canonical_scheduled_execution_value, canonical_schema_identity,
+    canonical_schema_identity_for_name, canonical_schema_value, canonical_table_identity_identity,
+    canonical_table_identity_value,
+};
+use crate::{MaterializedJournalSnapshot, TableIdentitySnapshotEntry};
 
 pub const MATERIALIZED_VERIFICATION_ROOT_VERSION: u16 = 1;
 pub const VERIFICATION_INDEX_MAX_DEPTH: usize = 128;
@@ -538,6 +557,450 @@ impl MaterializedVerificationIndex {
     }
 }
 
+/// One exact change to the canonical materialized-state leaf set.
+///
+/// Construction stays with the applied-record decoder below. Callers cannot
+/// assemble raw keys or values that use a second canonicalization path.
+#[derive(Debug, Clone)]
+enum MaterializedStateDelta {
+    Upsert(MaterializedStateLeaf),
+    Remove(LogicalLeafKey),
+    /// The record changed state whose exact leaf set is not present in the
+    /// journal event. A bounded session must rebuild from materialized state.
+    Invalidate,
+}
+
+/// A validated canonical leaf carried by an exact materialized-state delta.
+#[derive(Debug, Clone)]
+struct MaterializedStateLeaf {
+    key: LogicalLeafKey,
+    value: Vec<u8>,
+}
+
+impl MaterializedStateLeaf {
+    fn new(kind: LogicalLeafKind, identity: Vec<u8>, value: Vec<u8>) -> Result<Self> {
+        Ok(Self {
+            key: LogicalLeafKey::new(kind, &identity)?,
+            value,
+        })
+    }
+}
+
+/// Result of offering one successfully applied record to a verification
+/// session's process-local tracker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterializedDeltaApplyOutcome {
+    Advanced(VerificationPosition),
+    Duplicate(VerificationPosition),
+    Invalidated,
+}
+
+/// Session-owned root state over one contiguous applied journal prefix.
+///
+/// This type is deliberately not installed in a provider or in Nimbus's
+/// materialized serving cache. IMV5 retains it only inside bounded verification
+/// sessions. Any unrepresentable event, sequence gap, invalid record, or tree
+/// update error drops the derived index without affecting normal storage work.
+#[derive(Debug, Clone)]
+pub struct MaterializedVerificationTracker {
+    active: Option<ActiveVerificationIndex>,
+}
+
+/// A process-local generation captured by a bounded verification session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaterializedVerificationGeneration(u64);
+
+/// Shared invalidation signal for state replacement paths that cannot publish
+/// an exact journal delta, such as a libSQL replica-cache swap.
+#[derive(Debug, Clone, Default)]
+pub struct MaterializedVerificationInvalidator {
+    generation: Arc<AtomicU64>,
+}
+
+/// Keeps a replacement generation non-current for its complete mutation
+/// window. Storage replacement paths are single-writer operations, so a
+/// concurrent guard request is a contract error rather than a second writer.
+pub(crate) struct MaterializedVerificationUpdateGuard {
+    invalidator: MaterializedVerificationInvalidator,
+}
+
+impl MaterializedVerificationInvalidator {
+    pub fn generation(&self) -> MaterializedVerificationGeneration {
+        MaterializedVerificationGeneration(self.generation.load(AtomicOrdering::Acquire))
+    }
+
+    pub(crate) fn begin_update(&self) -> Result<MaterializedVerificationUpdateGuard> {
+        let current = self.generation.load(AtomicOrdering::Acquire);
+        if current & 1 != 0 {
+            return Err(Error::Internal(
+                "concurrent materialized verification replacement".to_string(),
+            ));
+        }
+        self.generation
+            .compare_exchange(
+                current,
+                current.wrapping_add(1),
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            )
+            .map_err(|_| {
+                Error::Internal("concurrent materialized verification replacement".to_string())
+            })?;
+        Ok(MaterializedVerificationUpdateGuard {
+            invalidator: self.clone(),
+        })
+    }
+
+    pub fn is_current(&self, generation: MaterializedVerificationGeneration) -> bool {
+        generation.0 & 1 == 0 && self.generation() == generation
+    }
+}
+
+impl Drop for MaterializedVerificationUpdateGuard {
+    fn drop(&mut self) {
+        let previous = self
+            .invalidator
+            .generation
+            .fetch_add(1, AtomicOrdering::AcqRel);
+        debug_assert_eq!(previous & 1, 1);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ActiveVerificationIndex {
+    index: MaterializedVerificationIndex,
+    applied_sequence: SequenceNumber,
+    table_identities: HashMap<TableId, TableIdentitySnapshotEntry>,
+}
+
+struct MaterializedVerificationSeed {
+    leaves: Vec<(LogicalLeafKey, Vec<u8>)>,
+    table_identities: HashMap<TableId, TableIdentitySnapshotEntry>,
+}
+
+impl MaterializedVerificationTracker {
+    pub fn from_snapshot(snapshot: &MaterializedJournalSnapshot) -> Result<Self> {
+        let seed = canonical_snapshot_seed(snapshot)?;
+        Ok(Self {
+            active: Some(ActiveVerificationIndex {
+                index: MaterializedVerificationIndex::from_leaves(seed.leaves)?,
+                applied_sequence: snapshot.applied_sequence,
+                table_identities: seed.table_identities,
+            }),
+        })
+    }
+
+    pub fn position(&self) -> Option<VerificationPosition> {
+        self.active
+            .as_ref()
+            .map(|active| active.index.position(active.applied_sequence))
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.active.is_some()
+    }
+
+    /// Applies a record only after its storage effects are known to be visible.
+    ///
+    /// A caller must never invoke this method for durable append alone. The
+    /// tracker publishes the new sequence only after every exact delta has
+    /// updated the tree.
+    pub fn apply_applied_record(
+        &mut self,
+        record: &TenantEventRecord,
+    ) -> MaterializedDeltaApplyOutcome {
+        if record.validate_integrity().is_err() {
+            self.invalidate();
+            return MaterializedDeltaApplyOutcome::Invalidated;
+        }
+        let Some(active) = self.active.as_mut() else {
+            return MaterializedDeltaApplyOutcome::Invalidated;
+        };
+        if record.sequence.0 <= active.applied_sequence.0 {
+            return MaterializedDeltaApplyOutcome::Duplicate(
+                active.index.position(active.applied_sequence),
+            );
+        }
+        if record.sequence.0 != active.applied_sequence.0.saturating_add(1) {
+            self.invalidate();
+            return MaterializedDeltaApplyOutcome::Invalidated;
+        }
+        let deltas = match deltas_for_validated_record(record, &mut active.table_identities) {
+            Ok(deltas) => deltas,
+            Err(_) => {
+                self.invalidate();
+                return MaterializedDeltaApplyOutcome::Invalidated;
+            }
+        };
+        for delta in deltas {
+            let result = match delta {
+                MaterializedStateDelta::Upsert(leaf) => {
+                    active.index.upsert(leaf.key, &leaf.value).map(|_| ())
+                }
+                MaterializedStateDelta::Remove(key) => {
+                    active.index.remove(&key);
+                    Ok(())
+                }
+                MaterializedStateDelta::Invalidate => {
+                    self.invalidate();
+                    return MaterializedDeltaApplyOutcome::Invalidated;
+                }
+            };
+            if result.is_err() {
+                self.invalidate();
+                return MaterializedDeltaApplyOutcome::Invalidated;
+            }
+        }
+        let Some(active) = self.active.as_mut() else {
+            return MaterializedDeltaApplyOutcome::Invalidated;
+        };
+        active.applied_sequence = record.sequence;
+        MaterializedDeltaApplyOutcome::Advanced(active.index.position(record.sequence))
+    }
+
+    pub fn invalidate(&mut self) {
+        self.active = None;
+    }
+}
+
+fn deltas_for_validated_record(
+    record: &TenantEventRecord,
+    table_identities: &mut HashMap<TableId, TableIdentitySnapshotEntry>,
+) -> Result<Vec<MaterializedStateDelta>> {
+    let mut deltas = Vec::new();
+    if record.events.is_empty() {
+        append_document_deltas(&record.writes, table_identities, &mut deltas)?;
+        if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
+            append_scheduled_execution_delta(execution_id, &mut deltas)?;
+        }
+        return Ok(deltas);
+    }
+    for event in &record.events {
+        match event {
+            TenantEventKind::DocumentWrite { writes } => {
+                append_document_deltas(writes, table_identities, &mut deltas)?;
+            }
+            TenantEventKind::SchemaChange { change } => match change.as_ref() {
+                SchemaChangeEvent::SetTable {
+                    table_id, current, ..
+                } => {
+                    append_default_table_identity_deltas(
+                        &current.table,
+                        table_id,
+                        table_identities,
+                        true,
+                        &mut deltas,
+                    )?;
+                    deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+                        LogicalLeafKind::Schema,
+                        canonical_schema_identity(current)?,
+                        canonical_schema_value(current)?,
+                    )?));
+                }
+                SchemaChangeEvent::DeleteTable {
+                    table, previous, ..
+                } => {
+                    let identity = if let Some(previous) = previous {
+                        canonical_schema_identity(previous)?
+                    } else {
+                        canonical_schema_identity_for_name(table.as_str())?
+                    };
+                    deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+                        LogicalLeafKind::Schema,
+                        &identity,
+                    )?));
+                }
+            },
+            // A lifecycle event can delete an unbounded document family, and
+            // the event does not carry those document IDs. Rebuild instead of
+            // pretending that a partial delta is exact.
+            TenantEventKind::TableLifecycle { .. } => {
+                deltas.push(MaterializedStateDelta::Invalidate)
+            }
+            TenantEventKind::ScheduledExecution { execution_id } => {
+                append_scheduled_execution_delta(execution_id, &mut deltas)?;
+            }
+            TenantEventKind::IndexLifecycle { .. }
+            | TenantEventKind::TriggerDelivery { .. }
+            | TenantEventKind::Barrier { .. } => {}
+        }
+    }
+    Ok(deltas)
+}
+
+fn append_document_deltas(
+    writes: &[WriteOp],
+    table_identities: &mut HashMap<TableId, TableIdentitySnapshotEntry>,
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
+    for write in writes {
+        let allow_create = write.previous.is_none() && write.current.is_some();
+        append_default_table_identity_deltas(
+            &write.table,
+            &write.table_id,
+            table_identities,
+            allow_create,
+            deltas,
+        )?;
+        if let Some(current) = &write.current {
+            deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+                LogicalLeafKind::Document,
+                canonical_document_identity(current)?,
+                canonical_document_value(current)?,
+            )?));
+        } else if let Some(previous) = &write.previous {
+            deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+                LogicalLeafKind::Document,
+                &canonical_document_identity(previous)?,
+            )?));
+        } else {
+            return Err(Error::Internal(format!(
+                "materialized document write {} has neither a previous nor current image",
+                write.doc_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn append_default_table_identity_deltas(
+    table: &nimbus_core::TableName,
+    table_id: &TableId,
+    table_identities: &mut HashMap<TableId, TableIdentitySnapshotEntry>,
+    allow_create: bool,
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
+    if let Some(identity) = table_identities.get(table_id) {
+        if identity.table != *table {
+            return Err(Error::Internal(format!(
+                "materialized write table {} disagrees with table id {} owned by {}",
+                table, table_id, identity.table
+            )));
+        }
+        if identity.is_active() {
+            append_table_identity_upsert(identity, deltas)?;
+            return Ok(());
+        }
+        if identity.state == nimbus_core::TableState::Deleting {
+            return Err(Error::Internal(format!(
+                "materialized write references deleting table identity {}",
+                table_id
+            )));
+        }
+    }
+    if !table_identities.contains_key(table_id) && !allow_create {
+        return Err(Error::Internal(format!(
+            "materialized write for unknown table identity {} cannot be exact",
+            table_id
+        )));
+    }
+
+    if let Some(previous_active) = table_identities
+        .values()
+        .find(|identity| identity.table == *table && identity.is_active())
+        .cloned()
+    {
+        deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+            LogicalLeafKind::TableIdentity,
+            &canonical_table_identity_identity(&previous_active)?,
+        )?));
+        let deleting = TableIdentitySnapshotEntry {
+            namespace: crate::table_identity::deleting_table_namespace(&previous_active.table_id),
+            table: previous_active.table,
+            table_id: previous_active.table_id.clone(),
+            state: nimbus_core::TableState::Deleting,
+        };
+        append_table_identity_upsert(&deleting, deltas)?;
+        table_identities.insert(deleting.table_id.clone(), deleting);
+    }
+
+    if let Some(staged_hidden) = table_identities.get(table_id).cloned() {
+        deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+            LogicalLeafKind::TableIdentity,
+            &canonical_table_identity_identity(&staged_hidden)?,
+        )?));
+    }
+    let identity = TableIdentitySnapshotEntry::default_namespace(table.clone(), table_id.clone());
+    append_table_identity_upsert(&identity, deltas)?;
+    table_identities.insert(table_id.clone(), identity);
+    Ok(())
+}
+
+fn append_table_identity_upsert(
+    identity: &TableIdentitySnapshotEntry,
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
+    deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+        LogicalLeafKind::TableIdentity,
+        canonical_table_identity_identity(identity)?,
+        canonical_table_identity_value(identity)?,
+    )?));
+    Ok(())
+}
+
+fn append_scheduled_execution_delta(
+    execution_id: &str,
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
+    deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+        LogicalLeafKind::ScheduledExecution,
+        canonical_scheduled_execution_identity(execution_id)?,
+        canonical_scheduled_execution_value(execution_id)?,
+    )?));
+    Ok(())
+}
+
+fn canonical_snapshot_seed(
+    snapshot: &MaterializedJournalSnapshot,
+) -> Result<MaterializedVerificationSeed> {
+    let state = snapshot.canonical_state()?;
+    let mut leaves = Vec::with_capacity(
+        state.table_identities().len()
+            + state.schema_tables().len()
+            + state.documents().len()
+            + state.scheduled_execution_ids().len(),
+    );
+    let mut table_identities = HashMap::with_capacity(state.table_identities().len());
+    for identity in state.table_identities() {
+        table_identities.insert(identity.table_id.clone(), identity.clone());
+        leaves.push((
+            LogicalLeafKey::new(
+                LogicalLeafKind::TableIdentity,
+                &canonical_table_identity_identity(identity)?,
+            )?,
+            canonical_table_identity_value(identity)?,
+        ));
+    }
+    for table in state.schema_tables() {
+        leaves.push((
+            LogicalLeafKey::new(LogicalLeafKind::Schema, &canonical_schema_identity(table)?)?,
+            canonical_schema_value(table)?,
+        ));
+    }
+    for document in state.documents() {
+        leaves.push((
+            LogicalLeafKey::new(
+                LogicalLeafKind::Document,
+                &canonical_document_identity(document)?,
+            )?,
+            canonical_document_value(document)?,
+        ));
+    }
+    for execution_id in state.scheduled_execution_ids() {
+        leaves.push((
+            LogicalLeafKey::new(
+                LogicalLeafKind::ScheduledExecution,
+                &canonical_scheduled_execution_identity(execution_id)?,
+            )?,
+            canonical_scheduled_execution_value(execution_id)?,
+        ));
+    }
+    Ok(MaterializedVerificationSeed {
+        leaves,
+        table_identities,
+    })
+}
+
 fn empty_hash(version: VerificationRootVersion) -> Hash {
     hash_parts(version, EMPTY_DOMAIN, &[])
 }
@@ -557,8 +1020,16 @@ fn hash_parts(version: VerificationRootVersion, domain: &[u8], parts: &[&[u8]]) 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::str::FromStr;
+
+    use nimbus_core::{
+        Document, DocumentId, Schema, TableId, TableLifecycleEvent, TableName, TableSchema,
+        Timestamp, WriteOp, WriteOpType,
+    };
+    use serde_json::json;
 
     use super::*;
+    use crate::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
 
     fn key(rank: usize) -> LogicalLeafKey {
         LogicalLeafKey::new(LogicalLeafKind::Document, &rank.to_be_bytes())
@@ -569,6 +1040,506 @@ mod tests {
         (0..count)
             .map(|rank| (key(rank), format!("value-{rank}").into_bytes()))
             .collect()
+    }
+
+    fn empty_snapshot() -> MaterializedJournalSnapshot {
+        MaterializedJournalSnapshot {
+            version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
+            applied_sequence: SequenceNumber(0),
+            durable_head: SequenceNumber(0),
+            table_identities: Vec::new(),
+            schema: Schema::default(),
+            documents: Vec::new(),
+            scheduled_execution_ids: Vec::new(),
+        }
+    }
+
+    fn inserted_document_record(sequence: u64) -> (TenantEventRecord, TableId, Document) {
+        let table = TableName::new("tasks").expect("table should be valid");
+        let table_id = TableId::from_str("tasks-table").expect("table id should be valid");
+        let document = Document::with_id_at(
+            DocumentId::from_key("task-1").expect("document id should be valid"),
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("one"))]),
+            Timestamp(10),
+        );
+        let record = TenantEventRecord::new(
+            SequenceNumber(sequence),
+            Timestamp(11),
+            vec![WriteOp {
+                table,
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(document.clone()),
+            }],
+            None,
+        )
+        .expect("record should be valid");
+        (record, table_id, document)
+    }
+
+    fn snapshot_after_insert(
+        record: &TenantEventRecord,
+        table_id: TableId,
+        document: Document,
+    ) -> MaterializedJournalSnapshot {
+        MaterializedJournalSnapshot {
+            version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
+            applied_sequence: record.sequence,
+            durable_head: record.sequence,
+            table_identities: vec![TableIdentitySnapshotEntry::default_namespace(
+                document.table.clone(),
+                table_id,
+            )],
+            schema: Schema::default(),
+            documents: vec![document],
+            scheduled_execution_ids: Vec::new(),
+        }
+    }
+
+    fn assert_local_provider_applied_delta(
+        export: impl Fn() -> Result<MaterializedJournalSnapshot>,
+        append: impl Fn(&[TenantEventRecord]) -> Result<()>,
+        apply: impl Fn(&[TenantEventRecord]) -> Result<()>,
+    ) {
+        let (record, _, _) = inserted_document_record(1);
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(
+            &export().expect("baseline snapshot should export"),
+        )
+        .expect("baseline tracker should build");
+        append(std::slice::from_ref(&record)).expect("durable append should succeed");
+        apply(std::slice::from_ref(&record)).expect("materialized apply should succeed");
+        let MaterializedDeltaApplyOutcome::Advanced(incremental) =
+            tracker.apply_applied_record(&record)
+        else {
+            panic!("post-apply delta should advance the tracker");
+        };
+        let rebuilt = MaterializedVerificationTracker::from_snapshot(
+            &export().expect("post-apply snapshot should export"),
+        )
+        .expect("post-apply tracker should rebuild")
+        .position()
+        .expect("post-apply tracker should be valid");
+        assert_eq!(incremental, rebuilt);
+    }
+
+    #[test]
+    fn local_provider_apply_paths_publish_only_post_apply_deltas() {
+        let redb = crate::TenantStore::create_in_memory().expect("redb store should open");
+        assert_local_provider_applied_delta(
+            || redb.export_materialized_journal_snapshot(),
+            |records| redb.append_durable_records_batch(records),
+            |records| redb.apply_durable_records_batch(records),
+        );
+
+        let memory = crate::MemoryTenantStore::new();
+        assert_local_provider_applied_delta(
+            || memory.export_materialized_journal_snapshot(),
+            |records| memory.append_durable_records_batch(records),
+            |records| memory.apply_durable_records_batch(records),
+        );
+
+        let directory = tempfile::tempdir().expect("sqlite tempdir should create");
+        let sqlite = crate::SqliteTenantStore::open(directory.path().join("tenant.sqlite3"))
+            .expect("sqlite store should open");
+        assert_local_provider_applied_delta(
+            || sqlite.export_materialized_journal_snapshot(),
+            |records| sqlite.append_durable_records_batch(records),
+            |records| sqlite.apply_durable_records_batch(records),
+        );
+    }
+
+    #[test]
+    fn snapshot_restore_invalidates_local_verification_generations() {
+        let snapshot = empty_snapshot();
+
+        let redb = crate::TenantStore::create_in_memory().expect("redb store should open");
+        let redb_generation = redb.materialized_verification_generation();
+        redb.restore_materialized_journal_from_snapshot(&snapshot)
+            .expect("redb snapshot should restore");
+        assert!(!redb.materialized_verification_generation_is_current(redb_generation));
+
+        let memory = crate::MemoryTenantStore::new();
+        let memory_generation = memory.materialized_verification_generation();
+        memory
+            .restore_materialized_journal_from_snapshot(&snapshot)
+            .expect("memory snapshot should restore");
+        assert!(!memory.materialized_verification_generation_is_current(memory_generation));
+
+        let directory = tempfile::tempdir().expect("sqlite tempdir should create");
+        let sqlite = crate::SqliteTenantStore::open(directory.path().join("tenant.sqlite3"))
+            .expect("sqlite store should open");
+        let sqlite_generation = sqlite.materialized_verification_generation();
+        sqlite
+            .restore_materialized_journal_from_snapshot(&snapshot)
+            .expect("sqlite snapshot should restore");
+        assert!(!sqlite.materialized_verification_generation_is_current(sqlite_generation));
+    }
+
+    #[test]
+    fn replacement_generation_is_never_current_during_update() {
+        let invalidator = MaterializedVerificationInvalidator::default();
+        let before = invalidator.generation();
+        assert!(invalidator.is_current(before));
+
+        let update = invalidator
+            .begin_update()
+            .expect("first replacement should begin");
+        let during = invalidator.generation();
+        assert!(!invalidator.is_current(before));
+        assert!(!invalidator.is_current(during));
+        assert!(invalidator.begin_update().is_err());
+
+        drop(update);
+        let after = invalidator.generation();
+        assert!(invalidator.is_current(after));
+        assert!(!invalidator.is_current(before));
+        assert!(!invalidator.is_current(during));
+    }
+
+    #[test]
+    fn schema_scheduler_and_lifecycle_records_have_safe_verification_effects() {
+        let store = crate::TenantStore::create_in_memory().expect("store should open");
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(
+            &store
+                .export_materialized_journal_snapshot()
+                .expect("baseline snapshot should export"),
+        )
+        .expect("baseline tracker should build");
+        let table = TableName::new("tasks").expect("table should be valid");
+        let table_id = TableId::from_str("tasks-table").expect("table id should be valid");
+        let schema = TableSchema {
+            table: table.clone(),
+            fields: Vec::new(),
+            indexes: Vec::new(),
+            access_policy: None,
+        };
+        let deleted_schema = schema.clone();
+        let schema_record = TenantEventRecord::schema_change(
+            SequenceNumber(1),
+            Timestamp(1),
+            SchemaChangeEvent::SetTable {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                previous: None,
+                current: schema,
+            },
+        )
+        .expect("schema record should build");
+        let scheduled_record = TenantEventRecord::from_events(
+            SequenceNumber(2),
+            Timestamp(2),
+            vec![TenantEventKind::ScheduledExecution {
+                execution_id: "execution-1".to_string(),
+            }],
+        )
+        .expect("scheduled record should build");
+        let schema_delete_record = TenantEventRecord::schema_change(
+            SequenceNumber(3),
+            Timestamp(3),
+            SchemaChangeEvent::DeleteTable {
+                table: table.clone(),
+                table_id: Some(table_id),
+                previous: Some(deleted_schema),
+            },
+        )
+        .expect("schema delete record should build");
+
+        for record in [&schema_record, &scheduled_record, &schema_delete_record] {
+            store
+                .append_durable_records_batch(std::slice::from_ref(record))
+                .expect("record should append");
+            store
+                .apply_durable_records_batch(std::slice::from_ref(record))
+                .expect("record should apply");
+            let MaterializedDeltaApplyOutcome::Advanced(incremental) =
+                tracker.apply_applied_record(record)
+            else {
+                panic!("exact record should advance");
+            };
+            let rebuilt = MaterializedVerificationTracker::from_snapshot(
+                &store
+                    .export_materialized_journal_snapshot()
+                    .expect("snapshot should export"),
+            )
+            .expect("snapshot tracker should rebuild")
+            .position()
+            .expect("rebuilt tracker should be valid");
+            assert_eq!(incremental, rebuilt);
+        }
+
+        let lifecycle_record = TenantEventRecord::table_lifecycle(
+            SequenceNumber(4),
+            Timestamp(4),
+            TableLifecycleEvent::StageHidden {
+                table: TableName::new("replacement").expect("table should be valid"),
+                table_id: TableId::from_str("replacement-table").expect("table id should be valid"),
+            },
+        )
+        .expect("lifecycle record should build");
+        store
+            .append_durable_records_batch(std::slice::from_ref(&lifecycle_record))
+            .expect("lifecycle record should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&lifecycle_record))
+            .expect("lifecycle record should apply");
+        assert_eq!(
+            tracker.apply_applied_record(&lifecycle_record),
+            MaterializedDeltaApplyOutcome::Invalidated
+        );
+        assert!(!tracker.is_valid());
+    }
+
+    #[test]
+    fn document_insert_update_delete_deltas_match_full_rebuilds() {
+        let store = crate::TenantStore::create_in_memory().expect("store should open");
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(
+            &store
+                .export_materialized_journal_snapshot()
+                .expect("baseline snapshot should export"),
+        )
+        .expect("baseline tracker should build");
+        let (insert, table_id, original) = inserted_document_record(1);
+        let mut updated = original.clone();
+        updated.update_time = Timestamp(20);
+        updated.fields.insert("title".to_string(), json!("two"));
+        let update = TenantEventRecord::new(
+            SequenceNumber(2),
+            Timestamp(21),
+            vec![WriteOp {
+                table: original.table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Update,
+                doc_id: original.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: Some(original),
+                current: Some(updated.clone()),
+            }],
+            None,
+        )
+        .expect("update record should build");
+        let delete = TenantEventRecord::new(
+            SequenceNumber(3),
+            Timestamp(22),
+            vec![WriteOp {
+                table: updated.table.clone(),
+                table_id,
+                op_type: WriteOpType::Delete,
+                doc_id: updated.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: Some(updated),
+                current: None,
+            }],
+            None,
+        )
+        .expect("delete record should build");
+
+        for record in [insert, update, delete] {
+            store
+                .append_durable_records_batch(std::slice::from_ref(&record))
+                .expect("record should append");
+            store
+                .apply_durable_records_batch(std::slice::from_ref(&record))
+                .expect("record should apply");
+            assert!(matches!(
+                tracker.apply_applied_record(&record),
+                MaterializedDeltaApplyOutcome::Advanced(_)
+            ));
+            let rebuilt = MaterializedVerificationTracker::from_snapshot(
+                &store
+                    .export_materialized_journal_snapshot()
+                    .expect("snapshot should export"),
+            )
+            .expect("snapshot tracker should rebuild");
+            assert_eq!(tracker.position(), rebuilt.position());
+        }
+    }
+
+    #[test]
+    fn hidden_lineage_document_write_matches_provider_activation() {
+        let store = crate::TenantStore::create_in_memory().expect("store should open");
+        let (initial_record, initial_table_id, _) = inserted_document_record(1);
+        store
+            .append_durable_records_batch(std::slice::from_ref(&initial_record))
+            .expect("initial write should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&initial_record))
+            .expect("initial write should apply");
+        let table = TableName::new("tasks").expect("table should be valid");
+        let hidden_id = TableId::from_str("hidden-table").expect("table id should be valid");
+        store
+            .stage_hidden_table_identity(&table, &hidden_id)
+            .expect("hidden identity should stage");
+        let checkpoint = store
+            .export_materialized_journal_snapshot()
+            .expect("checkpoint should export");
+        let hidden_document = Document::with_id_at(
+            DocumentId::from_key("hidden-task").expect("document id should be valid"),
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("hidden"))]),
+            Timestamp(10),
+        );
+        let record = TenantEventRecord::new(
+            SequenceNumber(checkpoint.applied_sequence.0 + 1),
+            Timestamp(11),
+            vec![WriteOp {
+                table,
+                table_id: hidden_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: hidden_document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(hidden_document),
+            }],
+            None,
+        )
+        .expect("hidden write record should build");
+        store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("hidden write should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect("hidden write should apply");
+        let expected = store
+            .export_materialized_journal_snapshot()
+            .expect("applied snapshot should export");
+        assert!(
+            expected
+                .table_identities
+                .iter()
+                .any(|identity| { identity.table_id == hidden_id && identity.is_active() })
+        );
+        assert!(expected.table_identities.iter().any(|identity| {
+            identity.table_id == initial_table_id
+                && identity.state == nimbus_core::TableState::Deleting
+        }));
+        assert!(!expected.table_identities.iter().any(|identity| {
+            identity.table_id == hidden_id && identity.state == nimbus_core::TableState::Hidden
+        }));
+        assert_eq!(expected.documents.len(), 2);
+
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(&checkpoint)
+            .expect("checkpoint tracker should build");
+        assert!(matches!(
+            tracker.apply_applied_record(&record),
+            MaterializedDeltaApplyOutcome::Advanced(_)
+        ));
+        let rebuilt = MaterializedVerificationTracker::from_snapshot(&expected)
+            .expect("expected tracker should build");
+        assert_eq!(tracker.position(), rebuilt.position());
+    }
+
+    #[test]
+    fn root_advances_with_applied_sequence() {
+        let (record, table_id, document) = inserted_document_record(1);
+        let expected = MaterializedVerificationTracker::from_snapshot(&snapshot_after_insert(
+            &record, table_id, document,
+        ))
+        .expect("post-apply snapshot should build")
+        .position()
+        .expect("post-apply tracker should be valid");
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(&empty_snapshot())
+            .expect("empty tracker should build");
+
+        let MaterializedDeltaApplyOutcome::Advanced(actual) = tracker.apply_applied_record(&record)
+        else {
+            panic!("contiguous applied record should advance the tracker");
+        };
+        assert_eq!(actual.applied_sequence(), SequenceNumber(1));
+        assert_eq!(actual.root_hash(), expected.root_hash());
+    }
+
+    #[test]
+    fn failed_apply_does_not_advance_root() {
+        let (record, _, _) = inserted_document_record(2);
+        let store = crate::TenantStore::create_in_memory().expect("store should open");
+        let tracker = MaterializedVerificationTracker::from_snapshot(
+            &store
+                .export_materialized_journal_snapshot()
+                .expect("snapshot should export"),
+        )
+        .expect("tracker should build");
+        let before = tracker.position().expect("tracker should be valid");
+
+        assert!(store.apply_durable_records_batch(&[record]).is_err());
+        assert_eq!(tracker.position(), Some(before));
+    }
+
+    #[test]
+    fn replay_duplicate_keeps_root() {
+        let (record, _, _) = inserted_document_record(1);
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(&empty_snapshot())
+            .expect("tracker should build");
+        let MaterializedDeltaApplyOutcome::Advanced(first) = tracker.apply_applied_record(&record)
+        else {
+            panic!("first record should advance");
+        };
+        assert_eq!(
+            tracker.apply_applied_record(&record),
+            MaterializedDeltaApplyOutcome::Duplicate(first)
+        );
+        assert_eq!(tracker.position(), Some(first));
+    }
+
+    #[test]
+    fn corrupt_duplicate_invalidates_verification_index() {
+        let (record, _, _) = inserted_document_record(1);
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(&empty_snapshot())
+            .expect("tracker should build");
+        assert!(matches!(
+            tracker.apply_applied_record(&record),
+            MaterializedDeltaApplyOutcome::Advanced(_)
+        ));
+        let mut corrupt = record;
+        corrupt.integrity_sha256[0] ^= 0xff;
+
+        assert_eq!(
+            tracker.apply_applied_record(&corrupt),
+            MaterializedDeltaApplyOutcome::Invalidated
+        );
+        assert!(!tracker.is_valid());
+    }
+
+    #[test]
+    fn apply_gap_invalidates_verification_index() {
+        let (record, _, _) = inserted_document_record(2);
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(&empty_snapshot())
+            .expect("tracker should build");
+
+        assert_eq!(
+            tracker.apply_applied_record(&record),
+            MaterializedDeltaApplyOutcome::Invalidated
+        );
+        assert!(!tracker.is_valid());
+        assert_eq!(tracker.position(), None);
+    }
+
+    #[test]
+    fn durable_head_ahead_of_apply_does_not_advance_verification_root() {
+        let (record, _, _) = inserted_document_record(1);
+        let store = crate::TenantStore::create_in_memory().expect("store should open");
+        let tracker = MaterializedVerificationTracker::from_snapshot(
+            &store
+                .export_materialized_journal_snapshot()
+                .expect("snapshot should export"),
+        )
+        .expect("tracker should build");
+        let before = tracker.position().expect("tracker should be valid");
+
+        store
+            .append_durable_records_batch(&[record])
+            .expect("durable append should succeed");
+        let progress = store.journal_progress().expect("progress should load");
+        assert_eq!(progress.durable_head, SequenceNumber(1));
+        assert_eq!(progress.applied_head, SequenceNumber(0));
+        assert_eq!(tracker.position(), Some(before));
     }
 
     fn adversarial_chain_keys(required: usize) -> Vec<LogicalLeafKey> {

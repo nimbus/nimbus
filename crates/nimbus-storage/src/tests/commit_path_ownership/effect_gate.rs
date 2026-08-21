@@ -11,7 +11,9 @@
 
 use super::effect_matrix::{
     Admission, CatalogEffect, Condition, DocumentEffect, IndexEffect, JournalEffect, Lease, MATRIX,
-    Outcome, SchedulerEffect, Shape, TriggerEffect, VersionEffect, WatermarkEffect, WriterEffects,
+    Outcome, SchedulerEffect, Shape, TriggerEffect, VERIFICATION_MATRIX,
+    VERIFICATION_OUT_OF_BAND_WRITERS, VerificationEffect, VersionEffect, WatermarkEffect,
+    WriterEffects,
 };
 
 /// The write-transaction primitives. They open a transaction for other writers
@@ -96,6 +98,20 @@ fn repo_root() -> std::path::PathBuf {
 
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn source_function<'a>(source: &'a str, symbol: &str) -> &'a str {
+    let marker = format!("fn {symbol}");
+    let start = source
+        .find(&marker)
+        .unwrap_or_else(|| panic!("writer function {symbol} must exist"));
+    let tail = &source[start + marker.len()..];
+    let end = ["\n    fn ", "\n    pub fn ", "\n    pub(crate) fn "]
+        .into_iter()
+        .filter_map(|next| tail.find(next))
+        .min()
+        .unwrap_or(tail.len());
+    &source[start..start + marker.len() + end]
 }
 
 /// Split `SqlStoreCore` into its methods, with comments removed so a doc
@@ -729,6 +745,158 @@ fn all_storage_writers_declare_their_commit_effects() {
          condition, document, index, version, catalog, scheduler, trigger, journal, watermark and \
          outcome in crates/nimbus-storage/src/tests/commit_path_ownership/effect_matrix.rs, and \
          each declaration is checked against the writer's own source. Violations: {violations:#?}"
+    );
+}
+
+/// IMV4: every inventoried writer declares how a bounded verification session
+/// learns about its state change.
+#[test]
+fn all_storage_writers_declare_their_materialized_verification_effect() {
+    assert_eq!(
+        VERIFICATION_MATRIX.len(),
+        MATRIX.len(),
+        "the verification ownership matrix must have one row per storage writer"
+    );
+    for (writer, (verification_writer, effect)) in MATRIX.iter().zip(VERIFICATION_MATRIX) {
+        assert_eq!(
+            writer.writer, *verification_writer,
+            "verification ownership must follow the checked writer matrix in exact order"
+        );
+        if writer.watermark == WatermarkEffect::AdvancedByRecordApply {
+            assert!(
+                matches!(
+                    effect,
+                    VerificationEffect::ExactAppliedRecord | VerificationEffect::Invalidate
+                ),
+                "writer {} advances applied state but declares {effect:?}",
+                writer.writer
+            );
+        }
+        if matches!(
+            writer.catalog,
+            CatalogEffect::TableSchemaReplaced | CatalogEffect::TableSchemaDeleted
+        ) {
+            assert_eq!(
+                *effect,
+                VerificationEffect::ExactAppliedRecord,
+                "schema writer {} must expose its applied event record",
+                writer.writer
+            );
+        }
+        if writer.catalog == CatalogEffect::TableLifecycle {
+            assert_eq!(
+                *effect,
+                VerificationEffect::Invalidate,
+                "unsequenced table lifecycle writer {} must invalidate a session",
+                writer.writer
+            );
+        }
+    }
+
+    let effect_for = |name: &str| {
+        VERIFICATION_MATRIX
+            .iter()
+            .find(|(writer, _)| *writer == name)
+            .map(|(_, effect)| *effect)
+            .expect("named writer must have a verification effect")
+    };
+    assert_eq!(
+        effect_for("append_durable_records_batch"),
+        VerificationEffect::DurableOnly,
+        "durable append alone must never advance a verification root"
+    );
+    assert_eq!(
+        effect_for("commit_object_meta_write_in_actor"),
+        VerificationEffect::ExactAppliedRecord,
+        "the sequenced object-metadata committer must expose exact document deltas"
+    );
+    assert_eq!(
+        effect_for("materialize_snapshot_to_replica_cache"),
+        VerificationEffect::Invalidate,
+        "libsql replica replacement must invalidate a stale session root"
+    );
+
+    let source_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    assert_eq!(
+        VERIFICATION_OUT_OF_BAND_WRITERS.len(),
+        9,
+        "the replacement inventory lost a local snapshot or replica-reconciliation writer"
+    );
+    for (path, symbol, effect) in VERIFICATION_OUT_OF_BAND_WRITERS {
+        assert!(
+            matches!(
+                effect,
+                VerificationEffect::Invalidate | VerificationEffect::DurableOnly
+            ),
+            "out-of-band writer {path}:{symbol} has unsafe effect {effect:?}"
+        );
+        let source = std::fs::read_to_string(source_root.join(path))
+            .unwrap_or_else(|error| panic!("verification writer {path} must be readable: {error}"));
+        assert!(
+            source.contains(&format!("fn {symbol}")),
+            "verification replacement writer {path}:{symbol} moved or disappeared"
+        );
+        if *effect == VerificationEffect::Invalidate {
+            let body = source_function(&source, symbol);
+            assert!(
+                body.contains("materialized_verification.begin_update()")
+                    || body.contains("restore_materialized_journal_from_snapshot"),
+                "verification replacement writer {path}:{symbol} declares invalidation but does \
+                 not publish it or delegate to the checked restore path"
+            );
+        }
+    }
+}
+
+/// IMV4 keeps serving materializers as derived read caches. Root authority is
+/// owned by the bounded verification-session concept, not either serving tree.
+#[test]
+fn materialized_serving_surfaces_have_no_verification_root_authority() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("storage crate must live under the workspace crates directory");
+    let owners = [
+        workspace.join("crates/nimbus-storage/src/materializer/mod.rs"),
+        workspace.join("crates/nimbus-engine/src/tenant/materialized_reads"),
+    ];
+    let forbidden = [
+        "MaterializedVerificationTracker",
+        "MaterializedVerificationIndex",
+        "VerificationPosition",
+        "apply_applied_record",
+    ];
+    let mut violations = Vec::new();
+    for owner in owners {
+        let files = if owner.is_dir() {
+            std::fs::read_dir(&owner)
+                .expect("serving surface directory must be readable")
+                .map(|entry| {
+                    entry
+                        .expect("serving surface entry must be readable")
+                        .path()
+                })
+                .filter(|path| {
+                    path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![owner]
+        };
+        for file in files {
+            let source = std::fs::read_to_string(&file)
+                .expect("materialized serving source must be readable");
+            for token in forbidden {
+                if source.contains(token) {
+                    violations.push(format!("{} contains {token}", file.display()));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "materialized serving surfaces acquired verification-root write authority: {violations:?}"
     );
 }
 

@@ -25,7 +25,10 @@ use crate::store::{
     PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite,
     TenantWriteCommit,
 };
-use crate::{RetentionFloor, RetentionGcConfig, RetentionGcSummary};
+use crate::{
+    MaterializedVerificationGeneration, MaterializedVerificationInvalidator, RetentionFloor,
+    RetentionGcConfig, RetentionGcSummary,
+};
 use nimbus_crypto::DataEncryptionKey;
 
 mod apply_context;
@@ -287,7 +290,21 @@ pub struct SqliteTenantStore {
     /// its own connection.
     writer_slot: Arc<Mutex<Option<Connection>>>,
     schema_cache: Arc<RwLock<Schema>>,
+    materialized_verification: MaterializedVerificationInvalidator,
     pub(crate) retention_floor: Arc<RetentionFloor>,
+}
+
+impl SqliteTenantStore {
+    pub fn materialized_verification_generation(&self) -> MaterializedVerificationGeneration {
+        self.materialized_verification.generation()
+    }
+
+    pub fn materialized_verification_generation_is_current(
+        &self,
+        generation: MaterializedVerificationGeneration,
+    ) -> bool {
+        self.materialized_verification.is_current(generation)
+    }
 }
 
 pub struct SqliteReadSnapshot {

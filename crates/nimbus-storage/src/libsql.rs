@@ -38,7 +38,6 @@ use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 use tower_service::Service;
 use tracing::{debug, warn};
 
-use crate::RetentionFloor;
 use crate::async_storage::{
     TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
     map_executor_permit_error,
@@ -52,6 +51,9 @@ use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, HistoricalIndexDocumentPage,
     JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot,
     NEXT_SEQUENCE_KEY, ResolvedWrite, TRIGGER_DELIVERY_CURSOR_KEY, TenantWriteCommit,
+};
+use crate::{
+    MaterializedVerificationGeneration, MaterializedVerificationInvalidator, RetentionFloor,
 };
 
 use crate::sql::store_core::FENCED_COMMITTER_LEASE_MARKER;
@@ -348,6 +350,7 @@ pub struct LibsqlReplicaTenantStore {
     refresh_complete: Arc<Notify>,
     required_cache_sequence: Arc<AtomicU64>,
     freshness_metrics: Arc<LibsqlReplicaFreshnessMetrics>,
+    materialized_verification: MaterializedVerificationInvalidator,
     #[cfg(test)]
     refresh_override: Option<TestRefreshOverride>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
@@ -425,6 +428,7 @@ impl LibsqlReplicaTenantStore {
             refresh_complete: Arc::new(Notify::new()),
             required_cache_sequence: Arc::new(AtomicU64::new(initial_applied)),
             freshness_metrics: Arc::new(LibsqlReplicaFreshnessMetrics::new()),
+            materialized_verification: MaterializedVerificationInvalidator::default(),
             #[cfg(test)]
             refresh_override: None,
             retention_floor: RetentionFloor::new(),
@@ -445,6 +449,20 @@ impl LibsqlReplicaTenantStore {
 
     pub fn primary_url(&self) -> &str {
         &self.provider.primary_url
+    }
+
+    /// Captures the local replica-cache generation for a bounded verification
+    /// session. A cache replacement or incremental reconciliation changes this
+    /// generation before another fast result can pass.
+    pub fn materialized_verification_generation(&self) -> MaterializedVerificationGeneration {
+        self.materialized_verification.generation()
+    }
+
+    pub fn materialized_verification_generation_is_current(
+        &self,
+        generation: MaterializedVerificationGeneration,
+    ) -> bool {
+        self.materialized_verification.is_current(generation)
     }
 
     pub fn check_fault(&self, point: crate::FaultPoint) -> Result<()> {
@@ -616,6 +634,9 @@ impl LibsqlReplicaTenantStore {
     fn refresh_local_cache_once(&self) -> Result<ReplicaRefreshOutcome> {
         #[cfg(test)]
         if let Some(refresh_override) = &self.refresh_override {
+            // A test replacement stands in for either physical refresh path.
+            // Keep its full mutation window non-current, matching production.
+            let _verification_update = self.materialized_verification.begin_update()?;
             return refresh_override(self);
         }
 
@@ -689,6 +710,7 @@ impl LibsqlReplicaTenantStore {
             store: next_store.clone(),
             replica_path: replica_path.clone(),
         };
+        let _verification_update = self.materialized_verification.begin_update()?;
         let previous = {
             let mut guard = self
                 .active_cache
@@ -724,6 +746,10 @@ impl LibsqlReplicaTenantStore {
             });
         }
 
+        // Reconciliation mutates the active cache in place. Keep the complete
+        // window non-current, including a later apply failure.
+        let verification_update = self.materialized_verification.begin_update()?;
+
         if local_progress.durable_head.0 < required_sequence {
             let next_sequence = SequenceNumber(local_progress.durable_head.0.saturating_add(1));
             let records = self.block_on(self.load_remote_durable_records_from(next_sequence))?;
@@ -743,6 +769,7 @@ impl LibsqlReplicaTenantStore {
         self.refresh_needed.store(true, Ordering::Release);
         self.freshness_metrics
             .note_refresh_attempt_path(LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot);
+        drop(verification_update);
         let snapshot = self.refresh_local_cache_from_snapshot()?;
         Ok(ReplicaRefreshOutcome {
             path: LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot,
