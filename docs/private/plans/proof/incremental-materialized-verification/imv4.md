@@ -35,11 +35,16 @@ snapshot rebuild. Table lifecycle invalidates because hard deletion can remove
 an unbounded document family that the event does not enumerate. Index and
 trigger events do not change a root-covered state family.
 
+The tracker retains the validated table-identity map from its bootstrap cut.
+Writes to hidden or deleting lineages do not enter the active-document root.
+An unknown identity can enter the map only through a creation event. A table ID
+and logical-name disagreement invalidates the tracker.
+
 Redb, memory, and SQLite snapshot restore publish an opaque process-local
 generation change. Their rebuild and PITR paths compose through the checked
-restore path. LibSQL publishes the same change before in-place catch-up and
-while the full-replacement cache is still hidden by its exclusive lock. A
-bounded session can reject a generation that is no longer current.
+restore path. A replacement guard keeps each complete mutation window
+non-current. This includes in-place libSQL catch-up and the full cache swap. A
+bounded session cannot capture a passing generation during replacement.
 
 The materialized serving trees remain derived read caches. A structural gate
 rejects verification-root authority in the storage materializer and the engine
@@ -74,18 +79,19 @@ applies its delta after the commit, and matches a full post-commit rebuild.
 
 ## Acceptance evidence
 
-The focused materialized-verification lane reports 20 passed tests. It covers
+The focused materialized-verification lane reports 22 passed tests. It covers
 contiguous advance, failed apply, duplicate replay, corrupt duplicate, and gap
 invalidation. It also covers durable-before-apply separation, local-provider
 apply order, document and schema delta parity, lifecycle invalidation, and local
-replacement generations.
+replacement generations. Two review regressions cover hidden-lineage writes and
+the complete replacement mutation window.
 
 The writer-ownership lane reports 6 passed tests. Its scan finds 52
 `SqlStoreCore` methods, 26 direct writers, 44 writers in the core, and 54 matrix
 rows with 10 external rows. The object route and libSQL replacement regressions
 each report one passed test. The durable-journal lane reports 9 passed tests.
 
-The full default-feature storage lane reports 357 passed tests and 3 expected
+The full default-feature storage lane reports 359 passed tests and 3 expected
 ignored tests. It includes all local provider and physical-durability tests.
 
 The unqualified engine mutation command first selected four remote-provider
