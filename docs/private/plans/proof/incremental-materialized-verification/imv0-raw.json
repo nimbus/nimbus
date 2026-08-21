@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "baseline_commit": "137cc632a1c8585545d200ea49f44bd236478175",
+  "mode": "full",
+  "target_os": "macos",
+  "target_arch": "aarch64",
+  "quick": true,
+  "measurements": [
+    {
+      "documents": 10000,
+      "payload_bytes": 1024,
+      "payload_state_bytes": 10240000,
+      "churn_basis_points": 0,
+      "elapsed_ns": 807184791,
+      "process_cpu_ns": 805851000,
+      "allocation_count": 2438248,
+      "allocated_bytes": 1693703373,
+      "peak_rss_bytes": 307445760,
+      "bytes_read": null,
+      "bytes_read_status": "UNVERIFIED: current verifier exposes no byte-read counter",
+      "report_ok": true,
+      "mismatch_count": 0,
+      "authoritative_document_count": 10000
+    }
+  ]
+}
