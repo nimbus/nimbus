@@ -411,7 +411,10 @@ impl Engine {
         if mismatches.is_empty() {
             *session_guard = Some(fresh_session);
         } else {
-            *session_guard = prior_session;
+            // Any failed scrub makes the retained witness unsafe. Dropping it
+            // forces the next request to scrub again. A persistent provider
+            // or replay mismatch therefore cannot become a warm success.
+            *session_guard = None;
         }
         Ok(report)
     }

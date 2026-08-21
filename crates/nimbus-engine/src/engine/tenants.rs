@@ -366,6 +366,7 @@ impl Engine {
             .expect("publisher failure diagnostics lock should not be poisoned")
             .remove(tenant_id);
         std::fs::remove_file(path).map_err(|error| Error::Internal(error.to_string()))?;
+        self.verification_sessions.invalidate(tenant_id);
         Ok(())
     }
 
@@ -467,6 +468,7 @@ impl Engine {
                 deletion.tenant_id
             )));
         }
+        self.verification_sessions.invalidate(&deletion.tenant_id);
         Ok(())
     }
 

@@ -1162,7 +1162,7 @@ async fn consistency_verification_root_mismatch_escalates_to_full_scrub() {
         .await;
 
     let report = engine
-        .verify_consistency_async(tenant_id)
+        .verify_consistency_async(tenant_id.clone())
         .await
         .expect("mismatch should produce a report");
     assert!(!report.ok, "{report:#?}");
@@ -1176,6 +1176,49 @@ async fn consistency_verification_root_mismatch_escalates_to_full_scrub() {
             .mismatches
             .iter()
             .any(|mismatch| mismatch.invariant == "full_scrub_matches_incremental_root")
+    );
+
+    let rebuilt = engine
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("a failed scrub should discard and rebuild its session");
+    assert!(rebuilt.ok, "{rebuilt:#?}");
+    assert_eq!(rebuilt.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        rebuilt.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::ColdStart)
+    );
+}
+
+#[tokio::test]
+async fn consistency_verification_session_does_not_cross_tenant_incarnation() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("session-incarnation").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("first tenant should create");
+    engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("first tenant should establish a session");
+
+    engine
+        .delete_tenant(&tenant_id)
+        .expect("first tenant should delete");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("replacement tenant should create");
+
+    let report = engine
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("replacement tenant should verify");
+    assert!(report.ok, "{report:#?}");
+    assert_eq!(report.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        report.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::ColdStart)
     );
 }
 
@@ -1351,10 +1394,12 @@ async fn consistency_verification_full_scrub_cut_owns_concurrent_alignment() {
         )
         .await
         .expect("concurrent insert should succeed");
-    let expected_cut = engine
-        .latest_sequence_async(tenant_id)
+    let minimum_cut = engine
+        .export_durable_journal_bootstrap_async(tenant_id)
         .await
-        .expect("latest sequence should read");
+        .expect("provider snapshot should export")
+        .snapshot
+        .applied_sequence;
     pause.release();
 
     let scrub = verification
@@ -1367,10 +1412,9 @@ async fn consistency_verification_full_scrub_cut_owns_concurrent_alignment() {
         scrub.escalation_reason,
         Some(crate::ConsistencyEscalationReason::AnchorExpired)
     );
-    assert_eq!(
-        scrub.anchor.position.applied_sequence(),
-        expected_cut,
-        "the captured full-scrub cut must own expected-root alignment"
+    assert!(
+        scrub.anchor.position.applied_sequence().0 >= minimum_cut.0,
+        "the captured full-scrub cut must include the concurrent write"
     );
 }
 

@@ -246,6 +246,14 @@ impl VerificationSessionRegistry {
         self.evict_to_bounds(&mut state, tenant_id);
     }
 
+    pub(crate) fn invalidate(&self, tenant_id: &TenantId) {
+        self.state
+            .lock()
+            .expect("verification session registry lock should not be poisoned")
+            .entries
+            .remove(tenant_id);
+    }
+
     fn evict_to_bounds(&self, state: &mut RegistryState, protected_tenant: &TenantId) {
         loop {
             let total_bytes = state.entries.values().fold(0usize, |total, entry| {
