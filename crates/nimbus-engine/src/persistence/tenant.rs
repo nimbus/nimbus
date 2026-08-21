@@ -48,6 +48,19 @@ macro_rules! delegate_store_method {
 }
 
 impl TenantPersistence {
+    #[cfg(test)]
+    pub(crate) fn prune_durable_journal_through_for_testing(
+        &self,
+        through: SequenceNumber,
+    ) -> Result<()> {
+        match self {
+            Self::Memory(store) => store.prune_durable_journal_through_for_testing(through),
+            _ => Err(nimbus_core::Error::InvalidInput(
+                "durable journal pruning test hook requires memory persistence".to_string(),
+            )),
+        }
+    }
+
     /// Retires tenant-specific persistence resources after engine-owned work
     /// drains and before shutdown or destructive provider deletion completes.
     ///

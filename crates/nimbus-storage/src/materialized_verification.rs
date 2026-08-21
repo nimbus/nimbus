@@ -700,6 +700,18 @@ impl MaterializedVerificationTracker {
         self.active.is_some()
     }
 
+    /// Returns the logical leaf count retained by this session tracker.
+    pub fn leaf_count(&self) -> usize {
+        self.active.as_ref().map_or(0, |active| active.index.len())
+    }
+
+    /// Returns the storage-owned resident-byte estimate for this tracker.
+    pub fn resident_bytes(&self) -> usize {
+        self.active
+            .as_ref()
+            .map_or(0, |active| active.index.resident_bytes())
+    }
+
     /// Applies a record only after its storage effects are known to be visible.
     ///
     /// A caller must never invoke this method for durable append alone. The

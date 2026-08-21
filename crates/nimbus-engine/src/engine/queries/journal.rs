@@ -74,6 +74,13 @@ where
     store.latest_sequence()
 }
 
+fn applied_sequence_for_store<S>(store: &S) -> Result<SequenceNumber>
+where
+    S: DurableJournal + ?Sized,
+{
+    store.applied_sequence()
+}
+
 impl Engine {
     async fn execute_journal_read_async<T, F>(
         self: &Arc<Self>,
@@ -119,6 +126,15 @@ impl Engine {
             read_durable_journal_from_for_store(&store, from)
         })
         .await
+    }
+
+    /// Reads the materialized applied head without exporting tenant state.
+    pub(super) async fn applied_sequence_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<SequenceNumber> {
+        self.execute_journal_read_async(tenant_id, move |store| applied_sequence_for_store(&store))
+            .await
     }
 
     /// Streams durable journal records using an ordered sequence cursor.

@@ -69,8 +69,9 @@ pub use triggers::{
     TriggerRegistry,
 };
 pub use verification::{
-    BootstrapFingerprint, ConsistencyMismatch, ConsistencyScope, ConsistencyVerificationReport,
-    SnapshotFingerprint,
+    BootstrapFingerprint, ConsistencyEscalationReason, ConsistencyMismatch, ConsistencyScope,
+    ConsistencyVerificationMode, ConsistencyVerificationReport, SnapshotFingerprint,
+    VerificationAnchor, VerificationRootFingerprint,
 };
 
 #[cfg(test)]
