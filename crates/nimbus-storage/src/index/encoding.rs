@@ -1,4 +1,4 @@
-use nimbus_core::{Result, order_preserving_number_bits};
+use nimbus_core::{Result, StoredValue, order_preserving_number_bits};
 use serde_json::Value;
 
 /// Encodes a scalar JSON value to bytes that preserve lexicographic order.
@@ -32,6 +32,14 @@ pub fn encode_index_value(value: &Value) -> Result<Vec<u8>> {
             "only null, boolean, number, and string fields are indexable in phase 2".to_string(),
         )),
     }
+}
+
+/// Encodes one adapter-lowered logical value with the existing index policy.
+///
+/// The projection preserves the current protocol-neutral key format. RR31
+/// owns any future integer-versus-float ordering change.
+pub(crate) fn encode_index_stored_value(value: &StoredValue) -> Result<Vec<u8>> {
+    encode_index_value(&value.projected_json())
 }
 
 /// Encodes an ordered tuple of scalar JSON values for composite index scans.

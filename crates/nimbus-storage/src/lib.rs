@@ -12,6 +12,7 @@ pub mod keys;
 pub mod kv;
 #[cfg(feature = "libsql")]
 pub mod libsql;
+mod materialized_position;
 pub mod materializer;
 pub mod memory;
 #[cfg(feature = "mysql")]
@@ -78,6 +79,9 @@ pub use libsql::{
     LibsqlReplicaTenantRegistration, LibsqlReplicaTenantStorage, LibsqlReplicaTenantStore,
     LibsqlReplicaWriteTransaction,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub use materialized_position::materialized_position_golden_fixture;
 pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest};
 pub use memory::{
     MemoryTenantProvider, MemoryTenantSnapshot, MemoryTenantStorage, MemoryTenantStore,

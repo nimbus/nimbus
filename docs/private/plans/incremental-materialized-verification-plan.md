@@ -3,10 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: run IMV1 from the retained IMV0 fail-before proof. Define the
-normalized logical value tree and canonical leaf codec. Repair float encoding,
-PITR preflight, opaque positions, and both Cargo-graph golden tests without
-changing protocol numeric ordering.
+Next action: monitor PR #303 and resolve any hosted failure. After it merges,
+advance IMV1 to `done` and start IMV2 from the merged main branch.
 
 ## Outcome
 
@@ -114,7 +112,7 @@ IMV0 runs first after promotion and creates the proof root and the
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | IMV0 | Pin the execution baseline, create the proof root, author the 16-condition verifier red, and capture full-verification fail-before cost. No production behavior changes. | `done` | PR #302. Work `58e46b675`, fix `14227dc59`; proof `97949afa2`, refresh `6e643ada8`. Verifier: `Summary: 3 passed, 13 failed`. |
-| IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `in_progress` | Started after IMV0 closed on 2026-08-20. |
+| IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `in_progress` | PR #303. Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`; Nimbus autoreview clean. Merge remains. |
 | IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `todo` | |
 | IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `todo` | |
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `todo` | |
@@ -444,7 +442,7 @@ The completion gate requires `Summary: 16 passed, 0 failed`.
   `crates/nimbus-storage/src/store/journal_snapshot.rs`, a concept-owned
   `crates/nimbus-storage/src/materialized_position.rs`, stored-value
   canonicalization, `crates/nimbus-firebase/src/grpc/write_stream.rs`,
-  `crates/nimbus-cli/src/provision.rs`, one
+  `crates/nimbus-cli/src/app_manifest.rs`, one
   shipped-graph test under `nimbus-engine`, the archived SIC plan, and
   `docs/private/architecture/storage/persistence-engine-baseline.md`.
 - Steps:
@@ -467,7 +465,7 @@ The completion gate requires `Summary: 16 passed, 0 failed`.
   10. Add one literal fixture to storage-only and shipped Cargo graphs.
   11. Delete duplicate, digest-only, or raw-JSON canonicalizers.
   12. Delete every incorrect claim that `preserve_order` stays disabled. This
-      includes the workspace manifest and `crates/nimbus-cli/src/provision.rs`.
+      includes the workspace manifest and `crates/nimbus-cli/src/app_manifest.rs`.
   13. Force-track the governing persistence specification and add the SIC4
       erratum with the failing mechanism and successor proof root.
 - Acceptance:
@@ -723,7 +721,7 @@ crates/nimbus-engine/src/engine/objects.rs,
 crates/nimbus-engine/src/engine/queries/verification.rs, and
 crates/nimbus-engine/src/replica.rs. Work in
 /Users/jack/src/github.com/nimbus/nimbus-worktrees/incremental-materialized-verification
-on branch codex/incremental-materialized-verification. Chat history is
+on branch codex/imv1-canonical-materialized-values. Chat history is
 not progress state. Resume from the status ledger, the execution log,
 and git state. If compaction happens, continue from the plan and git
 state rather than restarting. Loop: keep one task in_progress,
@@ -772,7 +770,7 @@ Append rows at the end. This section stays last.
 | 2026-08-19 | meta | refined | Rebased the baseline onto `5fb9284cf7e313cfc0a4901835d7bd6144e297c8`, which committed the AGENTS.md rewrite and the verification-runbook hazards. The stale object-writer sentence survived that commit, so IMV4 still owns it. No implementation started. |
 | 2026-08-19 | meta | refined | Strengthened IMV-D2 and IMV1: adapters lower values once into one normalized Nimbus logical tree used by persistence, semantic equality, index-key derivation, and hashing; the canonical codec only serializes that model. Routed repository-wide opaque durable outcomes and provider-capability sets to the active architecture-review control plane as IMVR1. No implementation started. |
 | 2026-08-19 | meta | refined | Closed the IMVR1 ownership gap by adding deferred successor row RR30 to the active architecture-review plan. RR30 activates after IMV1 and BLI3 merge, preserves valid closed enums, and routes every constructible invalid state to a repair row. No implementation started. |
-| 2026-08-19 | meta | refined | Applied the required Fable corrections. Led IMV1 with the shipped-graph `preserve_order` divergence and named the duplicate false claim in `crates/nimbus-cli/src/provision.rs`. Recorded that periodic verification does not exist today. Required the threshold 1 margin and the 192-bytes-per-leaf derivation. No implementation started. |
+| 2026-08-19 | meta | refined | Applied the required Fable corrections. Led IMV1 with the shipped-graph `preserve_order` divergence and named the duplicate false claim in `crates/nimbus-cli/src/app_manifest.rs`. Recorded that periodic verification does not exist today. Required the threshold 1 margin and the 192-bytes-per-leaf derivation. No implementation started. |
 | 2026-08-19 | IMVR2 | routed | Rejected the proposed universal numeric type tag because `IndexDefinition` carries no ordering profile and the tag cannot satisfy both Convex and unified numeric contracts. Routed cross-adapter numeric query and index semantics to successor row RR31. Rejected Convex `SetDigest` because its source states that it is not cryptographically strong and can collide. No implementation started. |
 | 2026-08-19 | meta | corrected | Updated the landing bundle and promotion gate to name both successor rows, RR30 and RR31. The owner-corroborated Fable audit adds no other open correction. No implementation started. |
 | 2026-08-19 | meta | corrected | Applied the second contract audit. Removed IMV0 from the promotion gate and sequenced it first after promotion. Made IMV0 acceptance retain the benchmark target explicitly. Split verifier conditions 8 through 14 as Merkle-only with a not-applicable rule and required conditions 15 and 16 under both verdicts. Moved the status ledger before Dependencies for cold resume. Named RR31 in the successor plan's resume pointer. No implementation started. |
@@ -782,3 +780,6 @@ Append rows at the end. This section stays last.
 | 2026-08-20 | IMV0 | started | The owner promoted the plan to `active`. IMV0 is the only `in_progress` task at baseline `137cc632a`. |
 | 2026-08-20 | IMV0 | completed | PR #302 contains the retained 36-rung full-verifier harness from work `58e46b675` and the safe default Cargo benchmark output from `14227dc59`. Proof commits `97949afa2` and `6e643ada8` record both feature graphs, three review-only digest probes, the quick cost baseline, and `Summary: 3 passed, 13 failed`. The closing allowlist, format, Clippy, docs, patch, and writing gates pass. Nimbus autoreview is clean. No production path or package changed, and no review-only probe remains. |
 | 2026-08-20 | IMV1 | started | Advanced mandatory canonical-value, codec, float, PITR, opaque-position, and cross-graph golden work. IMV1 is the only `in_progress` task. |
+| 2026-08-20 | IMV1 | implemented | Work `0da288204` adds the version 2 streaming codec, shared logical-value consumers, total floats, GeoPoint admission, opaque positions, PITR preflight, cross-graph golden tests, governing specification, and SIC4 erratum. Proof `ce2ea3d8e` records `Summary: 6 passed, 10 failed`. The full workspace run passed 7,538 of 7,539 tests; its unchanged MongoDB report failure passed three isolated reruns. Pre-PR autoreview and PR merge remain. |
+| 2026-08-20 | IMV1 | reviewed | Nimbus pre-PR autoreview found no actionable defect. It confirmed prefix-free codec framing, Cargo-graph-independent ordering, byte-preserving index derivation, and pre-write position validation. The approved negative-zero normalization remains explicit. PR publication and merge remain. |
+| 2026-08-20 | IMV1 | published | Opened PR #303 from `codex/imv1-canonical-materialized-values`. Hosted checks and merge remain. |

@@ -82,7 +82,7 @@ impl Document {
     /// the shared typed metadata.
     pub fn set_typed_field(&mut self, name: impl Into<String>, value: impl Into<StoredValue>) {
         let name = name.into();
-        let value = value.into();
+        let value = value.into().canonical();
         self.fields.insert(name.clone(), value.projected_json());
         self.typed_fields.insert(name, value);
     }

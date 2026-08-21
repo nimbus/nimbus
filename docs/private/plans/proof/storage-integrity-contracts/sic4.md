@@ -76,13 +76,15 @@ pub struct MaterializedPosition {
 }
 ```
 
-**What the digest covers.** `CanonicalMaterializedState` sorts all four
-collections — identities by (namespace, table, table_id, state), schema tables
-by name, documents by (table, id), scheduled execution ids lexically — and the
-digest is SHA-256 over its JSON. `serde_json`'s `preserve_order` is off
-workspace-wide, so a document's own field map is a `BTreeMap` and already
-canonical; the schema map was the only unordered input, and sorting it is what
-makes the digest a function of the state.
+**What the digest covered at SIC4 closeout.** `CanonicalMaterializedState`
+sorted all four outer collections — identities by (namespace, table, table_id,
+state), schema tables by name, documents by (table, id), and scheduled
+execution ids lexically — then hashed JSON. The closeout claim that
+`serde_json/preserve_order` was absent from the workspace was incorrect: the
+shipped graph enabled it through `workspace-hack`, so document map order stayed
+feature-sensitive. IMV1 records this erratum and replaces JSON hashing with the
+version 2 logical codec. The retained SIC4 evidence remains evidence for the
+outer-order and sequence-binding defects it actually closed.
 
 **What the digest does not cover, and why.** Sequences are absent from
 `CanonicalMaterializedState`: it answers *what state*, and `MaterializedPosition`

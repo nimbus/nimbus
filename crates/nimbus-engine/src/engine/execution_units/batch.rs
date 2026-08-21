@@ -1323,6 +1323,9 @@ fn write_array_elements(document: &mut Document, field_name: &str, values: Vec<S
 /// `Json`; a `Map` or `List` node therefore still carries typed metadata
 /// somewhere and can never equal a plain `Json` node.
 fn firestore_transform_values_equivalent(left: &StoredValue, right: &StoredValue) -> bool {
+    if left.logical_eq(right) {
+        return true;
+    }
     match (left, right) {
         (StoredValue::Json { value: left }, StoredValue::Json { value: right }) => {
             json_transform_values_equivalent(left, right)

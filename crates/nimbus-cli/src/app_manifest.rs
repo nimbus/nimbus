@@ -241,10 +241,10 @@ pub(crate) fn set_wiring_record(
     Ok(Some(render_document(&top, unit)))
 }
 
-/// A JSON object's entries in source order; values keep their original raw
-/// text so one entry can be rewritten without reformatting the rest. (The
-/// workspace `serde_json` deliberately does not enable `preserve_order`, so
-/// `serde_json::Map` cannot do this.)
+/// A JSON object's entries in source order. Values keep their original raw
+/// text, so one entry can change without reformatting the rest.
+/// `serde_json::Map` preserves order in the shipped graph, but it does not
+/// retain each value's source text.
 struct ObjectEntries(Vec<(String, Box<serde_json::value::RawValue>)>);
 
 type Entries = Vec<(String, Box<serde_json::value::RawValue>)>;

@@ -106,8 +106,8 @@ fn check_acknowledgement_survives(
         return Err(format!(
             "state digest diverged at unchanged applied sequence {}: acknowledged {}, reopened {}",
             acknowledged.applied_head.0,
-            acknowledged.position.state_digest,
-            reopened.position.state_digest
+            acknowledged.position.state_digest(),
+            reopened.position.state_digest()
         ));
     }
     Ok(())

@@ -241,7 +241,7 @@ where
         .export_materialized_position()
         .expect("materialized position should export");
     assert_eq!(
-        position.applied_sequence,
+        position.applied_sequence(),
         SequenceNumber(3),
         "the position must report the sequence the provider actually applied"
     );

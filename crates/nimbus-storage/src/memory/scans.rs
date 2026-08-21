@@ -8,7 +8,7 @@ use nimbus_core::{
 use serde_json::Value;
 
 use crate::IndexRangeBound;
-use crate::index::{encode_index_tuple, encode_index_value};
+use crate::index::{encode_index_tuple, encode_index_value, encoded_index_tuple_for_document};
 
 use super::MemoryTenantStore;
 use super::state::MemoryState;
@@ -91,7 +91,8 @@ fn sorted_index_matches(
         let Some(values) = indexed_values(&document, index) else {
             continue;
         };
-        let encoded = encode_index_tuple(&values)?;
+        let encoded = encoded_index_tuple_for_document(&document, index)?
+            .expect("indexed values were present on the document");
         if matches(&values, &encoded)? {
             rows.push((encoded, document.id.clone(), document));
         }

@@ -7,8 +7,8 @@ use nimbus_core::{
 use serde_json::json;
 
 use crate::{
-    MaterializedJournalSnapshot, NoopFaultInjector, PointInTimeRestoreTarget, RetentionGcConfig,
-    TableIdentitySnapshotEntry, TenantStore,
+    MaterializedJournalSnapshot, MaterializedPosition, NoopFaultInjector, PointInTimeRestoreTarget,
+    RetentionGcConfig, TableIdentitySnapshotEntry, TenantStore,
 };
 
 fn tasks_schema() -> TableSchema {
@@ -658,11 +658,13 @@ fn same_sequence_different_state_has_different_materialized_position() {
     // The sequence alone cannot tell these apart. That is exactly the silence
     // this contract closes: equal sequence, unequal state, unequal position.
     assert_eq!(
-        baseline_position.applied_sequence, drifted_position.applied_sequence,
+        baseline_position.applied_sequence(),
+        drifted_position.applied_sequence(),
         "the drift must not move the applied sequence, or the test proves nothing"
     );
     assert_ne!(
-        baseline_position.state_digest, drifted_position.state_digest,
+        baseline_position.state_digest(),
+        drifted_position.state_digest(),
         "a document change at an unchanged sequence must change the state digest"
     );
     assert_ne!(
@@ -755,8 +757,11 @@ fn pitr_import_rejects_wrong_target_digest() {
     // journal tail all still agree, so a sequence-only target would accept this
     // restore without noticing that the state it produced is not the state the
     // archive promised.
-    archive.target_position.state_digest =
-        "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    let mut archive_json = serde_json::to_value(&archive).expect("archive should serialize");
+    archive_json["target_position"]["state_digest"] = serde_json::Value::String(
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+    );
+    archive = serde_json::from_value(archive_json).expect("tampered archive should deserialize");
     let restored = TenantStore::create_in_memory().expect("restore store should open");
     let error = restored
         .import_point_in_time_restore_archive(&archive)
@@ -766,4 +771,64 @@ fn pitr_import_rejects_wrong_target_digest() {
         message.contains("point-in-time restore position mismatch"),
         "expected a position mismatch, saw {message}"
     );
+}
+
+#[test]
+fn pitr_rejects_invalid_target_position_before_first_write() {
+    let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
+    let live =
+        TenantStore::create_in_memory_with_simulation(clock.clone(), Arc::new(NoopFaultInjector))
+            .expect("live store should open");
+    let table_schema = tasks_schema();
+    live.replace_table_schema(&table_schema)
+        .expect("table schema should persist");
+
+    clock.set(Timestamp(1_100));
+    let document = nimbus_core::Document::new(
+        table_schema.table.clone(),
+        serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+    );
+    let commit = live
+        .insert_with_indexes(&document, &table_schema.indexes)
+        .expect("insert should succeed");
+    let archive = live
+        .export_point_in_time_restore_archive(
+            PointInTimeRestoreTarget::Sequence(commit.sequence),
+            RetentionGcConfig::retain_all(),
+        )
+        .expect("archive should export");
+
+    let digest = archive.target_position.state_digest().to_string();
+    let cases = [
+        (
+            MaterializedPosition::from_unchecked(1, archive.target_sequence, digest.clone()),
+            "unsupported materialized position version 1",
+        ),
+        (
+            MaterializedPosition::new(SequenceNumber(archive.target_sequence.0 + 1), digest)
+                .expect("mismatched sequence position should be structurally valid"),
+            "does not match target sequence",
+        ),
+    ];
+
+    for (target_position, expected_error) in cases {
+        let mut malformed = archive.clone();
+        malformed.target_position = target_position;
+        let destination = TenantStore::create_in_memory().expect("destination store should open");
+
+        let error = destination
+            .import_point_in_time_restore_archive(&malformed)
+            .expect_err("an invalid target position must fail before replay");
+        assert!(
+            error.to_string().contains(expected_error),
+            "expected {expected_error:?}, saw {error}"
+        );
+        let destination_snapshot = destination
+            .export_materialized_journal_snapshot()
+            .expect("destination snapshot should export");
+        assert_eq!(destination_snapshot.applied_sequence, SequenceNumber(0));
+        assert_eq!(destination_snapshot.durable_head, SequenceNumber(0));
+        assert!(destination_snapshot.documents.is_empty());
+        assert!(destination_snapshot.schema.tables.is_empty());
+    }
 }

@@ -65,6 +65,7 @@ impl ShadowMaterializerManifest {
                 self.compaction_threshold_records, config.compaction_threshold_records
             )));
         }
+        self.checkpoint_position.validate()?;
         // The position, not the sequence: a checkpoint whose content drifted
         // while its applied sequence stayed put must not recover as valid.
         let checkpoint_position = checkpoint.materialized_position()?;
@@ -75,10 +76,11 @@ impl ShadowMaterializerManifest {
                 describe_materialized_position(&checkpoint_position)
             )));
         }
-        if self.current_sequence.0 < self.checkpoint_position.applied_sequence.0 {
+        if self.current_sequence.0 < self.checkpoint_position.applied_sequence().0 {
             return Err(Error::InvalidInput(format!(
                 "shadow materializer current sequence {} is behind checkpoint sequence {}",
-                self.current_sequence.0, self.checkpoint_position.applied_sequence.0
+                self.current_sequence.0,
+                self.checkpoint_position.applied_sequence().0
             )));
         }
 
@@ -88,7 +90,7 @@ impl ShadowMaterializerManifest {
             )
         })?;
         let expected_pending =
-            self.current_sequence.0 - self.checkpoint_position.applied_sequence.0;
+            self.current_sequence.0 - self.checkpoint_position.applied_sequence().0;
         if pending_record_count != expected_pending {
             return Err(Error::InvalidInput(format!(
                 "shadow materializer manifest pending count {} does not match sequence gap {}",
@@ -452,7 +454,7 @@ impl ShadowMaterializer {
             let expected_first = self
                 .manifest
                 .checkpoint_position
-                .applied_sequence
+                .applied_sequence()
                 .0
                 .saturating_add(1);
             if first_record.sequence.0 != expected_first {
@@ -470,12 +472,12 @@ impl ShadowMaterializer {
                 )));
             }
         } else if self.manifest.current_sequence
-            != self.manifest.checkpoint_position.applied_sequence
+            != self.manifest.checkpoint_position.applied_sequence()
         {
             return Err(Error::InvalidInput(format!(
                 "shadow materializer has no pending tail but current sequence {} differs from checkpoint sequence {}",
                 self.manifest.current_sequence.0,
-                self.manifest.checkpoint_position.applied_sequence.0
+                self.manifest.checkpoint_position.applied_sequence().0
             )));
         }
         Ok(())

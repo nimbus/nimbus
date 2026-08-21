@@ -152,10 +152,9 @@ serial_test = "3"
 oxc = "=0.136.0"
 object_store = { version = "0.14.0", default-features = false, features = ["aws", "fs"] }
 serde = { version = "1", features = ["derive"] }
-# `raw_value` is additive-only (exposes `serde_json::value::RawValue`); it does
-# NOT change Map ordering or any existing serialization behavior. Used by the
-# CLI's order-preserving package.json dependency wiring. `preserve_order` stays
-# off: storage serializes documents through serde_json and must not reorder.
+# `raw_value` exposes `serde_json::value::RawValue` for the CLI's package.json
+# dependency wiring. The shipped graph also enables `preserve_order` through
+# `workspace-hack`, so storage codecs must define their own canonical map order.
 serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
 semver = "1"
