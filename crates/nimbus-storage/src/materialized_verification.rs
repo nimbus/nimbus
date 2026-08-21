@@ -4,12 +4,14 @@
 //! fail-closed transition boundary reviewable as a unit.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use nimbus_core::{
-    Error, Result, SchemaChangeEvent, SequenceNumber, TenantEventKind, TenantEventRecord, WriteOp,
+    Error, Result, SchemaChangeEvent, SequenceNumber, TableId, TenantEventKind, TenantEventRecord,
+    WriteOp,
 };
 use sha2::{Digest, Sha256};
 
@@ -615,17 +617,52 @@ pub struct MaterializedVerificationInvalidator {
     generation: Arc<AtomicU64>,
 }
 
+/// Keeps a replacement generation non-current for its complete mutation
+/// window. Storage replacement paths are single-writer operations, so a
+/// concurrent guard request is a contract error rather than a second writer.
+pub(crate) struct MaterializedVerificationUpdateGuard {
+    invalidator: MaterializedVerificationInvalidator,
+}
+
 impl MaterializedVerificationInvalidator {
     pub fn generation(&self) -> MaterializedVerificationGeneration {
         MaterializedVerificationGeneration(self.generation.load(AtomicOrdering::Acquire))
     }
 
-    pub fn invalidate(&self) {
-        self.generation.fetch_add(1, AtomicOrdering::AcqRel);
+    pub(crate) fn begin_update(&self) -> Result<MaterializedVerificationUpdateGuard> {
+        let current = self.generation.load(AtomicOrdering::Acquire);
+        if current & 1 != 0 {
+            return Err(Error::Internal(
+                "concurrent materialized verification replacement".to_string(),
+            ));
+        }
+        self.generation
+            .compare_exchange(
+                current,
+                current.wrapping_add(1),
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            )
+            .map_err(|_| {
+                Error::Internal("concurrent materialized verification replacement".to_string())
+            })?;
+        Ok(MaterializedVerificationUpdateGuard {
+            invalidator: self.clone(),
+        })
     }
 
     pub fn is_current(&self, generation: MaterializedVerificationGeneration) -> bool {
-        self.generation() == generation
+        generation.0 & 1 == 0 && self.generation() == generation
+    }
+}
+
+impl Drop for MaterializedVerificationUpdateGuard {
+    fn drop(&mut self) {
+        let previous = self
+            .invalidator
+            .generation
+            .fetch_add(1, AtomicOrdering::AcqRel);
+        debug_assert_eq!(previous & 1, 1);
     }
 }
 
@@ -633,15 +670,22 @@ impl MaterializedVerificationInvalidator {
 struct ActiveVerificationIndex {
     index: MaterializedVerificationIndex,
     applied_sequence: SequenceNumber,
+    table_identities: HashMap<TableId, TableIdentitySnapshotEntry>,
+}
+
+struct MaterializedVerificationSeed {
+    leaves: Vec<(LogicalLeafKey, Vec<u8>)>,
+    table_identities: HashMap<TableId, TableIdentitySnapshotEntry>,
 }
 
 impl MaterializedVerificationTracker {
     pub fn from_snapshot(snapshot: &MaterializedJournalSnapshot) -> Result<Self> {
-        let leaves = canonical_snapshot_leaves(snapshot)?;
+        let seed = canonical_snapshot_seed(snapshot)?;
         Ok(Self {
             active: Some(ActiveVerificationIndex {
-                index: MaterializedVerificationIndex::from_leaves(leaves)?,
+                index: MaterializedVerificationIndex::from_leaves(seed.leaves)?,
                 applied_sequence: snapshot.applied_sequence,
+                table_identities: seed.table_identities,
             }),
         })
     }
@@ -681,7 +725,7 @@ impl MaterializedVerificationTracker {
             self.invalidate();
             return MaterializedDeltaApplyOutcome::Invalidated;
         }
-        let deltas = match deltas_for_validated_record(record) {
+        let deltas = match deltas_for_validated_record(record, &mut active.table_identities) {
             Ok(deltas) => deltas,
             Err(_) => {
                 self.invalidate();
@@ -719,10 +763,13 @@ impl MaterializedVerificationTracker {
     }
 }
 
-fn deltas_for_validated_record(record: &TenantEventRecord) -> Result<Vec<MaterializedStateDelta>> {
+fn deltas_for_validated_record(
+    record: &TenantEventRecord,
+    table_identities: &mut HashMap<TableId, TableIdentitySnapshotEntry>,
+) -> Result<Vec<MaterializedStateDelta>> {
     let mut deltas = Vec::new();
     if record.events.is_empty() {
-        append_document_deltas(&record.writes, &mut deltas)?;
+        append_document_deltas(&record.writes, table_identities, &mut deltas)?;
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
             append_scheduled_execution_delta(execution_id, &mut deltas)?;
         }
@@ -731,21 +778,21 @@ fn deltas_for_validated_record(record: &TenantEventRecord) -> Result<Vec<Materia
     for event in &record.events {
         match event {
             TenantEventKind::DocumentWrite { writes } => {
-                append_document_deltas(writes, &mut deltas)?;
+                append_document_deltas(writes, table_identities, &mut deltas)?;
             }
             TenantEventKind::SchemaChange { change } => match change.as_ref() {
                 SchemaChangeEvent::SetTable {
                     table_id, current, ..
                 } => {
-                    let identity = TableIdentitySnapshotEntry::default_namespace(
-                        current.table.clone(),
-                        table_id.clone(),
-                    );
-                    deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
-                        LogicalLeafKind::TableIdentity,
-                        canonical_table_identity_identity(&identity)?,
-                        canonical_table_identity_value(&identity)?,
-                    )?));
+                    let identity =
+                        table_identity_for_write(&current.table, table_id, table_identities, true)?;
+                    if let Some(identity) = identity {
+                        deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+                            LogicalLeafKind::TableIdentity,
+                            canonical_table_identity_identity(&identity)?,
+                            canonical_table_identity_value(&identity)?,
+                        )?));
+                    }
                     deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
                         LogicalLeafKind::Schema,
                         canonical_schema_identity(current)?,
@@ -785,13 +832,23 @@ fn deltas_for_validated_record(record: &TenantEventRecord) -> Result<Vec<Materia
 
 fn append_document_deltas(
     writes: &[WriteOp],
+    table_identities: &mut HashMap<TableId, TableIdentitySnapshotEntry>,
     deltas: &mut Vec<MaterializedStateDelta>,
 ) -> Result<()> {
     for write in writes {
-        let identity = TableIdentitySnapshotEntry::default_namespace(
-            write.table.clone(),
-            write.table_id.clone(),
-        );
+        let allow_create = write.previous.is_none() && write.current.is_some();
+        let Some(identity) = table_identity_for_write(
+            &write.table,
+            &write.table_id,
+            table_identities,
+            allow_create,
+        )?
+        else {
+            // Canonical snapshots contain documents only for active table
+            // identities. Hidden and deleting lineage writes therefore do not
+            // change the root-covered document set.
+            continue;
+        };
         deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
             LogicalLeafKind::TableIdentity,
             canonical_table_identity_identity(&identity)?,
@@ -818,6 +875,32 @@ fn append_document_deltas(
     Ok(())
 }
 
+fn table_identity_for_write(
+    table: &nimbus_core::TableName,
+    table_id: &TableId,
+    table_identities: &mut HashMap<TableId, TableIdentitySnapshotEntry>,
+    allow_create: bool,
+) -> Result<Option<TableIdentitySnapshotEntry>> {
+    if let Some(identity) = table_identities.get(table_id) {
+        if identity.table != *table {
+            return Err(Error::Internal(format!(
+                "materialized write table {} disagrees with table id {} owned by {}",
+                table, table_id, identity.table
+            )));
+        }
+        return Ok(identity.is_active().then(|| identity.clone()));
+    }
+    if !allow_create {
+        return Err(Error::Internal(format!(
+            "materialized write for unknown table identity {} cannot be exact",
+            table_id
+        )));
+    }
+    let identity = TableIdentitySnapshotEntry::default_namespace(table.clone(), table_id.clone());
+    table_identities.insert(table_id.clone(), identity.clone());
+    Ok(Some(identity))
+}
+
 fn append_scheduled_execution_delta(
     execution_id: &str,
     deltas: &mut Vec<MaterializedStateDelta>,
@@ -830,9 +913,9 @@ fn append_scheduled_execution_delta(
     Ok(())
 }
 
-fn canonical_snapshot_leaves(
+fn canonical_snapshot_seed(
     snapshot: &MaterializedJournalSnapshot,
-) -> Result<Vec<(LogicalLeafKey, Vec<u8>)>> {
+) -> Result<MaterializedVerificationSeed> {
     let state = snapshot.canonical_state()?;
     let mut leaves = Vec::with_capacity(
         state.table_identities().len()
@@ -840,7 +923,9 @@ fn canonical_snapshot_leaves(
             + state.documents().len()
             + state.scheduled_execution_ids().len(),
     );
+    let mut table_identities = HashMap::with_capacity(state.table_identities().len());
     for identity in state.table_identities() {
+        table_identities.insert(identity.table_id.clone(), identity.clone());
         leaves.push((
             LogicalLeafKey::new(
                 LogicalLeafKind::TableIdentity,
@@ -873,7 +958,10 @@ fn canonical_snapshot_leaves(
             canonical_scheduled_execution_value(execution_id)?,
         ));
     }
-    Ok(leaves)
+    Ok(MaterializedVerificationSeed {
+        leaves,
+        table_identities,
+    })
 }
 
 fn empty_hash(version: VerificationRootVersion) -> Hash {
@@ -899,7 +987,7 @@ mod tests {
 
     use nimbus_core::{
         Document, DocumentId, Schema, TableId, TableLifecycleEvent, TableName, TableSchema,
-        Timestamp, WriteOp, WriteOpType,
+        TableState, Timestamp, WriteOp, WriteOpType,
     };
     use serde_json::json;
 
@@ -1053,6 +1141,27 @@ mod tests {
             .restore_materialized_journal_from_snapshot(&snapshot)
             .expect("sqlite snapshot should restore");
         assert!(!sqlite.materialized_verification_generation_is_current(sqlite_generation));
+    }
+
+    #[test]
+    fn replacement_generation_is_never_current_during_update() {
+        let invalidator = MaterializedVerificationInvalidator::default();
+        let before = invalidator.generation();
+        assert!(invalidator.is_current(before));
+
+        let update = invalidator
+            .begin_update()
+            .expect("first replacement should begin");
+        let during = invalidator.generation();
+        assert!(!invalidator.is_current(before));
+        assert!(!invalidator.is_current(during));
+        assert!(invalidator.begin_update().is_err());
+
+        drop(update);
+        let after = invalidator.generation();
+        assert!(invalidator.is_current(after));
+        assert!(!invalidator.is_current(before));
+        assert!(!invalidator.is_current(during));
     }
 
     #[test]
@@ -1213,6 +1322,69 @@ mod tests {
             .expect("snapshot tracker should rebuild");
             assert_eq!(tracker.position(), rebuilt.position());
         }
+    }
+
+    #[test]
+    fn hidden_lineage_document_write_does_not_enter_active_root() {
+        let table = TableName::new("tasks").expect("table should be valid");
+        let active_id = TableId::from_str("active-table").expect("table id should be valid");
+        let hidden_id = TableId::from_str("hidden-table").expect("table id should be valid");
+        let identities = vec![
+            TableIdentitySnapshotEntry::default_namespace(table.clone(), active_id),
+            TableIdentitySnapshotEntry {
+                namespace: crate::table_identity::hidden_table_namespace(&hidden_id),
+                table: table.clone(),
+                table_id: hidden_id.clone(),
+                state: TableState::Hidden,
+            },
+        ];
+        let checkpoint = MaterializedJournalSnapshot {
+            version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
+            applied_sequence: SequenceNumber(1),
+            durable_head: SequenceNumber(1),
+            table_identities: identities.clone(),
+            schema: Schema::default(),
+            documents: Vec::new(),
+            scheduled_execution_ids: Vec::new(),
+        };
+        let hidden_document = Document::with_id_at(
+            DocumentId::from_key("hidden-task").expect("document id should be valid"),
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("hidden"))]),
+            Timestamp(10),
+        );
+        let record = TenantEventRecord::new(
+            SequenceNumber(2),
+            Timestamp(11),
+            vec![WriteOp {
+                table,
+                table_id: hidden_id,
+                op_type: WriteOpType::Insert,
+                doc_id: hidden_document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(hidden_document),
+            }],
+            None,
+        )
+        .expect("hidden write record should build");
+        let expected = MaterializedJournalSnapshot {
+            applied_sequence: SequenceNumber(2),
+            durable_head: SequenceNumber(2),
+            table_identities: identities,
+            ..checkpoint.clone()
+        };
+
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(&checkpoint)
+            .expect("checkpoint tracker should build");
+        assert!(matches!(
+            tracker.apply_applied_record(&record),
+            MaterializedDeltaApplyOutcome::Advanced(_)
+        ));
+        let rebuilt = MaterializedVerificationTracker::from_snapshot(&expected)
+            .expect("expected tracker should build");
+        assert_eq!(tracker.position(), rebuilt.position());
     }
 
     #[test]

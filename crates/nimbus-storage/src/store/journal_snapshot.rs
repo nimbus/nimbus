@@ -325,7 +325,7 @@ impl TenantStore {
     ) -> Result<()> {
         snapshot.validate()?;
         self.ensure_materialized_journal_restore_target_is_empty()?;
-        self.materialized_verification.invalidate();
+        let _verification_update = self.materialized_verification.begin_update()?;
 
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
         for identity in &snapshot.table_identities {

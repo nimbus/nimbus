@@ -839,7 +839,7 @@ fn all_storage_writers_declare_their_materialized_verification_effect() {
         if *effect == VerificationEffect::Invalidate {
             let body = source_function(&source, symbol);
             assert!(
-                body.contains("materialized_verification.invalidate()")
+                body.contains("materialized_verification.begin_update()")
                     || body.contains("restore_materialized_journal_from_snapshot"),
                 "verification replacement writer {path}:{symbol} declares invalidation but does \
                  not publish it or delegate to the checked restore path"

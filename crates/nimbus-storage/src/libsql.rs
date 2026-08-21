@@ -635,8 +635,8 @@ impl LibsqlReplicaTenantStore {
         #[cfg(test)]
         if let Some(refresh_override) = &self.refresh_override {
             // A test replacement stands in for either physical refresh path.
-            // Invalidate before it can mutate the cache, matching production.
-            self.materialized_verification.invalidate();
+            // Keep its full mutation window non-current, matching production.
+            let _verification_update = self.materialized_verification.begin_update()?;
             return refresh_override(self);
         }
 
@@ -710,6 +710,7 @@ impl LibsqlReplicaTenantStore {
             store: next_store.clone(),
             replica_path: replica_path.clone(),
         };
+        let _verification_update = self.materialized_verification.begin_update()?;
         let previous = {
             let mut guard = self
                 .active_cache
@@ -717,9 +718,6 @@ impl LibsqlReplicaTenantStore {
                 .map_err(|_| Error::Internal("libsql replica cache lock poisoned".to_string()))?;
             let previous = guard.clone();
             *guard = next_handle;
-            // Publish the generation change while the same exclusive lock
-            // still hides the replacement cache from readers.
-            self.materialized_verification.invalidate();
             previous
         };
         self.retired_caches
@@ -748,10 +746,9 @@ impl LibsqlReplicaTenantStore {
             });
         }
 
-        // Reconciliation mutates the active cache in place. Invalidate first,
-        // so no session can certify the old root after the first new row is
-        // visible, including on a later apply failure.
-        self.materialized_verification.invalidate();
+        // Reconciliation mutates the active cache in place. Keep the complete
+        // window non-current, including a later apply failure.
+        let verification_update = self.materialized_verification.begin_update()?;
 
         if local_progress.durable_head.0 < required_sequence {
             let next_sequence = SequenceNumber(local_progress.durable_head.0.saturating_add(1));
@@ -772,6 +769,7 @@ impl LibsqlReplicaTenantStore {
         self.refresh_needed.store(true, Ordering::Release);
         self.freshness_metrics
             .note_refresh_attempt_path(LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot);
+        drop(verification_update);
         let snapshot = self.refresh_local_cache_from_snapshot()?;
         Ok(ReplicaRefreshOutcome {
             path: LibsqlReplicaRefreshPath::IncrementalFallbackToSnapshot,

@@ -482,7 +482,7 @@ impl MemoryTenantStore {
                         .to_string(),
                 ));
             }
-            self.materialized_verification.invalidate();
+            let _verification_update = self.materialized_verification.begin_update()?;
             state.restore_snapshot(snapshot)
         })
     }
