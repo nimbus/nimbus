@@ -21,6 +21,8 @@ complete.
   million-leaf memory and depth evidence.
 - `imv4.md` records the writer inventory, applied-delta contract, replacement
   invalidation, and focused acceptance results.
+- `imv5.md` records the bounded-session contract, full-scrub anchor semantics,
+  escalation behavior, cache limits, and focused acceptance results.
 - Later task proofs stay beside these files and remain inputs to `verify.sh`.
 
 The execution baseline is

@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: land the archive-gate correction from `codex/imv4-ci-taxonomy`,
-then mark IMV4 done and advance to IMV5 bounded verification sessions.
+Next action: review and publish IMV5 bounded verification sessions from
+`codex/imv5-bounded-verification-sessions`.
 
 ## Outcome
 
@@ -115,8 +115,8 @@ IMV0 runs first after promotion and creates the proof root and the
 | IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `done` | PR #303 merged as `9c807015a`. Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`; Nimbus autoreview and hosted checks clean. |
 | IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `done` | PR #304 merged as `a7667ec8f`. Work `7fec8c579`; proof `2e6b30cc3`. Verdict: `MERKLE_REQUIRED`. Verifier: `Summary: 7 passed, 9 failed`; Nimbus autoreview clean. |
 | IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `done` | PR #305 merged as `04b32d8b5`. Work `139a50928`, hardening `70cbe14fc` and `a6a60a4dc`; proof `030802c52`, refresh `74917387b`. Nine focused tests and the million-leaf gate pass. Verifier: `Summary: 8 passed, 8 failed`; Nimbus autoreview clean. |
-| IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `in_progress` | PR #306 merged as `2a862829c`; archive-gate correction is on `codex/imv4-ci-taxonomy`. |
-| IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `todo` | |
+| IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `done` | PR #306 merged as `2a862829c`; archive-gate correction PR #307 merged as `eb2997083b`. Verifier: `Summary: 9 passed, 7 failed`. |
+| IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `in_progress` | Work `a7c678351`; proof is in `imv5.md`. Verifier: `Summary: 11 passed, 5 failed`. Review and publication remain. |
 | IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `todo` | |
 | IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `todo` | |
 | IMV9 | After the final pull request merges, archive this plan, retain its proof root, and remove its active index entry. | `todo` | |
@@ -802,3 +802,6 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV4 | published | Opened PR #306 from `codex/imv4-materialized-writer-deltas`. Hosted checks and merge remain. |
 | 2026-08-21 | IMV4 | CI corrected | The hosted archive gate rejected two test-infrastructure omissions. The writer census now uses Cargo's runtime manifest environment, and the dedicated million-leaf test has an ignored-family ledger row. The taxonomy check and both affected tests pass. |
 | 2026-08-21 | IMV4 | merged pending correction | Auto-merge landed PR #306 as `2a862829c` before the non-required archive gate finished. The fix commit reached the closed source branch after merge. Branch `codex/imv4-ci-taxonomy` carries only that correction from merged main. |
+| 2026-08-21 | IMV4 | completed | Correction PR #307 passed the archive build, canonical inventory, test-universe, taxonomy, and required hosted gates. It merged as `eb2997083b`. IMV4 is terminal. |
+| 2026-08-21 | IMV5 | started | Created `codex/imv5-bounded-verification-sessions` from corrected main `eb2997083b`. IMV5 is the only `in_progress` task. |
+| 2026-08-21 | IMV5 | implemented | Work `a7c678351` adds per-tenant bounded root sessions, exact applied-suffix advance, full-scrub anchors, explicit modes and escalation reasons, retention rebuild, mismatch failure, and count, byte, idle, and anchor limits. Focused lanes pass 5 consistency, 3 session, and 22 storage tests. The verifier reports `Summary: 11 passed, 5 failed`. Review and publication remain. |
