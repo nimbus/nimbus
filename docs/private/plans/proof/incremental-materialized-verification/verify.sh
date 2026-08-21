@@ -28,6 +28,15 @@ test_ok() {
   [ "$status" -eq 0 ] && [ "$ran" -ge 1 ]
 }
 
+ignored_integration_test_ok() {
+  local krate="$1" target="$2" filter="$3"
+  local out status ran
+  out="$(cargo test -p "$krate" --test "$target" "$filter" -- --ignored --nocapture 2>&1)"
+  status=$?
+  ran="$(printf '%s\n' "$out" | grep -cE "^test .*${filter}.* \.\.\. ok$")"
+  [ "$status" -eq 0 ] && [ "$ran" -ge 1 ]
+}
+
 streaming_verdict=false
 if grok "$PROOF/imv2-verdict.md" "STREAMING_ACCEPTED" \
   && grep -qE '^\| IMV[3-6] \|.*\| `rejected\(IMV2 measurement gate\)` \|' "$PLAN"; then
@@ -179,7 +188,11 @@ else
   if test_ok nimbus-storage batch_and_incremental_verification_roots_match \
     && test_ok nimbus-storage verification_root_is_independent_of_update_order \
     && test_ok nimbus-storage delete_then_reinsert_restores_root \
-    && test_ok nimbus-storage verification_root_version_separates_formats; then
+    && test_ok nimbus-storage verification_root_version_separates_formats \
+    && ignored_integration_test_ok nimbus-storage generated_history verification_root \
+    && grok "$PROOF/imv3.md" "max_depth=55" \
+    && grok "$PROOF/imv3.md" "budgeted_bytes_per_leaf=160" \
+    && grok "$PROOF/imv3.md" "Dependency screen"; then
     ok "8. deterministic versioned incremental root contract passes"
   else
     no "8. incremental root" "IMV3 root tests are absent or failing"
