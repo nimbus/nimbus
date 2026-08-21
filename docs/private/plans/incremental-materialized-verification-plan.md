@@ -1,11 +1,11 @@
 # Incremental Materialized Verification Plan
 
-Status: `proposed` | Owner: this plan | Created: 2026-08-19.
+Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: land this plan, its index, and successor rows RR30 and RR31
-directly on main. Promote this plan to `active`, then run IMV0 to create the
-proof root and red verifier from baseline `137cc632a`.
+Next action: run IMV0 from baseline `137cc632a`. Create the proof root,
+benchmark harness, and 16-condition red verifier. Capture the fail-before
+evidence without changing production behavior.
 
 ## Outcome
 
@@ -112,7 +112,7 @@ IMV0 runs first after promotion and creates the proof root and the
 
 | ID | Task | Status | Evidence |
 |---|---|---|---|
-| IMV0 | Pin the execution baseline, create the proof root, author the 16-condition verifier red, and capture full-verification fail-before cost. No production behavior changes. | `todo` | |
+| IMV0 | Pin the execution baseline, create the proof root, author the 16-condition verifier red, and capture full-verification fail-before cost. No production behavior changes. | `in_progress` | Baseline `137cc632a`; owner promoted the plan on 2026-08-20. |
 | IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `todo` | |
 | IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `todo` | |
 | IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `todo` | |
@@ -778,3 +778,4 @@ Append rows at the end. This section stays last.
 | 2026-08-19 | IMV2 | corrected | Replaced the two-state verdict with three states: `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, and `NO_ACCEPTABLE_DESIGN`. The third state blocks IMV3 through IMV6 and keeps the plan nonterminal for an owner decision, so rejection can no longer accept a full verifier that missed its own target. Made the IMV0 closing diff an enforced allowlist that permits only the benchmark target and its manifest registration. No implementation started. |
 | 2026-08-19 | meta | corrected | Hardened the IMV0 closing allowlist into a baseline-anchored exact-set check. The check includes untracked files and requires both permitted paths. Split a long sentence in the `NO_ACCEPTABLE_DESIGN` bullet. Named the two successful verdicts for conditions 15 and 16. No implementation started. |
 | 2026-08-20 | meta | rebased | Refreshed the baseline to `137cc632a` after 17 merged commits. PRs #293, #297, and #301 repaired materialized-read publication and made durable-versus-applied sequence drift explicit. IMV4 now preserves that distinction and keeps the serving surface outside verification authority. No BLI-owned blob path changed. No implementation started. |
+| 2026-08-20 | IMV0 | started | The owner promoted the plan to `active`. IMV0 is the only `in_progress` task at baseline `137cc632a`. |

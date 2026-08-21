@@ -195,7 +195,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
   duration policies, explicit temporal-validation observations, clock-source
   guards, and structural gates that leave unproved distributed clock authority
   disabled under the horizontal-scaling plan.
-- `incremental-materialized-verification-plan.md` - `proposed`. This plan owns
+- `incremental-materialized-verification-plan.md` - `active`. This plan owns
   repeated materialized-state checks. IMV1 repairs the portable digest and
   streams it from one normalized logical value tree. IMV2 measures the full
   verifier against the ratified latency, write-cost, and memory gates. IMV3
