@@ -152,7 +152,7 @@ struct TreapNode {
     subtree_hash: Hash,
     left: Option<u32>,
     right: Option<u32>,
-    subtree_depth: u16,
+    subtree_depth: u32,
 }
 
 impl TreapNode {
