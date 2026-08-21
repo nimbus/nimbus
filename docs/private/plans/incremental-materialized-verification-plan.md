@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: review and publish IMV5 bounded verification sessions from
-`codex/imv5-bounded-verification-sessions`.
+Next action: implement IMV6 provider parity, recovery faults, bounded metrics,
+and operator controls from `codex/imv6-provider-parity-faults-observability`.
 
 ## Outcome
 
@@ -116,8 +116,8 @@ IMV0 runs first after promotion and creates the proof root and the
 | IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `done` | PR #304 merged as `a7667ec8f`. Work `7fec8c579`; proof `2e6b30cc3`. Verdict: `MERKLE_REQUIRED`. Verifier: `Summary: 7 passed, 9 failed`; Nimbus autoreview clean. |
 | IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `done` | PR #305 merged as `04b32d8b5`. Work `139a50928`, hardening `70cbe14fc` and `a6a60a4dc`; proof `030802c52`, refresh `74917387b`. Nine focused tests and the million-leaf gate pass. Verifier: `Summary: 8 passed, 8 failed`; Nimbus autoreview clean. |
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `done` | PR #306 merged as `2a862829c`; archive-gate correction PR #307 merged as `eb2997083b`. Verifier: `Summary: 9 passed, 7 failed`. |
-| IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `in_progress` | Work `a7c678351`; proof is in `imv5.md`. Verifier: `Summary: 11 passed, 5 failed`. Review and publication remain. |
-| IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `todo` | |
+| IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `done` | PR #308 merged as `ccddcf846`. Work `a7c678351`; hardening `395459752` and `3acdd45fd`; proof is in `imv5.md`. Verifier: `Summary: 11 passed, 5 failed`; Nimbus autoreview clean. |
+| IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `in_progress` | Branch `codex/imv6-provider-parity-faults-observability` from merged main `ccddcf846`. |
 | IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `todo` | |
 | IMV9 | After the final pull request merges, archive this plan, retain its proof root, and remove its active index entry. | `todo` | |
 
@@ -809,3 +809,5 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV5 | hardened | Autoreview found that a second applied-head read could move past the full-scrub snapshot and suppress an exact-cut comparison. Hardening `395459752` uses one bootstrap snapshot for expected-root alignment and actual-state evidence. It also preserves the independent authoritative, shadow, and replica replay check. A deterministic concurrent-write regression passes. |
 | 2026-08-21 | IMV5 | hardened | The clean follow-up review exposed two lower-priority cache risks. Hardening `3acdd45fd` discards every failed-scrub session, so a persistent replay mismatch cannot become a warm success. Tenant deletion also invalidates its session, so a replacement incarnation cannot reuse old evidence. Both regressions pass, including three repeated concurrency-lane runs. |
 | 2026-08-21 | IMV5 | reviewed | Final Nimbus pre-PR autoreview found no actionable defect. It confirmed single-cut alignment, persistent-mismatch failure, tenant-incarnation invalidation, registry accounting, bounded eviction, and the preserved three-way replay comparison. Publication and hosted checks remain. |
+| 2026-08-21 | IMV5 | completed | PR #308 merged as `ccddcf846`. The required hosted gates were green at merge. Broader hosted jobs continue after merge and remain correction signals. IMV5 is terminal. |
+| 2026-08-21 | IMV6 | started | Created `codex/imv6-provider-parity-faults-observability` from merged main `ccddcf846`. IMV6 is the only `in_progress` task. |
