@@ -21,10 +21,19 @@ independently.
 
 A cold session starts with one provider bootstrap export. This export is the
 full scrub: it reads actual materialized state at the provider's applied head.
-Nimbus builds the authoritative, shadow, and embedded-replica full-scrub
-evidence from that cut. It also builds three independent verification indexes.
+That snapshot is the only comparison and alignment cut. A concurrent write
+cannot make a second metadata read move the expected root past this cut and
+skip the comparison. Nimbus builds the authoritative, shadow, and
+embedded-replica full-scrub evidence from that cut. It also builds three
+verification indexes.
+
 The session retains the indexes and small fingerprint evidence. It does not
 retain three document snapshots.
+
+The full scrub also replays the durable tail through three implementations.
+It compares an authoritative store rebuild with `ShadowMaterializer` and
+`EmbeddedReplica`. This replay check remains independent of the three retained
+indexes, which share the storage-owned applied-record transition contract.
 
 A warm check first reads only the provider's applied-sequence metadata. It
 streams the exact contiguous journal suffix from the session sequence through
@@ -41,11 +50,11 @@ scan.
 ## Escalation and failure behavior
 
 A cold start, idle deadline, anchor deadline, applied-sequence rewind,
-retention gap, invalid index, or root mismatch runs a full scrub. Expiration
-first advances the expected indexes through the current applied head. The
-subsequent scrub can therefore detect provider drift that occurred after the
-old anchor. Capturing time after the per-tenant lock prevents an older waiter
-from moving the session clock backward.
+retention gap, invalid index, or root mismatch runs a full scrub. The scrub
+captures one bootstrap snapshot and advances the expected indexes through
+that snapshot's applied head. It can therefore detect provider drift that
+occurred after the old anchor. Capturing time after the per-tenant lock
+prevents an older waiter from moving the session clock backward.
 
 A root mismatch cannot become a successful full-scrub report. Nimbus compares
 the prior roots with each other and compares each same-sequence prior root with
@@ -80,10 +89,11 @@ owns the bounded metrics and operator controls.
 
 ## Acceptance evidence
 
-The consistency-verification lane reports 5 passed tests. It proves the cold
+The consistency-verification lane reports 6 passed tests. It proves the cold
 full mode, warm incremental mode, stable anchor identity, and an unchanged
 zero-event recheck. It also proves mismatch failure, retention-gap rebuild,
-and expired-anchor advance before a scrub.
+expired-anchor advance before a scrub, and single-cut alignment during a
+concurrent write.
 
 The session lane reports 3 passed tests. It proves count-based LRU eviction,
 byte-based LRU eviction, and the exact idle and anchor deadlines. The storage
