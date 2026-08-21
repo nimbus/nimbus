@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: run the IMV3 pre-PR review, publish and merge its task pull
-request, then start IMV4 from refreshed main.
+Next action: inventory every materialized-state writer, define the IMV4
+post-apply delta seam, and wire each route to update or invalidate the index.
 
 ## Outcome
 
@@ -114,8 +114,8 @@ IMV0 runs first after promotion and creates the proof root and the
 | IMV0 | Pin the execution baseline, create the proof root, author the 16-condition verifier red, and capture full-verification fail-before cost. No production behavior changes. | `done` | PR #302. Work `58e46b675`, fix `14227dc59`; proof `97949afa2`, refresh `6e643ada8`. Verifier: `Summary: 3 passed, 13 failed`. |
 | IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `done` | PR #303 merged as `9c807015a`. Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`; Nimbus autoreview and hosted checks clean. |
 | IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `done` | PR #304 merged as `a7667ec8f`. Work `7fec8c579`; proof `2e6b30cc3`. Verdict: `MERKLE_REQUIRED`. Verifier: `Summary: 7 passed, 9 failed`; Nimbus autoreview clean. |
-| IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `in_progress` | Work `139a50928`, hardening `70cbe14fc` and `a6a60a4dc`; proof `030802c52`, refresh `74917387b`. Nine focused tests and the million-leaf gate pass. Verifier: `Summary: 8 passed, 8 failed`; final Nimbus autoreview clean. Hosted checks and merge remain. |
-| IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `todo` | |
+| IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `done` | PR #305 merged as `04b32d8b5`. Work `139a50928`, hardening `70cbe14fc` and `a6a60a4dc`; proof `030802c52`, refresh `74917387b`. Nine focused tests and the million-leaf gate pass. Verifier: `Summary: 8 passed, 8 failed`; Nimbus autoreview clean. |
+| IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `in_progress` | Branch `codex/imv4-materialized-writer-deltas` starts from merged main `04b32d8b5`. |
 | IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `todo` | |
 | IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `todo` | |
 | IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `todo` | |
@@ -793,3 +793,5 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV3 | implemented | Work `139a50928` adds the opaque logical key, versioned verification position, domain-separated SHA-256 treap, update and delete operations, generated histories, and depth and memory counters. Proof `030802c52` records the dependency screen and a million-leaf depth of 55 at 149 measured and 164 budgeted bytes per leaf. The full storage lane passes 345 tests with 3 expected ignores. The verifier reports `Summary: 8 passed, 8 failed`. |
 | 2026-08-21 | IMV3 | hardened | Autoreview identified deterministic-priority depth as a selection-attack surface. Hardening `70cbe14fc` makes batch hashing iterative, enforces depth 128, and rolls back a rejected incremental insert. Follow-up `a6a60a4dc` widens the cached depth so malformed batch state cannot overflow before that check. Proof refresh `74917387b` records the 148-byte node and updated million-leaf result. The adversarial-chain regression passes. |
 | 2026-08-21 | IMV3 | reviewed | The final Nimbus pre-PR autoreview found no actionable defect. It confirmed batch and incremental shape equivalence, bottom-up hash and depth maintenance, rollback and free-list safety, domain framing, iterative batch hashing, and the 148-byte layout. |
+| 2026-08-21 | IMV3 | completed | PR #305 merged as `04b32d8b5`. IMV3 is terminal and the `MERKLE_REQUIRED` path advances to writer-owned deltas. |
+| 2026-08-21 | IMV4 | started | Created `codex/imv4-materialized-writer-deltas` from merged main `04b32d8b5`. IMV4 is the only `in_progress` task. |
