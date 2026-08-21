@@ -55,6 +55,7 @@ use crate::tenant::{
 };
 use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
+use queries::VerificationSessionRegistry;
 use tenant_load_gate::{TenantLoadGate, TenantLoadGateGuard};
 use transactions::TransactionSessionRegistry;
 
@@ -94,6 +95,7 @@ pub struct Engine {
     tenants: Arc<RwLock<HashMap<TenantId, Arc<TenantRuntime>>>>,
     publisher_failure_diagnostics: Arc<RwLock<HashMap<TenantId, PublisherErrorCounts>>>,
     transaction_sessions: RwLock<TransactionSessionRegistry>,
+    verification_sessions: VerificationSessionRegistry,
     tenant_load_gate: TenantLoadGate,
     embedded_provider_kind: Option<EmbeddedProviderKind>,
     persistence_provider: PersistenceProvider,
@@ -466,6 +468,7 @@ impl Engine {
             tenants: Arc::new(RwLock::new(HashMap::new())),
             publisher_failure_diagnostics: Arc::new(RwLock::new(HashMap::new())),
             transaction_sessions: RwLock::new(TransactionSessionRegistry::default()),
+            verification_sessions: VerificationSessionRegistry::default(),
             tenant_load_gate: TenantLoadGate::new(),
             embedded_provider_kind: parts.embedded_provider_kind,
             persistence_provider: parts.persistence_provider,

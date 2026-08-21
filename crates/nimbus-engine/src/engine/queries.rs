@@ -10,6 +10,7 @@ mod snapshot;
 mod structured;
 mod test_hooks;
 mod verification;
+mod verification_sessions;
 
 pub use authorization::DocumentReadFilter;
 pub(crate) use authorization::ReadAuthorization;
@@ -29,3 +30,4 @@ pub(crate) use structured::{
     finalize_structured_documents, finalize_structured_rows,
     prepare_collection_group_structured_query, prepare_structured_query, structured_base_query,
 };
+pub(crate) use verification_sessions::VerificationSessionRegistry;

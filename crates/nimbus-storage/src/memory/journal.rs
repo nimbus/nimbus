@@ -256,6 +256,17 @@ impl MemoryState {
 }
 
 impl MemoryTenantStore {
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn prune_durable_journal_through_for_testing(&self, through: SequenceNumber) -> Result<()> {
+        self.transact(|state| {
+            state
+                .durable_journal
+                .retain(|sequence, _| *sequence > through.0);
+            Ok(())
+        })
+    }
+
     pub fn journal_progress(&self) -> Result<JournalProgress> {
         Ok(self.read_state()?.progress())
     }

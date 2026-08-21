@@ -1045,6 +1045,257 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
     assert!(!report.bootstrap.snapshot_position.state_digest().is_empty());
 }
 
+#[tokio::test]
+async fn consistency_verification_incremental_verifier_reports_mode_and_anchor() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("verification-mode").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+        )
+        .await
+        .expect("first insert should succeed");
+
+    let full = engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("full verification should succeed");
+    assert_eq!(full.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        full.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::ColdStart)
+    );
+    let anchor = full.anchor.position.clone();
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(2))]),
+        )
+        .await
+        .expect("second insert should succeed");
+    let incremental = engine
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("incremental verification should succeed");
+
+    assert!(incremental.ok, "{incremental:#?}");
+    assert_eq!(
+        incremental.mode,
+        crate::ConsistencyVerificationMode::Incremental
+    );
+    assert_eq!(incremental.anchor.position, anchor);
+    assert_eq!(
+        incremental.event_count,
+        incremental.authoritative_root.applied_sequence - anchor.applied_sequence().0
+    );
+    assert_eq!(incremental.escalation_reason, None);
+    assert_eq!(
+        incremental.authoritative_root.applied_sequence,
+        incremental.shadow_root.applied_sequence
+    );
+    assert_eq!(
+        incremental.authoritative_root.applied_sequence,
+        incremental.embedded_replica_root.applied_sequence
+    );
+}
+
+#[tokio::test]
+async fn consistency_verification_unchanged_recheck_reads_no_full_snapshot() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("unchanged-recheck").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+
+    let full = engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("full verification should succeed");
+    let recheck = engine
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("unchanged verification should succeed");
+
+    assert_eq!(
+        recheck.mode,
+        crate::ConsistencyVerificationMode::Incremental
+    );
+    assert_eq!(recheck.event_count, 0);
+    assert_eq!(recheck.escalation_reason, None);
+    assert_eq!(recheck.anchor.position, full.anchor.position);
+    assert_eq!(recheck.bootstrap, full.bootstrap);
+    assert_eq!(recheck.authoritative, full.authoritative);
+}
+
+#[tokio::test]
+async fn consistency_verification_root_mismatch_escalates_to_full_scrub() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("root-mismatch").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+        )
+        .await
+        .expect("insert should succeed");
+    engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("full verification should establish a session");
+    engine
+        .corrupt_verification_shadow_for_testing(&tenant_id)
+        .await;
+
+    let report = engine
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("mismatch should produce a report");
+    assert!(!report.ok, "{report:#?}");
+    assert_eq!(report.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        report.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::RootMismatch)
+    );
+    assert!(
+        report
+            .mismatches
+            .iter()
+            .any(|mismatch| mismatch.invariant == "full_scrub_matches_incremental_root")
+    );
+}
+
+#[tokio::test]
+async fn consistency_verification_retention_gap_rebuilds_session() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_memory_persistence(data_dir.path()).expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("retention-gap").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+
+    for rank in [1, 2, 3] {
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+            )
+            .await
+            .expect("insert should succeed");
+        if rank == 1 {
+            engine
+                .verify_consistency_async(tenant_id.clone())
+                .await
+                .expect("first verification should establish a session");
+        }
+    }
+    let latest = engine
+        .latest_sequence_async(tenant_id.clone())
+        .await
+        .expect("latest sequence should read");
+    engine
+        .prune_durable_journal_through_for_testing(
+            &tenant_id,
+            SequenceNumber(latest.0.saturating_sub(1)),
+        )
+        .expect("retention cut should succeed");
+
+    let rebuilt = engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("retention gap should rebuild from materialized state");
+    assert!(rebuilt.ok, "{rebuilt:#?}");
+    assert_eq!(rebuilt.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        rebuilt.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::RetentionGap)
+    );
+
+    let recheck = engine
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("rebuilt session should support a fast recheck");
+    assert_eq!(
+        recheck.mode,
+        crate::ConsistencyVerificationMode::Incremental
+    );
+    assert_eq!(recheck.event_count, 0);
+}
+
+#[tokio::test]
+async fn consistency_verification_expired_anchor_advances_before_full_scrub() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let monotonic_clock = Arc::new(nimbus_core::ManualMonotonicClock::new());
+    let engine = Arc::new(
+        Engine::new_with_simulation_clocks(
+            data_dir.path(),
+            Arc::new(ManualWallClock::new(Timestamp(1_000))),
+            monotonic_clock.clone(),
+            Arc::new(nimbus_storage::NoopFaultInjector),
+        )
+        .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("expired-anchor").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+        )
+        .await
+        .expect("first insert should succeed");
+    let first = engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("first full scrub should succeed");
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(2))]),
+        )
+        .await
+        .expect("second insert should succeed");
+    monotonic_clock.advance(Duration::from_secs(15 * 60));
+    let scrub = engine
+        .verify_consistency_async(tenant_id)
+        .await
+        .expect("expired anchor should scrub");
+
+    assert!(scrub.ok, "{scrub:#?}");
+    assert_eq!(scrub.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        scrub.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::AnchorExpired)
+    );
+    assert!(scrub.event_count > 0);
+    assert!(
+        scrub.anchor.position.applied_sequence().0 > first.anchor.position.applied_sequence().0
+    );
+}
+
 #[test]
 fn snapshot_comparison_reports_document_field_differences_with_identifier() {
     let document = nimbus_core::Document::new(

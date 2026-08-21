@@ -20,6 +20,19 @@ use crate::engine::Engine;
 use crate::engine::mutations::document_bearing_commit_identity;
 
 impl Engine {
+    #[cfg(test)]
+    pub(crate) fn prune_durable_journal_through_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        through: SequenceNumber,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime
+                .store()
+                .prune_durable_journal_through_for_testing(through)
+        })?
+    }
+
     #[cfg(any(test, feature = "test-hooks"))]
     fn with_runtime_for_testing<T>(
         &self,

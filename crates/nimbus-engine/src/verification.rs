@@ -1,9 +1,28 @@
 use nimbus_core::{Document, Result};
 use nimbus_storage::{
     CanonicalMaterializedState, DurableJournalBootstrap, MaterializedJournalSnapshot,
-    MaterializedPosition, TableIdentitySnapshotEntry,
+    MaterializedPosition, MaterializedVerificationTracker, TableIdentitySnapshotEntry,
 };
 use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsistencyVerificationMode {
+    FullScrub,
+    Incremental,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsistencyEscalationReason {
+    ColdStart,
+    AnchorExpired,
+    IdleSessionExpired,
+    AppliedSequenceRewind,
+    RetentionGap,
+    IndexInvalidated,
+    RootMismatch,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,14 +66,63 @@ pub struct ConsistencyMismatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VerificationRootFingerprint {
+    pub version: u16,
+    pub applied_sequence: u64,
+    pub root_hash: String,
+    pub leaf_count: usize,
+    pub resident_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VerificationAnchor {
+    pub position: MaterializedPosition,
+    pub age_millis: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConsistencyVerificationReport {
     pub tenant_id: String,
     pub ok: bool,
+    pub mode: ConsistencyVerificationMode,
+    pub anchor: VerificationAnchor,
+    pub event_count: u64,
+    pub escalation_reason: Option<ConsistencyEscalationReason>,
+    pub authoritative_root: VerificationRootFingerprint,
+    pub shadow_root: VerificationRootFingerprint,
+    pub embedded_replica_root: VerificationRootFingerprint,
+    /// Full-scrub evidence retained at `anchor`. Incremental reports do not
+    /// claim that these counts were scanned again at the current sequence.
     pub authoritative: SnapshotFingerprint,
     pub shadow: SnapshotFingerprint,
     pub embedded_replica: SnapshotFingerprint,
     pub bootstrap: BootstrapFingerprint,
     pub mismatches: Vec<ConsistencyMismatch>,
+}
+
+pub(crate) fn verification_root_fingerprint(
+    tracker: &MaterializedVerificationTracker,
+) -> Result<VerificationRootFingerprint> {
+    let position = tracker.position().ok_or_else(|| {
+        nimbus_core::Error::Internal("materialized verification tracker is invalidated".to_string())
+    })?;
+    Ok(VerificationRootFingerprint {
+        version: position.version().as_u16(),
+        applied_sequence: position.applied_sequence().0,
+        root_hash: bytes_to_hex(position.root_hash()),
+        leaf_count: tracker.leaf_count(),
+        resident_bytes: tracker.resident_bytes(),
+    })
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
 }
 
 pub fn snapshot_fingerprint(snapshot: &MaterializedJournalSnapshot) -> Result<SnapshotFingerprint> {
