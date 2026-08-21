@@ -198,6 +198,11 @@ impl StoredValue {
         }
     }
 
+    /// Compares two stored spellings through the normalized logical tree.
+    pub fn logical_eq(&self, other: &Self) -> bool {
+        self.canonical() == other.canonical()
+    }
+
     /// Build a navigable plain value tree. Adapters use this as the base when
     /// updating one nested path while retaining typed metadata on siblings.
     pub fn from_json_tree(value: Value) -> Self {

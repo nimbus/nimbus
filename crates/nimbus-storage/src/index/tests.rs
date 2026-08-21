@@ -1,14 +1,14 @@
 use std::ops::Bound;
 
 use nimbus_core::{
-    Document, DocumentId, FieldSchema, FieldType, IndexDefinition, IndexState, TableName,
-    TableSchema, order_preserving_number_bits,
+    Document, DocumentId, FieldSchema, FieldType, IndexDefinition, IndexState, SpecialDouble,
+    TableName, TableSchema, TypedScalarValue, order_preserving_number_bits,
 };
 use serde_json::json;
 
 use crate::TenantStore;
 
-use super::encode_index_value;
+use super::{encode_index_value, encoded_index_tuple_for_document};
 
 fn save_schema_for_indexes(store: &TenantStore, table: &TableName, indexes: &[IndexDefinition]) {
     let mut fields = Vec::new();
@@ -34,6 +34,27 @@ fn save_schema_for_indexes(store: &TenantStore, table: &TableName, indexes: &[In
             access_policy: None,
         })
         .expect("index schema should save");
+}
+
+#[test]
+fn index_key_derivation_consumes_normalized_logical_value() {
+    let table = TableName::new("scores").expect("table name should be valid");
+    let mut document = Document::new(table, serde_json::Map::new());
+    document.set_typed_field(
+        "score",
+        TypedScalarValue::SpecialDouble {
+            value: SpecialDouble::Nan,
+        },
+    );
+    let index = IndexDefinition::new("by_score", ["score"]);
+
+    let encoded = encoded_index_tuple_for_document(&document, &index)
+        .expect("typed index key should encode")
+        .expect("typed indexed field should exist");
+    assert_eq!(
+        encoded,
+        encode_index_value(&json!("NaN")).expect("current projected key should encode")
+    );
 }
 
 #[test]

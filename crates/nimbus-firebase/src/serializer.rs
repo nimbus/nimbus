@@ -605,6 +605,17 @@ fn parse_geo_point_value(value: &Value) -> Result<FirestoreValue, FirestoreProto
         .get("longitude")
         .and_then(Value::as_f64)
         .ok_or_else(|| invalid_field("geoPointValue", "missing longitude".to_string()))?;
+    validate_geo_point_coordinates(latitude, longitude)?;
+    Ok(FirestoreValue::GeoPoint {
+        latitude,
+        longitude,
+    })
+}
+
+pub(crate) fn validate_geo_point_coordinates(
+    latitude: f64,
+    longitude: f64,
+) -> Result<(), FirestoreProtoJsonError> {
     if !latitude.is_finite() || !(-90.0..=90.0).contains(&latitude) {
         return Err(invalid_field(
             "geoPointValue",
@@ -617,10 +628,7 @@ fn parse_geo_point_value(value: &Value) -> Result<FirestoreValue, FirestoreProto
             "longitude must be finite and between -180 and 180".to_string(),
         ));
     }
-    Ok(FirestoreValue::GeoPoint {
-        latitude,
-        longitude,
-    })
+    Ok(())
 }
 
 fn parse_array_value(value: &Value) -> Result<Vec<FirestoreValue>, FirestoreProtoJsonError> {

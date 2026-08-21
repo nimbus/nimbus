@@ -33,7 +33,7 @@ use crate::ProjectTenantRegistry;
 use crate::resource_names::{self, FirestoreDatabaseName};
 use crate::serializer::{
     FirestoreDouble, FirestoreProtoJsonError, FirestoreValue, firestore_value_from_stored_value,
-    special_double_from_firestore,
+    special_double_from_firestore, validate_geo_point_coordinates,
 };
 use crate::{
     firestore_grpc_code, resolve_write_key, resource_name_error_to_core,
@@ -853,10 +853,14 @@ fn firestore_value_from_grpc(value: &Value) -> Result<FirestoreValue, Status> {
         Some(ValueType::StringValue(value)) => Ok(FirestoreValue::String(value.clone())),
         Some(ValueType::BytesValue(value)) => Ok(FirestoreValue::Bytes(value.clone())),
         Some(ValueType::ReferenceValue(value)) => Ok(FirestoreValue::Reference(value.clone())),
-        Some(ValueType::GeoPointValue(value)) => Ok(FirestoreValue::GeoPoint {
-            latitude: value.latitude,
-            longitude: value.longitude,
-        }),
+        Some(ValueType::GeoPointValue(value)) => {
+            validate_geo_point_coordinates(value.latitude, value.longitude)
+                .map_err(firestore_value_status)?;
+            Ok(FirestoreValue::GeoPoint {
+                latitude: value.latitude,
+                longitude: value.longitude,
+            })
+        }
         Some(ValueType::ArrayValue(values)) => values
             .values
             .iter()
@@ -1083,6 +1087,40 @@ mod tests {
                 decoded,
                 NumericValue::SpecialDouble { value } if value == expected
             ));
+        }
+    }
+
+    #[test]
+    fn grpc_geo_point_rejects_non_finite_and_out_of_range_coordinates() {
+        for (latitude, longitude) in [
+            (f64::NAN, 0.0),
+            (f64::INFINITY, 0.0),
+            (91.0, 0.0),
+            (0.0, f64::NEG_INFINITY),
+            (0.0, 181.0),
+        ] {
+            let value = Value {
+                value_type: Some(ValueType::GeoPointValue(LatLng {
+                    latitude,
+                    longitude,
+                })),
+            };
+            let error = firestore_value_from_grpc(&value)
+                .expect_err("invalid GeoPoint coordinates must be rejected");
+            assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        }
+
+        for (latitude, longitude) in [(-90.0, -180.0), (90.0, 180.0)] {
+            let value = Value {
+                value_type: Some(ValueType::GeoPointValue(LatLng {
+                    latitude,
+                    longitude,
+                })),
+            };
+            assert!(
+                firestore_value_from_grpc(&value).is_ok(),
+                "boundary GeoPoint ({latitude}, {longitude}) should be valid"
+            );
         }
     }
 

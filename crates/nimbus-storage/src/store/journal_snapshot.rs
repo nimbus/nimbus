@@ -4,14 +4,14 @@ use std::time::Instant;
 use nimbus_core::{
     CommitSequence, CommitTimestamp, Document, Error, HistoricalReadErrorKind,
     HistoricalReadSnapshot, ReadTimestamp, Result, Schema, SequenceNumber, TableId, TableName,
-    TableSchema, TableState, TenantEventRecord, Timestamp,
+    TableState, TenantEventRecord, Timestamp,
 };
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
+use crate::materialized_position::{CanonicalMaterializedState, MaterializedPosition};
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, TableIdentitySnapshotEntry, deleting_table_namespace,
     hidden_table_namespace,
@@ -46,43 +46,6 @@ pub struct MaterializedJournalSnapshot {
 
 pub const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 3;
 pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 1;
-
-/// The digest format for [`MaterializedPosition`]. Bump this when the canonical
-/// state layout changes, so a stale digest cannot compare equal to a fresh one.
-pub const MATERIALIZED_POSITION_VERSION: u16 = 1;
-
-/// A materialized snapshot's logical state in one canonical order, and the only
-/// input to the one canonical digest. Sequences are deliberately absent: this
-/// type answers "what state", and [`MaterializedPosition`] pairs it with "how
-/// far". Durable head is absent too, because it is a durability fact about the
-/// journal rather than a property of the state the journal produced.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct CanonicalMaterializedState {
-    pub snapshot_version: u16,
-    pub table_identities: Vec<TableIdentitySnapshotEntry>,
-    pub schema_tables: Vec<TableSchema>,
-    pub documents: Vec<Document>,
-    pub scheduled_execution_ids: Vec<String>,
-}
-
-impl CanonicalMaterializedState {
-    pub fn digest(&self) -> Result<String> {
-        let payload =
-            serde_json::to_vec(self).map_err(|error| Error::Serialization(error.to_string()))?;
-        Ok(format!("{:x}", Sha256::digest(payload.as_slice())))
-    }
-}
-
-/// Where a materialized artifact sits: the applied sequence plus the digest of
-/// the state that sequence produced. Consumers bind to this instead of a bare
-/// sequence, so a checkpoint, archive, or replica whose content drifted at an
-/// unchanged sequence no longer compares equal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MaterializedPosition {
-    pub version: u16,
-    pub applied_sequence: SequenceNumber,
-    pub state_digest: String,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -240,24 +203,20 @@ impl MaterializedJournalSnapshot {
         let mut scheduled_execution_ids = self.scheduled_execution_ids.clone();
         scheduled_execution_ids.sort_unstable();
 
-        Ok(CanonicalMaterializedState {
-            snapshot_version: self.version,
+        Ok(CanonicalMaterializedState::new(
+            self.version,
             table_identities,
             schema_tables,
             documents,
             scheduled_execution_ids,
-        })
+        ))
     }
 
     /// Where this snapshot sits: how far the journal is applied, and what state
     /// that produced. Two snapshots at the same sequence with different content
     /// have different positions, which a bare sequence cannot express.
     pub fn materialized_position(&self) -> Result<MaterializedPosition> {
-        Ok(MaterializedPosition {
-            version: MATERIALIZED_POSITION_VERSION,
-            applied_sequence: self.applied_sequence,
-            state_digest: self.canonical_state()?.digest()?,
-        })
+        MaterializedPosition::new(self.applied_sequence, self.canonical_state()?.digest()?)
     }
 
     pub(crate) fn empty_for_point_in_time_base() -> Self {
@@ -307,6 +266,14 @@ impl PointInTimeRestoreArchive {
                     self.index_version_storage_format, CURRENT_INDEX_VERSION_STORAGE_FORMAT
                 ),
             ));
+        }
+        self.target_position.validate()?;
+        if self.target_position.applied_sequence() != self.target_sequence {
+            return Err(Error::InvalidInput(format!(
+                "point-in-time target position sequence {} does not match target sequence {}",
+                self.target_position.applied_sequence().0,
+                self.target_sequence.0
+            )));
         }
         self.base_snapshot.validate()?;
         if self.target_sequence.0 < self.base_snapshot.applied_sequence.0 {
@@ -678,7 +645,9 @@ pub(crate) fn materialized_position_after_rebuild(
 pub(crate) fn describe_materialized_position(position: &MaterializedPosition) -> String {
     format!(
         "sequence {} digest {} (format v{})",
-        position.applied_sequence.0, position.state_digest, position.version
+        position.applied_sequence().0,
+        position.state_digest(),
+        position.version()
     )
 }
 

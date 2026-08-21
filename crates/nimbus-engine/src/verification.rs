@@ -92,24 +92,24 @@ pub fn compare_materialized_journal_snapshots(
     let left_position = left.materialized_position()?;
     let right_position = right.materialized_position()?;
 
-    if left_position.version != right_position.version {
+    if left_position.version() != right_position.version() {
         return Ok(Some(mismatch(
             "materialized_snapshot_match",
             left_scope,
             right_scope,
             "position.version",
-            left_position.version,
-            right_position.version,
+            left_position.version(),
+            right_position.version(),
         )));
     }
-    if left_position.applied_sequence != right_position.applied_sequence {
+    if left_position.applied_sequence() != right_position.applied_sequence() {
         return Ok(Some(mismatch(
             "materialized_snapshot_match",
             left_scope,
             right_scope,
             "position.applied_sequence",
-            left_position.applied_sequence.0,
-            right_position.applied_sequence.0,
+            left_position.applied_sequence().0,
+            right_position.applied_sequence().0,
         )));
     }
     // Durable head is compared separately because it is deliberately not part
@@ -124,7 +124,7 @@ pub fn compare_materialized_journal_snapshots(
             right.durable_head.0,
         )));
     }
-    if left_position.state_digest == right_position.state_digest {
+    if left_position.state_digest() == right_position.state_digest() {
         return Ok(None);
     }
 
@@ -138,8 +138,8 @@ pub fn compare_materialized_journal_snapshots(
                     left_scope,
                     right_scope,
                     "position.state_digest",
-                    left_position.state_digest,
-                    right_position.state_digest,
+                    left_position.state_digest(),
+                    right_position.state_digest(),
                 )
             }),
     ))
@@ -154,14 +154,14 @@ fn locate_canonical_state_difference(
     right_scope: ConsistencyScope,
     right: &CanonicalMaterializedState,
 ) -> Option<ConsistencyMismatch> {
-    if left.snapshot_version != right.snapshot_version {
+    if left.snapshot_version() != right.snapshot_version() {
         return Some(mismatch(
             "materialized_snapshot_match",
             left_scope,
             right_scope,
             "version",
-            left.snapshot_version,
-            right.snapshot_version,
+            left.snapshot_version(),
+            right.snapshot_version(),
         ));
     }
 
@@ -169,12 +169,12 @@ fn locate_canonical_state_difference(
     // same-named table changes the digest, so the walk has to be able to say so
     // rather than falling through to the opaque digest path.
     let left_identity_keys = left
-        .table_identities
+        .table_identities()
         .iter()
         .map(table_identity_key)
         .collect::<Vec<_>>();
     let right_identity_keys = right
-        .table_identities
+        .table_identities()
         .iter()
         .map(table_identity_key)
         .collect::<Vec<_>>();
@@ -188,7 +188,8 @@ fn locate_canonical_state_difference(
             right_identity_keys,
         ));
     }
-    for (left_identity, right_identity) in left.table_identities.iter().zip(&right.table_identities)
+    for (left_identity, right_identity) in
+        left.table_identities().iter().zip(right.table_identities())
     {
         if left_identity != right_identity {
             return Some(mismatch(
@@ -203,12 +204,12 @@ fn locate_canonical_state_difference(
     }
 
     let left_schema_keys = left
-        .schema_tables
+        .schema_tables()
         .iter()
         .map(|table| table.table.to_string())
         .collect::<Vec<_>>();
     let right_schema_keys = right
-        .schema_tables
+        .schema_tables()
         .iter()
         .map(|table| table.table.to_string())
         .collect::<Vec<_>>();
@@ -222,7 +223,7 @@ fn locate_canonical_state_difference(
             right_schema_keys,
         ));
     }
-    for (left_table, right_table) in left.schema_tables.iter().zip(&right.schema_tables) {
+    for (left_table, right_table) in left.schema_tables().iter().zip(right.schema_tables()) {
         if left_table != right_table {
             return Some(mismatch(
                 "materialized_snapshot_match",
@@ -235,8 +236,16 @@ fn locate_canonical_state_difference(
         }
     }
 
-    let left_document_keys = left.documents.iter().map(document_key).collect::<Vec<_>>();
-    let right_document_keys = right.documents.iter().map(document_key).collect::<Vec<_>>();
+    let left_document_keys = left
+        .documents()
+        .iter()
+        .map(document_key)
+        .collect::<Vec<_>>();
+    let right_document_keys = right
+        .documents()
+        .iter()
+        .map(document_key)
+        .collect::<Vec<_>>();
     if left_document_keys != right_document_keys {
         return Some(mismatch(
             "materialized_snapshot_match",
@@ -247,7 +256,7 @@ fn locate_canonical_state_difference(
             right_document_keys,
         ));
     }
-    for (left_document, right_document) in left.documents.iter().zip(&right.documents) {
+    for (left_document, right_document) in left.documents().iter().zip(right.documents()) {
         if left_document != right_document {
             return Some(mismatch(
                 "materialized_snapshot_match",
@@ -260,14 +269,14 @@ fn locate_canonical_state_difference(
         }
     }
 
-    if left.scheduled_execution_ids != right.scheduled_execution_ids {
+    if left.scheduled_execution_ids() != right.scheduled_execution_ids() {
         return Some(mismatch(
             "materialized_snapshot_match",
             left_scope,
             right_scope,
             "scheduled_execution_ids",
-            &left.scheduled_execution_ids,
-            &right.scheduled_execution_ids,
+            left.scheduled_execution_ids(),
+            right.scheduled_execution_ids(),
         ));
     }
 
@@ -376,4 +385,18 @@ where
     T: Serialize,
 {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "<unserializable>".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn materialized_position_golden_matches_shipped_graph() {
+        let position = nimbus_storage::materialized_position_golden_fixture()
+            .expect("materialized position fixture should compute");
+        assert_eq!(position.version(), 2);
+        assert_eq!(
+            position.state_digest(),
+            "cc10a2a6579d2df620010321813fa1ca2bc715288280c0d62a502b5281a7ca68"
+        );
+    }
 }

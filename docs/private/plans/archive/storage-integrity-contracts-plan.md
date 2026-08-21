@@ -277,6 +277,15 @@ order. SIC6 and SIC7 require `Summary: 13 passed, 0 failed`.
   `cargo test -p nimbus-engine verification -- --nocapture`.
   the plan verifier must report conditions 1–11 green.
 
+Erratum, 2026-08-20: SIC4 sorted the outer state collections but serialized
+each document through `serde_json`. The shipped Cargo graph enables
+`serde_json/preserve_order`, so equivalent document maps could hash in insertion
+order. JSON and typed-sidecar spellings also produced different bytes, and
+non-finite GeoPoint coordinates collapsed to the same JSON `null` value. SIC4
+therefore closed sequence binding but did not prove a feature-independent
+logical codec. IMV1 owns the repair and its retained evidence under
+`docs/private/plans/proof/incremental-materialized-verification/`.
+
 ### SIC5 Provider semantic qualification
 
 - Problem: fixtures and comments distribute the provider guarantees. No one

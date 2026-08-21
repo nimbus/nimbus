@@ -1029,7 +1029,7 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
     assert_eq!(report.authoritative.document_count, 3);
     assert_eq!(report.authoritative.schema_table_count, 1);
     assert_eq!(
-        report.authoritative.position.applied_sequence.0,
+        report.authoritative.position.applied_sequence().0,
         report.authoritative.durable_head
     );
     assert_eq!(report.authoritative.position, report.shadow.position);
@@ -1042,7 +1042,7 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
         report.bootstrap.bootstrap_cut_sequence,
         report.authoritative.durable_head
     );
-    assert!(!report.bootstrap.snapshot_position.state_digest.is_empty());
+    assert!(!report.bootstrap.snapshot_position.state_digest().is_empty());
 }
 
 #[test]

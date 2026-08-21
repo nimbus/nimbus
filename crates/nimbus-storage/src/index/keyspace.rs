@@ -2,7 +2,7 @@ use nimbus_core::{
     Document, DocumentId, Error, IndexDefinition, IndexId, Result, StorageErrorKind, TableId,
 };
 
-use super::encoding::encode_index_value;
+use super::encoding::{encode_index_stored_value, encode_index_value};
 
 const INDEX_KEY_DOC_ID_LENGTH_BYTES: usize = 2;
 
@@ -33,7 +33,11 @@ pub(crate) fn encoded_index_tuple_for_document(
         let Some(value) = document.get_field(field) else {
             return Ok(None);
         };
-        encoded.extend_from_slice(&encode_index_value(value)?);
+        let field_encoding = match document.typed_value(field) {
+            Some(stored) => encode_index_stored_value(stored)?,
+            None => encode_index_value(value)?,
+        };
+        encoded.extend_from_slice(&field_encoding);
     }
     Ok(Some(encoded))
 }

@@ -5,7 +5,7 @@ use nimbus_core::{
 };
 use serde_json::{Map, Value};
 
-use crate::index::encode_index_tuple;
+use crate::index::encoded_index_tuple_for_document;
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
 use super::MemoryTenantStore;
@@ -36,14 +36,7 @@ fn changed_before_commit(id: &DocumentId) -> Error {
 
 fn validate_index_values(document: &Document, indexes: &[IndexDefinition]) -> Result<()> {
     for index in indexes.iter().filter(|index| index.is_maintained()) {
-        let values = index
-            .fields
-            .iter()
-            .map(|field| document.fields.get(field).cloned())
-            .collect::<Option<Vec<_>>>();
-        if let Some(values) = values {
-            let _ = encode_index_tuple(&values)?;
-        }
+        let _ = encoded_index_tuple_for_document(document, index)?;
     }
     Ok(())
 }
