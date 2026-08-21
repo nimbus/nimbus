@@ -816,7 +816,7 @@ fn all_storage_writers_declare_their_materialized_verification_effect() {
         "libsql replica replacement must invalidate a stale session root"
     );
 
-    let source_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let source_root = repo_root().join("crates/nimbus-storage/src");
     assert_eq!(
         VERIFICATION_OUT_OF_BAND_WRITERS.len(),
         9,
@@ -852,7 +852,7 @@ fn all_storage_writers_declare_their_materialized_verification_effect() {
 /// owned by the bounded verification-session concept, not either serving tree.
 #[test]
 fn materialized_serving_surfaces_have_no_verification_root_authority() {
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest = repo_root().join("crates/nimbus-storage");
     let workspace = manifest
         .parent()
         .and_then(std::path::Path::parent)

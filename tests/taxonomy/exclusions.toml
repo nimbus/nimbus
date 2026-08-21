@@ -194,3 +194,12 @@ evidence = "This Linux-only regression creates and detaches a real NSFS network-
 measured_at = "2026-08-16"
 owner = "nimbus-network-control-plane"
 issue = "docs/private/plans/archive/nimbus-network-control-plane-plan.md#execution-status-ledger"
+
+[[exclusions]]
+pattern = "test(/verification_root_million_leaf_depth_and_memory_meet_imv2_limits$/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "The IMV3 plan gate runs this one-million-leaf depth and resident-memory measurement directly. The ordinary generated-history property corpus covers smaller incremental histories."
+measured_at = "2026-08-21"
+owner = "incremental-materialized-verification"
+issue = "docs/private/plans/incremental-materialized-verification-plan.md#imv3-deterministic-merkle-treap"
