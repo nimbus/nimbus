@@ -86,6 +86,7 @@ impl VerificationSession {
     }
 
     pub fn apply_records(&mut self, records: &[TenantEventRecord]) -> FastPathOutcome {
+        let mut roots_mismatched = false;
         for record in records {
             for tracker in [
                 &mut self.authoritative,
@@ -102,10 +103,14 @@ impl VerificationSession {
                 }
             }
             if !self.positions_match() {
-                return FastPathOutcome::Escalate(ConsistencyEscalationReason::RootMismatch);
+                roots_mismatched = true;
             }
         }
-        FastPathOutcome::Applied
+        if roots_mismatched {
+            FastPathOutcome::Escalate(ConsistencyEscalationReason::RootMismatch)
+        } else {
+            FastPathOutcome::Applied
+        }
     }
 
     pub fn resident_index_bytes(&self) -> usize {

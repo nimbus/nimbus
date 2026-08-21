@@ -6,6 +6,7 @@ use nimbus_storage::{
     MaterializedVerificationTracker, ShadowMaterializer, ShadowMaterializerConfig, TenantStore,
 };
 
+use super::snapshot::rebuild_authoritative_snapshot;
 use super::verification_sessions::{FastPathOutcome, FullScrubEvidence, VerificationSession};
 use crate::EmbeddedReplica;
 use crate::engine::Engine;
@@ -17,6 +18,71 @@ use crate::verification::{
 };
 
 const VERIFICATION_STREAM_LIMIT: usize = 256;
+
+#[cfg(test)]
+#[derive(Default)]
+struct FullScrubPause {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static FULL_SCRUB_PAUSES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<TenantId, Arc<FullScrubPause>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+async fn pause_before_full_scrub_for_testing(tenant_id: &TenantId) {
+    let pause = FULL_SCRUB_PAUSES
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("full-scrub pause registry should not be poisoned")
+        .get(tenant_id)
+        .cloned();
+    if let Some(pause) = pause {
+        pause.entered.notify_one();
+        pause.release.notified().await;
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct FullScrubPauseHandle {
+    tenant_id: TenantId,
+    pause: Arc<FullScrubPause>,
+}
+
+#[cfg(test)]
+impl FullScrubPauseHandle {
+    pub(crate) async fn wait_until_entered(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.pause.entered.notified(),
+        )
+        .await
+        .expect("verification should reach the full-scrub pause");
+    }
+
+    pub(crate) fn release(self) {
+        drop(self);
+    }
+}
+
+#[cfg(test)]
+impl Drop for FullScrubPauseHandle {
+    fn drop(&mut self) {
+        let mut pauses = FULL_SCRUB_PAUSES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("full-scrub pause registry should not be poisoned");
+        if pauses
+            .get(&self.tenant_id)
+            .is_some_and(|armed| Arc::ptr_eq(armed, &self.pause))
+        {
+            pauses.remove(&self.tenant_id);
+        }
+        self.pause.release.notify_one();
+    }
+}
 
 impl Engine {
     /// Builds a shadow materializer from the current authoritative journal state.
@@ -63,10 +129,18 @@ impl Engine {
             )
             .await
         } else if let Some(reason) = expiry_reason {
-            self.run_incremental_check(tenant_id.clone(), now, Some(reason), &mut session_guard)
-                .await
+            let prior_session = session_guard.take();
+            self.run_full_scrub(
+                tenant_id.clone(),
+                reason,
+                prior_session,
+                0,
+                now,
+                &mut session_guard,
+            )
+            .await
         } else {
-            self.run_incremental_check(tenant_id.clone(), now, None, &mut session_guard)
+            self.run_incremental_check(tenant_id.clone(), now, &mut session_guard)
                 .await
         };
 
@@ -89,7 +163,6 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
         now: Instant,
-        force_full_reason: Option<ConsistencyEscalationReason>,
         session_guard: &mut Option<VerificationSession>,
     ) -> Result<ConsistencyVerificationReport> {
         let target = self.applied_sequence_async(tenant_id.clone()).await?;
@@ -147,18 +220,6 @@ impl Engine {
 
         match session.apply_records(&records) {
             FastPathOutcome::Applied if session.positions_match() => {
-                if let Some(reason) = force_full_reason {
-                    return self
-                        .run_full_scrub(
-                            tenant_id,
-                            reason,
-                            Some(session),
-                            records.len() as u64,
-                            now,
-                            session_guard,
-                        )
-                        .await;
-                }
                 session.last_used_at = now;
                 *session_guard = Some(session);
                 report_from_session(
@@ -202,14 +263,72 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
         reason: ConsistencyEscalationReason,
-        prior_session: Option<VerificationSession>,
-        event_count: u64,
+        mut prior_session: Option<VerificationSession>,
+        mut event_count: u64,
         now: Instant,
         session_guard: &mut Option<VerificationSession>,
     ) -> Result<ConsistencyVerificationReport> {
+        let mut escalation_reason = reason;
+        #[cfg(test)]
+        pause_before_full_scrub_for_testing(&tenant_id).await;
         let bootstrap = self
             .export_durable_journal_bootstrap_async(tenant_id.clone())
             .await?;
+
+        // The bootstrap snapshot owns the full-scrub comparison cut. Align an
+        // expected session to that captured applied head, not to a separate
+        // metadata read that a concurrent commit can overtake.
+        let mut prior_is_comparable = false;
+        if let Some(prior) = prior_session.as_mut()
+            && let Some(current) = prior.applied_sequence()
+            && current <= bootstrap.snapshot.applied_sequence.0
+        {
+            let target = bootstrap.snapshot.applied_sequence;
+            let records = if current == target.0 {
+                Some(Vec::new())
+            } else {
+                match self
+                    .read_contiguous_applied_suffix(&tenant_id, SequenceNumber(current), target)
+                    .await
+                {
+                    Ok(records) => Some(records),
+                    Err(error) if session_suffix_requires_rebuild(&error) => {
+                        escalation_reason = ConsistencyEscalationReason::RetentionGap;
+                        None
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            if let Some(records) = records {
+                event_count = event_count.saturating_add(records.len() as u64);
+                if let FastPathOutcome::Escalate(alignment_reason) = prior.apply_records(&records) {
+                    escalation_reason = alignment_reason;
+                }
+                prior_is_comparable = prior.applied_sequence() == Some(target.0);
+            }
+        }
+
+        // Keep the prior cross-implementation replay check. The anchor below
+        // remains actual provider state at the applied head; this replay only
+        // checks how the three materializers interpret the captured durable
+        // tail through the bootstrap cut.
+        let journal_tail = self
+            .read_durable_journal_suffix_to_sequence_async(&tenant_id, &bootstrap)
+            .await?;
+        let replayed_authoritative = rebuild_authoritative_snapshot(&bootstrap, &journal_tail)?;
+        let replayed_shadow = ShadowMaterializer::from_checkpoint_and_journal(
+            bootstrap.snapshot.clone(),
+            journal_tail.clone(),
+            ShadowMaterializerConfig::default(),
+        )?
+        .current_snapshot();
+        let replayed_replica = EmbeddedReplica::bootstrap_from_bootstrap(
+            tenant_id.clone(),
+            TenantStore::create_in_memory()?,
+            bootstrap.clone(),
+            journal_tail,
+        )?
+        .export_materialized_journal_snapshot()?;
 
         // This snapshot is actual provider state at its applied head. A
         // durable tail can exist during recovery, but it cannot advance a
@@ -232,17 +351,17 @@ impl Engine {
         let mut mismatches = Vec::new();
         if let Some(mismatch) = compare_materialized_journal_snapshots(
             ConsistencyScope::AuthoritativeSnapshot,
-            &authoritative_snapshot,
+            &replayed_authoritative,
             ConsistencyScope::ShadowMaterializer,
-            &shadow_snapshot,
+            &replayed_shadow,
         )? {
             mismatches.push(mismatch);
         }
         if let Some(mismatch) = compare_materialized_journal_snapshots(
             ConsistencyScope::AuthoritativeSnapshot,
-            &authoritative_snapshot,
+            &replayed_authoritative,
             ConsistencyScope::EmbeddedReplica,
-            &replica_snapshot,
+            &replayed_replica,
         )? {
             mismatches.push(mismatch);
         }
@@ -271,10 +390,12 @@ impl Engine {
         };
 
         if let Some(prior) = prior_session.as_ref() {
-            if reason == ConsistencyEscalationReason::RootMismatch {
+            if escalation_reason == ConsistencyEscalationReason::RootMismatch {
                 mismatches.extend(compare_session_roots(prior));
             }
-            mismatches.extend(compare_prior_roots_to_full_scrub(prior, &fresh_session));
+            if prior_is_comparable {
+                mismatches.extend(compare_prior_roots_to_full_scrub(prior, &fresh_session));
+            }
         }
         mismatches.extend(compare_session_roots(&fresh_session));
 
@@ -282,7 +403,7 @@ impl Engine {
             &tenant_id,
             &fresh_session,
             ConsistencyVerificationMode::FullScrub,
-            Some(reason),
+            Some(escalation_reason),
             event_count,
             now,
             mismatches.clone(),
@@ -348,6 +469,21 @@ impl Engine {
             .as_mut()
             .expect("test must establish a verification session first")
             .corrupt_shadow_for_testing();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_before_full_scrub_for_testing(
+        &self,
+        tenant_id: TenantId,
+    ) -> FullScrubPauseHandle {
+        let pause = Arc::new(FullScrubPause::default());
+        let previous = FULL_SCRUB_PAUSES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("full-scrub pause registry should not be poisoned")
+            .insert(tenant_id.clone(), pause.clone());
+        assert!(previous.is_none(), "full-scrub pause already armed");
+        FullScrubPauseHandle { tenant_id, pause }
     }
 }
 

@@ -1296,6 +1296,84 @@ async fn consistency_verification_expired_anchor_advances_before_full_scrub() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn consistency_verification_full_scrub_cut_owns_concurrent_alignment() {
+    let data_dir = tempdir().expect("engine tempdir should build");
+    let monotonic_clock = Arc::new(nimbus_core::ManualMonotonicClock::new());
+    let engine = Arc::new(
+        Engine::new_with_simulation_clocks(
+            data_dir.path(),
+            Arc::new(ManualWallClock::new(Timestamp(1_000))),
+            monotonic_clock.clone(),
+            Arc::new(nimbus_storage::NoopFaultInjector),
+        )
+        .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("full-scrub-cut-race").expect("tenant id should build");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+        )
+        .await
+        .expect("first insert should succeed");
+    engine
+        .verify_consistency_async(tenant_id.clone())
+        .await
+        .expect("first full scrub should establish a session");
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(2))]),
+        )
+        .await
+        .expect("second insert should succeed");
+    monotonic_clock.advance(Duration::from_secs(15 * 60));
+
+    let pause = engine.pause_before_full_scrub_for_testing(tenant_id.clone());
+    let verify_engine = Arc::clone(&engine);
+    let verify_tenant = tenant_id.clone();
+    let verification =
+        tokio::spawn(async move { verify_engine.verify_consistency_async(verify_tenant).await });
+    pause.wait_until_entered().await;
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("rank".to_string(), json!(3))]),
+        )
+        .await
+        .expect("concurrent insert should succeed");
+    let expected_cut = engine
+        .latest_sequence_async(tenant_id)
+        .await
+        .expect("latest sequence should read");
+    pause.release();
+
+    let scrub = verification
+        .await
+        .expect("verification task should not panic")
+        .expect("expired anchor should scrub");
+    assert!(scrub.ok, "{scrub:#?}");
+    assert_eq!(scrub.mode, crate::ConsistencyVerificationMode::FullScrub);
+    assert_eq!(
+        scrub.escalation_reason,
+        Some(crate::ConsistencyEscalationReason::AnchorExpired)
+    );
+    assert_eq!(
+        scrub.anchor.position.applied_sequence(),
+        expected_cut,
+        "the captured full-scrub cut must own expected-root alignment"
+    );
+}
+
 #[test]
 fn snapshot_comparison_reports_document_field_differences_with_identifier() {
     let document = nimbus_core::Document::new(

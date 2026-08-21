@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nimbus_core::{
     Document, Error, HistoricalReadShape, Result, TableName, TenantEventRecord, TenantId,
 };
-use nimbus_storage::DurableJournalBootstrap;
+use nimbus_storage::{DurableJournalBootstrap, TenantStore};
 
 use crate::PinnedServingReadSnapshot;
 use crate::engine::Engine;
@@ -60,6 +60,19 @@ impl Engine {
         }
         Ok(tail)
     }
+}
+
+pub(super) fn rebuild_authoritative_snapshot(
+    bootstrap: &DurableJournalBootstrap,
+    journal_tail: &[TenantEventRecord],
+) -> Result<crate::MaterializedJournalSnapshot> {
+    let store = TenantStore::create_in_memory()?;
+    store.rebuild_materialized_journal_from_snapshot(
+        &bootstrap.snapshot,
+        journal_tail,
+        Some(bootstrap.bootstrap_cut),
+    )?;
+    store.export_materialized_journal_snapshot()
 }
 
 pub(crate) fn snapshot_table_documents(
