@@ -58,11 +58,14 @@ prevents an older waiter from moving the session clock backward.
 
 A root mismatch cannot become a successful full-scrub report. Nimbus compares
 the prior roots with each other and compares each same-sequence prior root with
-the rebuilt root. Any failed scrub discards its session. The next request must
-scrub again, so a persistent provider or replay mismatch cannot become a warm
-success. A session-only index fault can recover through a clean full rebuild.
-A retention gap also discards the old assurance and starts a new full anchor
-from actual state.
+the rebuilt root. IMV5 discarded a failed session and forced the next request
+to scrub again. IMV6 found that this also discarded the expected witness.
+Persistent same-sequence provider tamper could then become a cold success.
+
+IMV6 supersedes that behavior. It retains a consistent prior witness or a clean
+rebuilt witness after a session-only fault. It marks that witness for a
+confirming full scrub. A retention gap still discards the old assurance and
+starts a new full anchor from actual state.
 
 An unrelated provider error remains an error. It is not relabeled as a
 retention rebuild. A failed operation can discard its disposable session, but

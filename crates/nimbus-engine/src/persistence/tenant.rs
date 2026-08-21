@@ -61,6 +61,16 @@ impl TenantPersistence {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn tamper_document_for_testing(&self, document: Document) -> Result<()> {
+        match self {
+            Self::Memory(store) => store.tamper_document_for_testing(document),
+            _ => Err(nimbus_core::Error::InvalidInput(
+                "materialized document tamper hook requires memory persistence".to_string(),
+            )),
+        }
+    }
+
     /// Retires tenant-specific persistence resources after engine-owned work
     /// drains and before shutdown or destructive provider deletion completes.
     ///

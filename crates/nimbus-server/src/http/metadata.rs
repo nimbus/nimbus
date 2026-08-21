@@ -135,18 +135,45 @@ pub(crate) async fn tenant_engine_diagnostics(
     }))
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct ConsistencyReportQuery {
+    #[serde(default)]
+    force_full: bool,
+}
+
 /// Runs the on-demand tenant consistency verifier and returns the diagnostic report.
 pub(crate) async fn tenant_consistency_report(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<String>,
+    QueryParams(query): QueryParams<ConsistencyReportQuery>,
 ) -> Result<Json<nimbus_engine::ConsistencyVerificationReport>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.consistency")?;
-    let report = state
-        .engine
-        .clone()
-        .verify_consistency_async(tenant.tenant_id().clone())
-        .await?;
+    let report = if query.force_full {
+        state
+            .engine
+            .clone()
+            .verify_consistency_full_scrub_async(tenant.tenant_id().clone())
+            .await?
+    } else {
+        state
+            .engine
+            .clone()
+            .verify_consistency_async(tenant.tenant_id().clone())
+            .await?
+    };
     Ok(Json(report))
+}
+
+/// Clears one disposable verification session without changing tenant data.
+pub(crate) async fn clear_tenant_consistency_session(
+    State(state): State<Arc<AppState>>,
+    Path(tenant_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.consistency")?;
+    state
+        .engine
+        .clear_consistency_verification_session(tenant.tenant_id());
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Redirects to the repo-hosted examples index.

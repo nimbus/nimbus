@@ -14,6 +14,7 @@ use super::{
 };
 use crate::store::JournalProgress;
 use crate::{DurableJournal, MaterializedPosition, TenantPointRead, TenantPointWrite};
+use crate::{MaterializedJournalSnapshot, MaterializedVerificationTracker, VerificationPosition};
 
 /// Reads the materialized position a store currently publishes.
 ///
@@ -21,16 +22,19 @@ use crate::{DurableJournal, MaterializedPosition, TenantPointRead, TenantPointWr
 /// rather than a trait method, so the shared bodies below need this test-only
 /// bridge to stay provider-independent. It adds no production surface.
 pub(crate) trait MaterializedPositionOracle {
-    fn export_materialized_position(&self) -> Result<MaterializedPosition>;
+    fn export_materialized_snapshot(&self) -> Result<MaterializedJournalSnapshot>;
+
+    fn export_materialized_position(&self) -> Result<MaterializedPosition> {
+        self.export_materialized_snapshot()?.materialized_position()
+    }
 }
 
 macro_rules! impl_materialized_position_oracle {
     ($($ty:ty),+ $(,)?) => {
         $(
             impl MaterializedPositionOracle for $ty {
-                fn export_materialized_position(&self) -> Result<MaterializedPosition> {
-                    self.export_materialized_journal_snapshot()?
-                        .materialized_position()
+                fn export_materialized_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
+                    self.export_materialized_journal_snapshot()
                 }
             }
         )+
@@ -260,6 +264,37 @@ where
 pub(crate) fn reference_materialized_position() -> MaterializedPosition {
     let store = crate::MemoryTenantStore::new();
     exercise_materialized_position_is_provider_independent(&store)
+}
+
+/// Replaying one pinned batch must produce the same derived root on every
+/// provider as the canonical in-memory reference.
+pub(crate) fn exercise_materialized_verification_root_is_provider_independent<S>(
+    store: &S,
+) -> VerificationPosition
+where
+    S: DurableJournal + MaterializedPositionOracle,
+{
+    let records = parity_records();
+    store
+        .append_durable_records_batch(&records)
+        .expect("pinned records should append");
+    store
+        .recover_durable_journal()
+        .expect("pinned records should replay");
+
+    MaterializedVerificationTracker::from_snapshot(
+        &store
+            .export_materialized_snapshot()
+            .expect("materialized snapshot should export"),
+    )
+    .expect("verification tracker should build")
+    .position()
+    .expect("verification position should be valid")
+}
+
+pub(crate) fn reference_materialized_verification_root() -> VerificationPosition {
+    let store = crate::MemoryTenantStore::new();
+    exercise_materialized_verification_root_is_provider_independent(&store)
 }
 
 /// Durable-but-unapplied records must stay invisible to reads until

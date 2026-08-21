@@ -713,7 +713,7 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
         .route("/debug/runtime/metrics", get(http::runtime_diagnostics))
         .route(
             "/debug/tenants/{tenant_id}/consistency",
-            get(http::tenant_consistency_report),
+            get(http::tenant_consistency_report).delete(http::clear_tenant_consistency_session),
         )
         .route(
             "/debug/tenants/{tenant_id}/engine/metrics",

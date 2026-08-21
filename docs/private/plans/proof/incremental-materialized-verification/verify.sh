@@ -207,7 +207,7 @@ else
     && test_ok nimbus-storage hidden_lineage_document_write_matches_provider_activation \
     && test_ok nimbus-storage schema_scheduler_and_lifecycle_records_have_safe_verification_effects \
     && test_ok nimbus-storage snapshot_restore_invalidates_local_verification_generations \
-    && test_ok nimbus-storage replacement_generation_is_never_current_during_update \
+    && test_ok nimbus-storage overlapping_replacements_share_one_non_current_generation \
     && test_ok nimbus-engine object_manifest_commit_updates_verification_root \
     && test_ok nimbus-storage durable_head_ahead_of_apply_does_not_advance_verification_root \
     && test_ok nimbus-storage libsql_replica_refresh_invalidates_stale_verification_root --features libsql \
@@ -226,14 +226,18 @@ else
   fi
 
   if test_ok nimbus-engine unchanged_recheck_reads_no_full_snapshot \
-    && test_ok nimbus-engine bounded_sessions_evict_least_recently_used; then
+    && test_ok nimbus-engine bounded_sessions_evict_least_recently_used \
+    && test_ok nimbus-engine verification_session_limit_refuses_when_every_slot_is_active \
+    && test_ok nimbus-engine consistency_verification_process_restart_requires_full_scrub; then
     ok "11. verification sessions reuse state and remain bounded"
   else
     no "11. session behavior" "IMV5 reuse or eviction tests are absent or failing"
   fi
 
   if test_ok nimbus-storage corrupt_index_never_reports_success \
-    && test_ok nimbus-storage full_scrub_detects_state_tamper_at_same_sequence; then
+    && test_ok nimbus-storage full_scrub_detects_state_tamper_at_same_sequence \
+    && test_ok nimbus-engine \
+      consistency_full_scrub_rejects_persistent_same_sequence_provider_tamper; then
     ok "12. corruption and provider tamper fail closed"
   else
     no "12. fail-closed fallback" "IMV6 corruption tests are absent or failing"
@@ -247,7 +251,8 @@ else
     no "13. anchor and escalation" "IMV5 anchor or escalation tests are absent or failing"
   fi
 
-  if test_ok nimbus-storage verification_metrics_have_bounded_labels; then
+  if test_ok nimbus-storage verification_metrics_have_bounded_labels \
+    && test_ok nimbus-server tenant_consistency_route_returns_green_report_for_live_state; then
     ok "14. incremental verification metrics are bounded"
   else
     no "14. incremental metrics" "the bounded-label regression is absent or failing"

@@ -88,6 +88,13 @@ pub fn route_inventory() -> Vec<RouteInventoryEntry> {
             true,
         ),
         route(
+            "DELETE",
+            "/debug/tenants/{tenant_id}/consistency",
+            "native",
+            "clear_tenant_consistency_session",
+            true,
+        ),
+        route(
             "GET",
             "/debug/tenants/{tenant_id}/engine/metrics",
             "native",

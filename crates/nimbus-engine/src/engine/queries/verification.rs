@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use nimbus_core::{Error, Result, SequenceNumber, TenantEventRecord, TenantId};
 use nimbus_storage::{
+    MaterializedVerificationMetricMode, MaterializedVerificationObservation,
     MaterializedVerificationTracker, ShadowMaterializer, ShadowMaterializerConfig, TenantStore,
 };
 
@@ -18,6 +19,12 @@ use crate::verification::{
 };
 
 const VERIFICATION_STREAM_LIMIT: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerificationRequestMode {
+    ReuseAllowed,
+    ForceFullScrub,
+}
 
 #[cfg(test)]
 #[derive(Default)]
@@ -105,9 +112,40 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<ConsistencyVerificationReport> {
+        self.verify_consistency_with_mode(tenant_id, VerificationRequestMode::ReuseAllowed)
+            .await
+    }
+
+    /// Runs a full provider-state scrub even when a reusable session exists.
+    pub async fn verify_consistency_full_scrub_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<ConsistencyVerificationReport> {
+        self.verify_consistency_with_mode(tenant_id, VerificationRequestMode::ForceFullScrub)
+            .await
+    }
+
+    /// Discards one process-local verification session without changing data.
+    pub fn clear_consistency_verification_session(&self, tenant_id: &TenantId) -> bool {
+        self.verification_sessions.invalidate(tenant_id)
+    }
+
+    /// Returns fixed-shape process metrics for consistency verification.
+    pub fn consistency_verification_metrics(
+        &self,
+    ) -> nimbus_storage::MaterializedVerificationMetricsSnapshot {
+        self.verification_sessions.metrics_snapshot()
+    }
+
+    async fn verify_consistency_with_mode(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        request_mode: VerificationRequestMode,
+    ) -> Result<ConsistencyVerificationReport> {
+        let request_started_at = self.monotonic_now();
         let slot = self
             .verification_sessions
-            .acquire(&tenant_id, self.monotonic_now());
+            .acquire(&tenant_id, self.monotonic_now())?;
         let mut session_guard = slot.lock().await;
         // Another check for this tenant can wait on the session lock. Read
         // time after admission so an older waiter cannot move last-used time
@@ -118,7 +156,32 @@ impl Engine {
         let expiry_reason = session_guard
             .as_ref()
             .and_then(|session| session.expiry_reason(now, config));
-        let report = if session_guard.is_none() {
+        let failed_scrub_retry = session_guard
+            .as_ref()
+            .is_some_and(|session| session.requires_full_scrub);
+        let mut report = if request_mode == VerificationRequestMode::ForceFullScrub {
+            let prior_session = session_guard.take();
+            self.run_full_scrub(
+                tenant_id.clone(),
+                ConsistencyEscalationReason::OperatorForced,
+                prior_session,
+                0,
+                now,
+                &mut session_guard,
+            )
+            .await
+        } else if failed_scrub_retry {
+            let prior_session = session_guard.take();
+            self.run_full_scrub(
+                tenant_id.clone(),
+                ConsistencyEscalationReason::RootMismatch,
+                prior_session,
+                0,
+                now,
+                &mut session_guard,
+            )
+            .await
+        } else if session_guard.is_none() {
             self.run_full_scrub(
                 tenant_id.clone(),
                 ConsistencyEscalationReason::ColdStart,
@@ -156,6 +219,29 @@ impl Engine {
             resident_index_bytes,
             self.monotonic_now(),
         );
+        if let Ok(completed) = report.as_mut() {
+            let mode = match completed.mode {
+                ConsistencyVerificationMode::FullScrub => {
+                    MaterializedVerificationMetricMode::FullScrub
+                }
+                ConsistencyVerificationMode::Incremental => {
+                    MaterializedVerificationMetricMode::Incremental
+                }
+            };
+            let rebuilt = completed.mode == ConsistencyVerificationMode::FullScrub
+                && completed.escalation_reason != Some(ConsistencyEscalationReason::ColdStart);
+            self.verification_sessions
+                .record_verification(MaterializedVerificationObservation {
+                    mode,
+                    duration: self
+                        .monotonic_now()
+                        .saturating_duration_since(request_started_at),
+                    verified_leaves: completed.authoritative_root.leaf_count,
+                    rebuilt,
+                    mismatch_count: completed.mismatches.len(),
+                });
+            completed.metrics = self.verification_sessions.metrics_snapshot();
+        }
         report
     }
 
@@ -387,7 +473,12 @@ impl Engine {
             authoritative,
             shadow: shadow_tracker,
             embedded_replica: replica_tracker,
+            requires_full_scrub: false,
         };
+
+        let prior_was_consistent = prior_session
+            .as_ref()
+            .is_some_and(VerificationSession::positions_match);
 
         if let Some(prior) = prior_session.as_ref() {
             if escalation_reason == ConsistencyEscalationReason::RootMismatch {
@@ -411,10 +502,17 @@ impl Engine {
         if mismatches.is_empty() {
             *session_guard = Some(fresh_session);
         } else {
-            // Any failed scrub makes the retained witness unsafe. Dropping it
-            // forces the next request to scrub again. A persistent provider
-            // or replay mismatch therefore cannot become a warm success.
-            *session_guard = None;
+            // A failed scrub must never become a warm success. Keep a
+            // consistent prior witness when it disagrees with provider state;
+            // otherwise keep the clean rebuilt witness. The marker forces the
+            // next request through another full scrub.
+            let mut retained = if prior_was_consistent {
+                prior_session.expect("a consistent prior witness must exist")
+            } else {
+                fresh_session
+            };
+            retained.requires_full_scrub = true;
+            *session_guard = Some(retained);
         }
         Ok(report)
     }
@@ -466,12 +564,24 @@ impl Engine {
     ) {
         let slot = self
             .verification_sessions
-            .acquire(tenant_id, self.monotonic_now());
+            .acquire(tenant_id, self.monotonic_now())
+            .expect("test must admit the established verification session");
         let mut guard = slot.lock().await;
         guard
             .as_mut()
             .expect("test must establish a verification session first")
             .corrupt_shadow_for_testing();
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn tamper_materialized_document_for_testing(
+        self: &Arc<Self>,
+        tenant_id: &TenantId,
+        document: nimbus_core::Document,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant_async(tenant_id).await?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.store.tamper_document_for_testing(document)
     }
 
     #[cfg(test)]
@@ -519,6 +629,7 @@ fn report_from_session(
         embedded_replica: session.evidence.embedded_replica.clone(),
         bootstrap: session.evidence.bootstrap.clone(),
         mismatches,
+        metrics: nimbus_storage::MaterializedVerificationMetricsSnapshot::default(),
     })
 }
 
