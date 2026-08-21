@@ -125,6 +125,19 @@ The Nimbus pre-PR autoreview reports no accepted or actionable finding. It
 confirms the retained-witness rule, hard registry bounds, fixed metrics, local
 administration boundary, and test-only provider tamper hook.
 
+The first hosted run qualified PostgreSQL and MySQL. The libSQL verification
+root test also passed, but four PPSC recovery cases failed. The new invalidator
+rejected an overlapping replica-cache replacement as a storage error after
+the durable head advanced. Correction `0fe5db256` gives overlapping replacement
+guards one reference-counted non-current epoch. Derived verification work can
+no longer reject valid storage concurrency.
+
+The correction passes the 26-test materialized-verification lane, all eight
+engine consistency tests, the libSQL-feature test compile, and focused Clippy.
+Its real-provider rerun remains the hosted merge gate. A local fixture attempt
+was `UNVERIFIED`: Docker Desktop's credential helper blocked before it started
+the pinned libSQL image.
+
 The fixed verifier reports:
 
 ```text

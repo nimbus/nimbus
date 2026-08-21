@@ -207,7 +207,7 @@ else
     && test_ok nimbus-storage hidden_lineage_document_write_matches_provider_activation \
     && test_ok nimbus-storage schema_scheduler_and_lifecycle_records_have_safe_verification_effects \
     && test_ok nimbus-storage snapshot_restore_invalidates_local_verification_generations \
-    && test_ok nimbus-storage replacement_generation_is_never_current_during_update \
+    && test_ok nimbus-storage overlapping_replacements_share_one_non_current_generation \
     && test_ok nimbus-engine object_manifest_commit_updates_verification_root \
     && test_ok nimbus-storage durable_head_ahead_of_apply_does_not_advance_verification_root \
     && test_ok nimbus-storage libsql_replica_refresh_invalidates_stale_verification_root --features libsql \
