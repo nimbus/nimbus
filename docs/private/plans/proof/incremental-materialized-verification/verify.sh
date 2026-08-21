@@ -118,10 +118,54 @@ else
 fi
 
 # 7. IMV2 records a complete literal continuation verdict.
-if [ -f "$PROOF/imv2-raw.json" ] \
+if python3 - "$PROOF/imv2-raw.json" <<'PY' \
   && [ -f "$PROOF/imv2-verdict.md" ] \
   && grep -qE 'STREAMING_ACCEPTED|MERKLE_REQUIRED|NO_ACCEPTABLE_DESIGN' "$PROOF/imv2-verdict.md" \
   && grok "$PROOF/imv2-verdict.md" "measured margin"; then
+import itertools
+import json
+import sys
+
+try:
+    report = json.load(open(sys.argv[1]))
+    expected = set(itertools.product(
+        (10_000, 100_000, 1_000_000),
+        (256, 1_024, 8 * 1_024),
+        (0, 10, 100, 1_000),
+    ))
+    matrix = report["matrix"]
+    actual = {
+        (row["documents"], row["payload_bytes"], row["churn_basis_points"])
+        for row in matrix
+    }
+    decisive = next(
+        row for row in matrix
+        if (row["documents"], row["payload_bytes"], row["churn_basis_points"])
+        == (100_000, 1_024, 10)
+    )
+    million = next(
+        row for row in matrix
+        if (row["documents"], row["payload_bytes"], row["churn_basis_points"])
+        == (1_000_000, 1_024, 10)
+    )
+    valid = (
+        report["format_version"] == 2
+        and report["interval_seconds"] == 60
+        and report["churn_setup_budget_seconds"] == 120
+        and len(matrix) == 36
+        and actual == expected
+        and report["write_overhead"] is not None
+        and decisive["churn_setup_status"] == "measured"
+        and decisive["full"]["summary"]["p95_ns"] > 1_000_000_000
+        and decisive["candidate"]["resident_bytes_per_leaf"] <= 192
+        and million["churn_setup_status"] == "measured"
+        and million["full"]["censored_lower_bound_summary"]["p95_ns"]
+            >= 15_000_000_000
+    )
+except (OSError, KeyError, StopIteration, TypeError, ValueError):
+    valid = False
+sys.exit(0 if valid else 1)
+PY
   ok "7. IMV2 raw measurements and continuation verdict are recorded"
 else
   no "7. IMV2 verdict" "raw matrix, literal verdict, or measured margin is missing"

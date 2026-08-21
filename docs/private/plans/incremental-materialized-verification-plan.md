@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: monitor PR #303 and resolve any hosted failure. After it merges,
-advance IMV1 to `done` and start IMV2 from the merged main branch.
+Next action: run the IMV2 pre-PR review, publish and merge its task pull
+request, then start IMV3 from refreshed main under `MERKLE_REQUIRED`.
 
 ## Outcome
 
@@ -112,8 +112,8 @@ IMV0 runs first after promotion and creates the proof root and the
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | IMV0 | Pin the execution baseline, create the proof root, author the 16-condition verifier red, and capture full-verification fail-before cost. No production behavior changes. | `done` | PR #302. Work `58e46b675`, fix `14227dc59`; proof `97949afa2`, refresh `6e643ada8`. Verifier: `Summary: 3 passed, 13 failed`. |
-| IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `in_progress` | PR #303. Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`; Nimbus autoreview clean. Merge remains. |
-| IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `todo` | |
+| IMV1 | Repair `MaterializedPosition` as mandatory correctness work: lower adapter values once into one normalized logical tree shared by persistence, equality, indexing, and hashing; define one canonical codec; make float encoding total; validate PITR before writes; and prove one golden digest in storage-only and shipped Cargo graphs. | `done` | PR #303 merged as `9c807015a`. Work `0da288204`; proof `ce2ea3d8e`; verifier `Summary: 6 passed, 10 failed`; Nimbus autoreview and hosted checks clean. |
+| IMV2 | Run the benchmark matrix and decide `STREAMING_ACCEPTED`, `MERKLE_REQUIRED`, or `NO_ACCEPTABLE_DESIGN` from the ratified gate. | `in_progress` | Work `7fec8c579`; proof `2e6b30cc3`. Verdict: `MERKLE_REQUIRED`. Verifier: `Summary: 7 passed, 9 failed`. Pre-PR review, hosted checks, and merge remain. |
 | IMV3 | If required, implement the storage-owned deterministic Merkle treap and prove batch versus incremental equivalence. | `todo` | |
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `todo` | |
 | IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `todo` | |
@@ -721,7 +721,7 @@ crates/nimbus-engine/src/engine/objects.rs,
 crates/nimbus-engine/src/engine/queries/verification.rs, and
 crates/nimbus-engine/src/replica.rs. Work in
 /Users/jack/src/github.com/nimbus/nimbus-worktrees/incremental-materialized-verification
-on branch codex/imv1-canonical-materialized-values. Chat history is
+on branch codex/imv2-measurement-verdict. Chat history is
 not progress state. Resume from the status ledger, the execution log,
 and git state. If compaction happens, continue from the plan and git
 state rather than restarting. Loop: keep one task in_progress,
@@ -783,3 +783,8 @@ Append rows at the end. This section stays last.
 | 2026-08-20 | IMV1 | implemented | Work `0da288204` adds the version 2 streaming codec, shared logical-value consumers, total floats, GeoPoint admission, opaque positions, PITR preflight, cross-graph golden tests, governing specification, and SIC4 erratum. Proof `ce2ea3d8e` records `Summary: 6 passed, 10 failed`. The full workspace run passed 7,538 of 7,539 tests; its unchanged MongoDB report failure passed three isolated reruns. Pre-PR autoreview and PR merge remain. |
 | 2026-08-20 | IMV1 | reviewed | Nimbus pre-PR autoreview found no actionable defect. It confirmed prefix-free codec framing, Cargo-graph-independent ordering, byte-preserving index derivation, and pre-write position validation. The approved negative-zero normalization remains explicit. PR publication and merge remain. |
 | 2026-08-20 | IMV1 | published | Opened PR #303 from `codex/imv1-canonical-materialized-values`. Hosted checks and merge remain. |
+| 2026-08-20 | IMV1 | completed | PR #303 passed hosted checks and merged as `9c807015a`. Main fast-forwarded to that commit. IMV1 is terminal. |
+| 2026-08-20 | IMV2 | started | Created `codex/imv2-measurement-verdict` from merged main `9c807015a`. IMV2 is the only `in_progress` task. |
+| 2026-08-21 | IMV2 | measured | Completed all 36 required matrix coordinates. Twenty-eight churn states are exact. Eight broad stress rungs retain `resource_limited_setup` evidence under the 120-second inter-batch setup budget. The decisive 100,000-document, 1 KiB, 0.1% rung exceeds the full-verifier latency and memory limits. |
+| 2026-08-21 | IMV2 | implemented | Work `7fec8c579` adds isolated full-verifier samples, bounded resource accounting, the deterministic benchmark-only SHA-256 treap, paired write-overhead measurements, and checkpointed stable JSON. Proof `2e6b30cc3` records the raw matrix and literal `MERKLE_REQUIRED` verdict. The verifier reports `Summary: 7 passed, 9 failed`. |
+| 2026-08-21 | IMV2 | reviewed | Nimbus pre-PR autoreview found no actionable defect. It independently checked the treap operations, percentile calculations, censoring rule, decisive raw rows, and verifier assertions. The clean attestation is stored for the substantive diff. |

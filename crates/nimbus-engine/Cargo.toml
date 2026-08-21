@@ -63,6 +63,7 @@ nimbus-storage = { path = "../nimbus-storage", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing", default-features = false }
 proptest = "1"
 serial_test.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 tokio-postgres.workspace = true
 
