@@ -7,7 +7,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use nimbus_core::{
     Error, Result, SchemaChangeEvent, SequenceNumber, TableId, TenantEventKind, TenantEventRecord,
@@ -614,38 +613,40 @@ pub struct MaterializedVerificationGeneration(u64);
 /// an exact journal delta, such as a libSQL replica-cache swap.
 #[derive(Debug, Clone, Default)]
 pub struct MaterializedVerificationInvalidator {
-    generation: Arc<AtomicU64>,
+    state: Arc<parking_lot::Mutex<MaterializedVerificationInvalidationState>>,
+}
+
+#[derive(Debug, Default)]
+struct MaterializedVerificationInvalidationState {
+    generation: u64,
+    active_updates: u64,
 }
 
 /// Keeps a replacement generation non-current for its complete mutation
-/// window. Storage replacement paths are single-writer operations, so a
-/// concurrent guard request is a contract error rather than a second writer.
+/// window. Overlapping replacement work shares one non-current epoch. Derived
+/// verification state must not turn valid storage concurrency into a write
+/// failure.
 pub(crate) struct MaterializedVerificationUpdateGuard {
     invalidator: MaterializedVerificationInvalidator,
 }
 
 impl MaterializedVerificationInvalidator {
     pub fn generation(&self) -> MaterializedVerificationGeneration {
-        MaterializedVerificationGeneration(self.generation.load(AtomicOrdering::Acquire))
+        MaterializedVerificationGeneration(self.state.lock().generation)
     }
 
     pub(crate) fn begin_update(&self) -> Result<MaterializedVerificationUpdateGuard> {
-        let current = self.generation.load(AtomicOrdering::Acquire);
-        if current & 1 != 0 {
-            return Err(Error::Internal(
-                "concurrent materialized verification replacement".to_string(),
-            ));
+        let mut state = self.state.lock();
+        if state.active_updates == 0 {
+            debug_assert_eq!(state.generation & 1, 0);
+            state.generation = state.generation.wrapping_add(1);
         }
-        self.generation
-            .compare_exchange(
-                current,
-                current.wrapping_add(1),
-                AtomicOrdering::AcqRel,
-                AtomicOrdering::Acquire,
+        state.active_updates = state.active_updates.checked_add(1).ok_or_else(|| {
+            Error::ResourceExhausted(
+                "materialized verification replacement count overflow".to_string(),
             )
-            .map_err(|_| {
-                Error::Internal("concurrent materialized verification replacement".to_string())
-            })?;
+        })?;
+        drop(state);
         Ok(MaterializedVerificationUpdateGuard {
             invalidator: self.clone(),
         })
@@ -658,11 +659,13 @@ impl MaterializedVerificationInvalidator {
 
 impl Drop for MaterializedVerificationUpdateGuard {
     fn drop(&mut self) {
-        let previous = self
-            .invalidator
-            .generation
-            .fetch_add(1, AtomicOrdering::AcqRel);
-        debug_assert_eq!(previous & 1, 1);
+        let mut state = self.invalidator.state.lock();
+        debug_assert!(state.active_updates > 0);
+        state.active_updates = state.active_updates.saturating_sub(1);
+        if state.active_updates == 0 {
+            debug_assert_eq!(state.generation & 1, 1);
+            state.generation = state.generation.wrapping_add(1);
+        }
     }
 }
 
@@ -1193,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn replacement_generation_is_never_current_during_update() {
+    fn overlapping_replacements_share_one_non_current_generation() {
         let invalidator = MaterializedVerificationInvalidator::default();
         let before = invalidator.generation();
         assert!(invalidator.is_current(before));
@@ -1204,9 +1207,15 @@ mod tests {
         let during = invalidator.generation();
         assert!(!invalidator.is_current(before));
         assert!(!invalidator.is_current(during));
-        assert!(invalidator.begin_update().is_err());
+        let overlapping = invalidator
+            .begin_update()
+            .expect("an overlapping replacement should join the invalidation epoch");
 
         drop(update);
+        assert_eq!(invalidator.generation(), during);
+        assert!(!invalidator.is_current(during));
+
+        drop(overlapping);
         let after = invalidator.generation();
         assert!(invalidator.is_current(after));
         assert!(!invalidator.is_current(before));
