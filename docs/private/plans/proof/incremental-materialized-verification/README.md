@@ -23,6 +23,8 @@ complete.
   invalidation, and focused acceptance results.
 - `imv5.md` records the bounded-session contract, full-scrub anchor semantics,
   escalation behavior, cache limits, and focused acceptance results.
+- `imv6.md` records provider-root parity, fault recovery, hard session bounds,
+  fixed metrics, operator controls, and external-provider qualification state.
 - Later task proofs stay beside these files and remain inputs to `verify.sh`.
 
 The execution baseline is
