@@ -13,6 +13,7 @@ pub mod kv;
 #[cfg(feature = "libsql")]
 pub mod libsql;
 mod materialized_position;
+mod materialized_verification;
 pub mod materializer;
 pub mod memory;
 #[cfg(feature = "mysql")]
@@ -82,6 +83,13 @@ pub use libsql::{
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub use materialized_position::materialized_position_golden_fixture;
+pub use materialized_verification::{
+    LogicalLeafKey, LogicalLeafKind, MATERIALIZED_VERIFICATION_ROOT_VERSION,
+    MaterializedVerificationIndex, VERIFICATION_INDEX_ALLOCATOR_BYTES_PER_LEAF,
+    VERIFICATION_INDEX_BUDGETED_BYTES_PER_LEAF, VERIFICATION_INDEX_MAX_DEPTH,
+    VERIFICATION_INDEX_MAX_RESIDENT_BYTES_PER_LEAF, VERIFICATION_INDEX_NODE_BYTES,
+    VerificationPosition, VerificationRootVersion,
+};
 pub use materializer::{ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest};
 pub use memory::{
     MemoryTenantProvider, MemoryTenantSnapshot, MemoryTenantStorage, MemoryTenantStore,
