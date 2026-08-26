@@ -53,6 +53,12 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   defects, embedded process fence, retention contract, erasure and scrub
   hardening). Review-driven refactor and cleanup work should route through
   this plan's band ledgers while it is active.
+- `storage-metadata-retention-plan.md` - `active`. Executes Band SA row SA4.
+  It owns checkpoint-backed commit-log pruning, production MVCC compaction,
+  bounded CDC and PITR history, trimmed-history validation, and six-backend
+  qualification. It uses the current single-tenant process/committer fencing;
+  the horizontal-scaling plan still owns distributed retention authority and
+  cross-node checkpoint replication.
 - `nimbus-runtime-tenant-isolation-plan.md` - `complete` in PR #227. Canonical
   runtime-owner identity, routing-versus-reuse-authority separation,
   owner-partitioned
