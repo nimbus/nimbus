@@ -339,6 +339,15 @@ checks the journal bootstrap cut, and compares them. The report contains:
 The verifier reads live state, so run it on demand or on a coarse schedule
 rather than in a tight loop.
 
+Each request also emits a structured
+`action="tenant_consistency_verification"` log event. A clean report uses
+`INFO`. A report with mismatches or a verification failure uses `WARN`. The
+event includes the tenant, requested full-scrub flag, verification mode,
+escalation reason, mismatch count, journal event count, and anchor sequence;
+the mismatch event also names the first failed invariant. Alert on the warning
+event so a scheduled check cannot return a divergent report without an
+operator-visible signal.
+
 ## Check version and update status
 
 ```bash

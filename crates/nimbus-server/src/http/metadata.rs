@@ -162,20 +162,72 @@ pub(crate) async fn tenant_consistency_report(
     QueryParams(query): QueryParams<ConsistencyReportQuery>,
 ) -> Result<Json<nimbus_engine::ConsistencyVerificationReport>, AppError> {
     let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.consistency")?;
-    let report = if query.force_full {
+    let result = if query.force_full {
         state
             .engine
             .clone()
             .verify_consistency_full_scrub_async(tenant.tenant_id().clone())
-            .await?
+            .await
     } else {
         state
             .engine
             .clone()
             .verify_consistency_async(tenant.tenant_id().clone())
-            .await?
+            .await
     };
+    let report = match result {
+        Ok(report) => report,
+        Err(error) => {
+            tracing::warn!(
+                action = "tenant_consistency_verification",
+                tenant_id = %tenant.tenant_id(),
+                force_full = query.force_full,
+                error = %error,
+                "tenant consistency verification failed"
+            );
+            return Err(error.into());
+        }
+    };
+    trace_consistency_report(&report, query.force_full);
     Ok(Json(report))
+}
+
+fn trace_consistency_report(
+    report: &nimbus_engine::ConsistencyVerificationReport,
+    force_full: bool,
+) {
+    let mismatch_count = report.mismatches.len();
+    let anchor_sequence = report.anchor.position.applied_sequence().0;
+    if report.ok {
+        tracing::info!(
+            action = "tenant_consistency_verification",
+            tenant_id = %report.tenant_id,
+            force_full,
+            mode = ?report.mode,
+            escalation_reason = ?report.escalation_reason,
+            mismatch_count,
+            event_count = report.event_count,
+            anchor_sequence,
+            "tenant consistency verification completed"
+        );
+    } else {
+        let first_mismatch_invariant = report
+            .mismatches
+            .first()
+            .map_or("unknown", |mismatch| mismatch.invariant.as_str());
+        tracing::warn!(
+            action = "tenant_consistency_verification",
+            tenant_id = %report.tenant_id,
+            force_full,
+            mode = ?report.mode,
+            escalation_reason = ?report.escalation_reason,
+            mismatch_count,
+            event_count = report.event_count,
+            anchor_sequence,
+            first_mismatch_invariant,
+            "tenant consistency verification found mismatches"
+        );
+    }
 }
 
 /// Clears one disposable verification session without changing tenant data.
@@ -210,3 +262,7 @@ pub(crate) async fn encryption_status(
         });
     Json(status)
 }
+
+#[cfg(test)]
+#[path = "metadata/tests.rs"]
+mod tests;
