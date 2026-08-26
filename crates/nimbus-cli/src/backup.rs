@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli_ux;
 
-const BACKUP_FORMAT_VERSION: u16 = 1;
+const BACKUP_FORMAT_VERSION: u16 = 2;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum BackupCommand {
@@ -96,6 +96,18 @@ struct BackupFile {
     tenants: BTreeMap<String, PointInTimeRestoreArchive>,
 }
 
+#[derive(Deserialize)]
+struct BackupFileHeader {
+    format_version: u16,
+}
+
+#[derive(Deserialize)]
+struct BackupFilePayload {
+    format_version: u16,
+    provider: String,
+    tenants: BTreeMap<String, serde_json::Value>,
+}
+
 pub(crate) async fn run_backup_command(command: BackupCommand) -> Result<(), Box<dyn Error>> {
     match command {
         BackupCommand::Create(command) => run_backup_create(command).await,
@@ -147,21 +159,7 @@ async fn run_backup_restore(command: BackupRestoreCommand) -> Result<(), Box<dyn
             command.input.display()
         )
     })?;
-    let backup: BackupFile = serde_json::from_slice(&raw).map_err(|error| {
-        format!(
-            "backup file {} is not a valid nimbus backup: {error}",
-            command.input.display()
-        )
-    })?;
-    if backup.format_version != BACKUP_FORMAT_VERSION {
-        return Err(format!(
-            "backup file {} has unsupported format version {} (this binary supports {})",
-            command.input.display(),
-            backup.format_version,
-            BACKUP_FORMAT_VERSION,
-        )
-        .into());
-    }
+    let backup = decode_backup_file(&raw, &command.input)?;
     let engine = open_engine(&command.data_dir, command.provider).await?;
     for (tenant_name, archive) in &backup.tenants {
         let tenant_id = TenantId::new(tenant_name)?;
@@ -176,6 +174,56 @@ async fn run_backup_restore(command: BackupRestoreCommand) -> Result<(), Box<dyn
         command.data_dir.display(),
     ));
     Ok(())
+}
+
+fn decode_backup_file(raw: &[u8], input: &Path) -> Result<BackupFile, Box<dyn Error>> {
+    let header: BackupFileHeader = serde_json::from_slice(raw).map_err(|error| {
+        format!(
+            "backup file {} is not a valid nimbus backup: {error}",
+            input.display()
+        )
+    })?;
+    if header.format_version != BACKUP_FORMAT_VERSION {
+        let codec_context = (header.format_version < BACKUP_FORMAT_VERSION).then_some(
+            "; this backup predates materialized-position digest codec version 2 and must be recreated with a current Nimbus binary",
+        );
+        return Err(format!(
+            "backup file {} has unsupported format version {} (this binary supports {}){}",
+            input.display(),
+            header.format_version,
+            BACKUP_FORMAT_VERSION,
+            codec_context.unwrap_or_default(),
+        )
+        .into());
+    }
+
+    let payload: BackupFilePayload = serde_json::from_slice(raw).map_err(|error| {
+        format!(
+            "backup file {} is not a valid nimbus backup: {error}",
+            input.display()
+        )
+    })?;
+    let mut tenants = BTreeMap::new();
+    for (tenant, archive_json) in payload.tenants {
+        let archive_bytes = serde_json::to_vec(&archive_json).map_err(|error| {
+            format!(
+                "backup file {} tenant {tenant} archive could not be decoded: {error}",
+                input.display()
+            )
+        })?;
+        let archive = PointInTimeRestoreArchive::decode_json(&archive_bytes).map_err(|error| {
+            format!(
+                "backup file {} tenant {tenant} has an invalid point-in-time restore archive: {error}",
+                input.display()
+            )
+        })?;
+        tenants.insert(tenant, archive);
+    }
+    Ok(BackupFile {
+        format_version: payload.format_version,
+        provider: payload.provider,
+        tenants,
+    })
 }
 
 async fn open_engine(
@@ -241,6 +289,61 @@ mod tests {
             panic!("backup restore should parse");
         };
         assert_eq!(restore.provider, BackupProvider::Redb);
+    }
+
+    #[test]
+    fn backup_decode_reports_pre_digest_codec_format_before_tenants() {
+        let legacy = br#"{
+            "format_version": 1,
+            "provider": "sqlite",
+            "tenants": {
+                "alpha": {
+                    "version": 1,
+                    "target_position": {
+                        "version": 1,
+                        "applied_sequence": 0,
+                        "state_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+                    }
+                }
+            }
+        }"#;
+
+        let error = decode_backup_file(legacy, Path::new("legacy.json"))
+            .expect_err("legacy backup must fail before tenant archive decoding");
+        let message = error.to_string();
+        assert!(
+            message.contains("unsupported format version 1")
+                && message.contains("materialized-position digest codec"),
+            "legacy backup diagnostics must name the outer format and codec change: {message}"
+        );
+    }
+
+    #[test]
+    fn backup_decode_reports_tenant_archive_version_before_nested_position() {
+        let legacy_tenant = br#"{
+            "format_version": 2,
+            "provider": "sqlite",
+            "tenants": {
+                "alpha": {
+                    "version": 1,
+                    "target_position": {
+                        "version": 1,
+                        "applied_sequence": 0,
+                        "state_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+                    }
+                }
+            }
+        }"#;
+
+        let error = decode_backup_file(legacy_tenant, Path::new("relabeled.json"))
+            .expect_err("current envelope must still validate each tenant archive header first");
+        let message = error.to_string();
+        assert!(
+            message.contains("tenant alpha")
+                && message.contains("unsupported point-in-time restore archive version 1")
+                && message.contains("materialized-position digest codec"),
+            "tenant archive diagnostics must name the tenant, archive, and codec change: {message}"
+        );
     }
 
     #[tokio::test]
