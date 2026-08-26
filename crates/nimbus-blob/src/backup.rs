@@ -14,6 +14,8 @@ use crate::hash::{BLAKE3_HASH_LEN, BlobHash};
 use crate::pins::BlobPinRegistry;
 use crate::store::BlobStore;
 
+const BUNDLE_MAGIC_PREFIX: &[u8] = b"NIMBUSOBJBACKUP";
+const BUNDLE_FORMAT_VERSION: u64 = 1;
 const BUNDLE_MAGIC: &[u8] = b"NIMBUSOBJBACKUP1\n";
 
 /// Opaque key escrow record carried by an object backup bundle.
@@ -142,10 +144,8 @@ impl BackupBundle {
 
     /// Decodes a bundle previously produced by [`encode`](Self::encode).
     pub fn decode(mut bytes: Bytes) -> Result<Self> {
-        if bytes.len() < BUNDLE_MAGIC.len() || &bytes[..BUNDLE_MAGIC.len()] != BUNDLE_MAGIC {
-            return Err(corruption("backup bundle has invalid magic"));
-        }
-        bytes.advance(BUNDLE_MAGIC.len());
+        let magic_len = decode_bundle_magic(bytes.as_ref())?;
+        bytes.advance(magic_len);
         let escrow_id = String::from_utf8(read_bytes(&mut bytes)?.to_vec())
             .map_err(|err| Error::InvalidInput(format!("key escrow id is not UTF-8: {err}")))?;
         let key_escrow = KeyEscrow::new(escrow_id, read_bytes(&mut bytes)?)?;
@@ -298,6 +298,32 @@ fn corruption(message: impl Into<String>) -> Error {
     Error::storage(StorageErrorKind::Corruption, message)
 }
 
+fn decode_bundle_magic(bytes: &[u8]) -> Result<usize> {
+    if bytes.starts_with(BUNDLE_MAGIC) {
+        return Ok(BUNDLE_MAGIC.len());
+    }
+    let Some(version_bytes) = bytes.strip_prefix(BUNDLE_MAGIC_PREFIX) else {
+        return Err(corruption("backup bundle has invalid magic"));
+    };
+    let Some(newline) = version_bytes.iter().position(|byte| *byte == b'\n') else {
+        return Err(corruption("backup bundle has invalid magic"));
+    };
+    let version_bytes = &version_bytes[..newline];
+    if version_bytes.is_empty() || !version_bytes.iter().all(u8::is_ascii_digit) {
+        return Err(corruption("backup bundle has invalid magic"));
+    }
+    let version = std::str::from_utf8(version_bytes)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| corruption("backup bundle has invalid magic"))?;
+    if version == BUNDLE_FORMAT_VERSION {
+        return Err(corruption("backup bundle has invalid magic"));
+    }
+    Err(Error::InvalidInput(format!(
+        "unsupported object backup bundle version {version}; current version is {BUNDLE_FORMAT_VERSION}"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +395,37 @@ mod tests {
 
         let err = BackupBundle::decode(bundle.encode()).unwrap_err();
         assert_eq!(err.storage_kind(), Some(StorageErrorKind::Corruption));
+    }
+
+    #[test]
+    fn backup_bundle_decode_reports_future_format_as_version_skew() {
+        let escrow = KeyEscrow::new("tenant-a", Bytes::from_static(b"wrapped-key")).unwrap();
+        let bundle = BackupBundle {
+            manifest_snapshot: Bytes::new(),
+            commit_log_segment: Bytes::from_static(b"commit_log segment"),
+            key_escrow: escrow,
+            chunks: Vec::new(),
+        };
+        let mut encoded = bundle.encode().to_vec();
+        encoded[BUNDLE_MAGIC.len() - 2] = b'2';
+
+        let error = BackupBundle::decode(Bytes::from(encoded))
+            .expect_err("future backup bundle version must fail closed");
+
+        assert_eq!(error.storage_kind(), None);
+        assert!(
+            matches!(error, Error::InvalidInput(ref message)
+                if message.contains("unsupported object backup bundle version 2")
+                    && message.contains("current version is 1")),
+            "version skew must not report as corruption: {error}"
+        );
+    }
+
+    #[test]
+    fn backup_bundle_decode_keeps_unrecognized_magic_as_corruption() {
+        let error = BackupBundle::decode(Bytes::from_static(b"NOT-A-NIMBUS-BUNDLE"))
+            .expect_err("unrecognized backup bytes must fail closed");
+
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Corruption));
     }
 }

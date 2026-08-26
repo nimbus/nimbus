@@ -33,6 +33,8 @@ pub const MAX_WRAPPED_DATA_KEYS: usize = 1;
 pub const MAX_PLAINTEXT_BYTES: u64 = u64::MAX / 2;
 
 const SUBKEY_CONTEXT: &str = "nimbus-blob 2026 per-blob subkey";
+const MAGIC_PREFIX: &[u8; 3] = b"NBF";
+const FORMAT_VERSION: u8 = 2;
 const MAGIC: &[u8; 4] = b"NBF2";
 const HEADER_LEN: usize = 4 /* magic */ + 1 /* seed_kind */ + KEY_SEED_LEN + 8 /* plaintext_len */;
 
@@ -223,6 +225,12 @@ impl FramedBlobHeader {
             ));
         }
         if &framed[..4] != MAGIC {
+            if &framed[..3] == MAGIC_PREFIX && framed[3].is_ascii_digit() {
+                return Err(Error::InvalidInput(format!(
+                    "unsupported framed-ciphertext version {}; current version is {FORMAT_VERSION}",
+                    framed[3] - b'0'
+                )));
+            }
             return Err(Error::storage(
                 StorageErrorKind::Corruption,
                 "bad framed-ciphertext magic",
@@ -807,6 +815,36 @@ mod tests {
         let opened = open_framed_blob(&key, &framed).unwrap();
 
         assert_eq!(opened, plaintext);
+    }
+
+    #[test]
+    fn framed_blob_reports_future_format_as_version_skew() {
+        let key = key("tenant");
+        let mut framed = seal_framed_blob(&key, FramedBlobSeed::Content, b"payload").unwrap();
+        framed[3] = b'3';
+
+        let error = open_framed_blob(&key, &framed)
+            .expect_err("future framed-ciphertext version must fail closed");
+
+        assert_eq!(error.storage_kind(), None);
+        assert!(
+            matches!(error, Error::InvalidInput(ref message)
+                if message.contains("unsupported framed-ciphertext version 3")
+                    && message.contains("current version is 2")),
+            "version skew must not report as corruption: {error}"
+        );
+    }
+
+    #[test]
+    fn framed_blob_keeps_unrecognized_magic_as_corruption() {
+        let key = key("tenant");
+        let mut framed = seal_framed_blob(&key, FramedBlobSeed::Content, b"payload").unwrap();
+        framed[..4].copy_from_slice(b"NOPE");
+
+        let error = open_framed_blob(&key, &framed)
+            .expect_err("unrecognized framed ciphertext must fail closed");
+
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Corruption));
     }
 
     #[test]
