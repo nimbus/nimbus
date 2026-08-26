@@ -3,9 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: rebase IMV7 onto main `ae4a1b233`, rerun the verifier and
-affected gates, then run the pre-PR review and publish the closeout pull
-request.
+Next action: run the pre-PR review on rebased main `ae4a1b233`, resolve any
+accepted findings, then publish the closeout pull request.
 
 ## Outcome
 
@@ -119,7 +118,7 @@ IMV0 runs first after promotion and creates the proof root and the
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `done` | PR #306 merged as `2a862829c`; archive-gate correction PR #307 merged as `eb2997083b`. Verifier: `Summary: 9 passed, 7 failed`. |
 | IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `done` | PR #308 merged as `ccddcf846`. Work `a7c678351`; hardening `395459752` and `3acdd45fd`; proof is in `imv5.md`. Verifier: `Summary: 11 passed, 5 failed`; Nimbus autoreview clean. |
 | IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `done` | PR #309 merged as `f5f813366`. Work `3567ba656`; correction `0fe5db256`; proof is in `imv6.md`. The corrected hosted PostgreSQL, MySQL, and libSQL lanes pass, as do all other hosted checks. Verifier: `Summary: 14 passed, 2 failed`. |
-| IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `in_progress` | Measurements use main `80f845952`; current main `ae4a1b233` adds no materialized-verification change. The 36-coordinate matrix retains four typed seed-capacity results, and the exact gate rungs preserve `MERKLE_REQUIRED`. The verifier reports `Summary: 16 passed, 0 failed`. Local CI has two sandbox-blocked process-list cases; hosted CI is their source of truth. Review, publication, and merge remain. |
+| IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `in_progress` | Branch head is rebased onto main `ae4a1b233`; measurements use `80f845952`, before unrelated process-fence and metadata-retention work. The 36-coordinate matrix retains four typed seed-capacity results, and the exact gate rungs preserve `MERKLE_REQUIRED`. The rebased verifier reports `Summary: 16 passed, 0 failed`. Local CI has two sandbox-blocked process-list cases; hosted CI is their source of truth. Review, publication, and merge remain. |
 | IMV9 | After the final pull request merges, archive this plan, retain its proof root, and remove its active index entry. | `todo` | |
 
 ## Dependencies and coordination
@@ -823,3 +822,4 @@ Append rows at the end. This section stays last.
 | 2026-08-25 | IMV7 | implemented | Closeout documentation now defines canonical and disposable positions, full and incremental assurance, exact operator commands, triggers, and the shipped-graph test rule. The SIC4 erratum names the IMV1 proof. The benchmark now retains typed seed-capacity failures instead of dropping the matrix checkpoint. |
 | 2026-08-25 | IMV7 | measured | The current-main run retains all 36 required coordinates. The exact 100,000-document gate rung reports 13.537241 seconds p95 and 3,149.28125 MiB p95 extra RSS. The exact million-document gate rung retains a 15-second lower bound. Write changes are -1.517947% throughput and +0.693269% p99 latency. The accepted verdict remains `MERKLE_REQUIRED`. The production million-leaf test reports depth 55, 149 measured bytes per leaf, and 164 budgeted bytes per leaf. |
 | 2026-08-25 | IMV7 | verified | The verifier reports `Summary: 16 passed, 0 failed`. Format, Clippy, dependency policy, documentation, the required harness, JavaScript builds and typechecks, 95 UI files with 832 tests, and proof helpers pass. The non-runtime lane ran 7,592 tests: 7,587 passed and 110 were skipped. Three MongoDB failures passed together in isolation. Two CLI process-list cases remain `UNVERIFIED` because the local sandbox rejects `ps` with `Operation not permitted`; hosted CI is their merge source of truth. |
+| 2026-08-25 | IMV7 | rebased | Rebased the three closeout commits onto current main `ae4a1b233`. The intervening commits add an engine process fence and the storage-metadata-retention baseline; they do not change materialized verification or its benchmark. A first verifier run exhausted the recovery clone's 54 GiB generated target and reported three false failures. After `cargo clean` removed 53.5 GiB, the clean rebased run reported `Summary: 16 passed, 0 failed`. Format, workspace Clippy, docs, patch, and writing checks pass. |

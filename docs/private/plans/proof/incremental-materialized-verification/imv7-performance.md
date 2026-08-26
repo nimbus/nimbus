@@ -7,10 +7,16 @@ Accepted verdict: `MERKLE_REQUIRED`
 ## Source and method
 
 The run used merged `main` at `80f845952`. Closeout documentation commit
-`8448c42b5` changes no measured code. The benchmark-only correction in this
-pull request records a typed seed-capacity failure instead of losing the
-matrix checkpoint. It does not change production code, measured thresholds,
-or successful-rung behavior.
+`8448c42b5`, rebased as `ae732808a`, changes no measured code. The
+benchmark-only correction in this pull request records a typed seed-capacity
+failure instead of losing the matrix checkpoint. It does not change
+production code, measured thresholds, or successful-rung behavior.
+
+The closeout branch later rebased onto main `ae4a1b233`. The intervening
+commits add an engine process fence and the storage metadata-retention
+baseline. They do not change materialized verification, its benchmark, or the
+measured workload. The measurement was not relabeled or repeated. On the
+rebased head, the fixed verifier reports `Summary: 16 passed, 0 failed`.
 
 The first command ran the complete matrix:
 
