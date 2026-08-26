@@ -286,6 +286,13 @@ therefore closed sequence binding but did not prove a feature-independent
 logical codec. IMV1 owns the repair and its retained evidence under
 `docs/private/plans/proof/incremental-materialized-verification/`.
 
+Resolved, 2026-08-21: IMV1 work `0da288204` replaced that input with the
+version 2 storage-owned logical codec. PR #303 merged it as `9c807015a`.
+`materialized_position_golden_matches_storage_graph` and
+`materialized_position_golden_matches_shipped_graph` retain one literal digest
+in both Cargo graphs. The same proof root names regressions for equivalent
+stored spellings, map insertion order, and non-finite float classes.
+
 ### SIC5 Provider semantic qualification
 
 - Problem: fixtures and comments distribute the provider guarantees. No one

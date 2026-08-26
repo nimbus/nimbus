@@ -132,6 +132,17 @@ recovery and point-in-time restore reject a checkpoint that diverges from the
 state its sequence should carry. `durable_head` stays a separate field because
 it is a durability fact about the journal rather than a property of the state.
 
+Repeated verification uses a separate `VerificationPosition`. It carries its
+format version, the exact applied sequence, and a deterministic Merkle root.
+The root cannot advance from `durable_head`. Every materialized delta through
+the claimed sequence must first be visible in the derived index.
+
+A fast result
+also names the `MaterializedPosition` from its last full scrub. It proves that
+three roots still match at one applied sequence, but it does not claim that
+Nimbus read all provider state again. A gap, rewind, expired anchor, invalid
+index, or root mismatch causes another full state-derived scrub.
+
 ## Distributed activation gates
 
 The Cloudflare Durable Object module is a compatibility-test substrate. Its
