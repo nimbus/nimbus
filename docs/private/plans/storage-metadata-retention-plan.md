@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-25.
 Baseline: main @ cc7ae36a3c21bf7aa093c013f3025d074c679438.
 Proof root: `docs/private/plans/proof/storage-metadata-retention/`.
-Next action: execute SMR0 in the dedicated worktree. Author the retention
-contract verifier, capture the fail-before result, and ratify the bounded
-shipped profile from the existing storage-growth and compaction evidence.
+Next action: execute SMR1 in the dedicated worktree. Add the provider-neutral
+checkpoint and desired/confirmed/physical floor contract, then implement atomic
+memory, redb, and SQLite compaction plus nonzero-base PITR.
 
 ## Outcome
 
@@ -247,8 +247,8 @@ only active Band SA row. Promotion evidence:
 
 | ID | Task | Status | Evidence |
 | --- | --- | --- | --- |
-| SMR0 | Baseline: pin the code inventory, create the proof root, author the contract verifier red, capture fail-before behavior, and ratify the bounded shipped profile. No production behavior changes. | `in_progress` | Baseline `cc7ae36a3`; proof root created with plan promotion. |
-| SMR1 | Add the provider-neutral checkpoint and retention-state contract; support a nonzero PITR base; implement crash-safe compaction for memory, redb, and SQLite. | `todo` | |
+| SMR0 | Baseline: pin the code inventory, create the proof root, author the contract verifier red, capture fail-before behavior, and ratify the bounded shipped profile. No production behavior changes. | `done` | PR #313 merged as `0ff18d1a7`. Verifier: `Summary: 7 passed, 11 failed`. Calibration: 2,049 sequences, 3.22 MB archive, 108 ms export, 2,560 MVCC rows pruned in 15 ms. Proof: `smr0-baseline.md`. |
+| SMR1 | Add the provider-neutral checkpoint and retention-state contract; support a nonzero PITR base; implement crash-safe compaction for memory, redb, and SQLite. | `in_progress` | |
 | SMR2 | Implement lease-fenced checkpoint publication, journal pruning, and MVCC compaction parity for PostgreSQL, MySQL, and libSQL. | `todo` | |
 | SMR3 | Wire bounded single-flight maintenance into the production Engine tenant lifecycle with configuration, cancellation, retry, diagnostics, metrics, and an operator-triggered seam. | `todo` | |
 | SMR4 | Make journal, changefeed, historical-read, bootstrap, and PITR consumers fail closed across trimmed history, including post-page validation and concurrent-prune tests. | `todo` | |
@@ -486,3 +486,5 @@ explicit evidence, this plan is archived, and Band SA row SA4 is done.
 | Date | Item | Action | Evidence |
 | --- | --- | --- | --- |
 | 2026-08-25 | meta | promoted | User started Band SA execution. SA4 had no implementation-plan owner, so this active plan now owns checkpoint-backed journal retention, production MVCC compaction, bounded PITR, trimmed-history validation, and six-backend qualification. Baseline `cc7ae36a3`; no production behavior changed. |
+| 2026-08-25 | SMR0 | completed | PR #313 merged as `0ff18d1a7`. The 18-condition verifier is red at `7 passed, 11 failed`; the indexed 2,049-sequence calibration measured 3.22 MB archive size, 108 ms export, and 15 ms compaction for 1,280 document plus 1,280 index rows. Ratified 100,000-sequence document/index/PITR windows, 50,000 CDC, and a 10,000-sequence maintenance step. No production behavior changed. |
+| 2026-08-25 | SMR1 | started | Accepted the provider-neutral checkpoint and embedded atomic-compaction task. SMR1 is the only active task in this plan; SA4 remains the only active Band SA row. |
