@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-25.
 Baseline: main @ cc7ae36a3c21bf7aa093c013f3025d074c679438.
 Proof root: `docs/private/plans/proof/storage-metadata-retention/`.
-Next action: execute SMR1 in the dedicated worktree. Add the provider-neutral
-checkpoint and desired/confirmed/physical floor contract, then implement atomic
-memory, redb, and SQLite compaction plus nonzero-base PITR.
+Next action: execute SMR2 in the dedicated worktree. Add lease-fenced
+checkpoint publication and atomic journal/MVCC pruning for PostgreSQL, MySQL,
+and libSQL, including retained-base cache refresh and provider fault proof.
 
 ## Outcome
 
@@ -248,8 +248,8 @@ only active Band SA row. Promotion evidence:
 | ID | Task | Status | Evidence |
 | --- | --- | --- | --- |
 | SMR0 | Baseline: pin the code inventory, create the proof root, author the contract verifier red, capture fail-before behavior, and ratify the bounded shipped profile. No production behavior changes. | `done` | PR #313 merged as `0ff18d1a7`. Verifier: `Summary: 7 passed, 11 failed`. Calibration: 2,049 sequences, 3.22 MB archive, 108 ms export, 2,560 MVCC rows pruned in 15 ms. Proof: `smr0-baseline.md`. |
-| SMR1 | Add the provider-neutral checkpoint and retention-state contract; support a nonzero PITR base; implement crash-safe compaction for memory, redb, and SQLite. | `in_progress` | |
-| SMR2 | Implement lease-fenced checkpoint publication, journal pruning, and MVCC compaction parity for PostgreSQL, MySQL, and libSQL. | `todo` | |
+| SMR1 | Add the provider-neutral checkpoint and retention-state contract; support a nonzero PITR base; implement crash-safe compaction for memory, redb, and SQLite. | `done` | PR #314 merged as `0d4b9a112`. Full storage library lanes: 379 passed and 3 ignored with default features, and 379 passed and 3 ignored without default features. Verifier: `Summary: 12 passed, 6 failed`. Autoreview rerun clean. Proof: `smr1-embedded-checkpoint.md`. |
+| SMR2 | Implement lease-fenced checkpoint publication, journal pruning, and MVCC compaction parity for PostgreSQL, MySQL, and libSQL. | `in_progress` | |
 | SMR3 | Wire bounded single-flight maintenance into the production Engine tenant lifecycle with configuration, cancellation, retry, diagnostics, metrics, and an operator-triggered seam. | `todo` | |
 | SMR4 | Make journal, changefeed, historical-read, bootstrap, and PITR consumers fail closed across trimmed history, including post-page validation and concurrent-prune tests. | `todo` | |
 | SMR5 | Run the semantic/provider/benchmark matrix, update storage architecture and operating docs, and publish the final launch-readiness verdict. | `todo` | |
@@ -488,3 +488,5 @@ explicit evidence, this plan is archived, and Band SA row SA4 is done.
 | 2026-08-25 | meta | promoted | User started Band SA execution. SA4 had no implementation-plan owner, so this active plan now owns checkpoint-backed journal retention, production MVCC compaction, bounded PITR, trimmed-history validation, and six-backend qualification. Baseline `cc7ae36a3`; no production behavior changed. |
 | 2026-08-25 | SMR0 | completed | PR #313 merged as `0ff18d1a7`. The 18-condition verifier is red at `7 passed, 11 failed`; the indexed 2,049-sequence calibration measured 3.22 MB archive size, 108 ms export, and 15 ms compaction for 1,280 document plus 1,280 index rows. Ratified 100,000-sequence document/index/PITR windows, 50,000 CDC, and a 10,000-sequence maintenance step. No production behavior changed. |
 | 2026-08-25 | SMR1 | started | Accepted the provider-neutral checkpoint and embedded atomic-compaction task. SMR1 is the only active task in this plan; SA4 remains the only active Band SA row. |
+| 2026-08-26 | SMR1 | completed | PR #314 merged as `0d4b9a112`. The versioned checkpoint, embedded atomic compaction, nonzero-base PITR, sidecar-complete snapshot, generated-history proof, restart/fault/concurrency tests, full storage library lanes, and clean autoreview rerun satisfy SMR1. Verifier advanced from 7/11 to 12/6. |
+| 2026-08-26 | SMR2 | started | Accepted provider parity and lease fencing. SMR2 is the only active task. The existing SQL transaction lease validator is the authority seam; an Engine-only precheck is insufficient. |
