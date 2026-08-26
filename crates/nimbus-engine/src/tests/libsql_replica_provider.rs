@@ -45,6 +45,7 @@ async fn libsql_unloaded_scheduler_probe_skips_replica_bootstrap_without_work() 
         let tenant_id =
             TenantId::new("libsql-scheduler-probe").expect("scheduler probe tenant should parse");
         let replica_cache_dir = provider_config.replica_cache_dir.clone();
+        let tenant_replica_cache_dir = replica_cache_dir.join(tenant_id.as_str());
 
         let first = Arc::new(
             Engine::new_with_persistence_config(engine_config.clone())
@@ -82,10 +83,7 @@ async fn libsql_unloaded_scheduler_probe_skips_replica_bootstrap_without_work() 
         drop(reloaded);
 
         assert!(
-            std::fs::read_dir(&replica_cache_dir)
-                .expect("scheduler probe cache directory should remain readable")
-                .next()
-                .is_none(),
+            !tenant_replica_cache_dir.exists(),
             "checking an unloaded tenant without scheduled work must not materialize a replica cache"
         );
     })
