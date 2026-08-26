@@ -1,0 +1,447 @@
+<title>Nimbus Storage Adversarial Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;650;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #F7F8FA;
+  --surface: #FFFFFF;
+  --ink: #1B2432;
+  --muted: #5A6577;
+  --line: #DCE1EA;
+  --accent: #1F6E73;
+  --accent-soft: #E3EEEF;
+  --high: #A83240;
+  --high-soft: #F6E6E8;
+  --med: #96660F;
+  --med-soft: #F5EBD8;
+  --low: #46587E;
+  --low-soft: #E6EBF4;
+  --ok: #2E6E45;
+  --ok-soft: #E2EFE6;
+  --code-bg: #EEF1F5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0F141C;
+    --surface: #161D28;
+    --ink: #DCE3EE;
+    --muted: #8B96A8;
+    --line: #2A3342;
+    --accent: #5CB6BB;
+    --accent-soft: #17333A;
+    --high: #E0808C;
+    --high-soft: #3A1F26;
+    --med: #D4A755;
+    --med-soft: #35290F;
+    --low: #93A8CE;
+    --low-soft: #1E2637;
+    --ok: #7CBD92;
+    --ok-soft: #17301F;
+    --code-bg: #1D2531;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0F141C;
+  --surface: #161D28;
+  --ink: #DCE3EE;
+  --muted: #8B96A8;
+  --line: #2A3342;
+  --accent: #5CB6BB;
+  --accent-soft: #17333A;
+  --high: #E0808C;
+  --high-soft: #3A1F26;
+  --med: #D4A755;
+  --med-soft: #35290F;
+  --low: #93A8CE;
+  --low-soft: #1E2637;
+  --ok: #7CBD92;
+  --ok-soft: #17301F;
+  --code-bg: #1D2531;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 1.02rem;
+  line-height: 1.62;
+  margin: 0;
+}
+.wrap { max-width: 55rem; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+h1, h2, h3, h4 {
+  font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.2;
+  text-wrap: balance;
+  margin: 0;
+}
+h1 { font-size: 2.15rem; font-weight: 700; letter-spacing: -0.015em; }
+h2 { font-size: 1.4rem; font-weight: 650; margin-top: 3.2rem; padding-top: 1.4rem; border-top: 2px solid var(--line); }
+h3 { font-size: 1.06rem; font-weight: 650; margin-top: 1.9rem; }
+p { margin: 0.85rem 0; }
+a { color: var(--accent); }
+code, .ref {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.83em;
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 0.08em 0.32em;
+}
+.eyebrow {
+  font-family: "Archivo", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.meta {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 0.7rem;
+}
+.verdict {
+  margin-top: 2rem;
+  padding: 1.2rem 1.4rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+}
+.verdict p:first-child { margin-top: 0; }
+.verdict p:last-child { margin-bottom: 0; }
+.statrow {
+  display: flex; flex-wrap: wrap; gap: 0.9rem;
+  margin-top: 1.5rem;
+}
+.stat {
+  flex: 1 1 8rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+.stat .n {
+  font-family: "Archivo", sans-serif;
+  font-size: 1.7rem; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.stat .l { font-size: 0.78rem; color: var(--muted); font-family: "Archivo", sans-serif; letter-spacing: 0.04em; }
+.chip {
+  display: inline-block;
+  font-family: "Archivo", sans-serif;
+  font-size: 0.68rem; font-weight: 650;
+  letter-spacing: 0.08em;
+  padding: 0.14em 0.55em;
+  border-radius: 999px;
+  vertical-align: 0.18em;
+}
+.chip.high { background: var(--high-soft); color: var(--high); }
+.chip.med  { background: var(--med-soft);  color: var(--med); }
+.chip.low  { background: var(--low-soft);  color: var(--low); }
+.chip.ok   { background: var(--ok-soft);   color: var(--ok); }
+.chip.seam { background: var(--accent-soft); color: var(--accent); letter-spacing: 0.04em; text-transform: none; }
+.chip.ref { background: var(--low-soft); color: var(--muted); }
+.finding {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1.1rem 1.35rem 1.2rem;
+  margin-top: 1.15rem;
+}
+.finding.h { border-left: 4px solid var(--high); }
+.finding.m { border-left: 4px solid var(--med); }
+.finding.l { border-left: 4px solid var(--low); }
+.finding h3 { margin-top: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.55rem; }
+.finding h3 .num {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem; font-weight: 500;
+  color: var(--muted);
+}
+.finding p { margin: 0.6rem 0 0; }
+.kv { margin: 0.6rem 0 0; font-size: 0.92rem; }
+.kv b { font-family: "Archivo", sans-serif; font-size: 0.78rem; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); margin-right: 0.35rem; }
+ul, ol { margin: 0.7rem 0; padding-left: 1.4rem; }
+li { margin: 0.35rem 0; }
+li::marker { color: var(--muted); }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+  margin-top: 0.9rem;
+}
+.tablewrap { overflow-x: auto; }
+th {
+  font-family: "Archivo", sans-serif;
+  font-size: 0.74rem; font-weight: 650;
+  letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 0.5rem 0.75rem 0.5rem 0;
+  border-bottom: 2px solid var(--line);
+}
+td { padding: 0.55rem 0.75rem 0.55rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+blockquote {
+  margin: 0.9rem 0;
+  padding: 0.15rem 0 0.15rem 1.05rem;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  font-style: italic;
+}
+.lede { font-size: 1.08rem; }
+.small { font-size: 0.88rem; color: var(--muted); }
+.toc {
+  margin-top: 1.6rem;
+  font-family: "Archivo", sans-serif;
+  font-size: 0.86rem;
+  display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem;
+}
+.toc a { text-decoration: none; font-weight: 500; }
+.toc a:hover, .toc a:focus-visible { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Full adversarial review · storage &amp; exemplars</div>
+  <h1 style="margin-top:0.5rem">Nimbus Storage Adversarial Audit</h1>
+  <p class="meta">2026-08-25 · main @ <code>9c807015a</code> · seven parallel review lanes (Nimbus ground-truth map, post-SIC delta, celld v0.1.0→v0.2.1, object-store exemplars, durability exemplars, Turso + Convex deep dive, web research) followed by a direct-code verification pass. <strong>Rev 3:</strong> adjudicated across two rounds of second-model adversarial cross-review (Codex gpt-5.6, same commit) — three findings refuted (M4, M6, M13), two downgraded (H2, H5), one reopened by joint agreement (M2), several reframed as owned decisions. Original finding IDs kept stable for traceability. Review only — no code changed.</p>
+
+  <div class="verdict">
+    <p class="lede"><strong>Verdict: the transactional core is in strong shape — the exposure has moved to the edges.</strong> Every exemplar failure class that hits engines at their center (cached-position divergence, waiter starvation, ambiguous commit outcomes, position/state binding) is one Nimbus already closed, in several cases with a better mechanism than the exemplar. The confirmed defects that survive both review passes cluster in three places no active plan owns: the <strong>nimbus-s3 wire surface</strong>, the <strong>unfenced embedded default deployment</strong>, and the <strong>absent commit-log/MVCC retention story</strong> (with erasure codec identity and scrub classification as the leading medium hardening items). The active IMV plan and the proposed BLI plan are aimed at real problems — independent engines hit exactly the failures they predict — but BLI has not been promoted or started, and each has a small number of rider items listed below. "Unowned" throughout means no implementation-plan owner; the active architecture-review control plane owns review-driven triage, and this ledger is input to it.</p>
+  </div>
+
+  <div class="statrow">
+    <div class="stat"><div class="n">3</div><div class="l">High findings after cross-review (was 5)</div></div>
+    <div class="stat"><div class="n">6</div><div class="l">Medium findings (incl. one reopened)</div></div>
+    <div class="stat"><div class="n">5</div><div class="l">Claims refuted across both passes</div></div>
+    <div class="stat"><div class="n">6</div><div class="l">Exemplar validations of Nimbus design</div></div>
+  </div>
+
+  <nav class="toc">
+    <a href="#high">High findings</a>
+    <a href="#medium">Medium findings</a>
+    <a href="#low">Low / advisory</a>
+    <a href="#refuted">Refuted</a>
+    <a href="#plans">Plan pressure-tests</a>
+    <a href="#ahead">Where Nimbus is ahead</a>
+    <a href="#adopt">Adopt</a>
+    <a href="#avoid">Do not adopt</a>
+    <a href="#routing">Suggested routing</a>
+  </nav>
+
+  <h2 id="high">High findings</h2>
+  <p>Each confirmed by direct code read. After the second-model cross-review, three remain HIGH (H1, H3, and the retention half of H4); H2 and H5 are downgraded to MEDIUM but kept in place under their original IDs.</p>
+
+  <div class="finding h">
+    <h3><span class="num">H1</span> The nimbus-s3 wire surface has a verified defect cluster and no owning plan <span class="chip high">HIGH</span> <span class="chip seam">nimbus-s3</span></h3>
+    <p>Three confirmed defects in <code>crates/nimbus-s3/src/service.rs</code>, one explicit compatibility decision to record, and two separate mediums in <code>convex.rs</code>:</p>
+    <ul>
+      <li><strong>ListObjectsV2 silently loses one key per page.</strong> The continuation token is set to the first <em>unemitted</em> key (<code>service.rs:329</code>), but the next page's cursor filter skips keys <code>&lt;= token</code> (<code>:321-327</code>), so the token key itself is never returned. Every paginated listing of &gt;max-keys objects is missing objects, with no error. There is no pagination test.</li>
+      <li><strong>DeleteObject ignores the If-Match condition family entirely</strong> (<code>:274-290</code>) — unconditional delete, 204. A client's conditional delete is honored as an unconditional one, which is strictly worse than rejecting the header.</li>
+      <li><strong>CompleteMultipartUpload persists the client-supplied CRC64NVME unverified</strong> (<code>:626</code>); a later checksum-mode GET replays a value Nimbus never computed.</li>
+      <li><strong>Modern AWS SDK default checksum headers get a 400</strong> (<code>:1031-1054</code>). Deliberately fail-closed and honest, but current SDKs send <code>x-amz-checksum-crc32</code> by default, so stock clients break. A decision item, not a bug.</li>
+      <li><code>convex.rs:333-336</code> mints a fresh ULID per store, so concurrent stores of the same logical file orphan a manifest; <code>:534-546</code> does an O(n) full-bucket list per operation.</li>
+    </ul>
+    <p class="kv"><b>Exemplar</b> mountpoint-s3's mock client is an executable spec for D2-style semantics (preconditions evaluated before existence, 412 over 404); celld's four-probe <code>diagnose</code> is the model for asserting wire semantics against a real target.</p>
+    <p class="kv"><b>Fix shape</b> A small S3-conformance lane (pagination biconditional <code>IsTruncated ⟺ token</code>, conditional-delete, checksum recompute-or-reject) plus one owner plan for the wire surface. The engine-side condition machinery is already correct — these are all adapter-layer translation bugs.</p>
+  </div>
+
+  <div class="finding m">
+    <h3><span class="num">H2</span> Erasure parity bytes are on-disk format; the recorded rationale doesn't say so <span class="chip med">MED · downgraded</span> <span class="chip seam">nimbus-blob</span></h3>
+    <p>Each parity shard's <code>BlobHash</code> is both its storage key and the manifest's <code>ShardRef.shard_hash</code> (<code>erasure/store.rs:606-620</code>), and heal re-encodes and demands byte-exact equality — a mismatch returns <em>beyond repair</em> (<code>heal.rs:297-308</code>). So the exact bytes <code>reed-solomon-simd</code> emits are part of the durable format. But the pin <code>reed-solomon-simd = "=3.1.0"</code> sits bare in <code>nimbus-blob/Cargo.toml:31</code> (verified — neighboring deps carry rationale comments; the recorded rationale for this pin, in the RFS7 research doc, is supply-chain hygiene, not byte stability). No golden parity vector exists — every test re-encodes with the in-process library, so CI passes identically after any upgrade. A maintainer relaxing the pin for its <em>stated</em> reason converts every future heal of pre-upgrade data into an unrepairable state. Boundary note from cross-review: the exact pin plus the <code>NBLE1</code> version marker already establish a format boundary — the gap is that the constraint's <em>reason</em> is unrecorded and untested, not that the boundary is absent.</p>
+    <p class="kv"><b>Exemplar</b> celld v0.2 hand-ported the pierrec/lz4 <em>encoder</em> (decoder stays lz4_flex) precisely because "format-compatible ≠ same bytes," tested against upstream output vectors.</p>
+    <p class="kv"><b>Fix shape</b> Two cheap changes: a pin comment stating the real constraint, and a checked-in golden parity vector. A codec-identity field in the erasure manifest is optional — unnecessary if the project commits to the rule that any codec change requires an <code>NBLE2</code> format bump.</p>
+    <p class="kv"><b>Cross-review</b> Downgraded from HIGH: the exact pin, shard-hash verification, and the <code>NBLE1</code> boundary mean there is no current-corruption evidence — this is latent-upgrade hardening. One aggravating fact the cross-review adds: upstream guarantees cross-version byte compatibility only for shard sizes divisible by 64, and Nimbus accepts other even final shards, so the hazard is real for exactly those shards. The core hardening remains.</p>
+  </div>
+
+  <div class="finding h">
+    <h3><span class="num">H3</span> The embedded default deployment has no process fence, and encryption removes the one incidental lock <span class="chip high">HIGH</span> <span class="chip seam">nimbus-storage / nimbus-engine</span></h3>
+    <p><code>requires_committer_lease()</code> is <code>false</code> for Redb and SQLite (<code>persistence/tenant/committer_lease.rs:19-31</code>) — the networked providers get the good in-transaction CAS lease; the default deployment gets nothing. There is no data-directory lock, pid file, or already-running check (<code>bootstrap.rs</code> only does <code>create_dir_all</code>). The plain redb control DB is protected only by redb's own native file lock — and the <code>EncryptedFileBackend</code> is a custom backend that opens with plain <code>OpenOptions</code> and an in-process mutex (<code>encrypted_redb.rs:172,194</code>, verified: no flock anywhere in the file), bypassing redb's lock exactly where encryption-at-rest is enabled. Two processes on one data dir each run their own committer, schema cache, and sequence assignment; divergence surfaces late or not at all. One precedent already in-tree sharpens the gap: <code>LocalPackStore</code> takes an exclusive advisory flock on the blob-store root at open — so the blob plane is fenced while the Engine persistence and control roots created in <code>bootstrap.rs</code> are not. The pattern exists; it stops one directory short.</p>
+    <p class="kv"><b>Exemplar</b> celld deleted its 1,665-line clock-based leaser as unsound and now refuses to run anywhere it cannot fence; its analysis is why "single-process by design" needs a mechanical guard, not a convention. Nimbus's right answer is a data-dir advisory lock (fs2 is already the workspace lock crate), not lease machinery.</p>
+  </div>
+
+  <div class="finding h">
+    <h3><span class="num">H4</span> Commit-log and MVCC retention are unimplemented — a high launch-readiness gap <span class="chip high">HIGH</span> <span class="chip seam">nimbus-storage / nimbus-blob</span></h3>
+    <p>The HIGH classification covers exactly the metadata half, which no plan owns: the commit log is never truncated (no removal path exists outside a corruption-injection test); <code>retention.rs</code> prunes only the MVCC version side-tables, defaults to <code>retain_all</code>, and its only callers are tests — so <code>durable_journal_cursor_floor()</code> is always 0 and the floor-rejection machinery is unreachable in production (the guards themselves are unit-tested — <code>retention.rs:528</code> pins hard-delete denial under the floor — but nothing wires them into a production retention lifecycle); and PITR cost grows without bound because every restore replays from genesis. BLI is blob-plane only, so commit-log truncation, production MVCC pruning, and PITR growth are routed to no plan.</p>
+    <p>Adjacent but separately owned: the blob half is <strong>already recorded in BLI</strong> — BLIF1 covers the unsafe eager release (no refcount under content-addressed dedup: <code>PUT A</code> + <code>PUT B</code> identical bytes, <code>DELETE A</code> breaks <code>GET B</code>), blob GC is a correct mark-and-sweep whose every <code>sweep()</code> call site is a test (BLIF3), and BLI-D2 explicitly accepts remote-leg request orphans as pending-GC work. Its contribution here is urgency evidence only: BLI hasn't started while its highest-stakes defect is live.</p>
+    <p class="kv"><b>Exemplar</b> Convex's retention is the design template when this lane starts: four separate windows, prune cutoff clamped to the dependent structure's <em>confirmed-deleted</em> checkpoint, durable bound conservative / in-memory bound aggressive, and validation per page <em>after</em> each read so long scans crossing the floor fail instead of tearing. celld's deleted-retention consequences (O(lifetime) listings, silent wedges) are the cost of shipping additive-only without the deletion story.</p>
+  </div>
+
+  <div class="finding m">
+    <h3><span class="num">H5</span> Scrub and heal misclassify transient errors as corruption <span class="chip med">MED · downgraded</span> <span class="chip seam">nimbus-blob</span></h3>
+    <p>Verified: any <code>Err</code> from direct verification — including transient I/O — becomes a <code>HashMismatch</code> finding <em>and</em> a quarantine push (<code>scrub.rs:1375-1393</code>; same pattern in <code>scrub/rebuild.rs</code>). Heal's byte-equality check returns <em>beyond repair</em> for any mismatch cause. Downgraded from HIGH per cross-review: quarantine retains the bytes as evidence and a same-byte re-put can restore the record, so this is misclassification and an availability/operator-alarm hazard, not demonstrated permanent loss. The fix is unchanged — classify before concluding (<code>NotFound</code> vs transient I/O vs successful-read-wrong-bytes); only the last is corruption — and it still matters to land before BLI wires quarantine state into GC decisions.</p>
+    <p class="kv"><b>Exemplar</b> rustfs hit exactly this (<code>00519714</code>: heal misclassified transient I/O as corruption) and had to separate error classification from the corruption verdict.</p>
+  </div>
+
+  <h2 id="medium">Medium findings and reclassified items</h2>
+  <p>Original IDs kept. After both cross-review rounds the MEDIUM set is M1, M7, M10, and the reopened M2, plus the downgraded H2 and H5 above (six total). M5 is routed to the server security-contract review; M8, M9, and M14 are owned decision or documentation work; M4/M6/M13 are refuted in place below; M11/M12 are design-checklist questions, not defects.</p>
+
+  <div class="finding m">
+    <h3><span class="num">M1</span> Pre-#303 backups fail restore with a raw serde error <span class="chip med">MED</span> <span class="chip seam">nimbus-cli / nimbus-storage</span></h3>
+    <p>MaterializedPosition v2 hard-rejects v1 at deserialize, and the two durable homes of a position — the <code>nimbus backup</code> JSON archive and object-storage bundles — kept <code>BACKUP_FORMAT_VERSION = 1</code> and <code>POINT_IN_TIME_RESTORE_ARCHIVE_VERSION = 1</code>. Restore of any pre-#303 archive dies on a raw serde error <em>before</em> the friendly format check. Important scope note: the restore already <strong>fails safely</strong> — no old-format data is ever silently restored wrong. The break itself is correct pre-launch; the defect is purely the diagnostic path. Cross-review refinement, accepted: bumping the container versions alone does <em>not</em> fix the diagnostics, because the nested position deserialization fails before the outer version check runs — the fix is header-first parsing (read and check the container version before decoding any payload), then an operator-legible message naming the digest-codec change.</p>
+  </div>
+
+  <div class="finding m">
+    <h3><span class="num">M2</span> Negative-zero digest normalization — reopened as an IMV codec decision <span class="chip med">MED · REOPENED</span> <span class="chip seam">nimbus-storage · IMV1</span></h3>
+    <p>Both review passes now agree on this disposition (the cross-review conceded the scalar nuance in its second round). Verified mechanics: <code>write_f64</code> collapses −0.0 to +0.0 (<code>materialized_position.rs:483</code>) and the <code>SpecialDouble::NegativeZero</code> leaf digests identically to a plain <code>0.0</code> — asserted by <code>canonical_leaf_normalizes_negative_zero</code>. IMV-D7's normalization rationale ("where logical equality treats both zero spellings as one coordinate") holds for GeoPoint coordinates, but the stored scalar value model round-trips <code>"-0"</code> as a distinct client-observable sentinel — so at the document layer the decision's precondition is debatable, and the v2 digest cannot detect a −0/+0 replica drift that v1 could. Joint recommendation: reopen this inside IMV1 while the codec is still open, decide scalar and GeoPoint treatment <em>separately</em>, and land separate tests for each. Deciding now costs less — the decision still needs implementation and verification — while changing later costs a format break.</p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M3</span> A #303 test assertion went vacuous <span class="chip low">LOW</span> <span class="chip seam">nimbus-server tests</span></h3>
+    <p>Verified: <code>SnapshotFingerprint</code> serializes <code>position</code>, not <code>digest</code> (<code>nimbus-engine/src/verification.rs:18-29</code>), so both digest assertions in <code>core_http/documents_and_commits/consistency.rs:33-40</code> compare <code>Null == Null</code> and pass on any input. The engine-side twin was updated; the server-side one was missed. Related: the consistency verification endpoint has report semantics by design (HTTP 200 with mismatches in the body), but carries zero tracing, metrics, or alert integration — report-only is fine, unobserved is not.</p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M4</span> PITR export "acknowledgement ceiling" <span class="chip ref">REFUTED</span> <span class="chip seam">nimbus-engine</span></h3>
+    <p><strong>Refuted by cross-review, and I accept it.</strong> Reading the durable journal tail at export time is the correct bound: a committed mutation is valid backup input whether or not its client received the acknowledgement — backing up "beyond acks" is not a defect. celld's epoch seal solves a different problem (multiple restorers agreeing on one cut over an object store) whose preconditions Nimbus doesn't have; I transferred the mechanism without checking them. The one real residual — a zombie writer's garbage becoming exportable on an unfenced embedded deployment — is exactly H3, and the H3 fence closes it. The genesis-replay backup cost observation folds into H4's retention lane. <strong>Do not add an epoch seal.</strong></p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M5</span> Admin surface auth is conditional, not structural <span class="chip ref">ROUTED · server contract</span> <span class="chip seam">nimbus-server</span></h3>
+    <p>The gate no-ops when <code>local_server_security()</code> is <code>None</code> (<code>local_server/middleware.rs:117-119</code>, same conditional in two other layers), and admin handlers — tenant create/delete, document insert, diagnostics dumps — carry no independent auth. Every shipped binary installs security and non-loopback binding requires an explicitly rotated token, so this is unreachable via first-party paths today; the exposure is any embedder calling <code>nimbus_server::serve</code> directly. Three handlers already fail closed individually (shutdown, token rotation, UI shell) — generalize that pattern. celld's two-listener split (operator API on a loopback-default socket, never a middleware conditional) is the structural version if the server ever grows one. Scope note from cross-review, accepted: this is a server security-contract item, not a storage finding — route it to the public embedding-contract review, not a storage lane.</p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M6</span> External-S3 "false green" <span class="chip ref">REFUTED AS STATED</span> <span class="chip seam">verification</span></h3>
+    <p><strong>Refuted as stated; I verified the refutation.</strong> The owning verifier (<code>scripts/verify-nimbus-s3-object-storage.sh:272-320</code>) already implements exactly the celld pattern I recommended: it treats <em>any</em> target-scoped env var as "operator configured a target" and <strong>fails loudly</strong> when config is partial or <code>RUN_EXTERNAL_S3=1</code> is missing, prints visible skips, and the Rust harness prints its live/skipped mode, which the verifier parses — it never claims a skip as live evidence. My finding stopped at the raw test file and never read the framework above it. Residual LOW: no hosted CI job runs the live lane, which is a known operational gap, not a false green.</p>
+  </div>
+
+  <div class="finding m">
+    <h3><span class="num">M7</span> <code>TenantEventRecord.version</code> is written but never checked <span class="chip med">MED</span> <span class="chip seam">nimbus-storage</span></h3>
+    <p><code>validate_integrity</code> hashes the record's <em>own</em> stored version, so a future-versioned record verifies clean and replays as current — a silent-misreplay path on the durable journal closed by one comparison against <code>TENANT_EVENT_RECORD_VERSION</code>. This is the same class as M11's turso <code>7e8e6f279</code> — a version or marker that exists but cannot discriminate — and the two exemplars that hit it did so on the replica-bootstrap and silent-misreplay paths respectively; Nimbus has both surfaces. Related diagnostics gap: all seven blob-plane binary formats encode generation only in the magic string, so version skew reports as <em>Corruption</em> — an operator reaches for restore instead of "wrong binary" (acute for the two formats that cross deployment boundaries: backup bundles and the AEAD envelope). Pre-launch this is a diagnostics fix, not a compatibility layer.</p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M8</span> <code>tenant_kv_*</code> is a journal-less write plane with an unstated contract <span class="chip ref">OWNED · NKV contract work</span> <span class="chip seam">nimbus-engine</span></h3>
+    <p>Verified: <code>Engine::tenant_kv_put/delete/apply_batch</code> call <code>store.kv_*</code> directly — no committer, lease, sequence, or journal entry; redb-only, all other providers return Unsupported (<code>engine/kv.rs</code>). Cross-review reframe, accepted: this is a fact, not a violation — the three-route invariant covers client <em>document</em> mutations, and tenant KV is a separate product plane with its own architecture owner (the NKV plan) and its own backup/PITR story to build. Do <strong>not</strong> route it through the document committer without a design decision by that owner. What stands: the durability contract is unstated and the plane is invisible to PITR and replication today — document that before nimbus-kv ships on top of it.</p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M9</span> <code>EncryptedBlobStore::put_stream</code> is non-idempotent against a content-addressed contract <span class="chip ref">DECISION</span> <span class="chip seam">nimbus-blob</span></h3>
+    <p>A random salt per call (<code>encrypted.rs:45-52</code>) means a retried streamed put of identical plaintext yields a different stored hash. Cross-review reframe, accepted: this is a <strong>deliberate contract split</strong> — buffered content uses deterministic content-derived seeding, streamed content uses a random per-object salt — not an accidental defect. The consequences are real (streamed retries defeat dedup and can leave reclaimable orphans for the BLI sweep), but changing the seeding is a crypto-contract decision for its owner, not a patch to make from this audit.</p>
+  </div>
+
+  <div class="finding m">
+    <h3><span class="num">M10</span> Erasure release lacks crash-atomicity; rollback can unlink a committed replica <span class="chip med">MED</span> <span class="chip seam">nimbus-blob</span></h3>
+    <p>Narrowed after cross-review to the provable defect candidate: rollback preimage setup treats <em>every</em> read error as absence (<code>erasure/manifest.rs:204-207</code>), so a transient read failure during setup can later cause removal of a replica that exists — only <code>NotFound</code> should mean absent (the same classification rule as H5). The broader "two-marker release protocol" recommendation is withdrawn as unproven necessity; FoundationDB's pattern stays in the pattern library as a reference if BLI's sweep design wants crash-legible reclamation markers.</p>
+  </div>
+
+  <div class="finding m">
+    <h3><span class="num">M11</span> Journal replay-range absent-marker ambiguity <span class="chip ref">CHECKLIST</span> <span class="chip seam">nimbus-storage</span></h3>
+    <p>An audit question, not a finding — both reviews agree Nimbus records the relevant event types and validates contiguous PITR positions today. Turso <code>7e8e6f279</code>: a commit whose payload was all internal bookkeeping was indistinguishable from pre-portable history, and no fresh replica could ever bootstrap that database again. Keep as a design checklist item for future retention or replication work: a replay-range consumer must always distinguish "no user-visible change" from "a change you cannot replay" — an absent marker must never mean both.</p>
+  </div>
+
+  <div class="finding m">
+    <h3><span class="num">M12</span> Shared-metadata publication ordering — one lock, not two operations <span class="chip ref">CHECKLIST</span> <span class="chip seam">nimbus-engine</span></h3>
+    <p>An audit question, not a finding — no Nimbus failure site was identified. Turso <code>df979cf71</code>: a <code>fetch_max</code>-protected watermark plus a <em>separately</em> written cached header let an older finalizing commit overwrite a newer one's metadata — escalating from stale metadata to loss. The checklist rule: audit each spot where the per-tenant watermark bump and any shared metadata publish (position, schema version, summary) are separate operations; span both with one lock. Adjacent: turso <code>46cd926d3</code>'s fix — fold multi-field positions into one struct so the triple can't be observed torn — is worth asserting for every <code>MaterializedPosition</code> handoff.</p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M13</span> Schedule-only ambiguity exemption <span class="chip ref">REFUTED</span> <span class="chip seam">nimbus-engine</span></h3>
+    <p><strong>Refuted; I re-read the code and confirm it.</strong> The classification lives <em>inside</em> <code>persist_schedule_only_execution_unit</code> (<code>nimbus-engine/src/tenant/committer_lease.rs:277-340</code>): it validates the lease atomically with the batch, snapshots scheduler pre-state, and on write failure reconciles to <code>Committed</code> / <code>RolledBack</code> / <code>Ambiguous</code> — with ambiguous escalating to durable recovery (crash-and-replay), and an unreadable scheduler state also treated as ambiguous. The wrapper returning the error raw (<code>execution_units/commit.rs:176-180</code>) is correct because classification already happened one layer down; my audit — and the lane report it came from — stopped at the wrapper. The three-route uniformity claim stands fully, now with no residual.</p>
+  </div>
+
+  <div class="finding l">
+    <h3><span class="num">M14</span> Stale invariant documentation on the mutation-path map <span class="chip ref">OWNED · IMV4 / BLI5</span> <span class="chip seam">docs</span></h3>
+    <p>CLAUDE.md still says object manifests use the raw <code>TenantPointWrite</code> seam; they now commit via <code>CommitterMessage::InternalCommit</code> (<code>engine/objects.rs:465</code>) and <code>TenantPointWrite</code> is unused in the engine. Correction from cross-review, accepted (and recorded in this project's own memory): <strong>CLAUDE.md is a symlink to AGENTS.md</strong>, so there is one file, and IMV4 already owns the fix — this item is owned, not a gap. Likewise the untracked storage-seams spec is BLI5's red condition, already owned. Optional pattern note, no concrete second vulnerable site identified: the dual-graph golden-fixture template from #303 (assert one constant from both the focused and shipped feature graphs) is available to replicate if another order-sensitive serde_json digest surface appears.</p>
+  </div>
+
+  <h2 id="low">Low / advisory</h2>
+  <ul>
+    <li><strong>Placement invariants are <code>debug_assert</code> only</strong> (<code>placement.rs</code>) — compiled out in release; promote the cheap ones.</li>
+    <li><strong><code>local.rs</code> trio:</strong> TOCTOU at <code>:959-963</code>; <code>has()</code> ignores quarantine (<code>:833-837</code>); compaction materializes every live blob in RAM under the store mutex (<code>:1549-1556</code>).</li>
+    <li><strong><code>x-forwarded-proto</code></strong> read unconditionally, first-value, at two sites — feeds only user-visible URLs, no security decision; celld's rule (ignore by default, last-value when trusted) is the fix when touched.</li>
+    <li><strong>409→<code>AlreadyExists</code>→terminal mapping tripwire</strong> in <code>nimbus-blob/src/object_store.rs:309-331</code> — harmless while the no-bucket-CAS rule holds; add a comment so adopting conditional puts doesn't turn a retryable AWS 409 into a terminal error.</li>
+    <li><strong>Session cookie lacks <code>Secure</code> under TLS; <code>validate_origin</code> passes when Origin is absent;</strong> <code>/examples/*</code> is an unauthenticated ServeDir; reserved prefixes shadow user routes silently.</li>
+    <li><strong>Cheap greps from exemplar bug classes:</strong> no-op default trait bodies on abort/rollback hooks (turso <code>1e17db453</code> — the default body was the bug); panics on damaged tenant data → typed Corrupt errors (multi-tenant: one tenant's bad bytes is a shared-process availability event; four separate turso fixes).</li>
+    <li><strong>#301 note:</strong> the serving frontier is now a journal-derived bound rather than an applied-state bound — latent invariant change, wants a comment; plus an unconditional <code>.expect</code> on the scan path.</li>
+    <li><strong>IMV bench:</strong> <code>report_ok</code>/mismatch counts recorded but never asserted — the baseline cannot fail; ru_maxrss high-water never resets between rungs.</li>
+  </ul>
+
+  <h2 id="refuted">Refuted or downgraded during verification</h2>
+  <p>Pass-one refutations below; the cross-review refutations (M4 acknowledgement ceiling, M6 false green as stated, M13 schedule-only exemption) stand inline under their original IDs above, each re-verified against the code before acceptance.</p>
+  <ul>
+    <li><strong>“libSQL replica refresh gives up silently” — refuted.</strong> Refresh errors are logged via <code>warn!</code> with full context and recorded in freshness metrics (<code>libsql.rs:601-610</code>), and the freshness barrier falls back to a synchronous <code>refresh_local_cache()?</code> whose error propagates (<code>:498-515</code>). The claim was later re-raised as HIGH on the theory that the freshness barrier depends on the stopped background loop — but the synchronous fallback is exactly what breaks that dependency: a consumer that needs freshness triggers its own refresh and sees the error. Residual is low: the background reschedule stops until the next trigger re-arms it. One advisory survives the refutation — when replica health monitoring is added, derive staleness from log position and alarm on no-advance, never from the refresh loop's own self-reported health (Convex's stale-cache cluster and Litestream's 0.5.6 silent replication stop are both loops that "looked healthy" by doing nothing).</li>
+    <li><strong>“Commit-log replay must be idempotent and isn't” — downgraded.</strong> Nimbus replay is not blind re-application: records are byte-compared against the log and gapless-prefix gated (four contiguity gates). The turso full-page-image concern doesn't transfer directly. The live remnant is M11's marker ambiguity.</li>
+    <li><strong>BLIF7</strong> (backup lock race) stays refuted per the BLI plan — do not re-file.</li>
+    <li><strong>Ambiguous-outcome divergence across mutation paths</strong> — closed since the failure CLAUDE.md records: <code>classify_durable_write_error</code> is uniform across all three client routes with the correct evidence rule, and the M13 refutation confirms the schedule-only path classifies one layer down — no residual remains.</li>
+  </ul>
+
+  <h2 id="plans">Pressure-testing the plans — IMV (active) and BLI (proposed)</h2>
+
+  <h3>Blob-lifecycle-integrity (proposed, all tasks todo)</h3>
+  <p><strong>The plan is validated by independent engines hitting exactly its predicted failures.</strong> Turso <code>70220c982</code> is the live-root thesis in production form: GC dropped a version whose only physical evidence was a checkpoint, producing a resurrected row and an inconsistent secondary index — quote it into BLI0's fail-before evidence. celld shipped additive-only publication without the deletion story and now carries the consequences BLI is designed to prevent. Its rejection of per-object refcounts matches celld's and restic's independent conclusions. After cross-review, one scope addition and one design constraint:</p>
+  <ul>
+    <li><strong>Scrub/heal error classification (H5)</strong> is not in scope and should be — quarantine feeding GC decisions makes misclassification a deletion hazard, not just a diagnostics one. (M10's NotFound-vs-transient rule is the same fix.)</li>
+    <li><strong>Design constraint, not a task:</strong> reader-lifetime pins are unnecessary today — verified: <code>get_stream</code> fully buffers and verifies before returning a reader (<code>local.rs:817-819</code>), so no read spans a GC decision. The constraint to record in BLI4 is that this stays true: if streaming reads ever become lazy, pins must land in the same change.</li>
+  </ul>
+  <p class="small">Withdrawn after cross-review: adding remote-orphan reclamation to BLI (BLI-D2 accepts request orphans as pending-GC work and synchronous S3 reclamation is an explicit plan non-goal — the remote-leg story is owned, deferred by decision); and the erasure two-marker protocol (already withdrawn under M10).</p>
+  <p>And the biggest fact: BLI hasn't started, while H4 shows the eager unsafe release path is live today. BLIF1 is the single highest-stakes shipped defect in this audit.</p>
+
+  <h3>Incremental-materialized-verification (active; IMV1 in progress, #303 merged — ledger one step behind)</h3>
+  <p><strong>IMV is building something its exemplar never had.</strong> Convex's only live check is a sampled cache-vs-persistence comparison that panics; there is no checker, no fixup tool, no offline cross-check in the OSS drop — and no PITR at all. Nimbus is ahead of the reference here. Items to fold in while IMV1 is open:</p>
+  <ul>
+    <li><strong>M2 (−0.0), now reopened by joint agreement,</strong> belongs in the canonical codec now — decide scalar and GeoPoint treatment separately, with separate tests; encoding decisions are unfixable post-hoc (Convex is permanently stuck with Int64-before-Float64 and undefined-before-null).</li>
+    <li><strong>M3's vacuous server test</strong> rides the same change.</li>
+    <li><strong>Checklist note — name the exemplar for the opaque position type:</strong> Convex's <code>RepeatableTimestamp</code> — a proof-carrying wrapper with an enumerated reason — is the shape <code>MaterializedPosition</code> v2's validated construction already has. The remaining work is coverage, not a new type: raw journal cursors and PITR targets still circulate unwrapped outside the backup-export path (which does supply <code>PointInTimeRestoreTarget::Sequence</code> in production — <code>engine/queries/journal.rs:224</code>). turso's <code>SharedWalBackfillProof</code> (position bound to the materialized file's own identity, validated before trust) is the restore-side counterpart.</li>
+    <li><strong>Checklist note — invalidation keys on data change, not storage events:</strong> Convex's T3 outage came from compaction invalidating subscriptions for unchanged data (400× amplification). As IMV adds verification-driven rewrites, canonicalization must never look like a write to the subscription layer.</li>
+  </ul>
+
+  <h2 id="ahead">Where Nimbus is ahead of its exemplars</h2>
+  <ul>
+    <li><strong>Cached-position divergence — immune by construction.</strong> celld's worst defect (a cell permanently unactivatable on every node from a cached position optimization) can't occur: <code>MaterializedPosition</code> is a re-derived content digest, markers commit in the same transaction as the rows they describe, and replay has four independent contiguity gates.</li>
+    <li><strong>Waiter propagation.</strong> celld has a live 10-second-timeout-masks-real-error bug; Nimbus's ordered publisher answers every waiter on every exit path — the payoff of the #184 deadlock work.</li>
+    <li><strong>Ambiguous-outcome discipline</strong> now matches Convex's crash-and-replay rule uniformly, with a stricter evidence standard (durable head re-read from the provider's authoritative recovery path; cached projections rejected as evidence).</li>
+    <li><strong>Commit-authority conditions.</strong> All CAS decided at Nimbus's own commit authority, zero conditional writes against buckets — which is why celld's retry-vs-CAS hazards and the S3 conditional-write capability matrix don't apply. Keep the rule stated that plainly.</li>
+    <li><strong>Content addressing beats the ETag protocol.</strong> Manifests name content hashes, so check-then-read is atomic without carrying an ETag through every ranged GET (mountpoint's hardest-won requirement). The concurrent-overwrite exposure is availability-only (a 500, never spliced data); reader pins become relevant only if reads ever move off the current fully buffered <code>get_stream</code> design.</li>
+    <li><strong>The commit protocol survived all six turso WAL bug classes on paper:</strong> single-transaction atomicity plus in-transaction markers structurally exclude the file-vs-log disagreement family that cost turso a dozen fixes.</li>
+  </ul>
+
+  <h2 id="adopt">Adopt — exemplars and patterns</h2>
+  <h3>Clone into ~/src (priority order)</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Repo</th><th>Why</th></tr>
+    <tr><td><code>benbjohnson/litestream</code></td><td>v0.5 LTX redesign is the commit-log+PITR retention problem solved <em>after</em> getting it wrong twice (silent replication-stop postmortems #1083 included).</td></tr>
+    <tr><td><code>slatedb/slatedb</code></td><td>Rust writer-fencing over object storage via manifest conditional PUTs — the HS-plan design space.</td></tr>
+    <tr><td><code>orbitinghail/graft</code></td><td>Explicit consistency contract + lazy partial replication over object storage — the libSQL-replica design space.</td></tr>
+    <tr><td><code>restatedev/restate</code></td><td>"Derived state is a cache of the log" with log trimming + object-store snapshots — the H4 retention lane's closest working system.</td></tr>
+    <tr><td>keep <code>turso-hist.git</code> mirror</td><td>Already fetched to scratchpad — 19,549 commits of storage-bug archaeology; the local checkout is depth-1. Move it somewhere durable.</td></tr>
+  </table></div>
+  <h3>Patterns (cheap, high leverage)</h3>
+  <ul>
+    <li><strong>Golden vectors for every encoder whose output is addressed or digested</strong> — parity shards (H2) first; the #303 dual-graph fixture is the in-repo template.</li>
+    <li><strong>Data-dir advisory lock</strong> (H3) via the workspace's existing fs2.</li>
+    <li><strong>redb's CrashBackend</strong> — a 165-line deterministic three-image (live / durable / last-header) crash harness with sync-count freeze; extends fault injection to non-SQLite artifacts (blob index, erasure stripes, backup bundles) with no VFS hook and no VM.</li>
+    <li><strong>Fault-injection granularity upgrades:</strong> sub-checksum-granularity and padding-region faults (sector-granular injection only ever proves checksums work — the VOPR blind spot); and the fsyncgate case, "fsync fails <em>and</em> the page is marked clean" (no application handled it in the CuttleFS study). Turso's DST — simulators that disable fsync faults, no volatile-cache model — is the cautionary tale that apparatus ≠ coverage.</li>
+    <li><strong>Callback-shaped ordering APIs</strong> (Convex <code>log.append(…, apply_writes_callback)</code>): where two operations must stay ordered, make the API shape enforce it.</li>
+    <li><strong>A written read-consistency taxonomy</strong> per read path (Jepsen's recurring rqlite finding), including the replica read-your-writes contract.</li>
+    <li><strong>Version-skew ≠ corruption diagnostics</strong> (M7) for the formats that cross deployment boundaries.</li>
+    <li><strong>Deterministic-permutation (shuttle-style) tests for any side-cache that drives invalidation</strong> — Convex shipped six consecutive stale-read bugs in one cache, all in the cache library's concurrency contract, all found only after adding shuttle.</li>
+    <li><strong>Committer headroom by shrinking the critical section</strong>, never by parallelizing the writer — Convex's five-commit 2026-07 burst is the worked example that preserves the single-writer invariant.</li>
+  </ul>
+
+  <h2 id="avoid">Do not adopt — complexity consciously declined</h2>
+  <ul>
+    <li><strong>Convex's concurrent committer</strong> (per-commit storage writes drained via FuturesOrdered) — Nimbus's single-writer + two-stage group commit is simpler and already benchmarked at target throughput.</li>
+    <li><strong>Full FoundationDB-style deterministic simulation</strong> — take the two-level BUGGIFY shape and coverage-beacon idea only.</li>
+    <li><strong>rustfs's healing state machine and lock manager;</strong> streaming erasure reads (whole-shard content-addressed reads keep Nimbus immune to the decode-quorum lockstep bug class).</li>
+    <li><strong>S3 surface breadth:</strong> versioning as a stored dimension, object-lock/retention/legal-hold, lifecycle/storage classes, mountpoint's caching layer.</li>
+    <li><strong>Per-object refcounts</strong> — stay rejected (BLI, celld, and restic all independently converged on root-set + grace instead).</li>
+    <li><strong>TTL/wall-clock leases</strong> anywhere — celld deleted 1,665 lines of them for cause; Nimbus's DB-clock CAS lease is the right primitive, extended (not replaced) per H3.</li>
+    <li><strong>Read-set coarsening fallbacks</strong> — Convex chose fail-the-transaction over widen-the-interval; widening trades bounded memory for unbounded false invalidation.</li>
+    <li><strong>An unfenceable convenience mode</strong> — celld deleted local-FS mode entirely; Nimbus's embedded mode is genuinely single-process by design, so the answer is the H3 lock, not mode removal.</li>
+    <li><strong>Cross-review guardrails, all agreed:</strong> no PITR epoch seal (M4 refuted); no routing of tenant KV through the document committer (owner decision); no unilateral negative-zero change — M2 is reopened <em>inside IMV1</em> and decided there; no streaming-encryption seeding change without a crypto-contract decision; no erasure two-marker protocol on this audit's evidence alone; no reader-pin machinery while <code>get_stream</code> stays fully buffered.</li>
+  </ul>
+
+  <h2 id="routing">Suggested routing</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Lane</th><th>Contents</th><th>Owner</th></tr>
+    <tr><td>1 · Fix S3 wire defects</td><td>H1 cluster (pagination, conditional delete, checksum recompute-or-reject) + boundary/concurrency tests; Convex import race + O(n) list as separate mediums</td><td>new small plan or direct PRs</td></tr>
+    <tr><td>2 · Embedded process fence</td><td>H3: exclusive Engine-root data-dir lock incl. encrypted redb, plus a cross-process refusal test</td><td>direct PR</td></tr>
+    <tr><td>3 · Finish IMV in its order</td><td>IMV1 as planned; riders: M3 vacuous test, M1 header-first archive parsing, M2 reopened as a codec decision (scalar and GeoPoint decided separately, separate tests); backfill-proof and invalidation notes ride as checklist items unless a concrete acceptance gap surfaces</td><td>IMV (active)</td></tr>
+    <tr><td>4 · Execute BLI in its accepted order</td><td>BLIF1 is live and unsafe; proposed to the BLI owner (scope additions need owner approval): H5 scrub classification and M10 NotFound-vs-transient with the sweep work, the buffered-<code>get_stream</code> constraint recorded in BLI4, and turso <code>70220c982</code> quoted into BLI0</td><td>BLI (promote from proposed)</td></tr>
+    <tr><td>5 · Cheap standalone hardening</td><td>H2 pin comment + golden vector (codec-id field optional under an NBLE2-bump rule); M7 supported-version check; M8 KV contract doc</td><td>direct PRs</td></tr>
+    <tr><td>6 · Design retention as its own pre-launch contract</td><td>H4 commit-log truncation + production MVCC pruning + PITR cost (Convex four-window template, clamp rules, fail-closed-on-trimmed-history, per-page validation after each read); M11/M12 checklist rides here</td><td>new plan (touches HS)</td></tr>
+  </table></div>
+
+  <p class="small" style="margin-top:3rem">Method: seven parallel review agents (Nimbus map · post-SIC delta · celld delta · object-store exemplars · durability exemplars · Turso/Convex deep dive · web research), reports archived in the session scratchpad, followed by a direct-code adversarial verification pass in the main session, and then two rounds of second-model adversarial cross-review (Codex gpt-5.6, clean worktree at the same commit) whose claims in both directions were re-verified against the code before adoption. Honest accounting of pass one: M11 and M12 were shipped as open questions rather than verified findings, and three verified-looking claims (M4, M6, M13) did not survive the cross-review — in each case because verification stopped one layer short of the owning framework (the wrapper, not the classifier; the raw test, not the verifier; the mechanism, not its preconditions). Round two flowed both ways: four of my Rev 2 statements were corrected on verification (retention guards are unit-tested; <code>get_stream</code> fully buffers; backup export supplies a production PITR target; BLI's remote-orphan posture is a recorded decision), and the cross-review conceded M2's scalar nuance, reopening it jointly. Exemplar corpus: celld v0.2.1, turso (+ 19.5k-commit mirror), convex-backend (1,222 commits since March; note: OSS drop strips all Rust tests and contains no PITR), rustfs, redb, LiteFS/Litestream, mountpoint-s3, FoundationDB, Electric, TigerBeetle/Jepsen, restic, PocketBase, plus ~30 web-research postmortems (fsyncgate, CuttleFS, ALICE, Turso 2023-12-04, T3 Chat 2025-06-01, S3 conditional-write analyses).</p>
+</div>

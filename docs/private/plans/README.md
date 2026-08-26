@@ -48,9 +48,11 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
   workload-identity decision records. RR30 owns the deferred storage
   semantic-type audit that IMV and BLI routed. RR31 owns the deferred
-  cross-adapter numeric query and index semantics audit. Review-driven refactor
-  and cleanup work should route through this plan's band ledgers while it is
-  active.
+  cross-adapter numeric query and index semantics audit. Band SA owns the
+  corrected ledger of the 2026-08-25 storage adversarial review (S3 wire
+  defects, embedded process fence, retention contract, erasure and scrub
+  hardening). Review-driven refactor and cleanup work should route through
+  this plan's band ledgers while it is active.
 - `nimbus-runtime-tenant-isolation-plan.md` - `complete` in PR #227. Canonical
   runtime-owner identity, routing-versus-reuse-authority separation,
   owner-partitioned
