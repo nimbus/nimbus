@@ -7,8 +7,8 @@
 
 set -uo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${repo_root}"
+repo_root="${NIMBUS_STORAGE_RETENTION_VERIFY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+cd "${repo_root}" || exit 1
 
 passed=0
 failed=0
@@ -40,6 +40,33 @@ contains_all() {
   done
 }
 
+contains_each() {
+  local pattern="$1"
+  shift
+  local target
+  for target in "$@"; do
+    if ! contains "${pattern}" "${target}"; then
+      return 1
+    fi
+  done
+}
+
+if [[ "${1:-}" == '--require-each' ]]; then
+  shift
+  pattern="${1:-}"
+  if [[ -z "${pattern}" ]]; then
+    printf 'usage: %s --require-each PATTERN PATH...\n' "$0" >&2
+    exit 2
+  fi
+  shift
+  if (($# == 0)); then
+    printf 'require-each needs at least one path\n' >&2
+    exit 2
+  fi
+  contains_each "${pattern}" "$@"
+  exit $?
+fi
+
 if contains_all crates/nimbus-storage/src/retention.rs \
   'enum RetentionGcResource' \
   'struct RetentionGcWatermarks' \
@@ -53,7 +80,7 @@ if contains_all crates/nimbus-storage/src/retention.rs \
   'compact_retained_versions' \
   'prune_redb_document_versions_before' \
   'prune_redb_index_versions_before' \
-  && contains 'compact_retained_versions' \
+  && contains_each 'compact_retained_versions' \
     crates/nimbus-storage/src/sqlite.rs \
     crates/nimbus-storage/src/sql/store_core.rs; then
   pass 'MVCC compaction exists on embedded and SQL storage seams'
@@ -72,7 +99,7 @@ else
   fail 'existing tests preserve document anchors and closed index intervals'
 fi
 
-if contains 'RetentionExpired' \
+if contains_each 'RetentionExpired' \
     crates/nimbus-storage/src/changefeed.rs \
     crates/nimbus-storage/src/store/journal_snapshot.rs \
   && contains 'point_in_time_archive_rejects_expired_retention_target' \
@@ -106,7 +133,7 @@ if contains_all crates/nimbus-storage/src/retention/read_safety.rs \
   'fn validate_retention_after_page' \
   'HistoricalReadErrorKind::RetentionExpired' \
   'is behind the retention floor' \
-  && contains 'validate_retention_after_page' \
+  && contains_each 'validate_retention_after_page' \
     crates/nimbus-storage/src/store/journal_stream.rs \
     crates/nimbus-storage/src/sqlite/read.rs \
     crates/nimbus-storage/src/postgres/backend.rs \
@@ -161,25 +188,22 @@ else
   fail 'PITR export and import accept a validated nonzero retained base'
 fi
 
-if contains 'retention_checkpoint.*restart|restart.*retention_checkpoint' \
-    crates/nimbus-storage/src/tests \
-    crates/nimbus-storage/src/store \
-    crates/nimbus-storage/src/sqlite \
-  && contains 'checkpoint.*fault|fault.*checkpoint' \
-    crates/nimbus-storage/src/tests \
-    crates/nimbus-storage/src/store \
-    crates/nimbus-storage/src/sqlite; then
+if contains_all crates/nimbus-storage/src/tests/retention_checkpoint.rs \
+    'redb_retention_checkpoint_survives_restart' \
+    'sqlite_retention_checkpoint_survives_restart' \
+    'memory_retention_checkpoint_survives_restart' \
+    'embedded_retention_checkpoint_fault_before_commit' \
+    'embedded_retention_checkpoint_fault_after_commit'; then
   pass 'memory, redb, and SQLite prove restart and checkpoint fault atomicity'
 else
   fail 'memory, redb, and SQLite prove restart and checkpoint fault atomicity'
 fi
 
-if contains 'fenced_compact_retained_history' crates/nimbus-storage/src \
-  && contains 'stale.*lease.*retention|retention.*stale.*lease' \
-    crates/nimbus-storage/src/postgres \
-    crates/nimbus-storage/src/mysql \
-    crates/nimbus-storage/src/libsql \
-    crates/nimbus-storage/src/tests; then
+if contains 'fenced_compact_retained_history' crates/nimbus-storage/src/sql/store_core.rs \
+  && contains_each 'stale.*lease.*retention|retention.*stale.*lease' \
+    crates/nimbus-storage/src/tests/postgres_provider/retention.rs \
+    crates/nimbus-storage/src/tests/mysql_provider/retention.rs \
+    crates/nimbus-storage/src/tests/libsql_provider/retention.rs; then
   pass 'provider retention finalization is lease-fenced and tested'
 else
   fail 'provider retention finalization is lease-fenced and tested'
@@ -194,23 +218,30 @@ else
   fail 'the Engine lifecycle prepares off-route, finalizes in order, and exposes retain-all explicitly'
 fi
 
-if contains 'validate_retention_after_page|post_read_retention' \
-    crates/nimbus-storage/src \
-    crates/nimbus-engine/src \
-  && contains 'concurrent.*prune.*page|page.*concurrent.*prune' \
-    crates/nimbus-storage/src \
-    crates/nimbus-engine/src; then
+if contains_each 'validate_retention_after_page|post_read_retention' \
+    crates/nimbus-storage/src/store/journal_stream.rs \
+    crates/nimbus-storage/src/sqlite/read.rs \
+    crates/nimbus-storage/src/postgres/read.rs \
+    crates/nimbus-storage/src/mysql/read.rs \
+    crates/nimbus-storage/src/libsql/read.rs \
+  && contains_each 'concurrent.*prune.*page|page.*concurrent.*prune' \
+    crates/nimbus-storage/src/store/journal_stream/tests.rs \
+    crates/nimbus-storage/src/tests/memory_conformance.rs \
+    crates/nimbus-storage/src/tests/sqlite_foundation/journal.rs \
+    crates/nimbus-storage/src/tests/postgres_provider/retention.rs \
+    crates/nimbus-storage/src/tests/mysql_provider/retention.rs \
+    crates/nimbus-storage/src/tests/libsql_provider/retention.rs; then
   pass 'paged consumers revalidate after reads and cover concurrent pruning'
 else
   fail 'paged consumers revalidate after reads and cover concurrent pruning'
 fi
 
-if contains 'retention_.*(duration|failure|pruned|lag)' \
-    crates/nimbus-engine/src \
-    crates/nimbus-storage/src \
-  && contains 'confirmed_floor' \
-    crates/nimbus-engine/src \
-    crates/nimbus-storage/src/diagnostics.rs; then
+if contains_all crates/nimbus-engine/src/engine/metadata_retention.rs \
+    'retention_.*(duration|failure|pruned|lag)' \
+    'confirmed_floor' \
+  && contains_all crates/nimbus-storage/src/diagnostics.rs \
+    'retention_gc' \
+    'safe_prune_before'; then
   pass 'bounded metrics and diagnostics expose lifecycle outcomes and floor lag'
 else
   fail 'bounded metrics and diagnostics expose lifecycle outcomes and floor lag'
