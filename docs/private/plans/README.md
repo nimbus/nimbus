@@ -53,6 +53,10 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   defects, embedded process fence, retention contract, erasure and scrub
   hardening). Review-driven refactor and cleanup work should route through
   this plan's band ledgers while it is active.
+- `storage-review-repairs-plan.md` - `active`. Owns the five confirmed findings
+  from the 2026-08-26 Opus 5 aggregate review: complete materialized identity,
+  atomic nonzero-base PITR import with MVCC anchors, and proof-gate repairs.
+  It preserves the closed Band SA ledger and does not act on rejected claims.
 - `archive/storage-metadata-retention-plan.md` - `complete, archived`
   (2026-08-26; PRs #313–#321). Delivered checkpoint-backed commit-log pruning,
   production MVCC compaction, bounded CDC and PITR history, fail-closed trimmed
