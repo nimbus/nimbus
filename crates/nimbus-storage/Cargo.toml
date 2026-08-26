@@ -77,3 +77,7 @@ harness = false
 [[bench]]
 name = "kv-engine-write-throughput"
 harness = false
+
+[[bench]]
+name = "metadata-retention-baseline"
+harness = false
