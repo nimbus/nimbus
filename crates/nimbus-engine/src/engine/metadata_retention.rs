@@ -141,6 +141,8 @@ pub(crate) struct MetadataRetentionController {
     shutdown: CancellationToken,
     wake: Notify,
     next_sequence_hint: AtomicU64,
+    #[cfg(test)]
+    state_inspection_count: AtomicU64,
     manual_requests: Mutex<ManualRequestQueue>,
     metrics: Mutex<RetentionMetrics>,
     completion: ControllerCompletion,
@@ -164,6 +166,8 @@ impl MetadataRetentionController {
             shutdown: CancellationToken::new(),
             wake: Notify::new(),
             next_sequence_hint: AtomicU64::new(next_sequence_hint),
+            #[cfg(test)]
+            state_inspection_count: AtomicU64::new(0),
             manual_requests: Mutex::new(ManualRequestQueue {
                 accepting: false,
                 pending: VecDeque::new(),
@@ -208,6 +212,11 @@ impl MetadataRetentionController {
     #[cfg(test)]
     pub(crate) fn wake_for_testing(&self) {
         self.wake.notify_one();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn state_inspection_count_for_testing(&self) -> u64 {
+        self.state_inspection_count.load(Ordering::Acquire)
     }
 
     pub(crate) fn shutdown(&self) {
@@ -420,12 +429,16 @@ impl MetadataRetentionController {
                 return Err(error);
             }
         };
+        #[cfg(test)]
+        self.state_inspection_count.fetch_add(1, Ordering::AcqRel);
         self.observe_state(&state);
 
         let Some(step) = self.profile.maintenance_step_sequences() else {
+            self.record_successful_inspection_without_maintenance();
             return Ok(forced.then(|| run_result_from_state(false, &state, Duration::ZERO)));
         };
         if !forced && state.latest_sequence.0 < self.next_sequence_hint.load(Ordering::Acquire) {
+            self.record_successful_inspection_without_maintenance();
             return Ok(None);
         }
 
@@ -540,6 +553,13 @@ impl MetadataRetentionController {
             .min(RETENTION_PERIODIC_RECHECK)
     }
 
+    fn record_successful_inspection_without_maintenance(&self) {
+        self.metrics
+            .lock()
+            .expect("metadata-retention metrics lock should not be poisoned")
+            .next_retry_at = None;
+    }
+
     fn record_success(&self, summary: &RetentionHistorySummary, duration: Duration) {
         let mut metrics = self
             .metrics
@@ -632,7 +652,8 @@ mod tests {
     use std::time::Duration;
 
     use nimbus_core::{
-        ManualMonotonicClock, ManualWallClock, SequenceNumber, TableName, TenantId, Timestamp,
+        Error, ManualMonotonicClock, ManualWallClock, SequenceNumber, TableName, TenantId,
+        Timestamp,
     };
     use nimbus_storage::{EmbeddedProviderKind, FaultPoint, NoopFaultInjector};
     use nimbus_testing::{BlockingFaultInjector, CountedFaultInjector};
@@ -856,6 +877,63 @@ mod tests {
         assert_eq!(faults.failure_count(), 1);
         assert_eq!(diagnostics.run_count, 2);
         assert_eq!(diagnostics.last_failure, None);
+        engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn successful_ineligible_retry_rearms_the_periodic_delay() {
+        let monotonic_clock = Arc::new(ManualMonotonicClock::new());
+        let (_data_dir, engine, tenant_id) = engine_with_profile(
+            MetadataRetentionProfile::bounded(1_000, 1_000, 1_000, 1_000, 10)
+                .expect("ineligible retry profile should build"),
+            monotonic_clock.clone(),
+            Arc::new(NoopFaultInjector),
+        )
+        .await;
+        let controller = engine
+            .tenant_runtime_for_testing(&tenant_id)
+            .expect("ineligible retry runtime should remain loaded")
+            .metadata_retention_controller();
+
+        timeout(Duration::from_secs(5), async {
+            while controller.state_inspection_count_for_testing() == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("initial retention state inspection should finish");
+        let initial_inspections = controller.state_inspection_count_for_testing();
+
+        controller.record_failure(
+            &Error::Internal("injected state inspection failure".to_string()),
+            Duration::ZERO,
+            true,
+        );
+        monotonic_clock.advance(Duration::from_secs(1));
+        controller.wake_for_testing();
+        timeout(Duration::from_secs(5), async {
+            while controller.state_inspection_count_for_testing() == initial_inspections {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("eligible retry should inspect retention state once");
+        let inspections_after_retry = controller.state_inspection_count_for_testing();
+        assert_eq!(inspections_after_retry, initial_inspections + 1);
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            controller.state_inspection_count_for_testing(),
+            inspections_after_retry,
+            "a successful ineligible retry must wait for the periodic delay instead of busy-looping"
+        );
+        let diagnostics = controller.snapshot();
+        assert_eq!(diagnostics.next_retry_in_millis, None);
+        assert_eq!(
+            diagnostics.last_failure.as_deref(),
+            Some("internal error: injected state inspection failure"),
+            "clearing a recovered retry deadline must retain the last failure for diagnostics"
+        );
         engine.quiesce().await;
     }
 
