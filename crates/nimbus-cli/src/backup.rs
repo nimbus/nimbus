@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli_ux;
 
-const BACKUP_FORMAT_VERSION: u16 = 2;
+const BACKUP_FORMAT_VERSION: u16 = 3;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum BackupCommand {
@@ -185,7 +185,7 @@ fn decode_backup_file(raw: &[u8], input: &Path) -> Result<BackupFile, Box<dyn Er
     })?;
     if header.format_version != BACKUP_FORMAT_VERSION {
         let codec_context = (header.format_version < BACKUP_FORMAT_VERSION).then_some(
-            "; this backup predates materialized-position digest codec version 2 and must be recreated with a current Nimbus binary",
+            "; this backup predates materialized-position digest codec version 3 and must be recreated with a current Nimbus binary",
         );
         return Err(format!(
             "backup file {} has unsupported format version {} (this binary supports {}){}",
@@ -321,11 +321,11 @@ mod tests {
     #[test]
     fn backup_decode_reports_tenant_archive_version_before_nested_position() {
         let legacy_tenant = br#"{
-            "format_version": 2,
+            "format_version": 3,
             "provider": "sqlite",
             "tenants": {
                 "alpha": {
-                    "version": 1,
+                    "version": 2,
                     "target_position": {
                         "version": 1,
                         "applied_sequence": 0,
@@ -340,7 +340,7 @@ mod tests {
         let message = error.to_string();
         assert!(
             message.contains("tenant alpha")
-                && message.contains("unsupported point-in-time restore archive version 1")
+                && message.contains("unsupported point-in-time restore archive version 2")
                 && message.contains("materialized-position digest codec"),
             "tenant archive diagnostics must name the tenant, archive, and codec change: {message}"
         );

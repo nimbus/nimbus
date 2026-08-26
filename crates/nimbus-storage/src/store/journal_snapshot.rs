@@ -48,7 +48,7 @@ pub struct MaterializedJournalSnapshot {
 }
 
 pub const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 4;
-pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 2;
+pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -226,6 +226,20 @@ impl MaterializedJournalSnapshot {
                 .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
         });
 
+        let mut resource_path_bindings = self.resource_path_bindings.clone();
+        resource_path_bindings.sort_by(|left, right| {
+            left.locator
+                .table
+                .as_str()
+                .cmp(right.locator.table.as_str())
+                .then_with(|| left.locator.id.as_str().cmp(right.locator.id.as_str()))
+                .then_with(|| {
+                    left.document_path
+                        .segments()
+                        .cmp(&right.document_path.segments())
+                })
+        });
+
         let mut scheduled_execution_ids = self.scheduled_execution_ids.clone();
         scheduled_execution_ids.sort_unstable();
 
@@ -234,7 +248,9 @@ impl MaterializedJournalSnapshot {
             table_identities,
             schema_tables,
             documents,
+            resource_path_bindings,
             scheduled_execution_ids,
+            self.trigger_delivery_cursor,
         ))
     }
 
@@ -271,7 +287,7 @@ impl PointInTimeRestoreArchive {
             .map_err(|error| Error::Serialization(error.to_string()))?;
         if header.version != POINT_IN_TIME_RESTORE_ARCHIVE_VERSION {
             let codec_context = (header.version < POINT_IN_TIME_RESTORE_ARCHIVE_VERSION).then_some(
-                "; this archive predates materialized-position digest codec version 2 and must be recreated with a current Nimbus binary",
+                "; this archive predates materialized-position digest codec version 3 and must be recreated with a current Nimbus binary",
             );
             return Err(Error::InvalidInput(format!(
                 "unsupported point-in-time restore archive version {} (this binary supports {}){}",

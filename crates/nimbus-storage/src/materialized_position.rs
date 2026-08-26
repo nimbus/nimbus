@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::io::{self, Write};
 
 use nimbus_core::{
-    Document, Error, FieldType, IndexState, Result, SequenceNumber, SpecialDouble, StoredValue,
-    TableSchema, TypedScalarValue,
+    Document, DocumentLocator, Error, FieldType, IndexState, ResourcePathBinding, Result,
+    SequenceNumber, SpecialDouble, StoredValue, TableSchema, TriggerDeliveryCursor,
+    TypedScalarValue,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -13,12 +14,11 @@ use crate::TableIdentitySnapshotEntry;
 
 /// The digest format for [`MaterializedPosition`].
 ///
-/// Version 2 replaces feature-sensitive JSON serialization with an explicit,
-/// domain-tagged streaming codec.
-pub const MATERIALIZED_POSITION_VERSION: u16 = 2;
+/// Version 3 covers resource-path bindings and trigger-delivery progress.
+pub const MATERIALIZED_POSITION_VERSION: u16 = 3;
 
 const DIGEST_HEX_LEN: usize = 64;
-const CODEC_DOMAIN: &[u8] = b"nimbus.materialized-position.v2";
+const CODEC_DOMAIN: &[u8] = b"nimbus.materialized-position.v3";
 
 /// A materialized snapshot's logical state in canonical order.
 ///
@@ -31,7 +31,9 @@ pub struct CanonicalMaterializedState {
     table_identities: Vec<TableIdentitySnapshotEntry>,
     schema_tables: Vec<TableSchema>,
     documents: Vec<Document>,
+    resource_path_bindings: Vec<ResourcePathBinding>,
     scheduled_execution_ids: Vec<String>,
+    trigger_delivery_cursor: TriggerDeliveryCursor,
 }
 
 impl CanonicalMaterializedState {
@@ -40,14 +42,18 @@ impl CanonicalMaterializedState {
         table_identities: Vec<TableIdentitySnapshotEntry>,
         schema_tables: Vec<TableSchema>,
         documents: Vec<Document>,
+        resource_path_bindings: Vec<ResourcePathBinding>,
         scheduled_execution_ids: Vec<String>,
+        trigger_delivery_cursor: TriggerDeliveryCursor,
     ) -> Self {
         Self {
             snapshot_version,
             table_identities,
             schema_tables,
             documents,
+            resource_path_bindings,
             scheduled_execution_ids,
+            trigger_delivery_cursor,
         }
     }
 
@@ -67,8 +73,16 @@ impl CanonicalMaterializedState {
         &self.documents
     }
 
+    pub fn resource_path_bindings(&self) -> &[ResourcePathBinding] {
+        &self.resource_path_bindings
+    }
+
     pub fn scheduled_execution_ids(&self) -> &[String] {
         &self.scheduled_execution_ids
+    }
+
+    pub fn trigger_delivery_cursor(&self) -> TriggerDeliveryCursor {
+        self.trigger_delivery_cursor
     }
 
     pub fn digest(&self) -> Result<String> {
@@ -104,10 +118,19 @@ impl CanonicalMaterializedState {
         }
 
         write_tag(writer, 0x40)?;
+        write_len(writer, self.resource_path_bindings.len())?;
+        for binding in &self.resource_path_bindings {
+            write_resource_path_binding(writer, binding)?;
+        }
+
+        write_tag(writer, 0x50)?;
         write_len(writer, self.scheduled_execution_ids.len())?;
         for execution_id in &self.scheduled_execution_ids {
             write_scheduled_execution(writer, execution_id)?;
         }
+
+        write_tag(writer, 0x60)?;
+        write_trigger_delivery_cursor(writer, self.trigger_delivery_cursor)?;
         Ok(())
     }
 
@@ -158,12 +181,34 @@ pub(crate) fn canonical_document_value(document: &Document) -> Result<Vec<u8>> {
     canonical_bytes(|writer| write_document(writer, document))
 }
 
+pub(crate) fn canonical_resource_path_binding_identity(
+    locator: &DocumentLocator,
+) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_document_locator(writer, locator))
+}
+
+pub(crate) fn canonical_resource_path_binding_value(
+    binding: &ResourcePathBinding,
+) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_resource_path_binding(writer, binding))
+}
+
 pub(crate) fn canonical_scheduled_execution_identity(execution_id: &str) -> Result<Vec<u8>> {
     canonical_bytes(|writer| write_string(writer, execution_id))
 }
 
 pub(crate) fn canonical_scheduled_execution_value(execution_id: &str) -> Result<Vec<u8>> {
     canonical_bytes(|writer| write_scheduled_execution(writer, execution_id))
+}
+
+pub(crate) fn canonical_trigger_delivery_cursor_identity() -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_string(writer, "trigger_delivery_cursor"))
+}
+
+pub(crate) fn canonical_trigger_delivery_cursor_value(
+    cursor: TriggerDeliveryCursor,
+) -> Result<Vec<u8>> {
+    canonical_bytes(|writer| write_trigger_delivery_cursor(writer, cursor))
 }
 
 fn canonical_bytes(write: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> Result<Vec<u8>> {
@@ -311,6 +356,31 @@ fn write_table_identity(
 
 fn write_scheduled_execution(writer: &mut impl Write, execution_id: &str) -> io::Result<()> {
     write_string(writer, execution_id)
+}
+
+fn write_document_locator(writer: &mut impl Write, locator: &DocumentLocator) -> io::Result<()> {
+    write_string(writer, locator.table.as_str())?;
+    write_string(writer, locator.id.as_str())
+}
+
+fn write_resource_path_binding(
+    writer: &mut impl Write,
+    binding: &ResourcePathBinding,
+) -> io::Result<()> {
+    write_document_locator(writer, &binding.locator)?;
+    let segments = binding.document_path.segments();
+    write_len(writer, segments.len())?;
+    for segment in segments {
+        write_string(writer, &segment)?;
+    }
+    Ok(())
+}
+
+fn write_trigger_delivery_cursor(
+    writer: &mut impl Write,
+    cursor: TriggerDeliveryCursor,
+) -> io::Result<()> {
+    write_u64(writer, cursor.materialized_through.0)
 }
 
 fn write_table_schema(writer: &mut impl Write, table: &TableSchema) -> io::Result<()> {
@@ -622,7 +692,9 @@ pub fn materialized_position_golden_fixture() -> Result<MaterializedPosition> {
         )],
         Vec::new(),
         vec![document],
+        Vec::new(),
         vec!["execution1".to_string()],
+        TriggerDeliveryCursor::default(),
     );
     MaterializedPosition::new(SequenceNumber(7), state.digest()?)
 }
@@ -637,7 +709,15 @@ mod tests {
     use super::*;
 
     fn state_with_document(document: Document) -> CanonicalMaterializedState {
-        CanonicalMaterializedState::new(3, Vec::new(), Vec::new(), vec![document], Vec::new())
+        CanonicalMaterializedState::new(
+            3,
+            Vec::new(),
+            Vec::new(),
+            vec![document],
+            Vec::new(),
+            Vec::new(),
+            TriggerDeliveryCursor::default(),
+        )
     }
 
     fn document_with_value(value: Value) -> Document {
@@ -866,10 +946,10 @@ mod tests {
     fn materialized_position_golden_matches_storage_graph() {
         let position = materialized_position_golden_fixture()
             .expect("materialized position fixture should compute");
-        assert_eq!(position.version(), 2);
+        assert_eq!(position.version(), 3);
         assert_eq!(
             position.state_digest(),
-            "cc10a2a6579d2df620010321813fa1ca2bc715288280c0d62a502b5281a7ca68"
+            "af6dfc9b7f93c73314ae70ff777d7b2f93bef82704b11d18c87a5bae9bee36f9"
         );
     }
 
