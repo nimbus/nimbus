@@ -1,0 +1,256 @@
+{
+  "format_version": 2,
+  "baseline_commit": "137cc632a1c8585545d200ea49f44bd236478175",
+  "source_base_commit": "9c807015a3049adbd8e24b15a57ccac34b2fc380",
+  "target_os": "macos",
+  "target_arch": "aarch64",
+  "interval_seconds": 60,
+  "full_samples_per_rung": 3,
+  "candidate_samples_per_rung": 21,
+  "full_sample_timeout_seconds": 60,
+  "churn_setup_budget_seconds": 120,
+  "child_address_space_limit_bytes": 25769803776,
+  "matrix": [
+    {
+      "documents": 1000000,
+      "payload_bytes": 8192,
+      "payload_state_bytes": 8192000000,
+      "churn_basis_points": 0,
+      "churn_requested_documents": 0,
+      "churn_applied_documents": 0,
+      "churn_setup_elapsed_ns": 0,
+      "churn_setup_status": "resource_limited_seed",
+      "full": {
+        "status": "resource_limited_setup",
+        "sample_timeout_seconds": 15,
+        "samples": [],
+        "summary": null,
+        "censored_lower_bound_summary": null,
+        "timed_out_samples": 0,
+        "failures": [
+          "fixture seed exhausted local resources: database or disk is full"
+        ],
+        "bytes_read_scope": "not measured because the requested churn state was not reached"
+      },
+      "candidate": {
+        "status": "resource_limited_setup",
+        "samples_ns": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "sample_count": 21,
+          "p50_ns": 0,
+          "p95_ns": 0,
+          "p99_ns": 1
+        },
+        "root_hex": "c2365ce417330260f82542626780a2b6db86994047bfac8590ecfae723d0da09",
+        "node_bytes": 144,
+        "allocator_metadata_bytes_per_node": 16,
+        "resident_bytes_per_leaf": 160,
+        "total_resident_bytes": 160000000,
+        "memory_derivation": "size_of::<TreapNode>() (144) + conservative allocator metadata (16)"
+      }
+    },
+    {
+      "documents": 1000000,
+      "payload_bytes": 8192,
+      "payload_state_bytes": 8192000000,
+      "churn_basis_points": 10,
+      "churn_requested_documents": 1000,
+      "churn_applied_documents": 0,
+      "churn_setup_elapsed_ns": 0,
+      "churn_setup_status": "resource_limited_seed",
+      "full": {
+        "status": "resource_limited_setup",
+        "sample_timeout_seconds": 15,
+        "samples": [],
+        "summary": null,
+        "censored_lower_bound_summary": null,
+        "timed_out_samples": 0,
+        "failures": [
+          "fixture seed exhausted local resources: database or disk is full"
+        ],
+        "bytes_read_scope": "not measured because the requested churn state was not reached"
+      },
+      "candidate": {
+        "status": "resource_limited_setup",
+        "samples_ns": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "summary": {
+          "sample_count": 21,
+          "p50_ns": 0,
+          "p95_ns": 1,
+          "p99_ns": 1
+        },
+        "root_hex": "c2365ce417330260f82542626780a2b6db86994047bfac8590ecfae723d0da09",
+        "node_bytes": 144,
+        "allocator_metadata_bytes_per_node": 16,
+        "resident_bytes_per_leaf": 160,
+        "total_resident_bytes": 160000000,
+        "memory_derivation": "size_of::<TreapNode>() (144) + conservative allocator metadata (16)"
+      }
+    },
+    {
+      "documents": 1000000,
+      "payload_bytes": 8192,
+      "payload_state_bytes": 8192000000,
+      "churn_basis_points": 100,
+      "churn_requested_documents": 10000,
+      "churn_applied_documents": 0,
+      "churn_setup_elapsed_ns": 0,
+      "churn_setup_status": "resource_limited_seed",
+      "full": {
+        "status": "resource_limited_setup",
+        "sample_timeout_seconds": 15,
+        "samples": [],
+        "summary": null,
+        "censored_lower_bound_summary": null,
+        "timed_out_samples": 0,
+        "failures": [
+          "fixture seed exhausted local resources: database or disk is full"
+        ],
+        "bytes_read_scope": "not measured because the requested churn state was not reached"
+      },
+      "candidate": {
+        "status": "resource_limited_setup",
+        "samples_ns": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "summary": {
+          "sample_count": 21,
+          "p50_ns": 0,
+          "p95_ns": 1,
+          "p99_ns": 1
+        },
+        "root_hex": "c2365ce417330260f82542626780a2b6db86994047bfac8590ecfae723d0da09",
+        "node_bytes": 144,
+        "allocator_metadata_bytes_per_node": 16,
+        "resident_bytes_per_leaf": 160,
+        "total_resident_bytes": 160000000,
+        "memory_derivation": "size_of::<TreapNode>() (144) + conservative allocator metadata (16)"
+      }
+    },
+    {
+      "documents": 1000000,
+      "payload_bytes": 8192,
+      "payload_state_bytes": 8192000000,
+      "churn_basis_points": 1000,
+      "churn_requested_documents": 100000,
+      "churn_applied_documents": 0,
+      "churn_setup_elapsed_ns": 0,
+      "churn_setup_status": "resource_limited_seed",
+      "full": {
+        "status": "resource_limited_setup",
+        "sample_timeout_seconds": 15,
+        "samples": [],
+        "summary": null,
+        "censored_lower_bound_summary": null,
+        "timed_out_samples": 0,
+        "failures": [
+          "fixture seed exhausted local resources: database or disk is full"
+        ],
+        "bytes_read_scope": "not measured because the requested churn state was not reached"
+      },
+      "candidate": {
+        "status": "resource_limited_setup",
+        "samples_ns": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          0
+        ],
+        "summary": {
+          "sample_count": 21,
+          "p50_ns": 0,
+          "p95_ns": 1,
+          "p99_ns": 1
+        },
+        "root_hex": "c2365ce417330260f82542626780a2b6db86994047bfac8590ecfae723d0da09",
+        "node_bytes": 144,
+        "allocator_metadata_bytes_per_node": 16,
+        "resident_bytes_per_leaf": 160,
+        "total_resident_bytes": 160000000,
+        "memory_derivation": "size_of::<TreapNode>() (144) + conservative allocator metadata (16)"
+      }
+    }
+  ],
+  "write_overhead": null
+}

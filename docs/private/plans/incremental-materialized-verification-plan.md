@@ -3,8 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: run the IMV7 matched measurements, update the governing docs, and
-publish the closeout proof.
+Next action: rebase IMV7 onto main `ae4a1b233`, rerun the verifier and
+affected gates, then run the pre-PR review and publish the closeout pull
+request.
 
 ## Outcome
 
@@ -118,7 +119,7 @@ IMV0 runs first after promotion and creates the proof root and the
 | IMV4 | If required, account for every materialized-state writer, repair its repository instruction, and publish exact deltas or invalidate the index. | `done` | PR #306 merged as `2a862829c`; archive-gate correction PR #307 merged as `eb2997083b`. Verifier: `Summary: 9 passed, 7 failed`. |
 | IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `done` | PR #308 merged as `ccddcf846`. Work `a7c678351`; hardening `395459752` and `3acdd45fd`; proof is in `imv5.md`. Verifier: `Summary: 11 passed, 5 failed`; Nimbus autoreview clean. |
 | IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `done` | PR #309 merged as `f5f813366`. Work `3567ba656`; correction `0fe5db256`; proof is in `imv6.md`. The corrected hosted PostgreSQL, MySQL, and libSQL lanes pass, as do all other hosted checks. Verifier: `Summary: 14 passed, 2 failed`. |
-| IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `in_progress` | Branch `codex/imv7-closeout` starts from merged main `f5f813366`. |
+| IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `in_progress` | Measurements use main `80f845952`; current main `ae4a1b233` adds no materialized-verification change. The 36-coordinate matrix retains four typed seed-capacity results, and the exact gate rungs preserve `MERKLE_REQUIRED`. The verifier reports `Summary: 16 passed, 0 failed`. Local CI has two sandbox-blocked process-list cases; hosted CI is their source of truth. Review, publication, and merge remain. |
 | IMV9 | After the final pull request merges, archive this plan, retain its proof root, and remove its active index entry. | `todo` | |
 
 ## Dependencies and coordination
@@ -721,7 +722,7 @@ crates/nimbus-engine/src/engine/objects.rs,
 crates/nimbus-engine/src/engine/queries/verification.rs, and
 crates/nimbus-engine/src/replica.rs. Work in
 /Users/jack/src/github.com/nimbus/nimbus-worktrees/incremental-materialized-verification
-on branch codex/imv2-measurement-verdict. Chat history is
+on branch codex/imv7-closeout. Chat history is
 not progress state. Resume from the status ledger, the execution log,
 and git state. If compaction happens, continue from the plan and git
 state rather than restarting. Loop: keep one task in_progress,
@@ -818,3 +819,7 @@ Append rows at the end. This section stays last.
 | 2026-08-21 | IMV6 | reviewed | The second Nimbus pre-PR autoreview reports no accepted or actionable finding. It confirms that the invalidator mutex preserves an odd generation for the complete overlap window and returns to an even generation only after the last guard drops. Hosted requalification and publication remain. |
 | 2026-08-21 | IMV6 | completed | Corrected hosted PostgreSQL, MySQL, and libSQL lanes all passed. The complete libSQL lane includes the four PPSC recovery cases that exposed the overlap defect. Every other hosted check passed. PR #309 merged as `f5f813366`. IMV6 is terminal. |
 | 2026-08-21 | IMV7 | started | Created `codex/imv7-closeout` from merged main `f5f813366`. IMV7 is the only `in_progress` task. |
+| 2026-08-25 | IMV7 | resumed | Reconciled the branch with current main `80f845952`. The linked worktree git metadata is read-only in the execution sandbox, so a recovery clone carries the exact branch patch without changing the original dirty worktree. Recent negative-zero digest work preserves the IMV normalized-value contract. |
+| 2026-08-25 | IMV7 | implemented | Closeout documentation now defines canonical and disposable positions, full and incremental assurance, exact operator commands, triggers, and the shipped-graph test rule. The SIC4 erratum names the IMV1 proof. The benchmark now retains typed seed-capacity failures instead of dropping the matrix checkpoint. |
+| 2026-08-25 | IMV7 | measured | The current-main run retains all 36 required coordinates. The exact 100,000-document gate rung reports 13.537241 seconds p95 and 3,149.28125 MiB p95 extra RSS. The exact million-document gate rung retains a 15-second lower bound. Write changes are -1.517947% throughput and +0.693269% p99 latency. The accepted verdict remains `MERKLE_REQUIRED`. The production million-leaf test reports depth 55, 149 measured bytes per leaf, and 164 budgeted bytes per leaf. |
+| 2026-08-25 | IMV7 | verified | The verifier reports `Summary: 16 passed, 0 failed`. Format, Clippy, dependency policy, documentation, the required harness, JavaScript builds and typechecks, 95 UI files with 832 tests, and proof helpers pass. The non-runtime lane ran 7,592 tests: 7,587 passed and 110 were skipped. Three MongoDB failures passed together in isolation. Two CLI process-list cases remain `UNVERIFIED` because the local sandbox rejects `ps` with `Operation not permitted`; hosted CI is their merge source of truth. |

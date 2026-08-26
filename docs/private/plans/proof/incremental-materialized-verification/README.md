@@ -25,7 +25,10 @@ complete.
   escalation behavior, cache limits, and focused acceptance results.
 - `imv6.md` records provider-root parity, fault recovery, hard session bounds,
   fixed metrics, operator controls, and external-provider qualification state.
-- Later task proofs stay beside these files and remain inputs to `verify.sh`.
+- `imv7-raw.json` is the final 36-coordinate matrix. `imv7-tail-raw.json`
+  retains the capacity-limited four-coordinate tail run.
+- `imv7-performance.md` records the matched comparison, accepted verdict,
+  measured margins, production memory result, and remaining uncertainty.
 
 The execution baseline is
 `137cc632a1c8585545d200ea49f44bd236478175`. The baseline was clean before
