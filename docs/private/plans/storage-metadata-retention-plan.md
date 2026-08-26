@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-25.
 Baseline: main @ cc7ae36a3c21bf7aa093c013f3025d074c679438.
 Proof root: `docs/private/plans/proof/storage-metadata-retention/`.
-Next action: execute SMR5 qualification in the dedicated worktree. Run the
-generated-history, crash/restart, provider, benchmark, documentation, and
-repository-gate matrix; then publish the measured `SAFE` or `NOT SAFE` verdict.
+Next action: execute SMR9 cleanup. Confirm the green closeout verifier, archive
+this completed implementation plan, remove its active index entry, and close
+Band SA row SA4 with the exact SMR0-SMR5 evidence.
 
 ## Outcome
 
@@ -252,8 +252,8 @@ only active Band SA row. Promotion evidence:
 | SMR2 | Implement lease-fenced checkpoint publication, journal pruning, and MVCC compaction parity for PostgreSQL, MySQL, and libSQL. | `done` | PR #317 merged as `f97b2db67`. Nine focused live provider tests passed: stale fencing, exact restart floors, injected and real-SQL rollback, MVCC pruning, and libSQL retained-base cache rebuild. Verifier: `Summary: 13 passed, 5 failed`. Autoreview clean. Proof: `smr2-provider-parity.md`. |
 | SMR3 | Wire bounded single-flight maintenance into the production Engine tenant lifecycle with configuration, cancellation, retry, diagnostics, metrics, and an operator-triggered seam. | `done` | PR #319 merged as `820549575`. Ten controller tests prove automatic advancement, single flight, retry without a recovered busy loop, shutdown, and no below-threshold hot-path wait. Verifier: `Summary: 16 passed, 2 failed`. Final autoreview clean. Proof: `smr3-production-lifecycle.md`. |
 | SMR4 | Make journal, changefeed, historical-read, bootstrap, and PITR consumers fail closed across trimmed history, including post-page validation and concurrent-prune tests. | `done` | PR #320 merged as `e6b9fcb05`. Per-resource durable read floors, pre/post-page validation, contiguous journal validation, MVCC floor publication, typed Engine recovery, and deterministic concurrent-prune tests now cover all six backends. Verifier: `Summary: 17 passed, 1 failed`. Final autoreview clean. Proof: `smr4-consumer-safety.md`. |
-| SMR5 | Run the semantic/provider/benchmark matrix, update storage architecture and operating docs, and publish the final launch-readiness verdict. | `in_progress` | |
-| SMR9 | After the final code pull request merges, archive this plan, retain its proof root, remove its active index entry, and close Band SA row SA4 with exact evidence. | `todo` | |
+| SMR5 | Run the semantic/provider/benchmark matrix, update storage architecture and operating docs, and publish the final launch-readiness verdict. | `done` | PR #321 merged as `4fe11923d`. Generated/fault matrices passed; PostgreSQL 84/84 and MySQL 54/54 passed; all four libSQL retention cases passed. The steady-state benchmark measured 2.81% latest-path overhead and a 4.75 MB bounded redb plateau versus 34.22 MB retain-all. `make ci` and final autoreview passed. Verifier: `Summary: 18 passed, 0 failed`. Verdict: `SAFE`. Proof: `smr5-closeout.md`. |
+| SMR9 | After the final code pull request merges, archive this plan, retain its proof root, remove its active index entry, and close Band SA row SA4 with exact evidence. | `in_progress` | |
 
 ## Tasks
 
@@ -496,3 +496,5 @@ explicit evidence, this plan is archived, and Band SA row SA4 is done.
 | 2026-08-26 | SMR4 | started | Accepted trimmed-history consumer safety. SMR4 is the only active task. Every paged historical consumer must validate the authoritative floor after each read and return typed `RetentionExpired` if a concurrent prune crosses its required range. |
 | 2026-08-26 | SMR4 | completed | PR #320 merged as `e6b9fcb05`. Durable per-resource read floors and process-local publication now fail journal, changefeed, bootstrap, historical index, verification rebuild, and PITR reads closed before and after every relevant page. All six backends have deterministic concurrent-prune evidence. Verifier advanced from 16/2 to 17/1; final Nimbus autoreview was clean. Proof: `proof/storage-metadata-retention/smr4-consumer-safety.md`. |
 | 2026-08-26 | SMR5 | started | Accepted qualification and documentation. SMR5 is the only active task. It must run generated histories, crash/restart faults, all configured provider lanes, measured retention benchmarks, docs gates, `make ci`, the fully green verifier, and final Nimbus autoreview before publishing `SAFE` or `NOT SAFE`. |
+| 2026-08-26 | SMR5 | completed | PR #321 merged as `4fe11923d`. The semantic/fault matrix, PostgreSQL/MySQL/libSQL retention cases, paired steady-state and scale benchmarks, architecture/runbook updates, local `make ci`, and final Nimbus autoreview passed. Verifier reached 18/0. Verdict: `SAFE`; proof: `proof/storage-metadata-retention/smr5-closeout.md`. |
+| 2026-08-26 | SMR9 | started | Accepted terminal cleanup. SMR9 is the only active task. It must archive this plan, retain its proof root, remove active routing, and close SA4 with exact evidence. |

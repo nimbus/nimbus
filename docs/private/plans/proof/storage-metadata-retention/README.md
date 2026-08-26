@@ -26,3 +26,6 @@ Evidence:
   ordered finalization, diagnostics, metrics, and operator-control proof.
 - `smr4-consumer-safety.md`: durable read floors, fail-closed page validation,
   contiguous-history checks, concurrent-prune tests, and review evidence.
+- `smr5-closeout.md`: semantic and live-provider qualification, measured
+  latest-path/PITR/storage bounds, repository gates, review, and the final
+  `SAFE` verdict.
