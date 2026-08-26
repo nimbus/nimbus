@@ -4,7 +4,7 @@ Status: `active` | Owner: this plan | Created: 2026-08-26
 Baseline: main @ `b57a2d680891de852d5576e65ccaea787b005431`
 Proof root: `proof/storage-review-repairs/`
 
-Next action: repair the retention verifier so every backend claim requires evidence from every named path
+Next action: repair the IMV closeout gate with measured absolute candidate limits and negative fixtures
 
 ## Outcome
 
@@ -76,8 +76,8 @@ After:
 | SRR0 | Pin and adjudicate the aggregate review baseline. | `done` | Opus 5 reviewed 169 files in three passes. Independent checks confirmed five findings and rejected four. See `proof/storage-review-repairs/srr0-baseline.md`. |
 | SRR1 | Extend canonical materialized identity through full and incremental verification. | `done` | Commit `0a4ba6119`; storage 395 passed and 3 ignored; focused storage, engine, CLI, and server checks passed. See `proof/storage-review-repairs/srr1-materialized-identity.md`. |
 | SRR2 | Make nonzero-base PITR import atomic and seed MVCC anchors. | `done` | Commit `1a553ac87`; 397 storage tests passed with 4 planned skips; strict all-feature Clippy passed. See `proof/storage-review-repairs/srr2-atomic-pitr-import.md`. |
-| SRR3 | Require per-backend retention verifier evidence and test its failure behavior. | `in_progress` | |
-| SRR4 | Replace the IMV7 relative-only gate with measured absolute limits and negative tests. | `todo` | |
+| SRR3 | Require per-backend retention verifier evidence and test its failure behavior. | `done` | Commit `e83899824`; five helper groups and 18 omission mutations passed; the main verifier reports `18 passed, 0 failed`. See `proof/storage-review-repairs/srr3-retention-verifier.md`. |
+| SRR4 | Replace the IMV7 relative-only gate with measured absolute limits and negative tests. | `in_progress` | |
 | SRR5 | Run repository gates and a fresh Nimbus autoreview. | `todo` | |
 | SRR9 | Clean up this plan after the repair pull request merges. | `todo` | Trigger: merge of the final repair pull request. |
 
@@ -203,3 +203,5 @@ gates pass, and SRR9 waits only for the final merge.
 | 2026-08-26 | SRR2 | started | Accepted atomic nonzero-base PITR import and base-sequence MVCC anchors as one recovery contract. |
 | 2026-08-26 | SRR2 | completed | Commit `1a553ac87` stages the embedded restore, anchors, tail, checkpoint, and floors behind one visibility boundary. Memory, redb, and SQLite retry after a staged fault; redb and SQLite preserve base history across restart. |
 | 2026-08-26 | SRR3 | started | Accepted per-backend source evidence and mutation-tested verifier failures as the proof-tooling contract. |
+| 2026-08-26 | SRR3 | completed | Commit `e83899824` replaces aggregate path searches with explicit per-path checks. Five helper groups prove that each of 18 individual omissions fails closed; the main verifier stays green at 18 of 18 conditions. |
+| 2026-08-26 | SRR4 | started | Accepted absolute measured candidate limits, robust proof parsing, and malformed-proof negative tests as the IMV closeout contract. |
