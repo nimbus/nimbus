@@ -377,6 +377,7 @@ async fn erasure_release_removes_manifest_everywhere() {
     }
 }
 
+mod codec;
 mod read_only;
 
 #[tokio::test]

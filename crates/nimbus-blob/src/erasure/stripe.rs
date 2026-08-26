@@ -23,6 +23,9 @@ pub(crate) fn encode_stripe(
         shards[shard_index][offset] = *byte;
     }
 
+    // NBLE1 manifests persist the content address of every byte-exact shard,
+    // and heal must reproduce those bytes. The golden parity vector covers
+    // this codec call. Any output change requires an NBLE2 format bump.
     let parity =
         reed_solomon_simd::encode(data_shards, parity_shards, shards.iter().map(Vec::as_slice))
             .map_err(coding_error)?;
