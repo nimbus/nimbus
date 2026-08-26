@@ -2,7 +2,7 @@
 
 This directory holds the fail-before, implementation, provider, benchmark, and
 closeout evidence for
-[`storage-metadata-retention-plan.md`](../../storage-metadata-retention-plan.md).
+[`storage-metadata-retention-plan.md`](../../archive/storage-metadata-retention-plan.md).
 
 Promotion baseline: `cc7ae36a3c21bf7aa093c013f3025d074c679438`.
 
