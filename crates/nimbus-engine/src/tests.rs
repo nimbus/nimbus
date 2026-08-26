@@ -444,7 +444,9 @@ pub(crate) fn materialized_snapshot_with_documents(
         table_identities,
         schema: nimbus_core::Schema::default(),
         documents,
+        resource_path_bindings: Vec::new(),
         scheduled_execution_ids: Vec::new(),
+        trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
     }
 }
 

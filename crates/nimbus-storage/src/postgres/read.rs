@@ -110,6 +110,15 @@ impl PostgresTenantStore {
                 load_resource_path_bindings_from_session(&transaction, &schema_name).await?;
             let scheduled_execution_ids =
                 load_scheduled_execution_ids_from_session(&transaction, &schema_name).await?;
+            let trigger_delivery_cursor = load_metadata_u64_from_session(
+                &transaction,
+                &schema_name,
+                TRIGGER_DELIVERY_CURSOR_KEY,
+            )
+            .await?
+            .map(SequenceNumber)
+            .map(TriggerDeliveryCursor::new)
+            .unwrap_or_default();
             transaction.commit().await.map_err(map_postgres_error)?;
             Ok(PostgresReadSnapshot {
                 schema,
@@ -118,6 +127,7 @@ impl PostgresTenantStore {
                 documents,
                 resource_path_bindings,
                 scheduled_execution_ids,
+                trigger_delivery_cursor,
             })
         })
     }

@@ -14,6 +14,9 @@ mod tests;
 
 use super::document_versions::record_document_versions_for_writes;
 use super::index_versions::record_index_versions_for_writes;
+use super::resource_paths::{
+    remove_resource_path_binding_in_write_txn, upsert_resource_path_binding_in_write_txn,
+};
 use super::schema_rewrite::{
     durable_record_index_keys_for_table_id, rewrite_document_indexes_in_write_txn,
 };
@@ -387,40 +390,36 @@ fn apply_document_write_in_write_txn(
                 decode_document_msgpack(existing.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?
             };
-            if existing == *current {
-                return Ok(());
+            if existing != *current {
+                if existing != *previous {
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "update",
+                        write.doc_id.as_str(),
+                        "found a pre-image mismatch",
+                    ));
+                }
+                let payload = encode_document_msgpack(current)
+                    .map_err(|error| Error::Serialization(error.to_string()))?;
+                documents
+                    .insert(key.as_slice(), payload.as_slice())
+                    .map_err(map_redb_error)?;
             }
-            if existing != *previous {
-                return Err(crate::commit_log::durable_replay_preimage_corruption(
-                    sequence,
-                    "update",
-                    write.doc_id.as_str(),
-                    "found a pre-image mismatch",
-                ));
-            }
-            let payload = encode_document_msgpack(current)
-                .map_err(|error| Error::Serialization(error.to_string()))?;
-            documents
-                .insert(key.as_slice(), payload.as_slice())
-                .map_err(map_redb_error)?;
         }
         (Some(previous), None) => {
             ensure_default_table_id_in_write_txn(write_txn, &write.table, &write.table_id)?;
             let key = document_key(&write.table_id, &write.doc_id);
-            match documents.remove(key.as_slice()).map_err(map_redb_error)? {
-                Some(removed) => {
-                    let removed = decode_document_msgpack(removed.value())
-                        .map_err(|error| Error::Serialization(error.to_string()))?;
-                    if removed != *previous {
-                        return Err(crate::commit_log::durable_replay_preimage_corruption(
-                            sequence,
-                            "delete",
-                            write.doc_id.as_str(),
-                            "found a pre-image mismatch",
-                        ));
-                    }
+            if let Some(removed) = documents.remove(key.as_slice()).map_err(map_redb_error)? {
+                let removed = decode_document_msgpack(removed.value())
+                    .map_err(|error| Error::Serialization(error.to_string()))?;
+                if removed != *previous {
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "delete",
+                        write.doc_id.as_str(),
+                        "found a pre-image mismatch",
+                    ));
                 }
-                None => return Ok(()),
             }
         }
         (None, None) => {
@@ -428,6 +427,19 @@ fn apply_document_write_in_write_txn(
                 "durable journal write must include a previous or current document".to_string(),
             ));
         }
+    }
+
+    match (&write.current, &write.resource_path_binding) {
+        (Some(_), Some(binding)) => {
+            upsert_resource_path_binding_in_write_txn(write_txn, binding)?;
+        }
+        (None, _) => {
+            remove_resource_path_binding_in_write_txn(
+                write_txn,
+                &nimbus_core::DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
+            )?;
+        }
+        (Some(_), None) => {}
     }
 
     rewrite_document_indexes_in_write_txn(

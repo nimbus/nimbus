@@ -80,6 +80,15 @@ impl MySqlTenantStore {
                 load_resource_path_bindings_from_session(&mut transaction, &database_name).await?;
             let scheduled_execution_ids =
                 load_scheduled_execution_ids_from_session(&mut transaction, &database_name).await?;
+            let trigger_delivery_cursor = load_metadata_u64_from_session(
+                &mut transaction,
+                &database_name,
+                TRIGGER_DELIVERY_CURSOR_KEY,
+            )
+            .await?
+            .map(SequenceNumber)
+            .map(TriggerDeliveryCursor::new)
+            .unwrap_or_default();
             transaction.commit().await.map_err(map_mysql_error)?;
             Ok((
                 MySqlReadSnapshot {
@@ -89,6 +98,7 @@ impl MySqlTenantStore {
                     documents,
                     resource_path_bindings,
                     scheduled_execution_ids,
+                    trigger_delivery_cursor,
                 },
                 journal_cursor_floor,
             ))

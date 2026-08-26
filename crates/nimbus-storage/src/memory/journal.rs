@@ -1,6 +1,6 @@
 use nimbus_core::{
     CommitEntry, Error, Result, SchemaChangeEvent, SequenceNumber, TableLifecycleEvent, TableState,
-    TenantEventKind, TenantEventRecord, WriteOp,
+    TenantEventKind, TenantEventRecord, TriggerDeliveryCursor, WriteOp,
 };
 
 use crate::MAX_DURABLE_JOURNAL_STREAM_LIMIT;
@@ -11,6 +11,7 @@ use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
     PointInTimeRestoreArchive, PointInTimeRestoreTarget, describe_materialized_position,
 };
+use crate::{MaterializedRetentionCheckpoint, RetentionHistoryState, RetentionHistorySummary};
 
 use super::MemoryTenantStore;
 use super::state::{MemoryState, MemoryTableIdentity};
@@ -248,7 +249,11 @@ impl MemoryState {
                 .or_default()
                 .insert(document.id.clone(), document.clone());
         }
+        for binding in &snapshot.resource_path_bindings {
+            self.upsert_resource_path_binding(binding)?;
+        }
         self.scheduled_execution_ids = snapshot.scheduled_execution_ids.iter().cloned().collect();
+        self.trigger_delivery_cursor = snapshot.trigger_delivery_cursor;
         self.durable_head = snapshot.applied_sequence;
         self.applied_head = snapshot.applied_sequence;
         Ok(())
@@ -256,6 +261,100 @@ impl MemoryState {
 }
 
 impl MemoryTenantStore {
+    pub fn retention_gc_watermarks(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<crate::RetentionGcWatermarks> {
+        Ok(self
+            .retention_floor
+            .gc_watermarks(self.journal_progress()?.applied_head, config))
+    }
+
+    pub fn retention_history_state(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistoryState> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let state = self.read_state()?;
+        let checkpoint = state
+            .retention_checkpoint
+            .clone()
+            .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
+        RetentionHistoryState::new(
+            crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence()),
+            state.retention_physical_floor,
+            checkpoint,
+        )
+    }
+
+    pub fn compact_retained_history(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistorySummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let prepared = self.read_state()?.clone();
+        let checkpoint = prepared
+            .retention_checkpoint
+            .clone()
+            .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
+        let desired_floor =
+            crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence());
+        let before = RetentionHistoryState::new(
+            desired_floor,
+            prepared.retention_physical_floor,
+            checkpoint.clone(),
+        )?;
+        let journal_tail = prepared
+            .durable_journal
+            .range(checkpoint.sequence().0.saturating_add(1)..)
+            .map(|(_, record)| record.clone())
+            .collect::<Vec<_>>();
+        let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+
+        let mut live = self.write_state()?;
+        if live.revision != prepared.revision
+            || live.retention_checkpoint != prepared.retention_checkpoint
+        {
+            return Err(Error::conflict(
+                "memory retention state changed while compaction was prepared".to_string(),
+            ));
+        }
+        if candidate.sequence().0 > live.applied_head.0 {
+            return Err(Error::conflict(format!(
+                "retention checkpoint target {} exceeds current applied head {}",
+                candidate.sequence().0,
+                live.applied_head.0
+            )));
+        }
+        let mut next = live.clone();
+        let keys = next
+            .durable_journal
+            .range(..=candidate.sequence().0)
+            .map(|(sequence, _)| *sequence)
+            .collect::<Vec<_>>();
+        let journal_records_pruned = keys.len() as u64;
+        for sequence in keys {
+            next.durable_journal.remove(&sequence);
+        }
+        next.retention_checkpoint = Some(candidate.clone());
+        next.retention_physical_floor = candidate.sequence();
+        self.check_fault(FaultPoint::RetentionCheckpointBeforeCommit)?;
+        next.revision = live.revision.saturating_add(1);
+        *live = next;
+        drop(live);
+        self.check_fault(FaultPoint::RetentionCheckpointAfterCommit)?;
+
+        let after = RetentionHistoryState::new(desired_floor, candidate.sequence(), candidate)?;
+        Ok(RetentionHistorySummary {
+            watermarks,
+            before,
+            after,
+            journal_records_pruned,
+            document_versions_pruned: 0,
+            index_versions_pruned: 0,
+        })
+    }
+
     #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn prune_durable_journal_through_for_testing(&self, through: SequenceNumber) -> Result<()> {
@@ -318,12 +417,13 @@ impl MemoryTenantStore {
         }
         let state = self.read_state()?;
         let latest_sequence = state.durable_head();
-        let cursor_floor = state
+        let inferred_floor = state
             .durable_journal
             .first_key_value()
             .map_or(SequenceNumber(0), |(sequence, _)| {
                 SequenceNumber(sequence.saturating_sub(1))
             });
+        let cursor_floor = state.retention_physical_floor.max(inferred_floor);
         if after.0 < cursor_floor.0 {
             return Err(Error::InvalidInput(format!(
                 "journal cursor {} is behind the retention floor {}",
@@ -360,12 +460,13 @@ impl MemoryTenantStore {
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
         let state = self.read_state()?;
         let snapshot = state.materialized_snapshot();
-        let cursor_floor = state
+        let inferred_floor = state
             .durable_journal
             .first_key_value()
             .map_or(SequenceNumber(0), |(sequence, _)| {
                 SequenceNumber(sequence.saturating_sub(1))
             });
+        let cursor_floor = state.retention_physical_floor.max(inferred_floor);
         Ok(DurableJournalBootstrap {
             resume_after: snapshot.applied_sequence,
             bootstrap_cut: snapshot.durable_head,
@@ -487,6 +588,8 @@ impl MemoryTenantStore {
                 || !state.schema.tables.is_empty()
                 || !state.table_identities.is_empty()
                 || !state.scheduled_execution_ids.is_empty()
+                || !state.resource_bindings.is_empty()
+                || state.trigger_delivery_cursor != TriggerDeliveryCursor::default()
             {
                 return Err(Error::Internal(
                     "materialized journal snapshot restore requires an empty tenant store"
@@ -547,21 +650,20 @@ impl MemoryTenantStore {
         retention_config: RetentionGcConfig,
     ) -> Result<PointInTimeRestoreArchive> {
         let progress = self.journal_progress()?;
-        let retention_floor = if retention_config.history_window_sequences == u64::MAX {
-            SequenceNumber(0)
-        } else {
-            SequenceNumber(
-                progress
-                    .durable_head
-                    .0
-                    .saturating_sub(retention_config.history_window_sequences),
-            )
-        };
-        crate::store::build_point_in_time_restore_archive(
+        let watermarks = self.retention_gc_watermarks(retention_config)?;
+        let checkpoint = self
+            .read_state()?
+            .retention_checkpoint
+            .clone()
+            .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
+        crate::store::build_point_in_time_restore_archive_from_checkpoint(
             target,
-            self.read_durable_journal_from(SequenceNumber(1))?,
+            self.read_durable_journal_from(SequenceNumber(
+                checkpoint.sequence().0.saturating_add(1),
+            ))?,
             progress.durable_head,
-            retention_floor,
+            watermarks.pitr_exports.safe_prune_before,
+            checkpoint,
         )
     }
 
@@ -569,7 +671,7 @@ impl MemoryTenantStore {
         &self,
         archive: &PointInTimeRestoreArchive,
     ) -> Result<JournalProgress> {
-        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
+        archive.validate()?;
         let progress = self.rebuild_materialized_journal_from_snapshot(
             &archive.base_snapshot,
             &archive.journal_tail,
@@ -588,6 +690,22 @@ impl MemoryTenantStore {
                 ),
             ));
         }
+        let checkpoint = MaterializedRetentionCheckpoint::new(
+            archive.base_snapshot.clone(),
+            archive.base_checkpoint_timestamp,
+        )?;
+        self.transact(|state| {
+            if checkpoint.sequence().0 > state.applied_head.0 {
+                return Err(Error::InvalidInput(format!(
+                    "imported retention checkpoint {} exceeds restored applied head {}",
+                    checkpoint.sequence().0,
+                    state.applied_head.0
+                )));
+            }
+            state.retention_checkpoint = Some(checkpoint.clone());
+            state.retention_physical_floor = checkpoint.sequence();
+            Ok(())
+        })?;
         Ok(progress)
     }
 }

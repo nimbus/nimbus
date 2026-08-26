@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::Instant;
 
 use nimbus_core::{
     CommitSequence, CommitTimestamp, Document, Error, HistoricalReadErrorKind,
-    HistoricalReadSnapshot, ReadTimestamp, Result, Schema, SequenceNumber, TableId, TableName,
-    TableState, TenantEventRecord, Timestamp,
+    HistoricalReadSnapshot, ReadTimestamp, ResourcePathBinding, Result, Schema, SequenceNumber,
+    TableId, TableName, TableState, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
 };
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,8 @@ use crate::table_identity::{
 };
 use crate::{
     CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT, CURRENT_INDEX_VERSION_STORAGE_FORMAT,
-    CURRENT_STORAGE_FORMAT_VERSION, RetentionGcConfig, StorageFormatVersion,
+    CURRENT_STORAGE_FORMAT_VERSION, MaterializedRetentionCheckpoint, RetentionGcConfig,
+    StorageFormatVersion,
 };
 
 #[cfg(test)]
@@ -41,11 +42,13 @@ pub struct MaterializedJournalSnapshot {
     pub table_identities: Vec<TableIdentitySnapshotEntry>,
     pub schema: Schema,
     pub documents: Vec<Document>,
+    pub resource_path_bindings: Vec<ResourcePathBinding>,
     pub scheduled_execution_ids: Vec<String>,
+    pub trigger_delivery_cursor: TriggerDeliveryCursor,
 }
 
-pub const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 3;
-pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 1;
+pub const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 4;
+pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,6 +62,8 @@ pub struct PointInTimeRestoreArchive {
     pub version: u16,
     pub target_sequence: SequenceNumber,
     pub target_timestamp: Timestamp,
+    pub base_checkpoint_timestamp: Timestamp,
+    pub base_checkpoint_sha256: [u8; 32],
     pub base_snapshot: MaterializedJournalSnapshot,
     pub journal_tail: Vec<TenantEventRecord>,
     pub storage_format_version: StorageFormatVersion,
@@ -151,6 +156,22 @@ impl MaterializedJournalSnapshot {
                 )));
             }
         }
+        let mut locators = HashSet::new();
+        let mut paths = HashSet::new();
+        for binding in &self.resource_path_bindings {
+            if !locators.insert(binding.locator.clone()) {
+                return Err(Error::InvalidInput(format!(
+                    "materialized journal snapshot has duplicate resource locator {}:{}",
+                    binding.locator.table, binding.locator.id
+                )));
+            }
+            if !paths.insert(binding.document_path.clone()) {
+                return Err(Error::InvalidInput(format!(
+                    "materialized journal snapshot has duplicate document path {}",
+                    binding.document_path
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -227,7 +248,9 @@ impl MaterializedJournalSnapshot {
             table_identities: Vec::new(),
             schema: Schema::default(),
             documents: Vec::new(),
+            resource_path_bindings: Vec::new(),
             scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: TriggerDeliveryCursor::default(),
         }
     }
 }
@@ -276,6 +299,27 @@ impl PointInTimeRestoreArchive {
             )));
         }
         self.base_snapshot.validate()?;
+        let base_checkpoint = MaterializedRetentionCheckpoint::new(
+            self.base_snapshot.clone(),
+            self.base_checkpoint_timestamp,
+        )?;
+        if self.base_checkpoint_sha256 != base_checkpoint.snapshot_sha256 {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                "point-in-time archive base checkpoint digest does not match its contents",
+            ));
+        }
+        if base_checkpoint.sequence().0 == 0 && self.base_checkpoint_timestamp.0 != 0 {
+            return Err(Error::InvalidInput(
+                "sequence-0 PITR base must use timestamp 0".to_string(),
+            ));
+        }
+        if self.base_checkpoint_timestamp.0 > self.target_timestamp.0 {
+            return Err(Error::InvalidInput(format!(
+                "PITR base checkpoint timestamp {} exceeds target timestamp {}",
+                self.base_checkpoint_timestamp.0, self.target_timestamp.0
+            )));
+        }
         if self.target_sequence.0 < self.base_snapshot.applied_sequence.0 {
             return Err(Error::InvalidInput(format!(
                 "point-in-time target sequence {} is behind base snapshot sequence {}",
@@ -308,6 +352,20 @@ impl PointInTimeRestoreArchive {
             return Err(Error::InvalidInput(format!(
                 "point-in-time archive is missing target sequence {}",
                 self.target_sequence.0
+            )));
+        }
+        let expected_target_timestamp = if self.target_sequence == base_checkpoint.sequence() {
+            base_checkpoint.checkpoint_timestamp
+        } else {
+            self.journal_tail
+                .last()
+                .expect("a target after the base must have a validated final journal record")
+                .timestamp
+        };
+        if self.target_timestamp != expected_target_timestamp {
+            return Err(Error::InvalidInput(format!(
+                "point-in-time target timestamp {} does not match sequence {} timestamp {}",
+                self.target_timestamp.0, self.target_sequence.0, expected_target_timestamp.0
             )));
         }
         Ok(())
@@ -381,6 +439,9 @@ impl TenantStore {
                     .map_err(map_redb_error)?;
             }
         }
+        for binding in &snapshot.resource_path_bindings {
+            super::resource_paths::upsert_resource_path_binding_in_write_txn(&write_txn, binding)?;
+        }
         {
             let mut metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
             metadata
@@ -393,6 +454,12 @@ impl TenantStore {
                 .insert(
                     APPLIED_SEQUENCE_KEY,
                     encode_u64(snapshot.applied_sequence.0).as_slice(),
+                )
+                .map_err(map_redb_error)?;
+            metadata
+                .insert(
+                    super::TRIGGER_DELIVERY_CURSOR_KEY,
+                    encode_u64(snapshot.trigger_delivery_cursor.materialized_through.0).as_slice(),
                 )
                 .map_err(map_redb_error)?;
         }
@@ -455,14 +522,17 @@ impl TenantStore {
         target: PointInTimeRestoreTarget,
         retention_config: RetentionGcConfig,
     ) -> Result<PointInTimeRestoreArchive> {
-        let records = self.read_durable_journal_from(SequenceNumber(1))?;
+        let (checkpoint, _, _) = self.load_retention_checkpoint()?;
+        let records = self
+            .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
         let progress = self.journal_progress()?;
         let watermarks = self.retention_gc_watermarks(retention_config)?;
-        build_point_in_time_restore_archive(
+        build_point_in_time_restore_archive_from_checkpoint(
             target,
             records,
             progress.durable_head,
-            watermarks.document_versions.safe_prune_before,
+            watermarks.pitr_exports.safe_prune_before,
+            checkpoint,
         )
     }
 
@@ -489,6 +559,10 @@ impl TenantStore {
                 ),
             ));
         }
+        self.install_imported_retention_checkpoint(&MaterializedRetentionCheckpoint::new(
+            archive.base_snapshot.clone(),
+            archive.base_checkpoint_timestamp,
+        )?)?;
         Ok(progress)
     }
 
@@ -501,6 +575,8 @@ impl TenantStore {
             || !snapshot.load_schema()?.tables.is_empty()
             || !snapshot.table_identities()?.is_empty()
             || !snapshot.scheduled_execution_ids()?.is_empty()
+            || !snapshot.scan_resource_path_bindings()?.is_empty()
+            || self.trigger_delivery_cursor()? != TriggerDeliveryCursor::default()
         {
             return Err(Error::Internal(
                 "materialized journal snapshot restore requires an empty tenant store".to_string(),
@@ -560,24 +636,66 @@ pub(crate) fn resolve_point_in_time_target(
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn build_point_in_time_restore_archive(
     target: PointInTimeRestoreTarget,
     records: Vec<TenantEventRecord>,
     durable_head: SequenceNumber,
     retention_floor: SequenceNumber,
 ) -> Result<PointInTimeRestoreArchive> {
+    build_point_in_time_restore_archive_from_checkpoint(
+        target,
+        records,
+        durable_head,
+        retention_floor,
+        MaterializedRetentionCheckpoint::genesis()?,
+    )
+}
+
+pub(crate) fn build_point_in_time_restore_archive_from_checkpoint(
+    target: PointInTimeRestoreTarget,
+    records: Vec<TenantEventRecord>,
+    durable_head: SequenceNumber,
+    retention_floor: SequenceNumber,
+    checkpoint: MaterializedRetentionCheckpoint,
+) -> Result<PointInTimeRestoreArchive> {
+    checkpoint.validate()?;
+    let effective_floor = retention_floor.max(checkpoint.sequence());
+    match target {
+        PointInTimeRestoreTarget::Sequence(sequence) if sequence.0 < effective_floor.0 => {
+            return Err(Error::historical_read(
+                HistoricalReadErrorKind::RetentionExpired,
+                format!(
+                    "point-in-time target sequence {} is older than retention floor {}",
+                    sequence.0, effective_floor.0
+                ),
+            ));
+        }
+        PointInTimeRestoreTarget::Timestamp(timestamp)
+            if checkpoint.sequence().0 > 0 && timestamp.0 < checkpoint.checkpoint_timestamp.0 =>
+        {
+            return Err(Error::historical_read(
+                HistoricalReadErrorKind::RetentionExpired,
+                format!(
+                    "point-in-time target timestamp {} is older than retained checkpoint timestamp {}",
+                    timestamp.0, checkpoint.checkpoint_timestamp.0
+                ),
+            ));
+        }
+        _ => {}
+    }
     let (target_sequence, target_timestamp) =
-        resolve_point_in_time_target(target, &records, durable_head)?;
-    if target_sequence.0 < retention_floor.0 {
+        resolve_point_in_time_target_from_checkpoint(target, &records, durable_head, &checkpoint)?;
+    if target_sequence.0 < effective_floor.0 {
         return Err(Error::historical_read(
             HistoricalReadErrorKind::RetentionExpired,
             format!(
                 "point-in-time target sequence {} is older than retention floor {}",
-                target_sequence.0, retention_floor.0
+                target_sequence.0, effective_floor.0
             ),
         ));
     }
-    let base_snapshot = MaterializedJournalSnapshot::empty_for_point_in_time_base();
+    let base_snapshot = checkpoint.snapshot;
     let journal_tail = records
         .into_iter()
         .filter(|record| {
@@ -585,13 +703,23 @@ pub(crate) fn build_point_in_time_restore_archive(
                 && record.sequence.0 <= target_sequence.0
         })
         .collect::<Vec<_>>();
-    let target_position =
-        materialized_position_after_rebuild(&base_snapshot, &journal_tail, target_sequence)?;
+    validate_retained_pitr_tail(
+        base_snapshot.applied_sequence,
+        &journal_tail,
+        target_sequence,
+    )?;
+    let target_position = if target_sequence == base_snapshot.applied_sequence {
+        checkpoint.position
+    } else {
+        materialized_position_after_rebuild(&base_snapshot, &journal_tail, target_sequence)?
+    };
 
     Ok(PointInTimeRestoreArchive {
         version: POINT_IN_TIME_RESTORE_ARCHIVE_VERSION,
         target_sequence,
         target_timestamp,
+        base_checkpoint_timestamp: checkpoint.checkpoint_timestamp,
+        base_checkpoint_sha256: checkpoint.snapshot_sha256,
         base_snapshot,
         journal_tail,
         storage_format_version: CURRENT_STORAGE_FORMAT_VERSION,
@@ -601,13 +729,82 @@ pub(crate) fn build_point_in_time_restore_archive(
     })
 }
 
+fn validate_retained_pitr_tail(
+    base: SequenceNumber,
+    journal_tail: &[TenantEventRecord],
+    target: SequenceNumber,
+) -> Result<()> {
+    let mut expected = base.0.saturating_add(1);
+    for record in journal_tail {
+        record.validate_integrity()?;
+        if record.sequence.0 != expected {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "retained PITR journal expected sequence {expected}, got {}",
+                    record.sequence.0
+                ),
+            ));
+        }
+        expected = expected.saturating_add(1);
+    }
+    if expected != target.0.saturating_add(1) {
+        return Err(Error::storage(
+            nimbus_core::StorageErrorKind::Corruption,
+            format!(
+                "retained PITR journal is missing target sequence {}",
+                target.0
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_point_in_time_target_from_checkpoint(
+    target: PointInTimeRestoreTarget,
+    records: &[TenantEventRecord],
+    durable_head: SequenceNumber,
+    checkpoint: &MaterializedRetentionCheckpoint,
+) -> Result<(SequenceNumber, Timestamp)> {
+    match target {
+        PointInTimeRestoreTarget::Sequence(sequence) if sequence == checkpoint.sequence() => {
+            Ok((sequence, checkpoint.checkpoint_timestamp))
+        }
+        PointInTimeRestoreTarget::Sequence(_) => {
+            resolve_point_in_time_target(target, records, durable_head)
+        }
+        PointInTimeRestoreTarget::Timestamp(timestamp) => {
+            let base = (checkpoint.sequence().0 > 0).then_some((
+                CommitTimestamp::new(checkpoint.checkpoint_timestamp),
+                CommitSequence::new(checkpoint.sequence()),
+            ));
+            let snapshot = HistoricalReadSnapshot::resolve_at_or_before(
+                ReadTimestamp::new(timestamp),
+                base.into_iter().chain(records.iter().map(|record| {
+                    (
+                        CommitTimestamp::new(record.timestamp),
+                        CommitSequence::new(record.sequence),
+                    )
+                })),
+            )?;
+            Ok((
+                snapshot.sequence().sequence(),
+                snapshot.commit_timestamp().timestamp(),
+            ))
+        }
+    }
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn validate_point_in_time_archive_for_journal_replay_import(
     archive: &PointInTimeRestoreArchive,
 ) -> Result<()> {
     archive.validate()?;
-    validate_materialized_journal_replay_base_is_empty(&archive.base_snapshot)
+    let replay_base = &archive.base_snapshot;
+    validate_materialized_journal_replay_base_is_empty(replay_base)
 }
 
+#[cfg(any(test, feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn validate_materialized_journal_replay_base_is_empty(
     snapshot: &MaterializedJournalSnapshot,
 ) -> Result<()> {
@@ -616,7 +813,9 @@ pub(crate) fn validate_materialized_journal_replay_base_is_empty(
         || !snapshot.table_identities.is_empty()
         || !snapshot.schema.tables.is_empty()
         || !snapshot.documents.is_empty()
+        || !snapshot.resource_path_bindings.is_empty()
         || !snapshot.scheduled_execution_ids.is_empty()
+        || snapshot.trigger_delivery_cursor != TriggerDeliveryCursor::default()
     {
         return Err(Error::InvalidInput(
             "journal-replay restore requires an empty sequence-0 materialized snapshot".to_string(),
@@ -639,6 +838,20 @@ pub(crate) fn materialized_position_after_rebuild(
     restored
         .export_materialized_journal_snapshot()?
         .materialized_position()
+}
+
+pub(crate) fn materialized_snapshot_after_rebuild(
+    base_snapshot: &MaterializedJournalSnapshot,
+    journal_tail: &[TenantEventRecord],
+    target_sequence: SequenceNumber,
+) -> Result<MaterializedJournalSnapshot> {
+    let restored = TenantStore::create_in_memory()?;
+    restored.rebuild_materialized_journal_from_snapshot(
+        base_snapshot,
+        journal_tail,
+        Some(target_sequence),
+    )?;
+    restored.export_materialized_journal_snapshot()
 }
 
 /// One operator-readable rendering of a position, so a mismatch report names
@@ -674,6 +887,19 @@ impl TenantReadSnapshot {
         let scheduled_started = Instant::now();
         let scheduled_execution_ids = self.scheduled_execution_ids()?;
         let scheduled_elapsed = scheduled_started.elapsed();
+        let resource_path_bindings = self.scan_resource_path_bindings()?;
+        let trigger_delivery_cursor = match self.read_txn.open_table(METADATA) {
+            Ok(metadata) => metadata
+                .get(super::TRIGGER_DELIVERY_CURSOR_KEY)
+                .map_err(map_redb_error)?
+                .map(|value| super::journal::decode_u64(value.value()))
+                .transpose()?
+                .map(SequenceNumber)
+                .map(TriggerDeliveryCursor::new)
+                .unwrap_or_default(),
+            Err(TableError::TableDoesNotExist(_)) => TriggerDeliveryCursor::default(),
+            Err(error) => return Err(map_redb_error(error)),
+        };
         maybe_emit_redb_journal_profile(format_args!(
             "redb-journal-profile op=export-snapshot progress={:?} schema={:?} table_identities={:?} documents={:?} scheduled_execution_ids={:?} table_identity_count={} document_count={} scheduled_execution_count={} total={:?}",
             progress_elapsed,
@@ -693,7 +919,9 @@ impl TenantReadSnapshot {
             table_identities,
             schema,
             documents,
+            resource_path_bindings,
             scheduled_execution_ids,
+            trigger_delivery_cursor,
         })
     }
 

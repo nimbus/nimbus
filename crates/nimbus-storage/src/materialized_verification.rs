@@ -1065,7 +1065,9 @@ mod tests {
             table_identities: Vec::new(),
             schema: Schema::default(),
             documents: Vec::new(),
+            resource_path_bindings: Vec::new(),
             scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
         }
     }
 
@@ -1112,7 +1114,9 @@ mod tests {
             )],
             schema: Schema::default(),
             documents: vec![document],
+            resource_path_bindings: Vec::new(),
             scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
         }
     }
 

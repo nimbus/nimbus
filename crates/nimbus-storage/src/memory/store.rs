@@ -8,8 +8,10 @@ use nimbus_core::{
 use crate::async_storage::BlockingWriteStore;
 use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 use crate::{
-    MaterializedVerificationGeneration, MaterializedVerificationInvalidator, TenantWriteCommit,
+    MaterializedVerificationGeneration, MaterializedVerificationInvalidator, RetentionFloor,
+    RetentionParticipant, RetentionPinGuard, TenantWriteCommit,
 };
+use nimbus_core::{SequenceNumber, TableId};
 
 use super::state::MemoryState;
 
@@ -18,6 +20,7 @@ pub struct MemoryTenantStore {
     pub(super) state: Arc<RwLock<MemoryState>>,
     pub(super) clock: Arc<dyn WallClock>,
     pub(super) fault_injector: Arc<dyn FaultInjector>,
+    pub(super) retention_floor: Arc<RetentionFloor>,
     pub(super) materialized_verification: MaterializedVerificationInvalidator,
 }
 
@@ -28,6 +31,21 @@ impl Default for MemoryTenantStore {
 }
 
 impl MemoryTenantStore {
+    pub fn retention_floor(&self) -> Arc<RetentionFloor> {
+        self.retention_floor.clone()
+    }
+
+    pub fn pin_retention_participant(
+        &self,
+        participant: RetentionParticipant,
+        sequence: SequenceNumber,
+        table_id: Option<TableId>,
+        reason: impl Into<String>,
+    ) -> RetentionPinGuard {
+        self.retention_floor
+            .pin(participant, sequence, table_id, reason)
+    }
+
     pub fn new() -> Self {
         Self::with_simulation(Arc::new(SystemWallClock), Arc::new(NoopFaultInjector))
     }
@@ -48,6 +66,7 @@ impl MemoryTenantStore {
             state: Arc::new(RwLock::new(MemoryState::with_id_source(id_source))),
             clock,
             fault_injector,
+            retention_floor: RetentionFloor::new(),
             materialized_verification: MaterializedVerificationInvalidator::default(),
         }
     }
@@ -62,6 +81,7 @@ impl MemoryTenantStore {
             state: Arc::new(RwLock::new(self.read_state()?.clone())),
             clock: self.clock.clone(),
             fault_injector: self.fault_injector.clone(),
+            retention_floor: RetentionFloor::restore_from_snapshot(self.retention_floor.snapshot()),
             materialized_verification: MaterializedVerificationInvalidator::default(),
         })
     }

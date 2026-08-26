@@ -39,9 +39,13 @@ pub(crate) use journal_snapshot::validate_materialized_journal_replay_base_is_em
 pub use journal_snapshot::{
     MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
 };
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use journal_snapshot::{
-    build_point_in_time_restore_archive, describe_materialized_position,
-    validate_point_in_time_archive_for_journal_replay_import,
+    build_point_in_time_restore_archive, validate_point_in_time_archive_for_journal_replay_import,
+};
+pub(crate) use journal_snapshot::{
+    build_point_in_time_restore_archive_from_checkpoint, describe_materialized_position,
+    materialized_snapshot_after_rebuild,
 };
 pub use journal_stream::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,

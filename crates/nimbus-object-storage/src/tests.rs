@@ -559,7 +559,9 @@ fn backup_roots_are_extracted_from_object_manifest_snapshot() {
         table_identities: Vec::new(),
         schema: nimbus_core::Schema::default(),
         documents: Vec::new(),
+        resource_path_bindings: Vec::new(),
         scheduled_execution_ids: Vec::new(),
+        trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
     };
     let document = manifest.to_document().unwrap();
     snapshot
@@ -571,10 +573,17 @@ fn backup_roots_are_extracted_from_object_manifest_snapshot() {
             state: nimbus_core::TableState::Active,
         });
     snapshot.documents.push(document);
+    let base_checkpoint = nimbus_storage::MaterializedRetentionCheckpoint::new(
+        snapshot.clone(),
+        nimbus_core::Timestamp(0),
+    )
+    .expect("archive base checkpoint should compute");
     let archive = PointInTimeRestoreArchive {
         version: 1,
         target_sequence: nimbus_core::SequenceNumber(0),
         target_timestamp: nimbus_core::Timestamp(0),
+        base_checkpoint_timestamp: nimbus_core::Timestamp(0),
+        base_checkpoint_sha256: base_checkpoint.snapshot_sha256,
         base_snapshot: snapshot.clone(),
         journal_tail: Vec::new(),
         storage_format_version: nimbus_storage::CURRENT_STORAGE_FORMAT_VERSION,

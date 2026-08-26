@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nimbus_core::{
-    Document, DocumentId, Error, Result, SequenceNumber, TableId, TableName, TableState,
-    TenantEventRecord, WriteOp, WriteOpType,
+    Document, DocumentId, Error, ResourcePathBinding, Result, SequenceNumber, TableId, TableName,
+    TableState, TenantEventKind, TenantEventRecord, TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 
 use crate::store::describe_materialized_position;
@@ -108,7 +108,9 @@ pub struct ShadowMaterializer {
     manifest: ShadowMaterializerManifest,
     table_identities: BTreeMap<(String, TableName), (TableId, TableState)>,
     documents: BTreeMap<(TableId, DocumentId), Document>,
+    resource_path_bindings: BTreeMap<(TableName, DocumentId), ResourcePathBinding>,
     scheduled_execution_ids: BTreeSet<String>,
+    trigger_delivery_cursor: TriggerDeliveryCursor,
     pending_records: Vec<TenantEventRecord>,
 }
 
@@ -145,6 +147,17 @@ impl ShadowMaterializer {
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
+        let resource_path_bindings = checkpoint
+            .resource_path_bindings
+            .iter()
+            .cloned()
+            .map(|binding| {
+                (
+                    (binding.locator.table.clone(), binding.locator.id.clone()),
+                    binding,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let mut materializer = Self {
             config,
             checkpoint: checkpoint.clone(),
@@ -158,7 +171,9 @@ impl ShadowMaterializer {
             },
             table_identities,
             documents,
+            resource_path_bindings,
             scheduled_execution_ids,
+            trigger_delivery_cursor: checkpoint.trigger_delivery_cursor,
             pending_records: Vec::new(),
         };
         materializer.apply_records(journal_tail)?;
@@ -226,7 +241,9 @@ impl ShadowMaterializer {
             table_identities: self.current_table_identities(),
             schema: self.checkpoint.schema.clone(),
             documents: self.current_documents(),
+            resource_path_bindings: self.resource_path_bindings.values().cloned().collect(),
             scheduled_execution_ids: self.current_scheduled_execution_ids(),
+            trigger_delivery_cursor: self.trigger_delivery_cursor,
         }
     }
 
@@ -284,13 +301,18 @@ impl ShadowMaterializer {
         if let Some(execution_id) = &record.scheduled_execution_id {
             self.scheduled_execution_ids.insert(execution_id.clone());
         }
+        for event in &record.events {
+            if let TenantEventKind::TriggerDelivery { cursor } = event {
+                self.trigger_delivery_cursor = *cursor;
+            }
+        }
         Ok(())
     }
 
     fn apply_write(&mut self, record: &TenantEventRecord, write: &WriteOp) -> Result<()> {
         self.ensure_write_table_identity(write)?;
         let document_key = (write.table_id.clone(), write.doc_id.clone());
-        match write.op_type {
+        let result = match write.op_type {
             WriteOpType::Insert => match (&write.previous, &write.current) {
                 (None, Some(current)) => match self.documents.get(&document_key) {
                     Some(existing) if existing != current => Err(Error::conflict(format!(
@@ -316,16 +338,15 @@ impl ShadowMaterializer {
                             write.doc_id, record.sequence.0
                         ))
                     })?;
-                    if existing == current {
-                        return Ok(());
+                    if existing != current {
+                        if existing != previous {
+                            return Err(Error::conflict(format!(
+                                "shadow materializer update replay found conflicting state for document {} at sequence {}",
+                                write.doc_id, record.sequence.0
+                            )));
+                        }
+                        self.documents.insert(document_key, current.clone());
                     }
-                    if existing != previous {
-                        return Err(Error::conflict(format!(
-                            "shadow materializer update replay found conflicting state for document {} at sequence {}",
-                            write.doc_id, record.sequence.0
-                        )));
-                    }
-                    self.documents.insert(document_key, current.clone());
                     Ok(())
                 }
                 _ => Err(Error::InvalidInput(format!(
@@ -346,7 +367,22 @@ impl ShadowMaterializer {
                     write.doc_id, record.sequence.0
                 ))),
             },
+        };
+        result?;
+
+        let locator_key = (write.table.clone(), write.doc_id.clone());
+        match write.op_type {
+            WriteOpType::Insert | WriteOpType::Update => {
+                if let Some(binding) = &write.resource_path_binding {
+                    self.resource_path_bindings
+                        .insert(locator_key, binding.clone());
+                }
+            }
+            WriteOpType::Delete => {
+                self.resource_path_bindings.remove(&locator_key);
+            }
         }
+        Ok(())
     }
 
     fn ensure_write_table_identity(&mut self, write: &WriteOp) -> Result<()> {
@@ -521,7 +557,9 @@ mod tests {
             table_identities: Vec::new(),
             schema: nimbus_core::Schema::default(),
             documents: Vec::new(),
+            resource_path_bindings: Vec::new(),
             scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: TriggerDeliveryCursor::default(),
         };
         let records = vec![
             TenantEventRecord::new(
@@ -620,7 +658,9 @@ mod tests {
             ],
             schema: nimbus_core::Schema::default(),
             documents: vec![old_document.clone()],
+            resource_path_bindings: Vec::new(),
             scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: TriggerDeliveryCursor::default(),
         };
         let records = vec![
             TenantEventRecord::new(

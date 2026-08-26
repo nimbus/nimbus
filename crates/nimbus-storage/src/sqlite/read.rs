@@ -326,7 +326,9 @@ impl SqliteReadSnapshot {
             table_identities: self.table_identities()?,
             schema: self.load_schema()?,
             documents: self.documents()?,
+            resource_path_bindings: self.scan_resource_path_bindings()?,
             scheduled_execution_ids: self.scheduled_execution_ids()?,
+            trigger_delivery_cursor: self.trigger_delivery_cursor()?,
         })
     }
 
@@ -819,6 +821,12 @@ impl SqliteReadSnapshot {
     }
 
     pub fn durable_journal_cursor_floor(&self) -> Result<SequenceNumber> {
+        let physical_floor = self
+            .metadata_blob(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?
+            .as_deref()
+            .map(crate::retention::decode_retention_floor)
+            .transpose()?
+            .unwrap_or(SequenceNumber(0));
         let sequence = self
             .conn
             .query_row(
@@ -828,8 +836,8 @@ impl SqliteReadSnapshot {
             )
             .optional()
             .map_err(map_sqlite_error)?;
-        Ok(SequenceNumber(
+        Ok(physical_floor.max(SequenceNumber(
             sequence.map(|value| value.saturating_sub(1)).unwrap_or(0),
-        ))
+        )))
     }
 }
