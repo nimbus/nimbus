@@ -7,6 +7,9 @@ use nimbus_core::{Error, Result, StorageErrorKind};
 use crate::disk::{self, SyncObserver};
 use crate::hash::BlobHash;
 
+// NBLE1 implicitly commits to reed-solomon-simd=3.1.0 parity bytes. If the
+// codec output changes, use NBLE2 so heal never re-encodes an old manifest
+// under a different durable format.
 const MANIFEST_MAGIC: &[u8] = b"NBLE1";
 const MANIFEST_EXT: &str = "nblm";
 const CHECKSUM_LEN: usize = crate::BLAKE3_HASH_LEN;

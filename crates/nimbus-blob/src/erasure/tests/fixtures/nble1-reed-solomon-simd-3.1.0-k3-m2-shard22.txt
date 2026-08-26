@@ -1,0 +1,5 @@
+# NBLE1 erasure parity golden vector.
+# reed-solomon-simd=3.1.0; data_shards=3; parity_shards=2.
+# Payload is bytes 0x00 through 0x40 inclusive; padded shard size is 22 bytes.
+988e2f48b4fe5148e7d429f4f9fdf9fdc5c1cbcf2d06
+a2b51b7d9ad17961c5f735e9efeae9eccfcacfca5338

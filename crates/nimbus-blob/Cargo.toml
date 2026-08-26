@@ -28,6 +28,9 @@ bytes.workspace = true
 # refresh is an enterprise-crate-adoption question, not this crate's.
 fs2.workspace = true
 object_store.workspace = true
+# NBLE1 persists hashes of the exact parity bytes produced by this version.
+# A codec change that alters the golden vector requires an NBLE2 format bump;
+# do not update this pin as an ordinary dependency refresh.
 reed-solomon-simd = "=3.1.0"
 # The durable-write recipe (src/disk.rs) writes commit-point files through a
 # same-directory temp file persisted into place.
