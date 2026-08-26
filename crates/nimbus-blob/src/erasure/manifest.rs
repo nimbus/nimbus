@@ -179,6 +179,8 @@ pub(crate) struct PublishError {
 ///
 /// - a drive already holding IDENTICAL bytes is skipped (idempotent
 ///   republish is a no-op there);
+/// - every non-identical replica's preimage is read before the first write;
+///   only `NotFound` means there is no prior replica;
 /// - on a write failure, every path this call changed is rolled back —
 ///   restored to its prior bytes if one existed (committed replicas survive
 ///   a failed republish), removed if the call created it;
@@ -195,19 +197,47 @@ pub(crate) fn publish(
     observer: &dyn SyncObserver,
     quorum: usize,
 ) -> std::result::Result<(), PublishError> {
+    publish_with_reader(manifest, drive_roots, observer, quorum, |path| {
+        fs::read(path)
+    })
+}
+
+pub(super) fn publish_with_reader(
+    manifest: &ErasureManifest,
+    drive_roots: &[PathBuf],
+    observer: &dyn SyncObserver,
+    quorum: usize,
+    mut read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>,
+) -> std::result::Result<(), PublishError> {
     let bytes = manifest.encode();
-    let mut changed: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::with_capacity(drive_roots.len());
+    let mut pending = Vec::with_capacity(drive_roots.len());
     for root in drive_roots {
         let path = manifest_path(root, &manifest.blob_hash);
-        let prior = match fs::read(&path) {
+        let prior = match read(&path) {
             Ok(existing) => {
                 if existing == bytes {
                     continue; // identical replica already committed here
                 }
                 Some(existing)
             }
-            Err(_) => None,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(PublishError {
+                    // All preimages are collected before the first write, so
+                    // this failure has no state to roll back.
+                    rollback_durable: true,
+                    error: Error::storage(
+                        StorageErrorKind::Io,
+                        format!("read erasure manifest {}: {err}", path.display()),
+                    ),
+                });
+            }
         };
+        pending.push((path, prior));
+    }
+
+    let mut changed: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::with_capacity(pending.len());
+    for (path, prior) in pending {
         if let Err(err) = disk::write_replace_durable(&path, &bytes, observer) {
             // Roll back, TRACKING durability: an unlink that is not followed
             // by a successful directory fsync can un-happen after a crash.

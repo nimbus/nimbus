@@ -177,6 +177,51 @@ async fn drive_lengths(store: &ErasureBlobStore) -> Vec<usize> {
 }
 
 #[tokio::test]
+async fn erasure_publish_preimage_read_failure_aborts_before_writes() {
+    use crate::disk::recorder::RecordingSyncObserver;
+
+    let (_dir, store, roots) = open_temp(K, M, STRIPE);
+    let hash = store.put(payload(STRIPE + 3)).await.unwrap();
+    let mut replacement = store.load_manifest_for_test(&hash).await.unwrap();
+    replacement.generation += 1;
+    let prior = roots
+        .iter()
+        .map(|root| fs::read(manifest::manifest_path(root, &hash)).unwrap())
+        .collect::<Vec<_>>();
+    let denied = manifest::manifest_path(&roots[1], &hash);
+    let observer = RecordingSyncObserver::new();
+
+    let err = manifest::publish_with_reader(
+        &replacement,
+        &roots,
+        &observer,
+        store.visibility_quorum(),
+        |path| {
+            if path == denied {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected transient preimage read failure",
+                ))
+            } else {
+                fs::read(path)
+            }
+        },
+    )
+    .expect_err("transient preimage read must fail publish");
+
+    assert!(err.rollback_durable);
+    assert_eq!(err.error.storage_kind(), Some(StorageErrorKind::Io));
+    assert!(observer.events().is_empty(), "preflight performs no writes");
+    for (root, expected) in roots.iter().zip(prior) {
+        assert_eq!(
+            fs::read(manifest::manifest_path(root, &hash)).unwrap(),
+            expected,
+            "committed manifest replica remains unchanged"
+        );
+    }
+}
+
+#[tokio::test]
 async fn erasure_recovers_missing_data_shard() {
     let (_dir, store, _roots) = open_temp(K, M, STRIPE);
     let bytes = payload(STRIPE + 17);
