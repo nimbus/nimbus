@@ -204,12 +204,6 @@ extension-registry seam before the second concern edits `extensions.rs`.
   duration policies, explicit temporal-validation observations, clock-source
   guards, and structural gates that leave unproved distributed clock authority
   disabled under the horizontal-scaling plan.
-- `incremental-materialized-verification-plan.md` - `active`. This plan owns
-  repeated materialized-state checks. IMV1 repairs the portable digest and
-  streams it from one normalized logical value tree. IMV2 measures the full
-  verifier against the ratified latency, write-cost, and memory gates. IMV3
-  through IMV6 add a process-local Merkle root only when IMV2 requires it.
-  `MaterializedPosition` remains the canonical artifact binding.
 - `blob-lifecycle-integrity-plan.md` - `proposed`.
   Fixes shared-hash data loss on S3 and Convex storage. `BlobGc` gets one
   live-root cut, intent pins, and grace. It also gets an automatic local sweep

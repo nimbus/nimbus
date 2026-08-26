@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 cd "$ROOT" || { echo "cannot cd to repository root"; exit 2; }
 
 PROOF="docs/private/plans/proof/incremental-materialized-verification"
-PLAN="docs/private/plans/incremental-materialized-verification-plan.md"
+PLAN="docs/private/plans/archive/incremental-materialized-verification-plan.md"
 BASELINE="137cc632a1c8585545d200ea49f44bd236478175"
 pass=0
 fail=0
