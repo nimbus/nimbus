@@ -15,6 +15,7 @@ pub(crate) use mutations::write_log::{WriteLog, WriteLogConfig};
 mod object_placement;
 mod objects;
 mod occ_retry;
+mod process_fence;
 mod provider_hints;
 mod queries;
 pub use queries::DocumentReadFilter;
@@ -122,6 +123,8 @@ pub struct Engine {
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
+    // Declared last so provider and executor fields drop before the OS locks.
+    _process_fence: process_fence::EngineProcessFence,
 }
 
 #[derive(Clone)]
@@ -195,6 +198,7 @@ pub(super) struct EngineBootstrapParts {
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
+    process_fence: process_fence::EngineProcessFence,
 }
 
 tokio::task_local! {
@@ -492,6 +496,7 @@ impl Engine {
             engine_executor: parts.engine_executor,
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,
+            _process_fence: parts.process_fence,
         }
     }
 

@@ -127,6 +127,14 @@ freshness gates. See [Deploy on Linux](/operators/deploy-linux/).
 overrides where the local control plane lives (it defaults to the data
 directory).
 
+Each distinct local tenant, control-plane, or replica-cache root can belong
+to only one live Nimbus process. Engine startup takes an exclusive advisory
+lock in every configured local root before it opens storage. A second process
+that names any owned root fails with a `busy` storage error; it does not wait
+or fall back to a weaker mode. This fence also applies when embedded redb is
+encrypted. Stop the first process or configure distinct roots before starting
+another Engine.
+
 `tenant_provider` accepts `sqlite`, `libsql-replica`, `redb`, `postgres`,
 or `mysql`. Flags belonging to a provider other than the selected one are
 rejected at startup. See
