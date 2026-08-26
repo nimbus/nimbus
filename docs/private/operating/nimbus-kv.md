@@ -49,6 +49,42 @@ Default mode is durable plus cache:
 in-memory and volatile. `--no-cache` disables read-through caching and reads
 directly from the durable tier.
 
+## Durability And Recovery Boundary
+
+NKV0 durable mode means local redb transaction durability for the selected
+tenant file. `SET`, `DEL`, expiry changes, `INCR`, and batches commit directly
+through `TenantKvStore`; the value and expiry-index effects share one redb write
+transaction. A successful command does not mean that Nimbus appended a tenant
+event or assigned a document commit sequence.
+
+There are two current compositions:
+
+- Standalone `nimbus kv --data <path>` opens `RedbTenantKvStore` directly.
+- An embedder that calls `Engine::tenant_kv_*` reaches the same redb tables
+  through the loaded tenant runtime. That bridge supports redb tenants only.
+
+Neither composition enters the document mutation committer. Tenant-KV writes
+do not acquire a committer lease, receive a document commit sequence, or append
+to the tenant event journal. The local Engine process fence and redb's own
+transaction serialization still protect their respective files; those guards
+do not make the KV plane journal-visible.
+
+Consequences:
+
+- document PITR exports and journal replay do not contain tenant-KV writes;
+- current replica and changefeed paths do not reproduce tenant-KV state;
+- SQLite, libSQL, PostgreSQL, MySQL, and memory tenant providers do not
+  implement the Engine tenant-KV bridge;
+- NKV0 has no supported backup/restore operator contract. A closed-file copy is
+  not a substitute for the future NKV-DR contract;
+- `--no-disk` remains intentionally volatile.
+
+NKV-DR owns supported backup, restore, and point-in-time recovery. NKV6 owns
+replication, distributed fencing, and cross-node ordering. Routing tenant-KV
+writes through the document committer would change latency, ordering, recovery,
+and provider semantics, so it requires an explicit NKV owner decision and a new
+contract; do not infer that behavior from the shared `TenantStore` file.
+
 ## Conformance
 
 Focused local commands:
