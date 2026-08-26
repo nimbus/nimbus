@@ -99,6 +99,12 @@ impl SqlStoreCore for MySqlTenantStore {
         MySqlTenantStore::journal_progress(self)
     }
 
+    fn load_retention_metadata_snapshot(&self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+        let loaded = self.execute_write(|transaction| transaction.load_retention_metadata())?;
+        debug_assert!(loaded.commit.is_none());
+        Ok(loaded.value)
+    }
+
     fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
@@ -298,6 +304,26 @@ impl SqlWriteTransactionCore for MySqlWriteTransaction {
             index_prune_before,
         )
     }
+
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+        MySqlWriteTransaction::load_retention_metadata(self)
+    }
+
+    fn applied_sequence_for_retention(&mut self) -> Result<SequenceNumber> {
+        self.applied_sequence()
+    }
+
+    fn prune_durable_journal_through(&mut self, sequence: SequenceNumber) -> Result<u64> {
+        MySqlWriteTransaction::prune_durable_journal_through(self, sequence)
+    }
+
+    fn store_retention_metadata(
+        &mut self,
+        checkpoint_blob: &[u8],
+        physical_floor: SequenceNumber,
+    ) -> Result<()> {
+        MySqlWriteTransaction::store_retention_metadata(self, checkpoint_blob, physical_floor)
+    }
 }
 
 impl MySqlWriteTransaction {
@@ -418,6 +444,88 @@ impl MySqlWriteTransaction {
                 prune_index_versions_before_in_session(conn, &database_name, index_prune_before)
                     .await?;
             Ok((document_versions_pruned, index_versions_pruned))
+        })
+    }
+
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+        self.check_cancel()?;
+        let query = format!(
+            "SELECT key_name, value_blob FROM {} WHERE key_name IN (?, ?)",
+            qualified_table(&self.database_name, "metadata")
+        );
+        let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        let rows: Vec<Row> = Self::block_on(&runtime_handle, async move {
+            conn.exec(query, (checkpoint_key, physical_floor_key))
+                .await
+                .map_err(map_mysql_error)
+        })?;
+        let mut checkpoint_blob = None;
+        let mut physical_floor = SequenceNumber(0);
+        for row in rows {
+            let (key, value): (String, Option<Vec<u8>>) = mysql_async::from_row(row);
+            let Some(value) = value else {
+                return Err(Error::storage(
+                    nimbus_core::StorageErrorKind::Corruption,
+                    format!("retention metadata key {key} has no blob value"),
+                ));
+            };
+            if key == checkpoint_key {
+                checkpoint_blob = Some(value);
+            } else if key == physical_floor_key {
+                physical_floor = crate::retention::decode_retention_floor(value.as_slice())?;
+            }
+        }
+        Ok((checkpoint_blob, physical_floor))
+    }
+
+    fn prune_durable_journal_through(&mut self, sequence: SequenceNumber) -> Result<u64> {
+        self.check_cancel()?;
+        let query = format!(
+            "DELETE FROM {} WHERE sequence <= ?",
+            qualified_table(&self.database_name, "commit_log")
+        );
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_drop(query, (sequence.0,))
+                .await
+                .map_err(map_mysql_error)?;
+            Ok(conn.affected_rows())
+        })
+    }
+
+    fn store_retention_metadata(
+        &mut self,
+        checkpoint_blob: &[u8],
+        physical_floor: SequenceNumber,
+    ) -> Result<()> {
+        self.check_cancel()?;
+        let query = format!(
+            "INSERT INTO {} (key_name, value_blob) VALUES (?, ?), (?, ?) \
+             ON DUPLICATE KEY UPDATE value_blob = VALUES(value_blob)",
+            qualified_table(&self.database_name, "metadata")
+        );
+        let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
+        let checkpoint_blob = checkpoint_blob.to_vec();
+        let physical_floor_blob = physical_floor.0.to_be_bytes().to_vec();
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_drop(
+                query,
+                (
+                    checkpoint_key,
+                    checkpoint_blob,
+                    physical_floor_key,
+                    physical_floor_blob,
+                ),
+            )
+            .await
+            .map_err(map_mysql_error)
         })
     }
 

@@ -123,6 +123,7 @@ pub(super) enum CatalogEffect {
     TableLifecycle,
     ResourcePathBindings,
     UsageControlDatabase,
+    RetentionCheckpoint,
     None,
 }
 
@@ -162,6 +163,7 @@ pub(super) enum JournalEffect {
     DurableRecordsApplied,
     DurableRecordsReplayed,
     DurableRecordsAppendedAndApplied,
+    DurableRecordsPruned,
     None,
 }
 
@@ -186,6 +188,7 @@ pub(super) enum Outcome {
     ClaimedJobs,
     JournalProgress,
     RetentionSummary,
+    RetentionHistorySummary,
     ObjectCondition,
 }
 
@@ -276,6 +279,24 @@ pub(super) const MATRIX: &[WriterEffects] = &[
         journal: JournalEffect::None,
         watermark: WatermarkEffect::NotAdvanced,
         outcome: Outcome::RetentionSummary,
+    },
+    // Provider history retention publishes the checkpoint and deletes the
+    // corresponding journal/MVCC prefixes in one lease-fenced transaction.
+    WriterEffects {
+        writer: "fenced_compact_retained_history",
+        shape: Shape::Direct,
+        admission: Admission::AlwaysAdmitted,
+        lease: Lease::Fenced,
+        condition: Condition::ExpectedState,
+        document: DocumentEffect::None,
+        index: IndexEffect::PrunedWithVersions,
+        version: VersionEffect::PrunesRetained,
+        catalog: CatalogEffect::RetentionCheckpoint,
+        scheduler: SchedulerEffect::None,
+        trigger: TriggerEffect::None,
+        journal: JournalEffect::DurableRecordsPruned,
+        watermark: WatermarkEffect::NotAdvanced,
+        outcome: Outcome::RetentionHistorySummary,
     },
     WriterEffects {
         writer: "replace_table_schema",
@@ -1156,6 +1177,10 @@ pub(super) const VERIFICATION_MATRIX: &[(&str, VerificationEffect)] = &[
     ),
     (
         "compact_retained_versions",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "fenced_compact_retained_history",
         VerificationEffect::NoMaterializedState,
     ),
     (

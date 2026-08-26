@@ -296,7 +296,7 @@ where
 }
 
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
-fn fenced_insert_record(sequence: u64, document: &Document) -> TenantEventRecord {
+pub(crate) fn fenced_insert_record(sequence: u64, document: &Document) -> TenantEventRecord {
     TenantEventRecord::new(
         SequenceNumber(sequence),
         Timestamp(sequence.saturating_mul(100)),
@@ -313,6 +313,470 @@ fn fenced_insert_record(sequence: u64, document: &Document) -> TenantEventRecord
         None,
     )
     .expect("fenced insert record should build")
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) trait ProviderRetentionStore: CommitterLeaseStore + DurableJournal {
+    fn replace_table_schema(&self, table_schema: &TableSchema) -> nimbus_core::Result<()>;
+
+    fn table_identity_diagnostics(
+        &self,
+    ) -> nimbus_core::Result<Vec<crate::TableIdentityDiagnostic>>;
+
+    fn retention_history_state(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> nimbus_core::Result<crate::RetentionHistoryState>;
+
+    fn fenced_compact_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        config: crate::RetentionGcConfig,
+    ) -> crate::CommitterLeaseResult<crate::RetentionHistorySummary>;
+}
+
+#[cfg(feature = "postgres")]
+impl ProviderRetentionStore for crate::PostgresTenantStore {
+    fn replace_table_schema(&self, table_schema: &TableSchema) -> nimbus_core::Result<()> {
+        crate::PostgresTenantStore::replace_table_schema(self, table_schema)
+    }
+
+    fn table_identity_diagnostics(
+        &self,
+    ) -> nimbus_core::Result<Vec<crate::TableIdentityDiagnostic>> {
+        crate::PostgresTenantStore::table_identity_diagnostics(self)
+    }
+
+    fn retention_history_state(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> nimbus_core::Result<crate::RetentionHistoryState> {
+        crate::PostgresTenantStore::retention_history_state(self, config)
+    }
+
+    fn fenced_compact_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        config: crate::RetentionGcConfig,
+    ) -> crate::CommitterLeaseResult<crate::RetentionHistorySummary> {
+        crate::PostgresTenantStore::fenced_compact_retained_history(
+            self,
+            owner_id,
+            epoch,
+            durable_sequence,
+            config,
+        )
+    }
+}
+
+#[cfg(feature = "mysql")]
+impl ProviderRetentionStore for crate::MySqlTenantStore {
+    fn replace_table_schema(&self, table_schema: &TableSchema) -> nimbus_core::Result<()> {
+        crate::MySqlTenantStore::replace_table_schema(self, table_schema)
+    }
+
+    fn table_identity_diagnostics(
+        &self,
+    ) -> nimbus_core::Result<Vec<crate::TableIdentityDiagnostic>> {
+        crate::MySqlTenantStore::table_identity_diagnostics(self)
+    }
+
+    fn retention_history_state(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> nimbus_core::Result<crate::RetentionHistoryState> {
+        crate::MySqlTenantStore::retention_history_state(self, config)
+    }
+
+    fn fenced_compact_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        config: crate::RetentionGcConfig,
+    ) -> crate::CommitterLeaseResult<crate::RetentionHistorySummary> {
+        crate::MySqlTenantStore::fenced_compact_retained_history(
+            self,
+            owner_id,
+            epoch,
+            durable_sequence,
+            config,
+        )
+    }
+}
+
+#[cfg(feature = "libsql")]
+impl ProviderRetentionStore for crate::LibsqlReplicaTenantStore {
+    fn replace_table_schema(&self, table_schema: &TableSchema) -> nimbus_core::Result<()> {
+        crate::LibsqlReplicaTenantStore::replace_table_schema(self, table_schema)
+    }
+
+    fn table_identity_diagnostics(
+        &self,
+    ) -> nimbus_core::Result<Vec<crate::TableIdentityDiagnostic>> {
+        crate::LibsqlReplicaTenantStore::table_identity_diagnostics(self)
+    }
+
+    fn retention_history_state(
+        &self,
+        config: crate::RetentionGcConfig,
+    ) -> nimbus_core::Result<crate::RetentionHistoryState> {
+        crate::LibsqlReplicaTenantStore::retention_history_state(self, config)
+    }
+
+    fn fenced_compact_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        config: crate::RetentionGcConfig,
+    ) -> crate::CommitterLeaseResult<crate::RetentionHistorySummary> {
+        crate::LibsqlReplicaTenantStore::fenced_compact_retained_history(
+            self,
+            owner_id,
+            epoch,
+            durable_sequence,
+            config,
+        )
+    }
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) fn exercise_provider_retention_checkpoint<S>(
+    store: &S,
+    table_prefix: &str,
+) -> SequenceNumber
+where
+    S: ProviderRetentionStore + TenantPointRead,
+{
+    let table = TableName::new(format!("{table_prefix}_versions"))
+        .expect("retention table name should build");
+    let (schema, _index) = provider_support::indexed_rank_schema(&table);
+    store
+        .replace_table_schema(&schema)
+        .expect("retention index schema should persist");
+    let table_id = provider_support::active_table_id_for_diagnostic(
+        &store
+            .table_identity_diagnostics()
+            .expect("retention table identity should load"),
+        &table,
+    );
+    let lease = store
+        .acquire_committer_lease("retention-owner", Duration::from_secs(60))
+        .expect("retention owner should acquire the lease");
+    let base_sequence = lease.durable_sequence.0;
+    let inserted = provider_support::ranked_document(&table, "retained-1", 1);
+    let mut updated_twice = inserted.clone();
+    updated_twice
+        .fields
+        .insert("title".to_string(), json!("retained-2"));
+    updated_twice.fields.insert("rank".to_string(), json!(2));
+    updated_twice.update_time = Timestamp(inserted.update_time.0.saturating_add(1));
+    let mut updated_thrice = updated_twice.clone();
+    updated_thrice
+        .fields
+        .insert("title".to_string(), json!("retained-3"));
+    updated_thrice.fields.insert("rank".to_string(), json!(3));
+    updated_thrice.update_time = Timestamp(updated_twice.update_time.0.saturating_add(1));
+    let tail_document = provider_support::ranked_document(&table, "retained-4", 4);
+    let records = [
+        provider_support::durable_write_record(
+            SequenceNumber(base_sequence.saturating_add(1)),
+            Timestamp(100),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            inserted.id.clone(),
+            None,
+            Some(inserted.clone()),
+        ),
+        provider_support::durable_write_record(
+            SequenceNumber(base_sequence.saturating_add(2)),
+            Timestamp(200),
+            &table,
+            &table_id,
+            WriteOpType::Update,
+            inserted.id.clone(),
+            Some(inserted.clone()),
+            Some(updated_twice.clone()),
+        ),
+        provider_support::durable_write_record(
+            SequenceNumber(base_sequence.saturating_add(3)),
+            Timestamp(300),
+            &table,
+            &table_id,
+            WriteOpType::Update,
+            inserted.id.clone(),
+            Some(updated_twice),
+            Some(updated_thrice.clone()),
+        ),
+        provider_support::durable_write_record(
+            SequenceNumber(base_sequence.saturating_add(4)),
+            Timestamp(400),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            tail_document.id.clone(),
+            None,
+            Some(tail_document.clone()),
+        ),
+    ];
+    for (index, record) in records.iter().enumerate() {
+        let expected_previous = base_sequence
+            .saturating_add(u64::try_from(index).expect("record index should fit u64"));
+        store
+            .fenced_append_and_apply_durable_records_batch(
+                &lease.owner_id,
+                lease.epoch,
+                SequenceNumber(expected_previous),
+                std::slice::from_ref(record),
+            )
+            .expect("current lease holder should publish retained history");
+    }
+
+    let config = crate::RetentionGcConfig::new(1).expect("retention config should build");
+    let initial = store
+        .retention_history_state(config)
+        .expect("initial provider retention state should read");
+    assert_eq!(initial.confirmed_floor, SequenceNumber(0));
+    assert_eq!(initial.physical_floor, SequenceNumber(0));
+    let latest_sequence = SequenceNumber(base_sequence.saturating_add(4));
+    let expected_floor = SequenceNumber(latest_sequence.0.saturating_sub(1));
+    assert_eq!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .expect("journal should read before compaction")
+            .len(),
+        usize::try_from(latest_sequence.0).expect("provider sequence should fit usize")
+    );
+
+    let stale_epoch = lease.epoch.saturating_sub(1);
+    assert!(matches!(
+        store.fenced_compact_retained_history(
+            &lease.owner_id,
+            stale_epoch,
+            latest_sequence,
+            config,
+        ),
+        Err(CommitterLeaseError::Fenced { owner_id, epoch })
+            if owner_id == lease.owner_id && epoch == stale_epoch
+    ));
+    assert_eq!(
+        store
+            .retention_history_state(config)
+            .expect("fenced retention state should remain readable")
+            .physical_floor,
+        SequenceNumber(0),
+        "a stale generation must publish no floor"
+    );
+    assert_eq!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .expect("fenced retention must preserve journal history")
+            .len(),
+        usize::try_from(latest_sequence.0).expect("provider sequence should fit usize"),
+        "a stale generation must delete no journal records"
+    );
+
+    let summary = store
+        .fenced_compact_retained_history(&lease.owner_id, lease.epoch, latest_sequence, config)
+        .expect("current lease holder should compact retained history");
+    assert_eq!(summary.before.physical_floor, SequenceNumber(0));
+    assert_eq!(summary.after.confirmed_floor, expected_floor);
+    assert_eq!(summary.after.physical_floor, expected_floor);
+    assert_eq!(summary.journal_records_pruned, expected_floor.0);
+    assert_eq!(summary.document_versions_pruned, 2);
+    assert_eq!(summary.index_versions_pruned, 2);
+    assert_eq!(store.latest_sequence().unwrap(), latest_sequence);
+    assert_eq!(store.applied_sequence().unwrap(), latest_sequence);
+    for document in [updated_thrice, tail_document] {
+        assert_eq!(
+            store
+                .get(&document.table, &document.id)
+                .expect("materialized document should survive provider compaction"),
+            Some(document),
+            "the retained checkpoint and tail must rebuild the materialized state"
+        );
+    }
+    let retained = store
+        .read_durable_journal_from(SequenceNumber(1))
+        .expect("retained journal tail should read");
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].sequence, latest_sequence);
+    assert!(matches!(
+        store.stream_durable_journal(SequenceNumber(0), 10),
+        Err(Error::InvalidInput(message))
+            if message.contains(format!("retention floor {}", expected_floor.0).as_str())
+    ));
+    let persisted = store
+        .retention_history_state(config)
+        .expect("published provider retention state should read");
+    assert_eq!(persisted.confirmed_floor, expected_floor);
+    assert_eq!(persisted.physical_floor, expected_floor);
+    expected_floor
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) struct ProviderRetentionRollbackFixture {
+    pub(crate) lease: crate::CommitterLease,
+    pub(crate) table: TableName,
+    pub(crate) current_document: Document,
+    pub(crate) config: crate::RetentionGcConfig,
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) fn prepare_provider_retention_rollback<S>(
+    store: &S,
+    table_prefix: &str,
+) -> ProviderRetentionRollbackFixture
+where
+    S: ProviderRetentionStore + TenantPointRead,
+{
+    let lease = store
+        .acquire_committer_lease("faulted-retention-owner", Duration::from_secs(60))
+        .expect("faulted retention owner should acquire the lease");
+    let table = TableName::new(format!("{table_prefix}_versions"))
+        .expect("fault retention table should build");
+    let table_id = TableId::new();
+    let inserted = sample_document(table.as_str(), "faulted-1");
+    let mut updated_twice = inserted.clone();
+    updated_twice
+        .fields
+        .insert("title".to_string(), json!("faulted-2"));
+    updated_twice.update_time = Timestamp(inserted.update_time.0.saturating_add(1));
+    let mut updated_thrice = updated_twice.clone();
+    updated_thrice
+        .fields
+        .insert("title".to_string(), json!("faulted-3"));
+    updated_thrice.update_time = Timestamp(updated_twice.update_time.0.saturating_add(1));
+    let records = [
+        provider_support::durable_write_record(
+            SequenceNumber(1),
+            Timestamp(100),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            inserted.id.clone(),
+            None,
+            Some(inserted.clone()),
+        ),
+        provider_support::durable_write_record(
+            SequenceNumber(2),
+            Timestamp(200),
+            &table,
+            &table_id,
+            WriteOpType::Update,
+            inserted.id.clone(),
+            Some(inserted.clone()),
+            Some(updated_twice.clone()),
+        ),
+        provider_support::durable_write_record(
+            SequenceNumber(3),
+            Timestamp(300),
+            &table,
+            &table_id,
+            WriteOpType::Update,
+            inserted.id.clone(),
+            Some(updated_twice),
+            Some(updated_thrice.clone()),
+        ),
+    ];
+    for (index, record) in records.iter().enumerate() {
+        let sequence = u64::try_from(index).expect("record index should fit u64") + 1;
+        store
+            .fenced_append_and_apply_durable_records_batch(
+                &lease.owner_id,
+                lease.epoch,
+                SequenceNumber(sequence.saturating_sub(1)),
+                std::slice::from_ref(record),
+            )
+            .expect("fault fixture history should publish");
+    }
+
+    ProviderRetentionRollbackFixture {
+        lease,
+        table,
+        current_document: updated_thrice,
+        config: crate::RetentionGcConfig::new(1).expect("retention config should build"),
+    }
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) fn assert_provider_retention_rollback<S>(
+    store: &S,
+    fixture: &ProviderRetentionRollbackFixture,
+) where
+    S: ProviderRetentionStore + TenantPointRead,
+{
+    assert_eq!(
+        store
+            .retention_history_state(fixture.config)
+            .expect("rolled-back retention state should read")
+            .physical_floor,
+        SequenceNumber(0)
+    );
+    assert_eq!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .expect("rolled-back journal should remain complete")
+            .len(),
+        3
+    );
+    assert_eq!(
+        store
+            .get(&fixture.table, &fixture.current_document.id)
+            .expect("rolled-back current document should read"),
+        Some(fixture.current_document.clone()),
+    );
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) fn finish_provider_retention_rollback<S>(
+    store: &S,
+    fixture: ProviderRetentionRollbackFixture,
+) where
+    S: ProviderRetentionStore + TenantPointRead,
+{
+    let recovered = store
+        .fenced_compact_retained_history(
+            &fixture.lease.owner_id,
+            fixture.lease.epoch,
+            SequenceNumber(3),
+            fixture.config,
+        )
+        .expect("retention should succeed after the one-shot fault");
+    assert_eq!(recovered.journal_records_pruned, 2);
+    assert_eq!(
+        recovered.document_versions_pruned, 1,
+        "a successful retry must still find the version deleted by the rolled-back transaction"
+    );
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) fn exercise_provider_retention_fault_rollback<S>(store: &S, table_prefix: &str)
+where
+    S: ProviderRetentionStore + TenantPointRead,
+{
+    let fixture = prepare_provider_retention_rollback(store, table_prefix);
+    let error = store
+        .fenced_compact_retained_history(
+            &fixture.lease.owner_id,
+            fixture.lease.epoch,
+            SequenceNumber(3),
+            fixture.config,
+        )
+        .expect_err("pre-commit retention fault should roll the transaction back");
+    assert!(matches!(
+        error,
+        CommitterLeaseError::Storage(Error::Internal(message))
+            if message.contains("retention_checkpoint_before_commit")
+    ));
+    assert_provider_retention_rollback(store, &fixture);
+    finish_provider_retention_rollback(store, fixture);
 }
 
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]

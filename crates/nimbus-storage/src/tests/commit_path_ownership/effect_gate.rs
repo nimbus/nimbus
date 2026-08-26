@@ -21,9 +21,10 @@ use super::effect_matrix::{
 const PRIMITIVES: [&str; 2] = ["execute_write", "execute_write_cancellable"];
 
 /// Bodiless `SqlStoreCore` methods that only read.
-const PROVIDER_READERS: [&str; 4] = [
+const PROVIDER_READERS: [&str; 5] = [
     "retention_floor",
     "journal_progress",
+    "load_retention_metadata_snapshot",
     "read_durable_journal_from",
     "export_materialized_journal_snapshot",
 ];
@@ -41,7 +42,7 @@ const PROVIDER_MUTATORS: [&str; 5] = [
 
 /// Declared outcome for each return payload, so an outcome cannot drift from
 /// the signature it claims to describe.
-const OUTCOME_BY_PAYLOAD: [(&str, Outcome); 9] = [
+const OUTCOME_BY_PAYLOAD: [(&str, Outcome); 10] = [
     ("()", Outcome::Unit),
     ("bool", Outcome::Boolean),
     ("CommitEntry", Outcome::CommitEntry),
@@ -54,6 +55,7 @@ const OUTCOME_BY_PAYLOAD: [(&str, Outcome); 9] = [
     ("Vec<ScheduledJob>", Outcome::ClaimedJobs),
     ("JournalProgress", Outcome::JournalProgress),
     ("RetentionGcSummary", Outcome::RetentionSummary),
+    ("RetentionHistorySummary", Outcome::RetentionHistorySummary),
 ];
 
 /// Floors, so the scan cannot silently shrink to nothing and report success.
@@ -352,6 +354,18 @@ fn evidence_violations(declaration: &WriterEffects, body: &str) -> Vec<String> {
         require(
             declaration.index == IndexEffect::PrunedWithVersions,
             "prunes retained versions without declaring the index effect".into(),
+        );
+    }
+    if body.contains("prune_durable_journal_through") {
+        require(
+            declaration.journal == JournalEffect::DurableRecordsPruned,
+            "prunes durable records but does not declare the journal effect".into(),
+        );
+    }
+    if body.contains("store_retention_metadata") {
+        require(
+            declaration.catalog == CatalogEffect::RetentionCheckpoint,
+            "publishes retention metadata but does not declare the catalog effect".into(),
         );
     }
     if body.contains("schedule_ops_effect") {
