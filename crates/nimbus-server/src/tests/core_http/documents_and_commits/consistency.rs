@@ -30,13 +30,23 @@ async fn tenant_consistency_route_returns_green_report_for_live_state() {
         report["authoritative"]["document_count"],
         serde_json::json!(3)
     );
+    for scope in ["authoritative", "shadow", "embedded_replica"] {
+        assert!(
+            report[scope]["position"].is_object(),
+            "{scope} position must be present"
+        );
+        assert!(
+            report[scope]["position"]["state_digest"].is_string(),
+            "{scope} state digest must be present"
+        );
+    }
     assert_eq!(
-        report["authoritative"]["digest"],
-        report["shadow"]["digest"]
+        report["authoritative"]["position"],
+        report["shadow"]["position"]
     );
     assert_eq!(
-        report["authoritative"]["digest"],
-        report["embedded_replica"]["digest"]
+        report["authoritative"]["position"],
+        report["embedded_replica"]["position"]
     );
     assert_eq!(
         report["bootstrap"]["bootstrap_cut_sequence"],
