@@ -27,10 +27,10 @@ pub use kv::{
 };
 pub use object_metadata::{
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,
-    ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
-    ObjectManifestAttributes, ObjectMetaRead, ObjectMultipartPart, ObjectMultipartUpload,
-    ObjectUploadConditionOutcome, ObjectUploadExpectedState, multipart_upload_document_id,
-    object_manifest_document_id,
+    ObjectChunkRef, ObjectConditionOutcome, ObjectDeleteConditionOutcome,
+    ObjectDeleteExpectedState, ObjectExpectedState, ObjectManifest, ObjectManifestAttributes,
+    ObjectMetaRead, ObjectMultipartPart, ObjectMultipartUpload, ObjectUploadConditionOutcome,
+    ObjectUploadExpectedState, multipart_upload_document_id, object_manifest_document_id,
 };
 // Object metadata has no production writer in this crate; these seed the
 // metadata plane for the crate's own read-half coverage.

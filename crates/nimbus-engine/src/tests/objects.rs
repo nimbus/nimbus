@@ -10,7 +10,8 @@
 use super::*;
 use nimbus_storage::{
     MaterializedDeltaApplyOutcome, MaterializedVerificationTracker, ObjectChecksums,
-    ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectManifestAttributes,
+    ObjectConditionOutcome, ObjectDeleteConditionOutcome, ObjectDeleteExpectedState,
+    ObjectExpectedState, ObjectManifest, ObjectManifestAttributes,
 };
 
 fn manifest_for(key: &str, etag: &str) -> ObjectManifest {
@@ -233,6 +234,88 @@ async fn manifest_replace_preserves_creation_identity_and_delete_returns_previou
         runtime.durable_head(),
         head_after_delete,
         "absent delete must not consume a journal sequence"
+    );
+}
+
+/// Conditional delete is one committer decision. A rejected clause must not
+/// consume a sequence, and an accepted clause must delete the exact manifest
+/// image that the committer evaluated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn object_meta_conditional_delete_is_decided_before_sequence_assignment() {
+    let data_dir = tempdir().expect("conditional delete tempdir should build");
+    let (engine, tenant_id) = engine_with_tenant(&data_dir, "object-meta-delete-condition").await;
+    let runtime = engine
+        .registered_runtime_for_testing(&tenant_id)
+        .expect("tenant runtime should resolve");
+    let meta = engine
+        .tenant_object_meta(tenant_id.clone())
+        .await
+        .expect("object meta handle should resolve");
+    let bucket = "bucket".to_string();
+    let key = "conditional/delete.txt".to_string();
+
+    meta.put_manifest_unconditional(manifest_for(&key, "\"etag-current\""))
+        .await
+        .expect("seed manifest should commit");
+    let head_after_seed = runtime.durable_head();
+
+    for expected in [
+        ObjectDeleteExpectedState::EtagMatches("\"etag-stale\"".to_string()),
+        ObjectDeleteExpectedState::SizeMatches(13),
+        ObjectDeleteExpectedState::LastModifiedSecondsMatch(1_776_960_001),
+    ] {
+        let outcome = meta
+            .delete_manifest_conditional(bucket.clone(), key.clone(), vec![expected.clone()])
+            .await
+            .expect("a decided delete condition is not an error");
+        let ObjectDeleteConditionOutcome::Rejected { unmet, current } = outcome else {
+            panic!("a stale delete condition must be rejected");
+        };
+        assert_eq!(unmet, expected);
+        assert_eq!(current.etag, "\"etag-current\"");
+        assert_eq!(
+            runtime.durable_head(),
+            head_after_seed,
+            "a rejected delete must consume no sequence"
+        );
+    }
+
+    let accepted = meta
+        .delete_manifest_conditional(
+            bucket.clone(),
+            key.clone(),
+            vec![
+                ObjectDeleteExpectedState::EtagMatches("\"etag-current\"".to_string()),
+                ObjectDeleteExpectedState::SizeMatches(12),
+                ObjectDeleteExpectedState::LastModifiedSecondsMatch(1_776_960_000),
+            ],
+        )
+        .await
+        .expect("matching delete conditions should be decided");
+    let ObjectDeleteConditionOutcome::Deleted { commit, previous } = accepted else {
+        panic!("matching delete conditions must commit");
+    };
+    assert_eq!(previous.etag, "\"etag-current\"");
+    assert_eq!(commit.sequence, SequenceNumber(head_after_seed.0 + 1));
+    assert_eq!(runtime.durable_head(), commit.sequence);
+
+    let head_after_delete = runtime.durable_head();
+    let absent = meta
+        .delete_manifest_conditional(
+            bucket,
+            key,
+            vec![
+                ObjectDeleteExpectedState::NeverMatchesPresent,
+                ObjectDeleteExpectedState::SizeMatches(-1),
+            ],
+        )
+        .await
+        .expect("an absent conditional delete should succeed");
+    assert!(matches!(absent, ObjectDeleteConditionOutcome::Absent));
+    assert_eq!(
+        runtime.durable_head(),
+        head_after_delete,
+        "an absent conditional delete must consume no sequence"
     );
 }
 

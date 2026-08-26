@@ -665,6 +665,72 @@ impl ObjectExpectedState {
     }
 }
 
+/// One condition on a manifest delete.
+///
+/// S3 conditional deletes treat an absent object as success. Each clause
+/// therefore constrains only a present manifest. The S3 adapter owns header
+/// parsing and comparison policy; the committer receives only these
+/// protocol-neutral values and decides them against its serialized read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ObjectDeleteExpectedState {
+    /// A present manifest must carry this opaque `ETag`.
+    EtagMatches(String),
+    /// A present manifest must have this size. A negative value never
+    /// matches the unsigned stored size.
+    SizeMatches(i64),
+    /// A present manifest's modification time, truncated to whole seconds,
+    /// must match this Unix timestamp.
+    LastModifiedSecondsMatch(i64),
+    /// A wire condition that cannot match any present manifest, such as a
+    /// weak `If-Match` value under strong comparison.
+    NeverMatchesPresent,
+}
+
+impl ObjectDeleteExpectedState {
+    /// Evaluates this clause against the committer's current manifest.
+    #[must_use]
+    pub fn holds_for(&self, current: Option<&ObjectManifest>) -> bool {
+        let Some(current) = current else {
+            return true;
+        };
+        match self {
+            Self::EtagMatches(expected) => current.etag == *expected,
+            Self::SizeMatches(expected) => u64::try_from(*expected) == Ok(current.size),
+            Self::LastModifiedSecondsMatch(expected) => {
+                i64::try_from(current.last_modified_millis / 1_000) == Ok(*expected)
+            }
+            Self::NeverMatchesPresent => false,
+        }
+    }
+
+    /// Returns the first clause that does not hold.
+    #[must_use]
+    pub fn first_unmet<'a>(
+        clauses: &'a [Self],
+        current: Option<&ObjectManifest>,
+    ) -> Option<&'a Self> {
+        clauses.iter().find(|clause| !clause.holds_for(current))
+    }
+}
+
+/// What the commit authority decided for a conditional manifest delete.
+#[derive(Clone, Debug)]
+pub enum ObjectDeleteConditionOutcome {
+    /// The manifest existed, every clause held, and the delete committed.
+    Deleted {
+        commit: CommitEntry,
+        previous: ObjectManifest,
+    },
+    /// The manifest was absent. S3 conditional delete remains idempotent and
+    /// no sequence number is consumed.
+    Absent,
+    /// A clause did not hold against the present manifest. Nothing changed.
+    Rejected {
+        unmet: ObjectDeleteExpectedState,
+        current: ObjectManifest,
+    },
+}
+
 /// What the commit authority decided for a conditional object-metadata write.
 ///
 /// A rejected condition consumes no sequence number, appends no journal

@@ -76,7 +76,7 @@ terminated in front of it.
 | `PutObject` | body, `Content-Type`, user metadata (`x-amz-meta-*`), `Content-MD5`, `x-amz-checksum-crc64nvme`, `Content-Length`, `If-Match`, `If-None-Match` | `ETag`, `x-amz-checksum-crc64nvme`, size | Content-MD5 and CRC64NVME are verified against the received bytes; `Content-Length`, if sent, must match. Preconditions are checked against the current object |
 | `GetObject` | `Range`, `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since` | body, `ETag`, `Content-Type`, `Last-Modified`, user metadata, `Accept-Ranges` | A `Range` request returns `206 Partial Content` with `Content-Range`. `If-None-Match`/`If-Modified-Since` yield `304 Not Modified`; a failed `If-Match`/`If-Unmodified-Since` yields `412 Precondition Failed` |
 | `HeadObject` | `Range`, same preconditions as `GetObject` | headers only: `Content-Length`, `ETag`, `Content-Type`, `Last-Modified`, user metadata | `Range` reports the selected length and `Content-Range` |
-| `DeleteObject` | bucket, key | empty | Succeeds whether or not the key existed |
+| `DeleteObject` | bucket, key, `If-Match`, `x-amz-if-match-size`, `x-amz-if-match-last-modified-time` | empty | A condition mismatch on an existing object yields `412 Precondition Failed`. The conditions are checked atomically with deletion. Deleting an absent key still succeeds |
 | `ListObjectsV2` | `prefix`, `delimiter`, `max-keys`, `continuation-token`, `start-after` | `Contents`, `CommonPrefixes`, `KeyCount`, `IsTruncated`, `NextContinuationToken` | `max-keys` defaults to 1000 and is clamped to 1000. `delimiter` rolls up `CommonPrefixes` |
 
 Buckets are implicit. There is no bucket lifecycle operation: a
@@ -89,7 +89,7 @@ bucket name is a namespace within the tenant.
 | --- | --- | --- | --- |
 | `CreateMultipartUpload` | bucket, key, `Content-Type`, user metadata | `UploadId` | |
 | `UploadPart` | `UploadId`, `PartNumber`, body, `Content-MD5`, `x-amz-checksum-crc64nvme` | `ETag`, `x-amz-checksum-crc64nvme` | `PartNumber` must be 1–10000. Re-uploading a part number replaces it |
-| `CompleteMultipartUpload` | `UploadId`, ordered `Part` list with `PartNumber` and optional `ETag` | `ETag`, `Location` | Parts must be strictly ascending; a supplied per-part `ETag` must match; completion requires at least one part |
+| `CompleteMultipartUpload` | `UploadId`, ordered `Part` list with `PartNumber` and optional `ETag`, optional full-object `x-amz-checksum-crc64nvme` | `ETag`, `Location`, verified CRC64NVME when supplied | Parts must be strictly ascending; a supplied per-part `ETag` must match; completion requires at least one part. A supplied full-object CRC64NVME is recomputed across the selected parts and a mismatch is rejected |
 | `AbortMultipartUpload` | `UploadId` | empty | Releases the uploaded part bytes |
 
 The completed-object `ETag` is the standard multipart form: the MD5 of the
@@ -102,6 +102,10 @@ concatenated part MD5s, suffixed with the part count.
 | `Content-MD5` | Verified against the received bytes; a mismatch is rejected |
 | CRC64NVME (`x-amz-checksum-crc64nvme`, header or trailer) | Verified against the received bytes; returned on `PutObject`, `UploadPart`, `GetObject`, and `HeadObject` |
 | CRC32, CRC32C, SHA1, SHA256 | Rejected — a request carrying one of these checksum headers, or `x-amz-sdk-checksum-algorithm` naming one, fails with an error naming the algorithm |
+
+This rejection is deliberate. Nimbus does not accept a checksum that it
+cannot verify. Configure clients that add CRC32 or CRC32C automatically to
+use CRC64NVME or Content-MD5 for this endpoint.
 
 Whole-object `ETag` values are the MD5 of the object bytes. Object bytes
 are stored in the tenant's content-addressed blob plane; object metadata

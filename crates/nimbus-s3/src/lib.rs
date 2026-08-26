@@ -10,7 +10,8 @@ mod service;
 
 pub use auth::{AccessKeyRegistry, KeyBinding, S3_ACCESS_KEY_SPEC};
 pub use backend::{
-    S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver, put_manifest_unconditional,
+    S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver, delete_manifest_unconditional,
+    put_manifest_unconditional,
 };
 pub use config::{DEFAULT_S3_PORT, S3Config};
 pub use service::NimbusS3;

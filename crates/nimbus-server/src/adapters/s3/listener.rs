@@ -16,7 +16,7 @@ use axum::extract::{Path, State};
 use axum::http::{Response, StatusCode, header};
 use axum::routing::get;
 use nimbus_blob::BlobStore;
-use nimbus_core::{CommitEntry, Error, Result, TenantId};
+use nimbus_core::{Error, Result, TenantId};
 use nimbus_engine::{Engine, TenantObjectMeta};
 use nimbus_object_storage::{ObjectStorageConfig, ObjectStorageResolver};
 use nimbus_s3::convex::{
@@ -24,8 +24,9 @@ use nimbus_s3::convex::{
 };
 use nimbus_s3::{NimbusS3, S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver};
 use nimbus_storage::{
-    ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectMultipartUpload,
-    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
+    ObjectConditionOutcome, ObjectDeleteConditionOutcome, ObjectDeleteExpectedState,
+    ObjectExpectedState, ObjectManifest, ObjectMultipartUpload, ObjectUploadConditionOutcome,
+    ObjectUploadExpectedState,
 };
 use s3s::service::S3ServiceBuilder;
 use s3s::{Body, HttpError};
@@ -134,13 +135,14 @@ impl S3ObjectMeta for EngineObjectMeta {
             .await
     }
 
-    async fn delete_manifest(
+    async fn delete_manifest_conditional(
         &self,
         bucket: &str,
         key: &str,
-    ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
+        expected: Vec<ObjectDeleteExpectedState>,
+    ) -> Result<ObjectDeleteConditionOutcome> {
         self.0
-            .delete_manifest(bucket.to_string(), key.to_string())
+            .delete_manifest_conditional(bucket.to_string(), key.to_string(), expected)
             .await
     }
 

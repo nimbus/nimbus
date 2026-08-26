@@ -1,10 +1,18 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
+use nimbus_blob::BlobStore;
+use nimbus_core::{Error, Result, StorageErrorKind};
 use nimbus_storage::ObjectChecksums;
+use nimbus_storage::ObjectChunkRef;
 use s3s::crypto::{Checksum, Crc64Nvme, Md5};
 use s3s::{S3Error, S3ErrorCode, S3Result};
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt as _;
+
+use crate::object_io::parse_blob_hash;
+
+const CHECKSUM_READ_BUFFER_LEN: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ComputedChecksums {
@@ -60,6 +68,59 @@ impl ComputedChecksums {
         }
         Ok(())
     }
+}
+
+/// Computes one full-object CRC64NVME over the selected multipart chunks.
+///
+/// The read stays bounded to one fixed buffer even when a blob backend later
+/// makes `get_stream` lazy. Each part's recorded length is verified while the
+/// checksum is built.
+pub(crate) async fn crc64nvme_for_chunks(
+    blobs: &dyn BlobStore,
+    chunks: &[ObjectChunkRef],
+) -> Result<String> {
+    let mut checksum = Crc64Nvme::new();
+    let mut buffer = vec![0_u8; CHECKSUM_READ_BUFFER_LEN];
+    for chunk in chunks {
+        let hash = parse_blob_hash(&chunk.blob_hash)?;
+        let mut reader = blobs.get_stream(&hash).await?;
+        let mut actual_len = 0_u64;
+        loop {
+            let read = reader.read(&mut buffer).await.map_err(|error| {
+                Error::storage(
+                    StorageErrorKind::Io,
+                    format!("read multipart chunk {}: {error}", chunk.blob_hash),
+                )
+            })?;
+            if read == 0 {
+                break;
+            }
+            actual_len = actual_len.checked_add(read as u64).ok_or_else(|| {
+                Error::storage(
+                    StorageErrorKind::Corruption,
+                    "multipart chunk length overflow",
+                )
+            })?;
+            if actual_len > chunk.len {
+                return Err(chunk_length_error(chunk, actual_len));
+            }
+            checksum.update(&buffer[..read]);
+        }
+        if actual_len != chunk.len {
+            return Err(chunk_length_error(chunk, actual_len));
+        }
+    }
+    Ok(STANDARD.encode(checksum.finalize()))
+}
+
+fn chunk_length_error(chunk: &ObjectChunkRef, actual_len: u64) -> Error {
+    Error::storage(
+        StorageErrorKind::Corruption,
+        format!(
+            "multipart chunk {} expected {} bytes but blob returned {actual_len}",
+            chunk.blob_hash, chunk.len
+        ),
+    )
 }
 
 pub(crate) fn decode_md5_base64(value: &str) -> S3Result<[u8; 16]> {
