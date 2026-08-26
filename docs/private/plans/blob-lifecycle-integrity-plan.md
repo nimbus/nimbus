@@ -64,8 +64,9 @@ blob for the grace window and the next complete-root sweep.
 - Owns: the SIC1 retained-blob erratum and the tracked storage seams
   specification.
 - Does not own: `MaterializedPosition`, PITR target validation, canonical value
-  encoding, or Merkle verification. The proposed
-  `incremental-materialized-verification-plan.md` owns those items.
+  encoding, or Merkle verification. The completed
+  `archive/incremental-materialized-verification-plan.md` record owns those
+  delivered contracts.
 - Does not own: cluster-wide root authority. `horizontal-scaling-plan.md` owns
   the Raft-committed root set and distributed automatic sweep policy.
 - Non-goals: per-object reference counts and synchronous S3 reclamation. The

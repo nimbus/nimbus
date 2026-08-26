@@ -1,10 +1,18 @@
 # Incremental Materialized Verification Plan
 
-Status: `active` | Owner: this plan | Created: 2026-08-19.
+Status: `ARCHIVED`.
+Archive date: 2026-08-26.
+Campaign status: complete.
+Pull requests: #302–#309, #315, and #318.
+Prerequisite pull request: #316.
+Verdict: `MERKLE_REQUIRED`.
+Residual ownership: RR30 owns IMVR1. RR31 owns IMVR2.
+
+Owner: this plan | Created: 2026-08-19 | Completed: 2026-08-26.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: publish the IMV9 cleanup pull request, then archive this plan
-after its terminal evidence is recorded.
+Next action: none. Every row is terminal. RR30 and RR31 retain the two routed
+architecture residuals.
 
 ## Outcome
 
@@ -119,7 +127,7 @@ IMV0 runs first after promotion and creates the proof root and the
 | IMV5 | If required, add bounded verification sessions, incremental reports, full-scrub anchors, and automatic escalation. | `done` | PR #308 merged as `ccddcf846`. Work `a7c678351`; hardening `395459752` and `3acdd45fd`; proof is in `imv5.md`. Verifier: `Summary: 11 passed, 5 failed`; Nimbus autoreview clean. |
 | IMV6 | If required, complete six-provider parity, recovery faults, memory bounds, metrics, and operator controls. | `done` | PR #309 merged as `f5f813366`. Work `3567ba656`; correction `0fe5db256`; proof is in `imv6.md`. The corrected hosted PostgreSQL, MySQL, and libSQL lanes pass, as do all other hosted checks. Verifier: `Summary: 14 passed, 2 failed`. |
 | IMV7 | Run closeout measurements and required gates, update governing architecture and operating docs, and publish the final verdict. | `done` | PR #315 merged as `637a2f15c`. The 36-coordinate matrix retains four typed seed-capacity results, and the exact gate rungs preserve `MERKLE_REQUIRED`. The rebased verifier reports `Summary: 16 passed, 0 failed`. Nimbus autoreview and every required hosted check passed, including the two process-list cases that the local sandbox could not run. |
-| IMV9 | After the final pull request merges, archive this plan, retain its proof root, and remove its active index entry. | `in_progress` | PR #315 is merged. RR30 and RR31 retain IMVR1 and IMVR2. Archive publication remains. |
+| IMV9 | After the final pull request merges, archive this plan, retain its proof root, and remove its active index entry. | `done` | Terminal cleanup PR #318 moves this plan to `docs/private/plans/archive/`, retains the proof root, removes the active index entry, and preserves IMVR1 under RR30 and IMVR2 under RR31. |
 
 ## Dependencies and coordination
 
@@ -828,3 +836,4 @@ Append rows at the end. This section stays last.
 | 2026-08-26 | IMV7 | rebased | Merged prerequisite PR #316 at `deeefa4c5` after all hosted checks passed. It corrects the libSQL cache test for the process-fence artifact that main now requires. Rebased PR #315 onto that commit. `git range-diff` shows all seven reviewed commits are patch-identical. The verifier reports `Summary: 16 passed, 0 failed`. Docs, format, patch, and writing checks pass. The first verifier rerun exhausted the recovery clone's generated target; removing only that target and using the shared repository target restored the passing result. |
 | 2026-08-26 | IMV7 | completed | Every hosted check passed, including PostgreSQL, MySQL, libSQL, the two process-list cases unavailable in the local sandbox, all PPSC shards, and all verification-harness shards. PR #315 merged as `637a2f15c`. IMV7 is terminal. |
 | 2026-08-26 | IMV9 | started | Created the cleanup branch from merged main `637a2f15c`. RR30 and RR31 still own IMVR1 and IMVR2. Archive publication remains. |
+| 2026-08-26 | IMV9 | completed | Terminal cleanup PR #318 moves this plan to `docs/private/plans/archive/`. Every ledger row is terminal. The proof root and its executable verifier remain in place, with the verifier routed to the archive path. The active index entry is removed. BLI points to the completed archive record. RR30 still owns IMVR1, and RR31 still owns IMVR2. Documentation, proof, and patch gates pass. This plan and BLI have zero writing diagnostics. The index remains at its baseline 48 diagnostics. |
