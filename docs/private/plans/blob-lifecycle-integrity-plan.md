@@ -3,9 +3,10 @@
 Status: `proposed` | Owner: this plan | Created: 2026-08-19
 Baseline: main @ bdda5da944e244f1643b21c6ac699391c9b40d83
 Proof root: `docs/private/plans/proof/blob-lifecycle-integrity/`
-Next action: land this plan and its rebased index on main. Keep it `proposed`
-while IMV executes. After IMV reaches a valid stop, promote this plan and run
-BLI0 to create the proof root and nine-condition red verifier.
+Next action: Execute BLI-SA6 through the Band SA control plane as a
+pre-promotion safety prerequisite. Keep this plan `proposed`. After BLI-SA6 is
+terminal, promote this plan and run BLI0 first to create the proof root and
+nine-condition red verifier.
 
 ## Outcome
 
@@ -59,6 +60,8 @@ blob for the grace window and the next complete-root sweep.
 - Owns: destructive byte reclamation, object roots, intent pins, and
   object-plane `BlobGc` composition.
 - Owns: the automatic single-node schedule and explicit local GC command.
+- Owns: error classification for scrub, heal, and rollback reads that can feed
+  quarantine or later reclamation decisions.
 - Owns: an engine-owned opaque multipart expected-state type that validates
   exact-one clause cardinality before the commit authority receives a write.
 - Owns: the SIC1 retained-blob erratum and the tracked storage seams
@@ -89,10 +92,15 @@ Promote this plan to `active` only when every item holds:
 BLI0 runs first after promotion and creates the proof root and the
 nine-condition red verifier.
 
+BLI-SA6 is an accepted Band SA safety prerequisite that runs while this plan is
+still `proposed`. It does not activate BLI0 through BLI5 or change the rule that
+BLI0 is the first task after promotion.
+
 ## Status ledger
 
 | ID | Task | Status | Evidence |
 |---|---|---|---|
+| BLI-SA6 | Preserve transient scrub, heal, and rollback read failures as errors. Only successful-read-wrong-bytes is corruption, and only `NotFound` is absence. | `in_progress` | Band SA6 |
 | BLI0 | Pin the baseline, create the proof root, author the nine-condition verifier red, inventory every production reclamation caller, and capture shared-hash fail-before evidence. No production behavior changes. | `todo` | |
 | BLI1 | Move destructive reclaim behind its owning lifecycle seam and remove every request-local S3 release path. | `todo` | |
 | BLI2 | Compose complete roots and atomic intent pins into `BlobGc`, recheck each pin before reclaim, and add one explicit local GC command. | `todo` | |
@@ -120,6 +128,9 @@ nine-condition red verifier.
   its operating guide and capacity warning. The horizontal scaling plan owns
   distributed automatic sweep policy after a committed root authority
   activates.
+- Band SA owns the BLI-SA6 execution branch and proof. This plan accepts its
+  classification invariant because quarantine and rollback decisions can feed
+  later reclamation. BLI-SA6 does not promote or otherwise start this plan.
 
 ## Invariants
 
@@ -150,6 +161,9 @@ nine-condition red verifier.
 14. A cycle that exhausts its budget without reclaiming is no-progress, not
     success. A starved sweep and a healthy sweep never report the same
     state.
+15. A transient read or verification error is not evidence of corruption or
+    absence. Only a successful read with wrong bytes is corruption, and only
+    `NotFound` means absent.
 
 ## Findings ledger
 
@@ -162,6 +176,7 @@ nine-condition red verifier.
 | BLIF5 | P3 / confirmed | Multipart revision validation runs only when the caller supplies exactly one clause. Other cardinalities bypass the guard. | BLI3 |
 | BLIF6 | P2 / confirmed | The governing storage seams specification is local-only and predates the landed pin registry, append-position seal, and automatic sweep posture. The SIC invariant set never contained a blob-liveness invariant for delete, replacement, or cleanup, so the shared-hash defect closed out of scope rather than falsely verified. Invariant 6 itself is rejected-condition-scoped and remains satisfied. | BLI5 |
 | BLIF7 | P3 / race refuted | Writable server and CLI backup handles take the same exclusive root lock. A second process refuses with `Busy`; no unpinned backup can coexist with the automatic sweep. | BLI4 |
+| BLIF8 | P2 / confirmed | Scrub converts every verification error into `HashMismatch` and quarantine, heal reports any mismatch cause as beyond repair, and erasure rollback treats every preimage read error as absence. Transient I/O can therefore become false corruption or authorize later unlink. | BLI-SA6 |
 
 ## Decisions
 
@@ -226,6 +241,16 @@ nine-condition red verifier.
 - Re-open only if the multipart protocol no longer requires one observed state
   to fence each put.
 
+### BLI-D6 Keep transport failure distinct from durable evidence
+
+- Verification and preimage reads preserve transient or unavailable-provider
+  errors as errors.
+- A successful read whose bytes do not match the expected hash is corruption.
+- `NotFound` is the only read result that proves an absent preimage.
+- Heal and quarantine decisions retain the classified cause instead of
+  collapsing transport failure into beyond-repair corruption.
+- Re-open only if a provider supplies a stronger typed absence contract.
+
 ## Rejected designs
 
 - Check every other manifest before each S3 release. Rejected because it races
@@ -250,6 +275,7 @@ nine-condition red verifier.
 | Sweep driver | five-minute interval, initial delay, missed tick, overlap, disable, live writer, incomplete roots, budget, restart, tenant fairness, CLI backup root-lock refusal |
 | Placement | local pack, encrypted local pack, placement wrapper, erasure repair ownership |
 | Outcome | rooted retained, pinned retained, grace retained, orphan reclaimed, compaction report |
+| Failure classification | wrong bytes, not found, permission, unavailable, transient I/O, rollback preimage |
 
 ## Verifier contract
 
@@ -270,6 +296,30 @@ It prints one line for each fixed condition and ends with
 The completion gate requires `Summary: 9 passed, 0 failed`.
 
 ## Tasks
+
+### BLI-SA6 Pre-promotion error classification prerequisite
+
+- Problem: scrub, heal, and erasure rollback collapse transient read failures
+  into corruption or absence. Quarantine and later reclamation can turn that
+  diagnostic error into a deletion hazard.
+- Owning seam and paths: `crates/nimbus-blob/src/scrub.rs`,
+  `crates/nimbus-blob/src/scrub/rebuild.rs`, and
+  `crates/nimbus-blob/src/erasure/manifest.rs`.
+- Steps:
+  1. Separate successful-read-wrong-bytes from read or verification failure.
+  2. Preserve typed transient failures through scrub findings and heal reports.
+  3. Treat only `NotFound` as an absent rollback preimage.
+  4. Add regressions for wrong bytes, not found, and transient provider errors.
+- Acceptance: wrong bytes still quarantine and can report beyond repair;
+  transient scrub and heal errors remain typed failures without quarantine;
+  rollback restores or unlinks only from a successful preimage read or a typed
+  `NotFound`; a transient preimage error aborts rollback without unlinking a
+  committed replica.
+- Fail-before: an injected transient verifier error becomes `HashMismatch` and
+  quarantine, and an injected transient rollback read error is recorded as an
+  absent preimage.
+- Verification: focused `nimbus-blob` scrub, rebuild, and erasure rollback
+  tests; strict Clippy; format; the Band SA proof and review gates.
 
 ### BLI0 Baseline and red verifier
 
@@ -608,3 +658,4 @@ Append rows at the end. This section stays last.
 | 2026-08-19 | BLI4 | refined | Replaced the proposed backup hold choice with the existing exclusive root-lock refusal contract. Bound forward progress to 100,000 unique 4 KiB objects with 10% unrooted bytes, which spans more than three default pack targets. No implementation started. |
 | 2026-08-19 | meta | corrected | Applied the second contract audit. Removed BLI0 from the promotion gate and sequenced it first after promotion. Made BLI4's two ordered pull requests the explicit gate exception. Moved the status ledger before Coordination for cold resume. No implementation started. |
 | 2026-08-20 | meta | rebased | Rebased onto `bdda5da94` after IMV landed and became active. Preserved both adjacent index entries. Recent main merges changed no BLI-owned blob path. No implementation started. |
+| 2026-08-26 | BLI-SA6 | accepted | Accepted Band SA6 as a pre-promotion safety prerequisite. It owns scrub, heal, and rollback read-error classification because false quarantine or absence can feed later deletion. The plan remains proposed; BLI0 through BLI5 have not started. |
