@@ -19,10 +19,16 @@ use super::{
 
 impl TenantStore {
     pub fn read_snapshot(&self) -> Result<TenantReadSnapshot> {
-        Ok(TenantReadSnapshot {
+        let snapshot = TenantReadSnapshot {
             read_txn: self.db.begin_read().map_err(map_redb_error)?,
+            retention_floor: self.retention_floor.clone(),
+            fault_injector: self.fault_injector.clone(),
             scan_metrics: self.scan_metrics.clone(),
-        })
+        };
+        snapshot
+            .retention_floor
+            .observe_published_read_floors(snapshot.retained_history_read_floors()?);
+        Ok(snapshot)
     }
 
     pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {

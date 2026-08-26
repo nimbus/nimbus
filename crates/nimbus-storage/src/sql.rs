@@ -34,6 +34,7 @@ pub(crate) mod index_history;
 pub(crate) mod predicate;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod read_snapshot;
+pub(crate) mod retention;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod row;
 #[cfg(any(feature = "mysql", feature = "postgres"))]

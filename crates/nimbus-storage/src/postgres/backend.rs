@@ -10,6 +10,7 @@ use crate::postgres::document_versions::{
 use crate::postgres::index_versions::{
     record_index_versions_for_events_in_session, record_index_versions_for_writes_in_session,
 };
+use crate::retention::{validate_contiguous_journal_page, validate_retention_after_page};
 
 // Dialect-independent row serialization lives once in `crate::sql::row`; the
 // PostgreSQL module re-exports it so existing call sites stay unchanged.
@@ -89,7 +90,12 @@ where
         .query_one(query.as_str(), &[])
         .await
         .map_err(map_postgres_error)?;
-    sequence_number_from_i64(row.get::<_, i64>(0))
+    let journal_head = sequence_number_from_i64(row.get::<_, i64>(0))?;
+    let applied_head = load_metadata_u64_from_session(session, schema_name, APPLIED_SEQUENCE_KEY)
+        .await?
+        .map(SequenceNumber)
+        .unwrap_or_default();
+    Ok(journal_head.max(applied_head))
 }
 
 pub(super) async fn load_documents_from_session<C>(
@@ -506,7 +512,10 @@ pub(super) async fn load_durable_records_from_session<C>(
 where
     C: GenericClient + Sync,
 {
-    let from = i64_from_sequence(sequence)?;
+    let latest_sequence = load_latest_sequence_from_session(session, schema_name).await?;
+    let cursor_floor = load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
+    let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(cursor_floor);
+    let from = i64_from_sequence(SequenceNumber(suffix_after.0.saturating_add(1)))?;
     let query = format!(
         "SELECT record_blob FROM {} WHERE sequence >= $1 ORDER BY sequence",
         qualified_table(schema_name, "commit_log")
@@ -515,12 +524,23 @@ where
         .query(query.as_str(), &[&from])
         .await
         .map_err(map_postgres_error)?;
-    rows.into_iter()
+    let records = rows
+        .into_iter()
         .map(|row| {
             let payload: Vec<u8> = row.get(0);
             deserialize_tenant_event_record(payload.as_slice())
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    let latest_sequence = records
+        .last()
+        .map(|record| record.sequence)
+        .unwrap_or_default()
+        .max(latest_sequence);
+    let authoritative_floor =
+        load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
+    validate_retention_after_page(suffix_after, authoritative_floor, "durable journal suffix")?;
+    validate_contiguous_journal_page(suffix_after, records.as_slice(), latest_sequence, false)?;
+    Ok(records)
 }
 
 pub(super) async fn load_durable_journal_cursor_floor_from_session<C>(
@@ -539,12 +559,49 @@ where
         .await
         .map_err(map_postgres_error)?;
     let min_sequence = row.get::<_, Option<i64>>(0);
-    match min_sequence {
-        Some(sequence) => Ok(SequenceNumber(
-            sequence_number_from_i64(sequence)?.0.saturating_sub(1),
-        )),
-        None => Ok(SequenceNumber(0)),
+    let inferred_floor = match min_sequence {
+        Some(sequence) => SequenceNumber(sequence_number_from_i64(sequence)?.0.saturating_sub(1)),
+        None => SequenceNumber(0),
+    };
+    let read_floors = load_retention_read_floors_from_session(session, schema_name).await?;
+    Ok(inferred_floor.max(read_floors.journal))
+}
+
+pub(super) async fn load_retention_read_floors_from_session<C>(
+    session: &C,
+    schema_name: &str,
+) -> Result<crate::RetentionReadFloors>
+where
+    C: GenericClient + Sync,
+{
+    let query = format!(
+        "SELECT key, value_blob FROM {} WHERE key IN ($1, $2, $3)",
+        qualified_table(schema_name, "metadata")
+    );
+    let document_floor_key = crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY;
+    let index_floor_key = crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY;
+    let journal_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
+    let rows = session
+        .query(
+            query.as_str(),
+            &[&document_floor_key, &index_floor_key, &journal_floor_key],
+        )
+        .await
+        .map_err(map_postgres_error)?;
+    let mut read_floors = crate::RetentionReadFloors::default();
+    for row in rows {
+        let key: String = row.get(0);
+        let value: Vec<u8> = row.get(1);
+        let floor = crate::retention::decode_retention_floor(value.as_slice())?;
+        if key == document_floor_key {
+            read_floors.document_versions = floor;
+        } else if key == index_floor_key {
+            read_floors.index_versions = floor;
+        } else if key == journal_floor_key {
+            read_floors.journal = floor;
+        }
     }
+    Ok(read_floors)
 }
 
 pub(super) async fn stream_durable_journal_from_session<C>(
@@ -558,12 +615,7 @@ where
 {
     let latest_sequence = load_latest_sequence_from_session(session, schema_name).await?;
     let cursor_floor = load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
-    if after.0 < cursor_floor.0 {
-        return Err(Error::InvalidInput(format!(
-            "journal cursor {} is behind the retention floor {}",
-            after.0, cursor_floor.0
-        )));
-    }
+    validate_retention_after_page(after, cursor_floor, "durable journal cursor")?;
     if after.0 > latest_sequence.0 {
         return Err(Error::InvalidInput(format!(
             "journal cursor {} is ahead of the latest durable sequence {}",
@@ -584,24 +636,32 @@ where
         .map_err(map_postgres_error)?;
     let mut records = Vec::with_capacity(limit);
     let mut has_more = false;
+    let mut observed_latest_sequence = latest_sequence;
     for row in rows {
         let payload: Vec<u8> = row.get(0);
+        let record = deserialize_tenant_event_record(payload.as_slice())?;
+        observed_latest_sequence = observed_latest_sequence.max(record.sequence);
         if records.len() == limit {
             has_more = true;
             break;
         }
-        records.push(deserialize_tenant_event_record(payload.as_slice())?);
+        records.push(record);
     }
+    let latest_sequence = observed_latest_sequence;
 
     let next_cursor = records
         .last()
         .map(|record| record.sequence)
         .unwrap_or(after);
+    let authoritative_floor =
+        load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
+    validate_retention_after_page(after, authoritative_floor, "durable journal page")?;
+    validate_contiguous_journal_page(after, records.as_slice(), latest_sequence, has_more)?;
     Ok(DurableJournalPage {
         records,
         next_cursor,
         latest_sequence,
-        cursor_floor,
+        cursor_floor: authoritative_floor,
         has_more,
     })
 }

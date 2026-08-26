@@ -36,12 +36,10 @@ pub use index_versions::HistoricalIndexDocumentPage;
 pub use journal_snapshot::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use journal_snapshot::validate_materialized_journal_replay_base_is_empty;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) use journal_snapshot::validate_point_in_time_archive_for_journal_replay_import;
 pub use journal_snapshot::{
     MaterializedJournalSnapshot, PointInTimeRestoreArchive, PointInTimeRestoreTarget,
-};
-#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
-pub(crate) use journal_snapshot::{
-    build_point_in_time_restore_archive, validate_point_in_time_archive_for_journal_replay_import,
 };
 pub(crate) use journal_snapshot::{
     build_point_in_time_restore_archive_from_checkpoint, describe_materialized_position,
@@ -162,6 +160,8 @@ pub enum ResolvedScheduleOp {
 /// flows.
 pub struct TenantReadSnapshot {
     pub(crate) read_txn: ReadTransaction,
+    pub(crate) retention_floor: Arc<RetentionFloor>,
+    pub(crate) fault_injector: Arc<dyn FaultInjector>,
     scan_metrics: Arc<ScanMetrics>,
 }
 

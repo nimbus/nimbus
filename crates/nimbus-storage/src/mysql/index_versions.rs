@@ -57,6 +57,20 @@ impl MySqlTenantStore {
 // lives once in `crate::sql::index_history`; only the entry load below is
 // dialect-specific.
 impl SqlHistoricalIndexStore for MySqlTenantStore {
+    fn retention_read_floors(&self) -> Result<crate::RetentionReadFloors> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_retention_read_floors_from_session(&mut conn, &database_name).await
+        })
+        .map(|floors| floors.max(self.retention_floor.published_read_floors()))
+    }
+
+    fn check_retention_read_page(&self) -> Result<()> {
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)
+    }
+
     fn visible_historical_index_entries(
         &self,
         read_shape: &HistoricalReadShape,

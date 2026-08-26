@@ -5,7 +5,6 @@ use super::index_versions::{
     prune_index_versions_before_in_session, record_index_versions_for_events_in_session,
 };
 use super::*;
-use crate::CommitterLeaseResult;
 use crate::sql::schema_events::{
     durable_record_changes_schema_cache, sql_record_schema_set_events,
 };
@@ -17,6 +16,7 @@ use crate::sql::store_core::{
 };
 use crate::sql::write_core::SqlDurableJournalTransaction;
 use crate::sql::write_pipeline::SqlWritePipelineMetrics;
+use crate::{CommitterLeaseResult, RetentionReadFloors};
 
 sql_store_core_facade!(PostgresTenantStore);
 
@@ -112,11 +112,15 @@ impl SqlStoreCore for PostgresTenantStore {
         self.retention_floor.as_ref()
     }
 
+    fn check_retention_read_page(&self) -> Result<()> {
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)
+    }
+
     fn journal_progress(&self) -> Result<JournalProgress> {
         PostgresTenantStore::journal_progress(self)
     }
 
-    fn load_retention_metadata_snapshot(&self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+    fn load_retention_metadata_snapshot(&self) -> Result<(Option<Vec<u8>>, RetentionReadFloors)> {
         let loaded = self.execute_write(|transaction| transaction.load_retention_metadata())?;
         debug_assert!(loaded.commit.is_none());
         Ok(loaded.value)
@@ -322,7 +326,7 @@ impl SqlWriteTransactionCore for PostgresWriteTransaction {
         )
     }
 
-    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, RetentionReadFloors)> {
         PostgresWriteTransaction::load_retention_metadata(self)
     }
 
@@ -337,9 +341,9 @@ impl SqlWriteTransactionCore for PostgresWriteTransaction {
     fn store_retention_metadata(
         &mut self,
         checkpoint_blob: &[u8],
-        physical_floor: SequenceNumber,
+        read_floors: RetentionReadFloors,
     ) -> Result<()> {
-        PostgresWriteTransaction::store_retention_metadata(self, checkpoint_blob, physical_floor)
+        PostgresWriteTransaction::store_retention_metadata(self, checkpoint_blob, read_floors)
     }
 }
 
@@ -448,33 +452,49 @@ impl PostgresWriteTransaction {
         })
     }
 
-    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, RetentionReadFloors)> {
         self.check_cancel()?;
         let query = format!(
-            "SELECT key, value_blob FROM {} WHERE key = $1 OR key = $2",
+            "SELECT key, value_blob FROM {} WHERE key IN ($1, $2, $3, $4)",
             qualified_table(&self.schema_name, "metadata")
         );
         let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let document_floor_key = crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY;
+        let index_floor_key = crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY;
         let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
         let client = self.session()?;
         let rows = self.block_on(async move {
             client
-                .query(query.as_str(), &[&checkpoint_key, &physical_floor_key])
+                .query(
+                    query.as_str(),
+                    &[
+                        &checkpoint_key,
+                        &document_floor_key,
+                        &index_floor_key,
+                        &physical_floor_key,
+                    ],
+                )
                 .await
                 .map_err(map_postgres_error)
         })?;
         let mut checkpoint_blob = None;
-        let mut physical_floor = SequenceNumber(0);
+        let mut read_floors = RetentionReadFloors::default();
         for row in rows {
             let key: String = row.get(0);
             let value: Vec<u8> = row.get(1);
             if key == checkpoint_key {
                 checkpoint_blob = Some(value);
+            } else if key == document_floor_key {
+                read_floors.document_versions =
+                    crate::retention::decode_retention_floor(value.as_slice())?;
+            } else if key == index_floor_key {
+                read_floors.index_versions =
+                    crate::retention::decode_retention_floor(value.as_slice())?;
             } else if key == physical_floor_key {
-                physical_floor = crate::retention::decode_retention_floor(value.as_slice())?;
+                read_floors.journal = crate::retention::decode_retention_floor(value.as_slice())?;
             }
         }
-        Ok((checkpoint_blob, physical_floor))
+        Ok((checkpoint_blob, read_floors))
     }
 
     fn prune_durable_journal_through(&mut self, sequence: SequenceNumber) -> Result<u64> {
@@ -496,18 +516,23 @@ impl PostgresWriteTransaction {
     fn store_retention_metadata(
         &mut self,
         checkpoint_blob: &[u8],
-        physical_floor: SequenceNumber,
+        read_floors: RetentionReadFloors,
     ) -> Result<()> {
         self.check_cancel()?;
         let query = format!(
-            "INSERT INTO {} (key, value_blob) VALUES ($1, $2), ($3, $4) \
+            "INSERT INTO {} (key, value_blob) VALUES \
+             ($1, $2), ($3, $4), ($5, $6), ($7, $8) \
              ON CONFLICT(key) DO UPDATE SET value_blob = EXCLUDED.value_blob",
             qualified_table(&self.schema_name, "metadata")
         );
         let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let document_floor_key = crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY;
+        let index_floor_key = crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY;
         let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
         let checkpoint_blob = checkpoint_blob.to_vec();
-        let physical_floor_blob = physical_floor.0.to_be_bytes().to_vec();
+        let document_floor_blob = read_floors.document_versions.0.to_be_bytes().to_vec();
+        let index_floor_blob = read_floors.index_versions.0.to_be_bytes().to_vec();
+        let physical_floor_blob = read_floors.journal.0.to_be_bytes().to_vec();
         let client = self.session()?;
         self.block_on(async move {
             client
@@ -516,6 +541,10 @@ impl PostgresWriteTransaction {
                     &[
                         &checkpoint_key,
                         &checkpoint_blob,
+                        &document_floor_key,
+                        &document_floor_blob,
+                        &index_floor_key,
+                        &index_floor_blob,
                         &physical_floor_key,
                         &physical_floor_blob,
                     ],

@@ -269,11 +269,13 @@ impl SqliteTenantStore {
         config: RetentionGcConfig,
     ) -> Result<RetentionHistoryState> {
         let watermarks = self.retention_gc_watermarks(config)?;
-        let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
+        let (checkpoint, read_floors, _) = self.load_retention_checkpoint()?;
+        self.retention_floor
+            .observe_published_read_floors(read_floors);
         RetentionHistoryState::new(
             watermarks.document_versions.latest_sequence,
             crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence()),
-            physical_floor,
+            read_floors.journal,
             checkpoint,
         )
     }
@@ -283,14 +285,16 @@ impl SqliteTenantStore {
         config: RetentionGcConfig,
     ) -> Result<PreparedRetentionHistory> {
         let watermarks = self.retention_gc_watermarks(config)?;
-        let (checkpoint, physical_floor, expected_checkpoint_blob) =
+        let (checkpoint, expected_read_floors, expected_checkpoint_blob) =
             self.load_retention_checkpoint()?;
+        self.retention_floor
+            .observe_published_read_floors(expected_read_floors);
         let desired_floor =
             crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence());
         let before = RetentionHistoryState::new(
             watermarks.document_versions.latest_sequence,
             desired_floor,
-            physical_floor,
+            expected_read_floors.journal,
             checkpoint.clone(),
         )?;
         let journal_tail = self
@@ -303,6 +307,7 @@ impl SqliteTenantStore {
             before,
             candidate,
             expected_checkpoint_blob,
+            expected_read_floors,
             expected_revision: None,
         })
     }
@@ -319,9 +324,15 @@ impl SqliteTenantStore {
             before,
             candidate,
             expected_checkpoint_blob,
+            expected_read_floors,
             ..
         } = prepared;
         let candidate_blob = crate::retention::serialize_retention_checkpoint(&candidate)?;
+        let published_read_floors = expected_read_floors.max(crate::RetentionReadFloors::new(
+            watermarks.document_versions.safe_prune_before,
+            watermarks.index_versions.safe_prune_before,
+            candidate.sequence(),
+        ));
 
         let mut transaction = self.begin_write_transaction()?;
         let current_checkpoint_blob = transaction
@@ -336,6 +347,32 @@ impl SqliteTenantStore {
         if current_checkpoint_blob != expected_checkpoint_blob {
             return Err(Error::conflict(
                 "retention checkpoint changed while compaction was prepared".to_string(),
+            ));
+        }
+        let current_read_floors = {
+            let conn = transaction.connection_mut()?;
+            let load_floor = |key: &str| -> Result<SequenceNumber> {
+                conn.query_row(
+                    "SELECT value_blob FROM metadata WHERE key = ?1",
+                    [key],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(map_sqlite_error)?
+                .as_deref()
+                .map(crate::retention::decode_retention_floor)
+                .transpose()
+                .map(|floor| floor.unwrap_or_default())
+            };
+            crate::RetentionReadFloors::new(
+                load_floor(crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)?,
+                load_floor(crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)?,
+                load_floor(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?,
+            )
+        };
+        if current_read_floors != expected_read_floors {
+            return Err(Error::conflict(
+                "retention read floors changed while compaction was prepared".to_string(),
             ));
         }
         let applied_head = transaction
@@ -360,11 +397,11 @@ impl SqliteTenantStore {
         }
         let document_versions_pruned = document_versions::prune_document_versions_before_in_conn(
             transaction.connection_mut()?,
-            watermarks.document_versions.safe_prune_before,
+            published_read_floors.document_versions,
         )?;
         let index_versions_pruned = index_versions::prune_index_versions_before_in_conn(
             transaction.connection_mut()?,
-            watermarks.index_versions.safe_prune_before,
+            published_read_floors.index_versions,
         )?;
         let journal_records_pruned = transaction
             .connection_mut()?
@@ -379,11 +416,29 @@ impl SqliteTenantStore {
         )?;
         transaction.put_metadata(
             crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
-            candidate.sequence().0.to_be_bytes().as_slice(),
+            published_read_floors.journal.0.to_be_bytes().as_slice(),
+        )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+            published_read_floors
+                .document_versions
+                .0
+                .to_be_bytes()
+                .as_slice(),
+        )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+            published_read_floors
+                .index_versions
+                .0
+                .to_be_bytes()
+                .as_slice(),
         )?;
         self.fault_injector
             .check(FaultPoint::RetentionCheckpointBeforeCommit)?;
-        let commit = transaction.commit()?;
+        let commit = self
+            .retention_floor
+            .publish_read_floors_with_commit(published_read_floors, || transaction.commit())?;
         debug_assert!(commit.is_none());
         self.fault_injector
             .check(FaultPoint::RetentionCheckpointAfterCommit)?;
@@ -391,7 +446,7 @@ impl SqliteTenantStore {
         let after = RetentionHistoryState::new(
             before.latest_sequence,
             before.desired_floor,
-            candidate.sequence(),
+            published_read_floors.journal,
             candidate,
         )?;
         Ok(RetentionHistorySummary {
@@ -415,7 +470,7 @@ impl SqliteTenantStore {
         &self,
     ) -> Result<(
         MaterializedRetentionCheckpoint,
-        SequenceNumber,
+        crate::RetentionReadFloors,
         Option<Vec<u8>>,
     )> {
         let checkpoint_blob =
@@ -425,19 +480,25 @@ impl SqliteTenantStore {
             .map(crate::retention::deserialize_retention_checkpoint)
             .transpose()?
             .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
-        let physical_floor = self
-            .metadata_blob(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?
-            .as_deref()
-            .map(crate::retention::decode_retention_floor)
-            .transpose()?
-            .unwrap_or(SequenceNumber(0));
+        let load_floor = |key| -> Result<SequenceNumber> {
+            self.metadata_blob(key)?
+                .as_deref()
+                .map(crate::retention::decode_retention_floor)
+                .transpose()
+                .map(|floor| floor.unwrap_or_default())
+        };
+        let read_floors = crate::RetentionReadFloors::new(
+            load_floor(crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)?,
+            load_floor(crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)?,
+            load_floor(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?,
+        );
         RetentionHistoryState::new(
             checkpoint.sequence(),
             checkpoint.sequence(),
-            physical_floor,
+            read_floors.journal,
             checkpoint.clone(),
         )?;
-        Ok((checkpoint, physical_floor, checkpoint_blob))
+        Ok((checkpoint, read_floors, checkpoint_blob))
     }
 
     pub(crate) fn install_imported_retention_checkpoint(
@@ -463,8 +524,22 @@ impl SqliteTenantStore {
             crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
             checkpoint.sequence().0.to_be_bytes().as_slice(),
         )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+            checkpoint.sequence().0.to_be_bytes().as_slice(),
+        )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+            checkpoint.sequence().0.to_be_bytes().as_slice(),
+        )?;
         let commit = transaction.commit()?;
         debug_assert!(commit.is_none());
+        self.retention_floor
+            .observe_published_read_floors(crate::RetentionReadFloors::new(
+                checkpoint.sequence(),
+                checkpoint.sequence(),
+                checkpoint.sequence(),
+            ));
         Ok(())
     }
 }
@@ -518,6 +593,8 @@ impl SqliteTenantStore {
 pub struct SqliteReadSnapshot {
     conn: PooledSqliteConnection,
     schema_cache: Arc<RwLock<Schema>>,
+    retention_floor: Arc<RetentionFloor>,
+    fault_injector: Arc<dyn FaultInjector>,
 }
 
 pub struct SqliteWriteTransaction {

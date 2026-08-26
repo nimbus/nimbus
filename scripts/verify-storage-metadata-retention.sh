@@ -102,7 +102,11 @@ else
   fail 'all provider stores expose the current retention-floor seam'
 fi
 
-if contains 'journal cursor .* is behind the retention floor' \
+if contains_all crates/nimbus-storage/src/retention/read_safety.rs \
+  'fn validate_retention_after_page' \
+  'HistoricalReadErrorKind::RetentionExpired' \
+  'is behind the retention floor' \
+  && contains 'validate_retention_after_page' \
     crates/nimbus-storage/src/store/journal_stream.rs \
     crates/nimbus-storage/src/sqlite/read.rs \
     crates/nimbus-storage/src/postgres/backend.rs \

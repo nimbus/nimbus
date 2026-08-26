@@ -10,7 +10,7 @@ use nimbus_core::ResourcePathBinding;
 use crate::FaultPoint;
 use crate::sql::store_core::{SqlStoreCore, SqlWriteTransactionCore, sql_store_core_facade};
 use crate::sql::write_core::{SqlWriteBackend, sql_apply_resolved_write, sql_commit, sql_rollback};
-use crate::{CommitterLeaseError, CommitterLeaseResult};
+use crate::{CommitterLeaseError, CommitterLeaseResult, RetentionReadFloors};
 
 sql_store_core_facade!(LibsqlReplicaTenantStore);
 
@@ -113,11 +113,15 @@ impl SqlStoreCore for LibsqlReplicaTenantStore {
         self.retention_floor.as_ref()
     }
 
+    fn check_retention_read_page(&self) -> Result<()> {
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)
+    }
+
     fn journal_progress(&self) -> Result<JournalProgress> {
         LibsqlReplicaTenantStore::journal_progress(self)
     }
 
-    fn load_retention_metadata_snapshot(&self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+    fn load_retention_metadata_snapshot(&self) -> Result<(Option<Vec<u8>>, RetentionReadFloors)> {
         let loaded = self.execute_write(|transaction| transaction.load_retention_metadata())?;
         debug_assert!(loaded.commit.is_none());
         Ok(loaded.value)
@@ -339,7 +343,7 @@ impl SqlWriteTransactionCore for LibsqlReplicaWriteTransaction {
         )
     }
 
-    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, RetentionReadFloors)> {
         LibsqlReplicaWriteTransaction::load_retention_metadata(self)
     }
 
@@ -354,13 +358,9 @@ impl SqlWriteTransactionCore for LibsqlReplicaWriteTransaction {
     fn store_retention_metadata(
         &mut self,
         checkpoint_blob: &[u8],
-        physical_floor: SequenceNumber,
+        read_floors: RetentionReadFloors,
     ) -> Result<()> {
-        LibsqlReplicaWriteTransaction::store_retention_metadata(
-            self,
-            checkpoint_blob,
-            physical_floor,
-        )
+        LibsqlReplicaWriteTransaction::store_retention_metadata(self, checkpoint_blob, read_floors)
     }
 }
 
@@ -628,19 +628,34 @@ impl LibsqlReplicaWriteTransaction {
         })
     }
 
-    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, RetentionReadFloors)> {
         self.check_cancel()?;
         let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let document_floor_key = crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY;
+        let index_floor_key = crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY;
         let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
         self.store.block_on(async {
             let checkpoint_blob =
                 load_remote_metadata_blob(self.session()?, checkpoint_key).await?;
-            let physical_floor = load_remote_metadata_blob(self.session()?, physical_floor_key)
+            let document_versions = load_remote_metadata_blob(self.session()?, document_floor_key)
                 .await?
                 .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
                 .transpose()?
                 .unwrap_or(SequenceNumber(0));
-            Ok((checkpoint_blob, physical_floor))
+            let index_versions = load_remote_metadata_blob(self.session()?, index_floor_key)
+                .await?
+                .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
+                .transpose()?
+                .unwrap_or(SequenceNumber(0));
+            let journal = load_remote_metadata_blob(self.session()?, physical_floor_key)
+                .await?
+                .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
+                .transpose()?
+                .unwrap_or(SequenceNumber(0));
+            Ok((
+                checkpoint_blob,
+                RetentionReadFloors::new(document_versions, index_versions, journal),
+            ))
         })
     }
 
@@ -673,21 +688,30 @@ impl LibsqlReplicaWriteTransaction {
     fn store_retention_metadata(
         &mut self,
         checkpoint_blob: &[u8],
-        physical_floor: SequenceNumber,
+        read_floors: RetentionReadFloors,
     ) -> Result<()> {
         self.check_cancel()?;
         let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let document_floor_key = crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY;
+        let index_floor_key = crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY;
         let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
         let checkpoint_blob = checkpoint_blob.to_vec();
-        let physical_floor_blob = physical_floor.0.to_be_bytes().to_vec();
+        let document_floor_blob = read_floors.document_versions.0.to_be_bytes().to_vec();
+        let index_floor_blob = read_floors.index_versions.0.to_be_bytes().to_vec();
+        let physical_floor_blob = read_floors.journal.0.to_be_bytes().to_vec();
         self.store.block_on(async {
             self.session()?
                 .execute(
-                    "INSERT INTO metadata (key, value_blob) VALUES (?1, ?2), (?3, ?4) \
+                    "INSERT INTO metadata (key, value_blob) VALUES \
+                     (?1, ?2), (?3, ?4), (?5, ?6), (?7, ?8) \
                      ON CONFLICT(key) DO UPDATE SET value_blob = excluded.value_blob",
                     libsql::params![
                         checkpoint_key,
                         checkpoint_blob,
+                        document_floor_key,
+                        document_floor_blob,
+                        index_floor_key,
+                        index_floor_blob,
                         physical_floor_key,
                         physical_floor_blob
                     ],

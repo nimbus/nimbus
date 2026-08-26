@@ -903,11 +903,14 @@ impl LibsqlReplicaTenantStore {
         &self,
         sequence: SequenceNumber,
     ) -> Result<Vec<TenantEventRecord>> {
-        let sequence = i64_from_u64(sequence.0)?;
+        let latest_sequence = self.load_remote_latest_sequence().await?;
+        let cursor_floor = self.load_remote_durable_journal_cursor_floor().await?;
+        let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(cursor_floor);
+        let sequence_i64 = i64_from_u64(suffix_after.0.saturating_add(1))?;
         let sql = format!(
-            "SELECT record_blob FROM commit_log WHERE sequence >= {sequence} ORDER BY sequence"
+            "SELECT record_blob FROM commit_log WHERE sequence >= {sequence_i64} ORDER BY sequence"
         );
-        retry_idempotent_remote_operation(
+        let records = retry_idempotent_remote_operation(
             &self.remote_session,
             "load durable journal records",
             |conn| {
@@ -953,7 +956,25 @@ impl LibsqlReplicaTenantStore {
                 }
             },
         )
-        .await
+        .await?;
+        let latest_sequence = records
+            .last()
+            .map(|record| record.sequence)
+            .unwrap_or_default()
+            .max(latest_sequence);
+        let authoritative_floor = self.load_remote_durable_journal_cursor_floor().await?;
+        crate::retention::validate_retention_after_page(
+            suffix_after,
+            authoritative_floor,
+            "durable journal suffix",
+        )?;
+        crate::retention::validate_contiguous_journal_page(
+            suffix_after,
+            records.as_slice(),
+            latest_sequence,
+            false,
+        )?;
+        Ok(records)
     }
 
     async fn load_remote_durable_journal_page(
@@ -963,12 +984,11 @@ impl LibsqlReplicaTenantStore {
     ) -> Result<DurableJournalPage> {
         let latest_sequence = self.load_remote_latest_sequence().await?;
         let cursor_floor = self.load_remote_durable_journal_cursor_floor().await?;
-        if after.0 < cursor_floor.0 {
-            return Err(Error::InvalidInput(format!(
-                "journal cursor {} is behind the retention floor {}",
-                after.0, cursor_floor.0
-            )));
-        }
+        crate::retention::validate_retention_after_page(
+            after,
+            cursor_floor,
+            "durable journal cursor",
+        )?;
         if after.0 > latest_sequence.0 {
             return Err(Error::InvalidInput(format!(
                 "journal cursor {} is ahead of the latest durable sequence {}",
@@ -989,23 +1009,39 @@ impl LibsqlReplicaTenantStore {
             .map_err(map_libsql_error)?;
         let mut records = Vec::with_capacity(limit);
         let mut has_more = false;
+        let mut observed_latest_sequence = latest_sequence;
         while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
             let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
+            let record = deserialize_tenant_event_record(payload.as_slice())?;
+            observed_latest_sequence = observed_latest_sequence.max(record.sequence);
             if records.len() == limit {
                 has_more = true;
                 continue;
             }
-            records.push(deserialize_tenant_event_record(payload.as_slice())?);
+            records.push(record);
         }
+        let latest_sequence = observed_latest_sequence;
         let next_cursor = records
             .last()
             .map(|record| record.sequence)
             .unwrap_or(after);
+        let authoritative_floor = self.load_remote_durable_journal_cursor_floor().await?;
+        crate::retention::validate_retention_after_page(
+            after,
+            authoritative_floor,
+            "durable journal page",
+        )?;
+        crate::retention::validate_contiguous_journal_page(
+            after,
+            records.as_slice(),
+            latest_sequence,
+            has_more,
+        )?;
         Ok(DurableJournalPage {
             records,
             next_cursor,
             latest_sequence,
-            cursor_floor,
+            cursor_floor: authoritative_floor,
             has_more,
         })
     }
@@ -1020,10 +1056,45 @@ impl LibsqlReplicaTenantStore {
             return Ok(SequenceNumber(0));
         };
         let min_sequence = row.get::<Option<i64>>(0).map_err(map_libsql_error)?;
-        Ok(match min_sequence {
+        let inferred_floor = match min_sequence {
             Some(sequence) => SequenceNumber(sequence_from_i64(sequence)?.0.saturating_sub(1)),
             None => SequenceNumber(0),
-        })
+        };
+        let read_floors = self.load_remote_retention_read_floors().await?;
+        Ok(inferred_floor.max(read_floors.journal))
+    }
+
+    async fn load_remote_retention_read_floors(&self) -> Result<crate::RetentionReadFloors> {
+        let conn = self.remote_connection()?;
+        let document_versions = load_remote_metadata_blob(
+            &conn,
+            crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+        )
+        .await?
+        .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
+        .transpose()?
+        .unwrap_or_default();
+        let index_versions = load_remote_metadata_blob(
+            &conn,
+            crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+        )
+        .await?
+        .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
+        .transpose()?
+        .unwrap_or_default();
+        let journal = load_remote_metadata_blob(
+            &conn,
+            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+        )
+        .await?
+        .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
+        .transpose()?
+        .unwrap_or_default();
+        Ok(crate::RetentionReadFloors::new(
+            document_versions,
+            index_versions,
+            journal,
+        ))
     }
 
     async fn load_remote_scheduled_jobs(&self, table: &str) -> Result<Vec<ScheduledJob>> {

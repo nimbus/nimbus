@@ -68,6 +68,26 @@ async fn libsql_provider_retention_checkpoint_fault_rolls_back_every_delete() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn libsql_provider_page_rejects_concurrent_retention_prune() {
+    let (faults, rows_read, resume) = super::super::pause_after_retention_read_page();
+    with_test_provider_with_faults(faults, |provider, _config| async move {
+        let tenant = TenantId::new("retention-page-race").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        super::super::exercise_provider_retention_concurrent_prune_page(
+            opened.store,
+            "libsql_retention_page",
+            rows_read,
+            resume,
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn libsql_provider_retention_sql_error_preserves_error_and_rolls_back() {
     with_test_provider(|provider, config| async move {
         let tenant = TenantId::new("retention-provider-error").expect("tenant id should build");

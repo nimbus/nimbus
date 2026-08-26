@@ -1,5 +1,7 @@
 use super::*;
-use crate::{PointInTimeRestoreTarget, RetentionGcConfig, RetentionParticipant};
+use crate::{
+    PointInTimeRestoreTarget, RetentionGcConfig, RetentionParticipant, RetentionReadFloors,
+};
 use nimbus_core::{DocumentLocator, DocumentPath, ResourcePathBinding};
 
 #[derive(Default)]
@@ -650,6 +652,14 @@ fn embedded_retention_checkpoint_fault_after_commit_exposes_atomic_floor() {
     assert_eq!(state.confirmed_floor, SequenceNumber(2));
     assert_eq!(state.physical_floor, SequenceNumber(2));
     assert_eq!(
+        redb.load_retention_checkpoint().unwrap().1,
+        RetentionReadFloors::new(SequenceNumber(2), SequenceNumber(2), SequenceNumber(2),)
+    );
+    assert_eq!(
+        redb.retention_floor().published_read_floors(),
+        RetentionReadFloors::new(SequenceNumber(2), SequenceNumber(2), SequenceNumber(2),)
+    );
+    assert_eq!(
         redb.read_durable_journal_from(SequenceNumber(1))
             .unwrap()
             .len(),
@@ -679,6 +689,14 @@ fn embedded_retention_checkpoint_fault_after_commit_exposes_atomic_floor() {
     assert_eq!(state.confirmed_floor, SequenceNumber(2));
     assert_eq!(state.physical_floor, SequenceNumber(2));
     assert_eq!(
+        sqlite.load_retention_checkpoint().unwrap().1,
+        RetentionReadFloors::new(SequenceNumber(2), SequenceNumber(2), SequenceNumber(2),)
+    );
+    assert_eq!(
+        sqlite.retention_floor().published_read_floors(),
+        RetentionReadFloors::new(SequenceNumber(2), SequenceNumber(2), SequenceNumber(2),)
+    );
+    assert_eq!(
         sqlite
             .read_durable_journal_from(SequenceNumber(1))
             .unwrap()
@@ -703,6 +721,10 @@ fn embedded_retention_checkpoint_fault_after_commit_exposes_atomic_floor() {
         .unwrap();
     assert_eq!(state.confirmed_floor, SequenceNumber(2));
     assert_eq!(state.physical_floor, SequenceNumber(2));
+    assert_eq!(
+        memory.retention_floor().published_read_floors(),
+        RetentionReadFloors::new(SequenceNumber(2), SequenceNumber(2), SequenceNumber(2),)
+    );
     assert_eq!(
         memory
             .read_durable_journal_from(SequenceNumber(1))

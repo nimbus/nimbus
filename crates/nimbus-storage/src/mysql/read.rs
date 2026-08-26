@@ -2,6 +2,7 @@ use super::resource_paths::load_resource_path_bindings_from_session;
 use super::*;
 use crate::IndexRangeBound;
 use crate::range_bound::{borrow_index_range_bound, clone_index_range_bound};
+use crate::retention::{validate_contiguous_journal_page, validate_retention_after_page};
 
 impl MySqlTenantStore {
     pub fn load_schema(&self) -> Result<Schema> {
@@ -371,18 +372,13 @@ impl MySqlTenantStore {
         validate_durable_journal_stream_limit(limit)?;
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
-        self.block_on(async move {
+        let mut page = self.block_on(async move {
             let mut conn = provider.conn().await?;
             let latest_sequence =
                 load_latest_sequence_from_session(&mut conn, &database_name).await?;
             let cursor_floor =
                 load_durable_journal_cursor_floor_from_session(&mut conn, &database_name).await?;
-            if after.0 < cursor_floor.0 {
-                return Err(Error::InvalidInput(format!(
-                    "journal cursor {} is behind the retention floor {}",
-                    after.0, cursor_floor.0
-                )));
-            }
+            validate_retention_after_page(after, cursor_floor, "durable journal cursor")?;
             if after.0 > latest_sequence.0 {
                 return Err(Error::InvalidInput(format!(
                     "journal cursor {} is ahead of the latest durable sequence {}",
@@ -405,31 +401,65 @@ impl MySqlTenantStore {
                 .map_err(map_mysql_error)?;
             let mut records = Vec::with_capacity(limit);
             let mut has_more = false;
+            let mut observed_latest_sequence = latest_sequence;
             for row in rows {
                 let (record_blob,): (Vec<u8>,) = mysql_async::from_row(row);
+                let record = deserialize_tenant_event_record(record_blob.as_slice())?;
+                observed_latest_sequence = observed_latest_sequence.max(record.sequence);
                 if records.len() == limit {
                     has_more = true;
                     break;
                 }
-                records.push(deserialize_tenant_event_record(record_blob.as_slice())?);
+                records.push(record);
             }
+            let latest_sequence = observed_latest_sequence;
             let next_cursor = records
                 .last()
                 .map(|record| record.sequence)
                 .unwrap_or(after);
+            let authoritative_floor =
+                load_durable_journal_cursor_floor_from_session(&mut conn, &database_name).await?;
+            validate_retention_after_page(after, authoritative_floor, "durable journal page")?;
+            validate_contiguous_journal_page(after, records.as_slice(), latest_sequence, has_more)?;
             Ok(DurableJournalPage {
                 records,
                 next_cursor,
                 latest_sequence,
-                cursor_floor,
+                cursor_floor: authoritative_floor,
                 has_more,
             })
-        })
+        })?;
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let authoritative_floor = self
+            .block_on(async move {
+                let mut conn = provider.conn().await?;
+                load_durable_journal_cursor_floor_from_session(&mut conn, &database_name).await
+            })?
+            .max(self.retention_floor.published_read_floors().journal);
+        validate_retention_after_page(after, authoritative_floor, "durable journal page")?;
+        page.cursor_floor = page.cursor_floor.max(authoritative_floor);
+        Ok(page)
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
-        let (snapshot, cursor_floor) = self.read_snapshot_with_journal_floor()?;
+        let (snapshot, initial_floor) = self.read_snapshot_with_journal_floor()?;
         let snapshot = snapshot.export_materialized_journal_snapshot()?;
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let authoritative_floor = self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_durable_journal_cursor_floor_from_session(&mut conn, &database_name).await
+        })?;
+        let cursor_floor = initial_floor
+            .max(authoritative_floor)
+            .max(self.retention_floor.published_read_floors().journal);
+        validate_retention_after_page(
+            snapshot.applied_sequence,
+            cursor_floor,
+            "durable journal bootstrap",
+        )?;
         Ok(DurableJournalBootstrap {
             resume_after: snapshot.applied_sequence,
             bootstrap_cut: snapshot.durable_head,
