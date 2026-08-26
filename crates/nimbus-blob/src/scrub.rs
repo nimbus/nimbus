@@ -1255,6 +1255,16 @@ fn verify_record_paced(
     Ok(())
 }
 
+/// Turns verified corruption into a finding candidate. Every other failure
+/// remains an error and cannot authorize quarantine.
+fn classify_verification(verdict: Result<()>) -> Result<Option<Error>> {
+    match verdict {
+        Ok(()) => Ok(None),
+        Err(err) if err.storage_kind() == Some(StorageErrorKind::Corruption) => Ok(Some(err)),
+        Err(err) => Err(err),
+    }
+}
+
 async fn merge_pack_findings(
     report: &mut ScrubReport,
     pack_scan: &PackScan,
@@ -1373,9 +1383,9 @@ async fn merge_pack_findings(
         *pacing = next_pacing;
         report.bytes_scanned = report.bytes_scanned.saturating_add(direct_bytes);
         for (hash, entry, verdict) in verdicts {
-            match verdict {
-                Ok(()) => report.records_verified += 1,
-                Err(err) => {
+            match classify_verification(verdict)? {
+                None => report.records_verified += 1,
+                Some(err) => {
                     report.corrupt_records += 1;
                     report.findings.push(finding(
                         ScrubFindingKind::HashMismatch,

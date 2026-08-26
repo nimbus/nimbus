@@ -20,8 +20,8 @@ use crate::local::{self, INDEX_MAGIC, INDEX_PUT, LocalPackState, PACK_MAGIC, Pac
 use crate::root_guard::{self, LocalPackStoreOptions};
 
 use super::{
-    PacingTracker, ScannedRecord, ScrubFindingKind, ScrubPacing, ScrubReport, finding, scan_pack,
-    verify_record_paced,
+    PacingTracker, ScannedRecord, ScrubFindingKind, ScrubPacing, ScrubReport,
+    classify_verification, finding, scan_pack, verify_record_paced,
 };
 
 pub(super) fn is_index_corruption(err: &Error) -> bool {
@@ -181,12 +181,18 @@ pub(super) fn rebuild_corrupt_index_under_guard(
             continue;
         }
         let mut direct_bytes = 0u64;
-        match verify_record_paced(&packs_dir, &hash, entry, &mut pacing, &mut direct_bytes) {
-            Ok(()) => {
+        match classify_verification(verify_record_paced(
+            &packs_dir,
+            &hash,
+            entry,
+            &mut pacing,
+            &mut direct_bytes,
+        ))? {
+            None => {
                 rebuilt.insert(hash, entry);
                 report.records_verified += 1;
             }
-            Err(err) => {
+            Some(err) => {
                 // Retain the LIVE claim fail-closed instead of silently
                 // dropping it: keep the entry, quarantine it, and name it in
                 // the report — silent removal would turn a corruption read
@@ -339,18 +345,18 @@ pub(super) fn rebuild_index_locked(
             continue;
         }
         let mut direct_bytes = 0u64;
-        match verify_record_paced(
+        match classify_verification(verify_record_paced(
             &state.packs_dir,
             hash,
             *entry,
             &mut pacing,
             &mut direct_bytes,
-        ) {
-            Ok(()) => {
+        ))? {
+            None => {
                 rebuilt.insert(*hash, *entry);
                 report.records_verified += 1;
             }
-            Err(err) => {
+            Some(err) => {
                 // Retain fail-closed instead of silently dropping (see the
                 // guard-path second pass).
                 rebuilt.insert(*hash, *entry);

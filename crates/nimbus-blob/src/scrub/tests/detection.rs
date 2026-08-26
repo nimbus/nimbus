@@ -3,6 +3,22 @@
 
 use super::*;
 
+#[test]
+fn direct_verification_preserves_transient_errors() {
+    let wrong_bytes = Error::storage(StorageErrorKind::Corruption, "wrong bytes");
+    let transient = Error::storage(StorageErrorKind::Io, "temporary read failure");
+    let absent = Error::NotFound("pack vanished".to_string());
+
+    assert!(classify_verification(Ok(())).unwrap().is_none());
+    assert!(classify_verification(Err(wrong_bytes)).unwrap().is_some());
+    let transient = classify_verification(Err(transient)).unwrap_err();
+    assert_eq!(transient.storage_kind(), Some(StorageErrorKind::Io));
+    assert!(matches!(
+        classify_verification(Err(absent)).unwrap_err(),
+        Error::NotFound(_)
+    ));
+}
+
 #[tokio::test]
 async fn scrub_detects_flipped_byte() {
     let (dir, store) = open_temp(4096);
