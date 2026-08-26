@@ -3,10 +3,9 @@
 Status: `proposed` | Owner: this plan | Created: 2026-08-19
 Baseline: main @ bdda5da944e244f1643b21c6ac699391c9b40d83
 Proof root: `docs/private/plans/proof/blob-lifecycle-integrity/`
-Next action: Execute BLI-SA6 through the Band SA control plane as a
-pre-promotion safety prerequisite. Keep this plan `proposed`. After BLI-SA6 is
-terminal, promote this plan and run BLI0 first to create the proof root and
-nine-condition red verifier.
+Next action: Await explicit promotion after Band SA closes. BLI-SA6 is complete,
+but this plan remains `proposed`. When promoted, run BLI0 first to create the
+proof root and nine-condition red verifier.
 
 ## Outcome
 
@@ -60,8 +59,8 @@ blob for the grace window and the next complete-root sweep.
 - Owns: destructive byte reclamation, object roots, intent pins, and
   object-plane `BlobGc` composition.
 - Owns: the automatic single-node schedule and explicit local GC command.
-- Owns: error classification for scrub, heal, and rollback reads that can feed
-  quarantine or later reclamation decisions.
+- Owns: error classification for scrub verification and rollback preimage reads
+  that can feed quarantine or later reclamation decisions.
 - Owns: an engine-owned opaque multipart expected-state type that validates
   exact-one clause cardinality before the commit authority receives a write.
 - Owns: the SIC1 retained-blob erratum and the tracked storage seams
@@ -100,7 +99,7 @@ BLI0 is the first task after promotion.
 
 | ID | Task | Status | Evidence |
 |---|---|---|---|
-| BLI-SA6 | Preserve transient scrub, heal, and rollback read failures as errors. Only successful-read-wrong-bytes is corruption, and only `NotFound` is absence. | `in_progress` | Band SA6 |
+| BLI-SA6 | Preserve transient scrub/rebuild verification and rollback preimage failures as errors. Only typed corruption can authorize quarantine, and only `NotFound` means no prior manifest replica. Preserve missing-pack heal repair. | `done` | PR #327; `proof/architecture-review-2026-07/sa6-error-classification.md` |
 | BLI0 | Pin the baseline, create the proof root, author the nine-condition verifier red, inventory every production reclamation caller, and capture shared-hash fail-before evidence. No production behavior changes. | `todo` | |
 | BLI1 | Move destructive reclaim behind its owning lifecycle seam and remove every request-local S3 release path. | `todo` | |
 | BLI2 | Compose complete roots and atomic intent pins into `BlobGc`, recheck each pin before reclaim, and add one explicit local GC command. | `todo` | |
@@ -176,7 +175,7 @@ BLI0 is the first task after promotion.
 | BLIF5 | P3 / confirmed | Multipart revision validation runs only when the caller supplies exactly one clause. Other cardinalities bypass the guard. | BLI3 |
 | BLIF6 | P2 / confirmed | The governing storage seams specification is local-only and predates the landed pin registry, append-position seal, and automatic sweep posture. The SIC invariant set never contained a blob-liveness invariant for delete, replacement, or cleanup, so the shared-hash defect closed out of scope rather than falsely verified. Invariant 6 itself is rejected-condition-scoped and remains satisfied. | BLI5 |
 | BLIF7 | P3 / race refuted | Writable server and CLI backup handles take the same exclusive root lock. A second process refuses with `Busy`; no unpinned backup can coexist with the automatic sweep. | BLI4 |
-| BLIF8 | P2 / confirmed | Scrub converts every verification error into `HashMismatch` and quarantine, heal reports any mismatch cause as beyond repair, and erasure rollback treats every preimage read error as absence. Transient I/O can therefore become false corruption or authorize later unlink. | BLI-SA6 |
+| BLIF8 | P2 / corrected and completed | Scrub/rebuild converted every direct-verification error into `HashMismatch` and quarantine, and erasure-manifest publish treated every rollback preimage read error as absence. Transient I/O could therefore become false corruption or authorize later unlink. The original heal clause was refuted: missing indexed pack data is repair evidence and must remain repairable. | BLI-SA6 |
 
 ## Decisions
 
@@ -299,26 +298,29 @@ The completion gate requires `Summary: 9 passed, 0 failed`.
 
 ### BLI-SA6 Pre-promotion error classification prerequisite
 
-- Problem: scrub, heal, and erasure rollback collapse transient read failures
-  into corruption or absence. Quarantine and later reclamation can turn that
-  diagnostic error into a deletion hazard.
+- Problem: scrub/rebuild direct verification and erasure-manifest rollback
+  preimage reads collapse transient failures into corruption or absence.
+  Quarantine and later reclamation can turn that diagnostic error into a
+  deletion hazard.
 - Owning seam and paths: `crates/nimbus-blob/src/scrub.rs`,
   `crates/nimbus-blob/src/scrub/rebuild.rs`, and
   `crates/nimbus-blob/src/erasure/manifest.rs`.
 - Steps:
-  1. Separate successful-read-wrong-bytes from read or verification failure.
-  2. Preserve typed transient failures through scrub findings and heal reports.
+  1. Separate typed corruption from transient verification failure.
+  2. Preserve typed transient failures through scrub and rebuild.
   3. Treat only `NotFound` as an absent rollback preimage.
-  4. Add regressions for wrong bytes, not found, and transient provider errors.
-- Acceptance: wrong bytes still quarantine and can report beyond repair;
-  transient scrub and heal errors remain typed failures without quarantine;
-  rollback restores or unlinks only from a successful preimage read or a typed
-  `NotFound`; a transient preimage error aborts rollback without unlinking a
-  committed replica.
+  4. Preserve heal repair for a missing indexed physical pack.
+  5. Add regressions for transient verification, rollback preimage failure, and
+     missing-pack repair.
+- Acceptance: typed corruption still authorizes a finding and quarantine;
+  transient scrub/rebuild errors remain typed failures without quarantine;
+  rollback restores or unlinks only from a successful preimage read or typed
+  `NotFound`; a transient preimage error aborts before any manifest write; and
+  heal reconstructs missing indexed pack data.
 - Fail-before: an injected transient verifier error becomes `HashMismatch` and
   quarantine, and an injected transient rollback read error is recorded as an
   absent preimage.
-- Verification: focused `nimbus-blob` scrub, rebuild, and erasure rollback
+- Verification: focused `nimbus-blob` scrub, rebuild, erasure publish, and heal
   tests; strict Clippy; format; the Band SA proof and review gates.
 
 ### BLI0 Baseline and red verifier
@@ -659,3 +661,5 @@ Append rows at the end. This section stays last.
 | 2026-08-19 | meta | corrected | Applied the second contract audit. Removed BLI0 from the promotion gate and sequenced it first after promotion. Made BLI4's two ordered pull requests the explicit gate exception. Moved the status ledger before Coordination for cold resume. No implementation started. |
 | 2026-08-20 | meta | rebased | Rebased onto `bdda5da94` after IMV landed and became active. Preserved both adjacent index entries. Recent main merges changed no BLI-owned blob path. No implementation started. |
 | 2026-08-26 | BLI-SA6 | accepted | Accepted Band SA6 as a pre-promotion safety prerequisite. It owns scrub, heal, and rollback read-error classification because false quarantine or absence can feed later deletion. The plan remains proposed; BLI0 through BLI5 have not started. |
+| 2026-08-26 | BLI-SA6 | corrected | Refuted the heal clause after Nimbus autoreview: missing indexed physical pack data is canonical repair evidence. Narrowed the accepted finding to scrub/rebuild verification and erasure-manifest rollback preimages, and retained a missing-pack repair regression. |
+| 2026-08-26 | BLI-SA6 | completed | PR #327 merged as `619a0a4c8`. Transient verifier errors propagate without quarantine, manifest preimage reads fail before the first write unless the result is `NotFound`, and missing-pack heal remains repairable. The plan stays `proposed`; BLI0 through BLI5 have not started. |
