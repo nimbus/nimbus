@@ -48,12 +48,15 @@ use tokio::runtime::Handle as TokioRuntimeHandle;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 use tokio::sync::Semaphore;
 
+use crate::FaultPoint;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 use crate::async_storage::{
     TenantWriteOutcome, map_executor_join_error, map_executor_permit_error,
 };
 use crate::retention::{
-    RetentionFloor, RetentionGcConfig, RetentionGcSummary, RetentionGcWatermarks,
+    MaterializedRetentionCheckpoint, RetentionFloor, RetentionGcConfig, RetentionGcSummary,
+    RetentionGcWatermarks, RetentionHistoryState, RetentionHistorySummary,
+    deserialize_retention_checkpoint, desired_journal_floor, serialize_retention_checkpoint,
 };
 use crate::sql::commit_effects::{
     CommitTimestampEffect, DocumentWrites, ExecutionDedup, JournalEffect, LeaseEffect, ScheduleOps,
@@ -220,6 +223,22 @@ pub(crate) trait SqlWriteTransactionCore: SqlWriteBackend {
         document_prune_before: SequenceNumber,
         index_prune_before: SequenceNumber,
     ) -> Result<(u64, u64)>;
+    /// Load the provider-owned materialized checkpoint and physical journal
+    /// floor from the open transaction's snapshot.
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)>;
+    /// Load the applied head inside the transaction that will publish a
+    /// checkpoint. This must not be inferred from the physical commit log.
+    fn applied_sequence_for_retention(&mut self) -> Result<SequenceNumber>;
+    /// Remove the durable journal prefix through `sequence`.
+    fn prune_durable_journal_through(&mut self, sequence: SequenceNumber) -> Result<u64>;
+    /// Publish the checkpoint and physical floor inside the current
+    /// transaction. Implementations must also invalidate any local replica
+    /// cache that mirrors the provider state.
+    fn store_retention_metadata(
+        &mut self,
+        checkpoint_blob: &[u8],
+        physical_floor: SequenceNumber,
+    ) -> Result<()>;
 }
 
 /// Store-level seam. Each SQL backend supplies its write bridge and a handful of
@@ -253,6 +272,7 @@ pub(crate) trait SqlStoreCore: Sized {
 
     fn retention_floor(&self) -> &RetentionFloor;
     fn journal_progress(&self) -> Result<JournalProgress>;
+    fn load_retention_metadata_snapshot(&self) -> Result<(Option<Vec<u8>>, SequenceNumber)>;
     fn read_durable_journal_from(&self, sequence: SequenceNumber)
     -> Result<Vec<TenantEventRecord>>;
     fn recover_durable_journal(&self) -> Result<JournalProgress>;
@@ -361,6 +381,108 @@ pub(crate) trait SqlStoreCore: Sized {
             watermarks,
             document_versions_pruned: committed.value.0,
             index_versions_pruned: committed.value.1,
+        })
+    }
+
+    fn load_retention_checkpoint(
+        &self,
+    ) -> Result<(
+        MaterializedRetentionCheckpoint,
+        SequenceNumber,
+        Option<Vec<u8>>,
+    )> {
+        let (checkpoint_blob, physical_floor) = self.load_retention_metadata_snapshot()?;
+        let checkpoint = checkpoint_blob
+            .as_deref()
+            .map(deserialize_retention_checkpoint)
+            .transpose()?
+            .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
+        RetentionHistoryState::new(checkpoint.sequence(), physical_floor, checkpoint.clone())?;
+        Ok((checkpoint, physical_floor, checkpoint_blob))
+    }
+
+    fn retention_history_state(&self, config: RetentionGcConfig) -> Result<RetentionHistoryState> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
+        RetentionHistoryState::new(
+            desired_journal_floor(&watermarks).max(checkpoint.sequence()),
+            physical_floor,
+            checkpoint,
+        )
+    }
+
+    /// Atomically publish a materialized checkpoint and prune the provider's
+    /// retained history while the caller still owns the committer lease.
+    fn fenced_compact_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        config: RetentionGcConfig,
+    ) -> CommitterLeaseResult<RetentionHistorySummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let (checkpoint, physical_floor, expected_checkpoint_blob) =
+            self.load_retention_checkpoint()?;
+        let desired_floor = desired_journal_floor(&watermarks).max(checkpoint.sequence());
+        let before = RetentionHistoryState::new(desired_floor, physical_floor, checkpoint.clone())?;
+        let journal_tail = self
+            .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
+        let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+        let candidate_blob = serialize_retention_checkpoint(&candidate)?;
+        let candidate_sequence = candidate.sequence();
+        let document_prune_before = watermarks.document_versions.safe_prune_before;
+        let index_prune_before = watermarks.index_versions.safe_prune_before;
+        let fenced_owner_id = owner_id.to_string();
+        let owner_id = owner_id.to_string();
+        let result = self.execute_write(move |transaction| {
+            if transaction.validate_fenced_committer_lease(
+                owner_id.as_str(),
+                epoch,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            let (current_checkpoint_blob, current_physical_floor) =
+                transaction.load_retention_metadata()?;
+            if current_checkpoint_blob != expected_checkpoint_blob
+                || current_physical_floor != physical_floor
+            {
+                return Err(Error::conflict(
+                    "retention checkpoint changed while compaction was prepared".to_string(),
+                ));
+            }
+            let applied_head = transaction.applied_sequence_for_retention()?;
+            if candidate_sequence.0 > applied_head.0 {
+                return Err(Error::conflict(format!(
+                    "retention checkpoint target {} exceeds current applied head {}",
+                    candidate_sequence.0, applied_head.0
+                )));
+            }
+            let (document_versions_pruned, index_versions_pruned) =
+                transaction.prune_retained_versions(document_prune_before, index_prune_before)?;
+            let journal_records_pruned =
+                transaction.prune_durable_journal_through(candidate_sequence)?;
+            transaction.store_retention_metadata(&candidate_blob, candidate_sequence)?;
+            transaction.check_fault(FaultPoint::RetentionCheckpointBeforeCommit)?;
+            Ok((
+                journal_records_pruned,
+                document_versions_pruned,
+                index_versions_pruned,
+            ))
+        });
+        let committed = map_fenced_write_result(result, fenced_owner_id, epoch)?;
+        debug_assert!(committed.commit.is_none());
+        let after = RetentionHistoryState::new(desired_floor, candidate_sequence, candidate)?;
+        Ok(RetentionHistorySummary {
+            watermarks,
+            before,
+            after,
+            journal_records_pruned: committed.value.0,
+            document_versions_pruned: committed.value.1,
+            index_versions_pruned: committed.value.2,
         })
     }
 
@@ -1215,6 +1337,20 @@ macro_rules! sql_store_core_facade {
 
             pub fn compact_retained_versions(&self, config: crate::retention::RetentionGcConfig) -> nimbus_core::Result<crate::retention::RetentionGcSummary> {
                 <Self as crate::sql::store_core::SqlStoreCore>::compact_retained_versions(self, config)
+            }
+
+            pub fn retention_history_state(&self, config: crate::retention::RetentionGcConfig) -> nimbus_core::Result<crate::retention::RetentionHistoryState> {
+                <Self as crate::sql::store_core::SqlStoreCore>::retention_history_state(self, config)
+            }
+
+            pub fn fenced_compact_retained_history(
+                &self,
+                owner_id: &str,
+                epoch: u64,
+                durable_sequence: nimbus_core::SequenceNumber,
+                config: crate::retention::RetentionGcConfig,
+            ) -> crate::traits::CommitterLeaseResult<crate::retention::RetentionHistorySummary> {
+                <Self as crate::sql::store_core::SqlStoreCore>::fenced_compact_retained_history(self, owner_id, epoch, durable_sequence, config)
             }
 
             pub fn export_point_in_time_restore_archive(

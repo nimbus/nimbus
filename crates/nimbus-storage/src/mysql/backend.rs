@@ -227,7 +227,8 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\
                 key_name VARCHAR(191) PRIMARY KEY,\
-                value_u64 BIGINT UNSIGNED NOT NULL\
+                value_u64 BIGINT UNSIGNED,\
+                value_blob LONGBLOB\
             ) ENGINE=InnoDB",
             qualified_table(database_name, "metadata")
         ),

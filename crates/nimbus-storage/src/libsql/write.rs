@@ -117,6 +117,12 @@ impl SqlStoreCore for LibsqlReplicaTenantStore {
         LibsqlReplicaTenantStore::journal_progress(self)
     }
 
+    fn load_retention_metadata_snapshot(&self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+        let loaded = self.execute_write(|transaction| transaction.load_retention_metadata())?;
+        debug_assert!(loaded.commit.is_none());
+        Ok(loaded.value)
+    }
+
     fn read_durable_journal_from(
         &self,
         sequence: SequenceNumber,
@@ -330,6 +336,30 @@ impl SqlWriteTransactionCore for LibsqlReplicaWriteTransaction {
             self,
             document_prune_before,
             index_prune_before,
+        )
+    }
+
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+        LibsqlReplicaWriteTransaction::load_retention_metadata(self)
+    }
+
+    fn applied_sequence_for_retention(&mut self) -> Result<SequenceNumber> {
+        LibsqlReplicaWriteTransaction::applied_sequence_for_retention(self)
+    }
+
+    fn prune_durable_journal_through(&mut self, sequence: SequenceNumber) -> Result<u64> {
+        LibsqlReplicaWriteTransaction::prune_durable_journal_through(self, sequence)
+    }
+
+    fn store_retention_metadata(
+        &mut self,
+        checkpoint_blob: &[u8],
+        physical_floor: SequenceNumber,
+    ) -> Result<()> {
+        LibsqlReplicaWriteTransaction::store_retention_metadata(
+            self,
+            checkpoint_blob,
+            physical_floor,
         )
     }
 }
@@ -596,6 +626,78 @@ impl LibsqlReplicaWriteTransaction {
                 prune_index_versions_before_remote(self.session()?, index_prune_before).await?;
             Ok((document_versions_pruned, index_versions_pruned))
         })
+    }
+
+    fn load_retention_metadata(&mut self) -> Result<(Option<Vec<u8>>, SequenceNumber)> {
+        self.check_cancel()?;
+        let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
+        self.store.block_on(async {
+            let checkpoint_blob =
+                load_remote_metadata_blob(self.session()?, checkpoint_key).await?;
+            let physical_floor = load_remote_metadata_blob(self.session()?, physical_floor_key)
+                .await?
+                .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
+                .transpose()?
+                .unwrap_or(SequenceNumber(0));
+            Ok((checkpoint_blob, physical_floor))
+        })
+    }
+
+    fn applied_sequence_for_retention(&mut self) -> Result<SequenceNumber> {
+        self.check_cancel()?;
+        self.store.block_on(async {
+            Ok(
+                load_remote_metadata_u64(self.session()?, APPLIED_SEQUENCE_KEY)
+                    .await?
+                    .map(SequenceNumber)
+                    .unwrap_or(SequenceNumber(0)),
+            )
+        })
+    }
+
+    fn prune_durable_journal_through(&mut self, sequence: SequenceNumber) -> Result<u64> {
+        self.check_cancel()?;
+        let sequence = i64_from_u64(sequence.0)?;
+        self.store.block_on(async {
+            self.session()?
+                .execute(
+                    "DELETE FROM commit_log WHERE sequence <= ?1",
+                    libsql::params![sequence],
+                )
+                .await
+                .map_err(map_libsql_error)
+        })
+    }
+
+    fn store_retention_metadata(
+        &mut self,
+        checkpoint_blob: &[u8],
+        physical_floor: SequenceNumber,
+    ) -> Result<()> {
+        self.check_cancel()?;
+        let checkpoint_key = crate::retention::RETENTION_CHECKPOINT_METADATA_KEY;
+        let physical_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
+        let checkpoint_blob = checkpoint_blob.to_vec();
+        let physical_floor_blob = physical_floor.0.to_be_bytes().to_vec();
+        self.store.block_on(async {
+            self.session()?
+                .execute(
+                    "INSERT INTO metadata (key, value_blob) VALUES (?1, ?2), (?3, ?4) \
+                     ON CONFLICT(key) DO UPDATE SET value_blob = excluded.value_blob",
+                    libsql::params![
+                        checkpoint_key,
+                        checkpoint_blob,
+                        physical_floor_key,
+                        physical_floor_blob
+                    ],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            Ok(())
+        })?;
+        self.refresh_cache_after_commit = true;
+        Ok(())
     }
 
     pub fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {

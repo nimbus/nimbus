@@ -347,6 +347,16 @@ pub(super) async fn load_next_sequence_from_session(conn: &Connection) -> Result
 }
 
 pub(super) async fn load_remote_metadata_u64(conn: &Connection, key: &str) -> Result<Option<u64>> {
+    load_remote_metadata_blob(conn, key)
+        .await?
+        .map(|bytes| decode_u64(bytes.as_slice()))
+        .transpose()
+}
+
+pub(super) async fn load_remote_metadata_blob(
+    conn: &Connection,
+    key: &str,
+) -> Result<Option<Vec<u8>>> {
     let rows = conn
         .query(
             "SELECT value_blob FROM metadata WHERE key = ?1",
@@ -357,8 +367,7 @@ pub(super) async fn load_remote_metadata_u64(conn: &Connection, key: &str) -> Re
     let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
-    let bytes = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
-    Ok(Some(decode_u64(bytes.as_slice())?))
+    row.get::<Vec<u8>>(0).map(Some).map_err(map_libsql_error)
 }
 
 pub(super) async fn put_remote_metadata_u64(
