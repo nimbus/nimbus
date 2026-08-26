@@ -257,7 +257,14 @@ impl ErasureHealer {
                     bad.push((shard_index, true));
                 }
                 Err(Error::NotFound(_)) => bad.push((shard_index, false)),
-                Err(err) => return Err(err),
+                // Any other read failure (Io, etc.): the shard cannot serve,
+                // which is exactly the condition heal repairs. The record may
+                // still be indexed, so release-first applies. Aborting the
+                // whole run here would leave a recoverable loss class
+                // unhealed; if the failure is systemic, the repair WRITE
+                // surfaces it, and beyond-repair classification never
+                // deletes.
+                Err(_) => bad.push((shard_index, true)),
             }
         }
         Ok(StripeProbe { healthy, bad })

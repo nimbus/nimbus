@@ -249,9 +249,10 @@ async fn erasure_heal_lifts_quarantine_via_reupload() {
 }
 
 #[tokio::test]
-async fn erasure_heal_preserves_transient_shard_read_failure() {
+async fn erasure_heal_repairs_missing_backing_pack() {
     let (_dir, store, _roots) = open_temp(K, M, STRIPE);
-    let hash = store.put(payload_with_seed(STRIPE + 5, 44)).await.unwrap();
+    let bytes = payload_with_seed(STRIPE - 5, 44);
+    let hash = store.put(bytes.clone()).await.unwrap();
     let manifest = store.load_manifest_for_test(&hash).await.unwrap();
     let shard = shard_ref(&manifest, 0, 0);
     let drive = stripe::drive_for(0, 0, K + M);
@@ -259,11 +260,13 @@ async fn erasure_heal_preserves_transient_shard_read_failure() {
     let path = pack_path(&store.drive_root(drive).join("packs"), entry.pack_id);
     fs::remove_file(path).unwrap();
 
-    let err = ErasureHealer::new(store.clone()).heal().await.unwrap_err();
+    let report = ErasureHealer::new(store.clone()).heal().await.unwrap();
 
-    assert_eq!(err.storage_kind(), Some(StorageErrorKind::Io));
-    assert_eq!(manifest_generations(&store, &hash), vec![1; K + M]);
-    assert_eq!(store.last_heal().unwrap(), None);
+    assert_eq!(report.stripes_repaired, 1);
+    assert_eq!(report.shards_rewritten, 1);
+    assert!(report.beyond_repair.is_empty());
+    assert_eq!(manifest_generations(&store, &hash), vec![2; K + M]);
+    assert_eq!(store.get(&hash).await.unwrap(), bytes);
 }
 
 #[tokio::test]
