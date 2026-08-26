@@ -55,6 +55,10 @@ struct Inner {
     /// Counts manifest writes that actually committed, so tests can assert
     /// that a rejected condition consumed no commit at all.
     manifest_commits: AtomicUsize,
+    /// Counts point reads and bucket scans separately, so Convex tests can
+    /// prove that storage-id operations do not grow with bucket cardinality.
+    manifest_gets: AtomicUsize,
+    manifest_lists: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -116,6 +120,14 @@ impl InMemoryBackend {
     /// rejected condition must not move this.
     fn manifest_commits(&self) -> usize {
         self.inner.manifest_commits.load(Ordering::SeqCst)
+    }
+
+    fn manifest_gets(&self) -> usize {
+        self.inner.manifest_gets.load(Ordering::SeqCst)
+    }
+
+    fn manifest_lists(&self) -> usize {
+        self.inner.manifest_lists.load(Ordering::SeqCst)
     }
 
     /// Part numbers the durable upload record holds, in order. Reads the
@@ -268,6 +280,7 @@ impl S3ObjectMeta for InMemoryTenantMeta {
 
     async fn get_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>> {
         tokio::task::yield_now().await;
+        self.inner.manifest_gets.fetch_add(1, Ordering::SeqCst);
         Ok(self
             .inner
             .manifests
@@ -308,6 +321,7 @@ impl S3ObjectMeta for InMemoryTenantMeta {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectManifest>> {
+        self.inner.manifest_lists.fetch_add(1, Ordering::SeqCst);
         let manifests_guard = self.inner.manifests.lock().unwrap();
         let mut manifests = manifests_guard
             .iter()
@@ -1762,6 +1776,81 @@ async fn convex_storage_projects_virtual_metadata_and_hides_internal_key() {
 }
 
 #[tokio::test]
+async fn convex_storage_id_operations_use_point_manifest_access() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend.clone());
+    let tenant = tenant("tenant-a");
+    let metadata = storage
+        .store(
+            &tenant,
+            Bytes::from_static(b"point access"),
+            Some("text/plain".to_string()),
+            1_000,
+        )
+        .await
+        .expect("Convex storage put should succeed");
+
+    assert!(
+        storage
+            .metadata(&tenant, &metadata.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(storage.read(&tenant, &metadata.id).await.unwrap().is_some());
+
+    let signer = DownloadTokenSigner::new(b"test-download-secret".to_vec()).unwrap();
+    let token = signer.sign(&tenant, &metadata.id, 2_000).unwrap();
+    storage
+        .download_with_token(&signer, &token, 1_500)
+        .await
+        .expect("point download should succeed");
+    assert!(storage.delete(&tenant, &metadata.id).await.unwrap());
+
+    assert_eq!(backend.manifest_lists(), 0);
+    assert_eq!(backend.manifest_gets(), 3);
+}
+
+#[tokio::test]
+async fn concurrent_convex_imports_share_one_manifest_identity() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let storage = ConvexObjectStorage::new(backend.clone());
+    let tenant = tenant("tenant-a");
+    let id = ConvexStorageId::generate().expect("storage id should generate");
+
+    let (left, right) = tokio::join!(
+        storage.import_with_id(
+            &tenant,
+            &id,
+            Bytes::from_static(b"left"),
+            Some("text/plain".to_string()),
+            1_000,
+            2_000,
+        ),
+        storage.import_with_id(
+            &tenant,
+            &id,
+            Bytes::from_static(b"right"),
+            Some("text/plain".to_string()),
+            1_000,
+            3_000,
+        ),
+    );
+    left.expect("left import should commit");
+    right.expect("right import should commit");
+
+    assert_eq!(backend.convex_manifest_keys(&tenant).len(), 1);
+    let stored = storage
+        .read(&tenant, &id)
+        .await
+        .expect("read should succeed")
+        .expect("one concurrent import should remain");
+    assert!(
+        stored.bytes == Bytes::from_static(b"left") || stored.bytes == Bytes::from_static(b"right")
+    );
+}
+
+#[tokio::test]
 async fn convex_hmac_download_serves_bytes_and_fails_closed_after_blob_loss() {
     let backend = Arc::new(InMemoryBackend::default());
     let storage = ConvexObjectStorage::new(backend.clone());
@@ -1815,7 +1904,7 @@ async fn convex_hmac_download_serves_bytes_and_fails_closed_after_blob_loss() {
 }
 
 #[tokio::test]
-async fn convex_export_import_zip_preserves_storage_ids_and_rotates_internal_keys() {
+async fn convex_export_import_zip_preserves_storage_ids_and_internal_keys() {
     let source_backend = Arc::new(InMemoryBackend::default());
     let source = ConvexObjectStorage::new(source_backend.clone());
     let tenant = tenant("tenant-a");
@@ -1852,7 +1941,7 @@ async fn convex_export_import_zip_preserves_storage_ids_and_rotates_internal_key
         .expect("imported object should exist");
     assert_eq!(read_back.bytes, Bytes::from_static(br#"{"ok":true}"#));
     let target_key = target_backend.convex_manifest_keys(&tenant)[0].clone();
-    assert_ne!(target_key, source_key);
+    assert_eq!(target_key, source_key);
 
     let imported_again = target
         .import_zip(&tenant, archive, 1_776_960_002_000)
@@ -1861,7 +1950,7 @@ async fn convex_export_import_zip_preserves_storage_ids_and_rotates_internal_key
     assert_eq!(imported_again[0].id, metadata.id);
     let target_keys = target_backend.convex_manifest_keys(&tenant);
     assert_eq!(target_keys.len(), 1);
-    assert_ne!(target_keys[0], target_key);
+    assert_eq!(target_keys[0], target_key);
     let read_again = target
         .read(&tenant, &metadata.id)
         .await

@@ -310,7 +310,6 @@ impl ConvexObjectStorage {
     ) -> ConvexStorageResult<ConvexStorageMetadata> {
         self.resolver.ensure_tenant(tenant).await?;
         let ctx = self.resolver.resolve(tenant).await?;
-        let previous = self.manifest_for_storage_id(&ctx, id).await?;
         let byte_len = bytes.len() as u64;
         let computed = ComputedChecksums::for_bytes(&bytes);
         let blobs = ctx.blobs().await?;
@@ -327,19 +326,17 @@ impl ConvexObjectStorage {
         );
         let manifest = ObjectManifest::whole(
             CONVEX_STORAGE_BUCKET,
-            internal_object_key(),
+            internal_object_key(id),
             byte_len,
             hash.to_hex(),
             attributes,
         )?;
-        // The Convex storage surface writes each object under a freshly
-        // generated internal key and supersedes the old one by deleting it
-        // below, so this write carries no expected state.
-        put_manifest_unconditional(ctx.meta.as_ref(), manifest.clone()).await?;
-        if let Some(previous) = previous
-            && delete_manifest_unconditional(ctx.meta.as_ref(), &previous.bucket, &previous.key)
-                .await?
-                .is_some()
+        // One storage id owns one stable manifest slot. The commit authority
+        // returns the exact manifest this write superseded, so concurrent
+        // imports cannot publish duplicate manifests or release from a stale
+        // pre-read.
+        if let Some(previous) =
+            put_manifest_unconditional(ctx.meta.as_ref(), manifest.clone()).await?
         {
             release_manifest_blobs_except(blobs.as_ref(), &previous, Some(&manifest)).await?;
         }
@@ -390,19 +387,16 @@ impl ConvexObjectStorage {
         id: &ConvexStorageId,
     ) -> ConvexStorageResult<bool> {
         let ctx = self.resolver.resolve(tenant).await?;
-        let Some(manifest) = self.manifest_for_storage_id(&ctx, id).await? else {
+        let key = internal_object_key(id);
+        let Some((_, manifest)) =
+            delete_manifest_unconditional(ctx.meta.as_ref(), CONVEX_STORAGE_BUCKET, &key).await?
+        else {
             return Ok(false);
         };
-        if delete_manifest_unconditional(ctx.meta.as_ref(), &manifest.bucket, &manifest.key)
-            .await?
-            .is_some()
-        {
-            let blobs = ctx.blobs().await?;
-            release_manifest_blobs(blobs.as_ref(), &manifest).await?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        validate_manifest_storage_id(&manifest, id)?;
+        let blobs = ctx.blobs().await?;
+        release_manifest_blobs(blobs.as_ref(), &manifest).await?;
+        Ok(true)
     }
 
     pub async fn download_with_token(
@@ -534,13 +528,14 @@ impl ConvexObjectStorage {
         ctx: &S3TenantObjects,
         id: &ConvexStorageId,
     ) -> ConvexStorageResult<Option<ObjectManifest>> {
-        let manifests = ctx
+        let manifest = ctx
             .meta
-            .list_manifests(CONVEX_STORAGE_BUCKET, "", usize::MAX)
+            .get_manifest(CONVEX_STORAGE_BUCKET, &internal_object_key(id))
             .await?;
-        Ok(manifests
-            .into_iter()
-            .find(|manifest| manifest_storage_id(manifest).as_deref() == Some(id.as_str())))
+        if let Some(manifest) = &manifest {
+            validate_manifest_storage_id(manifest, id)?;
+        }
+        Ok(manifest)
     }
 }
 
@@ -633,6 +628,19 @@ fn manifest_storage_id(manifest: &ObjectManifest) -> Option<String> {
         .map(str::to_string)
 }
 
+fn validate_manifest_storage_id(
+    manifest: &ObjectManifest,
+    expected: &ConvexStorageId,
+) -> ConvexStorageResult<()> {
+    if manifest_storage_id(manifest).as_deref() != Some(expected.as_str()) {
+        return Err(ConvexStorageError::Core(Error::Serialization(format!(
+            "Convex storage manifest {} does not belong to {}",
+            manifest.key, expected
+        ))));
+    }
+    Ok(())
+}
+
 fn system_u64(manifest: &ObjectManifest, field: &str) -> Option<u64> {
     manifest.system_metadata.get(field).and_then(Value::as_u64)
 }
@@ -645,8 +653,8 @@ fn storage_table() -> Result<TableName> {
     TableName::new(CONVEX_STORAGE_TABLE)
 }
 
-fn internal_object_key() -> String {
-    format!("convex/objects/{}", ulid::Ulid::new())
+fn internal_object_key(id: &ConvexStorageId) -> String {
+    format!("convex/objects/{}", id.raw_id().as_str())
 }
 
 fn export_object_path(metadata: &ConvexStorageMetadata, manifest: &ObjectManifest) -> String {
