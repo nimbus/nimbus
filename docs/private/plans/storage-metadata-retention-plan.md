@@ -3,10 +3,10 @@
 Status: `active` | Owner: this plan | Created: 2026-08-25.
 Baseline: main @ cc7ae36a3c21bf7aa093c013f3025d074c679438.
 Proof root: `docs/private/plans/proof/storage-metadata-retention/`.
-Next action: execute SMR3 in the dedicated worktree. Add the bounded shipped
-profile and one single-flight maintenance controller per loaded tenant, with
-ordered finalization, cancellation, retry, diagnostics, metrics, and a manual
-operator trigger.
+Next action: execute SMR4 in the dedicated worktree. Give every journal,
+changefeed, bootstrap, historical-read, and PITR page one shared fail-closed
+floor contract, with post-read validation and deterministic concurrent-prune
+tests on all supported storage shapes.
 
 ## Outcome
 
@@ -251,8 +251,8 @@ only active Band SA row. Promotion evidence:
 | SMR0 | Baseline: pin the code inventory, create the proof root, author the contract verifier red, capture fail-before behavior, and ratify the bounded shipped profile. No production behavior changes. | `done` | PR #313 merged as `0ff18d1a7`. Verifier: `Summary: 7 passed, 11 failed`. Calibration: 2,049 sequences, 3.22 MB archive, 108 ms export, 2,560 MVCC rows pruned in 15 ms. Proof: `smr0-baseline.md`. |
 | SMR1 | Add the provider-neutral checkpoint and retention-state contract; support a nonzero PITR base; implement crash-safe compaction for memory, redb, and SQLite. | `done` | PR #314 merged as `0d4b9a112`. Full storage library lanes: 379 passed and 3 ignored with default features, and 379 passed and 3 ignored without default features. Verifier: `Summary: 12 passed, 6 failed`. Autoreview rerun clean. Proof: `smr1-embedded-checkpoint.md`. |
 | SMR2 | Implement lease-fenced checkpoint publication, journal pruning, and MVCC compaction parity for PostgreSQL, MySQL, and libSQL. | `done` | PR #317 merged as `f97b2db67`. Nine focused live provider tests passed: stale fencing, exact restart floors, injected and real-SQL rollback, MVCC pruning, and libSQL retained-base cache rebuild. Verifier: `Summary: 13 passed, 5 failed`. Autoreview clean. Proof: `smr2-provider-parity.md`. |
-| SMR3 | Wire bounded single-flight maintenance into the production Engine tenant lifecycle with configuration, cancellation, retry, diagnostics, metrics, and an operator-triggered seam. | `in_progress` | |
-| SMR4 | Make journal, changefeed, historical-read, bootstrap, and PITR consumers fail closed across trimmed history, including post-page validation and concurrent-prune tests. | `todo` | |
+| SMR3 | Wire bounded single-flight maintenance into the production Engine tenant lifecycle with configuration, cancellation, retry, diagnostics, metrics, and an operator-triggered seam. | `done` | PR #319 merged as `820549575`. Ten controller tests prove automatic advancement, single flight, retry without a recovered busy loop, shutdown, and no below-threshold hot-path wait. Verifier: `Summary: 16 passed, 2 failed`. Final autoreview clean. Proof: `smr3-production-lifecycle.md`. |
+| SMR4 | Make journal, changefeed, historical-read, bootstrap, and PITR consumers fail closed across trimmed history, including post-page validation and concurrent-prune tests. | `in_progress` | |
 | SMR5 | Run the semantic/provider/benchmark matrix, update storage architecture and operating docs, and publish the final launch-readiness verdict. | `todo` | |
 | SMR9 | After the final code pull request merges, archive this plan, retain its proof root, remove its active index entry, and close Band SA row SA4 with exact evidence. | `todo` | |
 
@@ -493,3 +493,5 @@ explicit evidence, this plan is archived, and Band SA row SA4 is done.
 | 2026-08-26 | SMR2 | started | Accepted provider parity and lease fencing. SMR2 is the only active task. The existing SQL transaction lease validator is the authority seam; an Engine-only precheck is insufficient. |
 | 2026-08-26 | SMR2 | completed | PR #317 merged as `f97b2db67`. PostgreSQL, MySQL, and libSQL now publish checkpoints and delete journal/MVCC prefixes in one lease-fenced transaction. Nine focused live tests passed, including native provider-error rollback and libSQL cache rebuild. Verifier advanced from 12/6 to 13/5; Nimbus autoreview was clean. |
 | 2026-08-26 | SMR3 | started | Accepted the bounded production lifecycle. SMR3 is the only active task. The Engine must own one single-flight controller per loaded tenant, finalize through the ordered maintenance authority, and cancel and drain on every tenant and Engine shutdown path. |
+| 2026-08-26 | SMR3 | completed | PR #319 merged as `820549575`. The bounded shipped profile, explicit retain-all mode, one controller per loaded tenant, off-route preparation, ordered finalization, lifecycle drainage, manual trigger, diagnostics, metrics, configuration surfaces, late-pin guard, and recovered-retry regression satisfy SMR3. Verifier advanced from 13/5 to 16/2; final Nimbus autoreview was clean. |
+| 2026-08-26 | SMR4 | started | Accepted trimmed-history consumer safety. SMR4 is the only active task. Every paged historical consumer must validate the authoritative floor after each read and return typed `RetentionExpired` if a concurrent prune crosses its required range. |
