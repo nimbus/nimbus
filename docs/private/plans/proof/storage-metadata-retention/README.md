@@ -20,3 +20,9 @@ Evidence:
   calibration.
 - `smr1-embedded-checkpoint.md`: provider-neutral checkpoint, embedded atomic
   compaction, nonzero-base PITR, tests, review, and routed follow-up evidence.
+- `smr2-provider-parity.md`: lease-fenced PostgreSQL, MySQL, and libSQL
+  checkpoint publication, pruning, rollback, restart, and cache-rebuild proof.
+- `smr3-production-lifecycle.md`: bounded Engine policy, controller lifecycle,
+  ordered finalization, diagnostics, metrics, and operator-control proof.
+- `smr4-consumer-safety.md`: durable read floors, fail-closed page validation,
+  contiguous-history checks, concurrent-prune tests, and review evidence.
