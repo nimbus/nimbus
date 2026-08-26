@@ -236,9 +236,16 @@ impl SqliteTenantStore {
         let _pin_barrier = self
             .retention_floor
             .guard_prepared_watermarks(&watermarks)?;
-        let document_prune_before = watermarks.document_versions.safe_prune_before;
-        let index_prune_before = watermarks.index_versions.safe_prune_before;
-        if document_prune_before.0 == 0 && index_prune_before.0 == 0 {
+        let (_, expected_read_floors, expected_checkpoint_blob) =
+            self.load_retention_checkpoint()?;
+        self.retention_floor
+            .observe_published_read_floors(expected_read_floors);
+        let published_read_floors = expected_read_floors.max(crate::RetentionReadFloors::new(
+            watermarks.document_versions.safe_prune_before,
+            watermarks.index_versions.safe_prune_before,
+            expected_read_floors.journal,
+        ));
+        if published_read_floors == expected_read_floors {
             return Ok(RetentionGcSummary {
                 watermarks,
                 document_versions_pruned: 0,
@@ -247,15 +254,76 @@ impl SqliteTenantStore {
         }
 
         let mut transaction = self.begin_write_transaction()?;
+        let (current_checkpoint_blob, current_read_floors) = {
+            let conn = transaction.connection_mut()?;
+            let current_checkpoint_blob = conn
+                .query_row(
+                    "SELECT value_blob FROM metadata WHERE key = ?1",
+                    [crate::retention::RETENTION_CHECKPOINT_METADATA_KEY],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(map_sqlite_error)?;
+            let load_floor = |key: &str| -> Result<SequenceNumber> {
+                conn.query_row(
+                    "SELECT value_blob FROM metadata WHERE key = ?1",
+                    [key],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(map_sqlite_error)?
+                .as_deref()
+                .map(crate::retention::decode_retention_floor)
+                .transpose()
+                .map(|floor| floor.unwrap_or_default())
+            };
+            (
+                current_checkpoint_blob,
+                crate::RetentionReadFloors::new(
+                    load_floor(crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)?,
+                    load_floor(crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)?,
+                    load_floor(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?,
+                ),
+            )
+        };
+        if current_checkpoint_blob != expected_checkpoint_blob
+            || current_read_floors != expected_read_floors
+        {
+            return Err(Error::conflict(
+                "retention metadata changed while version compaction was prepared".to_string(),
+            ));
+        }
         let document_versions_pruned = document_versions::prune_document_versions_before_in_conn(
             transaction.connection_mut()?,
-            document_prune_before,
+            published_read_floors.document_versions,
         )?;
         let index_versions_pruned = index_versions::prune_index_versions_before_in_conn(
             transaction.connection_mut()?,
-            index_prune_before,
+            published_read_floors.index_versions,
         )?;
-        let commit = transaction.commit()?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+            published_read_floors
+                .document_versions
+                .0
+                .to_be_bytes()
+                .as_slice(),
+        )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+            published_read_floors
+                .index_versions
+                .0
+                .to_be_bytes()
+                .as_slice(),
+        )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+            published_read_floors.journal.0.to_be_bytes().as_slice(),
+        )?;
+        let commit = self
+            .retention_floor
+            .publish_read_floors_with_commit(published_read_floors, || transaction.commit())?;
         debug_assert!(commit.is_none());
         Ok(RetentionGcSummary {
             watermarks,

@@ -741,9 +741,16 @@ impl TenantStore {
         let _pin_barrier = self
             .retention_floor
             .guard_prepared_watermarks(&watermarks)?;
-        let document_prune_before = watermarks.document_versions.safe_prune_before;
-        let index_prune_before = watermarks.index_versions.safe_prune_before;
-        if document_prune_before.0 == 0 && index_prune_before.0 == 0 {
+        let (_, expected_read_floors, expected_checkpoint_blob) =
+            self.load_retention_checkpoint()?;
+        self.retention_floor
+            .observe_published_read_floors(expected_read_floors);
+        let published_read_floors = expected_read_floors.max(RetentionReadFloors::new(
+            watermarks.document_versions.safe_prune_before,
+            watermarks.index_versions.safe_prune_before,
+            expected_read_floors.journal,
+        ));
+        if published_read_floors == expected_read_floors {
             return Ok(RetentionGcSummary {
                 watermarks,
                 document_versions_pruned: 0,
@@ -755,11 +762,68 @@ impl TenantStore {
             .db
             .begin_write()
             .map_err(crate::store::map_redb_error)?;
-        let document_versions_pruned =
-            prune_redb_document_versions_before(&write_txn, document_prune_before)?;
+        {
+            let metadata = write_txn
+                .open_table(crate::store::METADATA)
+                .map_err(crate::store::map_redb_error)?;
+            let current_checkpoint_blob = metadata
+                .get(RETENTION_CHECKPOINT_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| value.value().to_vec());
+            let load_floor = |key| -> Result<SequenceNumber> {
+                metadata
+                    .get(key)
+                    .map_err(crate::store::map_redb_error)?
+                    .map(|value| decode_retention_floor(value.value()))
+                    .transpose()
+                    .map(|floor| floor.unwrap_or_default())
+            };
+            let current_read_floors = RetentionReadFloors::new(
+                load_floor(RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)?,
+                load_floor(RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)?,
+                load_floor(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?,
+            );
+            if current_checkpoint_blob != expected_checkpoint_blob
+                || current_read_floors != expected_read_floors
+            {
+                return Err(Error::conflict(
+                    "retention metadata changed while version compaction was prepared".to_string(),
+                ));
+            }
+        }
+        let document_versions_pruned = prune_redb_document_versions_before(
+            &write_txn,
+            published_read_floors.document_versions,
+        )?;
         let index_versions_pruned =
-            prune_redb_index_versions_before(&write_txn, index_prune_before)?;
-        write_txn.commit().map_err(crate::store::map_redb_error)?;
+            prune_redb_index_versions_before(&write_txn, published_read_floors.index_versions)?;
+        {
+            let mut metadata = write_txn
+                .open_table(crate::store::METADATA)
+                .map_err(crate::store::map_redb_error)?;
+            for (key, floor) in [
+                (
+                    RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+                    published_read_floors.document_versions,
+                ),
+                (
+                    RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+                    published_read_floors.index_versions,
+                ),
+                (
+                    RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+                    published_read_floors.journal,
+                ),
+            ] {
+                metadata
+                    .insert(key, floor.0.to_be_bytes().as_slice())
+                    .map_err(crate::store::map_redb_error)?;
+            }
+        }
+        self.retention_floor
+            .publish_read_floors_with_commit(published_read_floors, || {
+                write_txn.commit().map_err(crate::store::map_redb_error)
+            })?;
         Ok(RetentionGcSummary {
             watermarks,
             document_versions_pruned,

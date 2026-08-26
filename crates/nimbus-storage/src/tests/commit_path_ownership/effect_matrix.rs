@@ -114,7 +114,8 @@ pub(super) enum VersionEffect {
 }
 
 /// The writer's effect on catalog state: schema, table identity, resource-path
-/// bindings, object metadata, and the cross-tenant usage database.
+/// bindings, object metadata, retention metadata, and the cross-tenant usage
+/// database.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CatalogEffect {
     TableSchemaReplaced,
@@ -263,7 +264,8 @@ pub(super) const MATRIX: &[WriterEffects] = &[
         watermark: WatermarkEffect::AdvancedByRecordApply,
         outcome: Outcome::OptionalCommitEntry,
     },
-    // Retention GC prunes versions and never commits.
+    // Retention GC prunes versions and publishes the corresponding document
+    // and index read floors with the retained checkpoint.
     WriterEffects {
         writer: "compact_retained_versions",
         shape: Shape::Direct,
@@ -273,7 +275,7 @@ pub(super) const MATRIX: &[WriterEffects] = &[
         document: DocumentEffect::None,
         index: IndexEffect::PrunedWithVersions,
         version: VersionEffect::PrunesRetained,
-        catalog: CatalogEffect::None,
+        catalog: CatalogEffect::RetentionCheckpoint,
         scheduler: SchedulerEffect::None,
         trigger: TriggerEffect::None,
         journal: JournalEffect::None,

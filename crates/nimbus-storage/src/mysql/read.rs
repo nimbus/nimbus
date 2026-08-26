@@ -444,8 +444,9 @@ impl MySqlTenantStore {
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
-        let (snapshot, initial_floor) = self.read_snapshot_with_journal_floor()?;
-        let snapshot = snapshot.export_materialized_journal_snapshot()?;
+        let (read_snapshot, initial_floor) = self.read_snapshot_with_journal_floor()?;
+        let snapshot = read_snapshot.export_materialized_journal_snapshot()?;
+        drop(read_snapshot);
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
         let authoritative_floor = self.block_on(async move {

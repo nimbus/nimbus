@@ -33,11 +33,48 @@ pub(crate) fn compact_retained_versions<S: SqlStoreCore>(
     let _pin_barrier = store
         .retention_floor()
         .guard_prepared_watermarks(&watermarks)?;
-    let document_prune_before = watermarks.document_versions.safe_prune_before;
-    let index_prune_before = watermarks.index_versions.safe_prune_before;
-    let committed = store.execute_write(move |transaction| {
-        transaction.prune_retained_versions(document_prune_before, index_prune_before)
-    })?;
+    let (checkpoint, expected_read_floors, expected_checkpoint_blob) =
+        store.load_retention_checkpoint()?;
+    store
+        .retention_floor()
+        .observe_published_read_floors(expected_read_floors);
+    let published_read_floors = expected_read_floors.max(RetentionReadFloors::new(
+        watermarks.document_versions.safe_prune_before,
+        watermarks.index_versions.safe_prune_before,
+        expected_read_floors.journal,
+    ));
+    if published_read_floors == expected_read_floors {
+        return Ok(RetentionGcSummary {
+            watermarks,
+            document_versions_pruned: 0,
+            index_versions_pruned: 0,
+        });
+    }
+    let checkpoint_blob = serialize_retention_checkpoint(&checkpoint)?;
+    let committed =
+        store
+            .retention_floor()
+            .publish_read_floors_with_commit(published_read_floors, || {
+                store.execute_write(move |transaction| {
+                    let (current_checkpoint_blob, current_read_floors) =
+                        transaction.load_retention_metadata()?;
+                    if current_checkpoint_blob != expected_checkpoint_blob
+                        || current_read_floors != expected_read_floors
+                    {
+                        return Err(Error::conflict(
+                            "retention metadata changed while version compaction was prepared"
+                                .to_string(),
+                        ));
+                    }
+                    let pruned = transaction.prune_retained_versions(
+                        published_read_floors.document_versions,
+                        published_read_floors.index_versions,
+                    )?;
+                    transaction
+                        .store_retention_metadata(&checkpoint_blob, published_read_floors)?;
+                    Ok(pruned)
+                })
+            })?;
     debug_assert!(committed.commit.is_none());
     Ok(RetentionGcSummary {
         watermarks,

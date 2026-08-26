@@ -309,10 +309,11 @@ impl PostgresTenantStore {
         let mut page =
             stream_durable_journal_from_session(&client, &self.schema_name, after, limit).await?;
         self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
+        let remote_authoritative_floor =
+            load_durable_journal_cursor_floor_from_session(&client, &self.schema_name).await?;
+        drop(client);
         let authoritative_floor =
-            load_durable_journal_cursor_floor_from_session(&client, &self.schema_name)
-                .await?
-                .max(self.retention_floor.published_read_floors().journal);
+            remote_authoritative_floor.max(self.retention_floor.published_read_floors().journal);
         crate::retention::validate_retention_after_page(
             after,
             authoritative_floor,
