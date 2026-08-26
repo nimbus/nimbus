@@ -9,7 +9,8 @@ use crate::retention::RetentionGcConfig;
 use crate::simulation::{DurableApplyKind, FaultPoint};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
-    PointInTimeRestoreArchive, PointInTimeRestoreTarget, describe_materialized_position,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget,
+    validate_point_in_time_archive_materialization,
 };
 use crate::{
     MaterializedRetentionCheckpoint, PreparedRetentionHistory, RetentionHistoryState,
@@ -788,43 +789,75 @@ impl MemoryTenantStore {
         &self,
         archive: &PointInTimeRestoreArchive,
     ) -> Result<JournalProgress> {
-        archive.validate()?;
-        let progress = self.rebuild_materialized_journal_from_snapshot(
-            &archive.base_snapshot,
-            &archive.journal_tail,
-            Some(archive.target_sequence),
-        )?;
-        let restored_position = self
-            .export_materialized_journal_snapshot()?
-            .materialized_position()?;
-        if restored_position != archive.target_position {
-            return Err(Error::storage(
-                nimbus_core::StorageErrorKind::Corruption,
-                format!(
-                    "point-in-time restore position mismatch: restored {} expected {}",
-                    describe_materialized_position(&restored_position),
-                    describe_materialized_position(&archive.target_position)
-                ),
+        let checkpoint = validate_point_in_time_archive_materialization(archive)?;
+        let _verification_update = self.materialized_verification.begin_update()?;
+        let mut live = self.write_state()?;
+        if live.durable_head().0 != 0
+            || live.applied_head.0 != 0
+            || !live.documents.is_empty()
+            || !live.schema.tables.is_empty()
+            || !live.table_identities.is_empty()
+            || !live.durable_journal.is_empty()
+            || !live.scheduled_execution_ids.is_empty()
+            || !live.resource_bindings.is_empty()
+            || live.trigger_delivery_cursor != TriggerDeliveryCursor::default()
+            || live.retention_checkpoint.is_some()
+            || live.retention_physical_floor.0 != 0
+            || live.retention_document_version_floor.0 != 0
+            || live.retention_index_version_floor.0 != 0
+        {
+            return Err(Error::Internal(
+                "materialized journal snapshot restore requires an empty tenant store".to_string(),
             ));
         }
-        let checkpoint = MaterializedRetentionCheckpoint::new(
-            archive.base_snapshot.clone(),
-            archive.base_checkpoint_timestamp,
+
+        let mut next = live.clone();
+        next.restore_snapshot(&archive.base_snapshot)?;
+        for record in &archive.journal_tail {
+            next.durable_journal
+                .insert(record.sequence.0, record.clone());
+            next.durable_head = record.sequence;
+            next.apply_record(record)?;
+            next.applied_head = record.sequence;
+        }
+        next.retention_checkpoint = Some(checkpoint.clone());
+        next.retention_physical_floor = checkpoint.sequence();
+        next.retention_document_version_floor = checkpoint.sequence();
+        next.retention_index_version_floor = checkpoint.sequence();
+
+        self.check_durable_records_fault(
+            FaultPoint::JournalAppendBeforeDurableFlush,
+            &archive.journal_tail,
         )?;
-        self.transact(|state| {
-            if checkpoint.sequence().0 > state.applied_head.0 {
-                return Err(Error::InvalidInput(format!(
-                    "imported retention checkpoint {} exceeds restored applied head {}",
-                    checkpoint.sequence().0,
-                    state.applied_head.0
-                )));
-            }
-            state.retention_checkpoint = Some(checkpoint.clone());
-            state.retention_physical_floor = checkpoint.sequence();
-            state.retention_document_version_floor = checkpoint.sequence();
-            state.retention_index_version_floor = checkpoint.sequence();
-            Ok(())
-        })?;
-        Ok(progress)
+        self.check_fault(FaultPoint::RetentionCheckpointBeforeCommit)?;
+        self.check_durable_records_fault(
+            FaultPoint::StorageCommitBeforeVisibility,
+            &archive.journal_tail,
+        )?;
+        let floors = RetentionReadFloors::new(
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+        );
+        self.retention_floor
+            .publish_read_floors_with_commit(floors, || -> Result<()> {
+                next.revision = live.revision.saturating_add(1);
+                *live = next;
+                Ok(())
+            })?;
+        drop(live);
+        self.check_durable_records_fault(
+            FaultPoint::JournalFlushBeforeVisibility,
+            &archive.journal_tail,
+        )?;
+        self.check_durable_records_fault(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &archive.journal_tail,
+        )?;
+        self.check_fault(FaultPoint::RetentionCheckpointAfterCommit)?;
+        Ok(JournalProgress {
+            durable_head: archive.target_sequence,
+            applied_head: archive.target_sequence,
+        })
     }
 }
