@@ -368,6 +368,12 @@ impl TenantEventRecord {
     }
 
     pub fn validate_integrity(&self) -> Result<()> {
+        if self.version != TENANT_EVENT_RECORD_VERSION {
+            return Err(Error::InvalidInput(format!(
+                "unsupported tenant event record version {}; current version is {}",
+                self.version, TENANT_EVENT_RECORD_VERSION
+            )));
+        }
         let expected = self.compute_integrity()?;
         if self.integrity_sha256 == expected {
             Ok(())
@@ -453,4 +459,34 @@ fn compatibility_events(
         events.push(TenantEventKind::ScheduledExecution { execution_id });
     }
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn future_record_version_with_matching_integrity_is_rejected() {
+        let mut record = TenantEventRecord::barrier(
+            SequenceNumber(7),
+            Timestamp(11),
+            "future-version".to_string(),
+        )
+        .expect("record should build");
+        record.version = TENANT_EVENT_RECORD_VERSION + 1;
+        record.integrity_sha256 = record
+            .compute_integrity()
+            .expect("future-version integrity should compute");
+
+        let error = record
+            .validate_integrity()
+            .expect_err("future journal record version must fail closed");
+
+        assert!(
+            matches!(error, Error::InvalidInput(ref message)
+                if message.contains("unsupported tenant event record version 4")
+                    && message.contains("current version is 3")),
+            "version skew must be operator-legible and distinct from corruption: {error}"
+        );
+    }
 }
