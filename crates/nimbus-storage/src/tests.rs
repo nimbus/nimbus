@@ -21,10 +21,11 @@ pub(crate) use crate::{
     DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
     GeneratedTaskHistorySeedCase, GeneratedTaskRecord, HardDeleteDecision, MemoryTenantStore,
     RedbTenantStorage, RestartBoundary, RetentionFloor, RetentionParticipant,
-    ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer, ShadowMaterializerConfig,
-    ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore, TenantReadStorage,
-    TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore, VerificationHarnessMode,
-    replay_generated_task_history, selected_generated_task_history_seed_corpus,
+    ScriptedFaultInjector, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
+    ShadowMaterializerConfig, ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore,
+    TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore,
+    VerificationHarnessMode, replay_generated_task_history,
+    selected_generated_task_history_seed_corpus,
 };
 // Reached only from the provider-gated exercisers below.
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
@@ -55,6 +56,7 @@ mod provider_scenarios;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 mod provider_support;
 mod recovery;
+mod retention_checkpoint;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 mod sql_pair_scenarios;
 mod sqlite_foundation;

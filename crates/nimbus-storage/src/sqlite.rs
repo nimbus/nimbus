@@ -26,8 +26,9 @@ use crate::store::{
     TenantWriteCommit,
 };
 use crate::{
-    MaterializedVerificationGeneration, MaterializedVerificationInvalidator, RetentionFloor,
-    RetentionGcConfig, RetentionGcSummary,
+    MaterializedRetentionCheckpoint, MaterializedVerificationGeneration,
+    MaterializedVerificationInvalidator, RetentionFloor, RetentionGcConfig, RetentionGcSummary,
+    RetentionHistoryState, RetentionHistorySummary,
 };
 use nimbus_crypto::DataEncryptionKey;
 
@@ -258,6 +259,162 @@ impl SqliteTenantStore {
             document_versions_pruned,
             index_versions_pruned,
         })
+    }
+
+    pub fn retention_history_state(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistoryState> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
+        RetentionHistoryState::new(
+            crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence()),
+            physical_floor,
+            checkpoint,
+        )
+    }
+
+    pub fn compact_retained_history(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistorySummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let (checkpoint, physical_floor, expected_checkpoint_blob) =
+            self.load_retention_checkpoint()?;
+        let desired_floor =
+            crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence());
+        let before = RetentionHistoryState::new(desired_floor, physical_floor, checkpoint.clone())?;
+        let journal_tail = self
+            .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
+        let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+        let candidate_blob = crate::retention::serialize_retention_checkpoint(&candidate)?;
+
+        let mut transaction = self.begin_write_transaction()?;
+        let current_checkpoint_blob = transaction
+            .connection_mut()?
+            .query_row(
+                "SELECT value_blob FROM metadata WHERE key = ?1",
+                [crate::retention::RETENTION_CHECKPOINT_METADATA_KEY],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(map_sqlite_error)?;
+        if current_checkpoint_blob != expected_checkpoint_blob {
+            return Err(Error::conflict(
+                "retention checkpoint changed while compaction was prepared".to_string(),
+            ));
+        }
+        let applied_head = transaction
+            .connection_mut()?
+            .query_row(
+                "SELECT value_blob FROM metadata WHERE key = ?1",
+                [APPLIED_SEQUENCE_KEY],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(map_sqlite_error)?
+            .as_deref()
+            .map(decode_u64)
+            .transpose()?
+            .unwrap_or(0);
+        if candidate.sequence().0 > applied_head {
+            return Err(Error::conflict(format!(
+                "retention checkpoint target {} exceeds current applied head {}",
+                candidate.sequence().0,
+                applied_head
+            )));
+        }
+        let document_versions_pruned = document_versions::prune_document_versions_before_in_conn(
+            transaction.connection_mut()?,
+            watermarks.document_versions.safe_prune_before,
+        )?;
+        let index_versions_pruned = index_versions::prune_index_versions_before_in_conn(
+            transaction.connection_mut()?,
+            watermarks.index_versions.safe_prune_before,
+        )?;
+        let journal_records_pruned = transaction
+            .connection_mut()?
+            .execute(
+                "DELETE FROM commit_log WHERE sequence <= ?1",
+                [candidate.sequence().0],
+            )
+            .map_err(map_sqlite_error)? as u64;
+        transaction.put_metadata(
+            crate::retention::RETENTION_CHECKPOINT_METADATA_KEY,
+            candidate_blob.as_slice(),
+        )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+            candidate.sequence().0.to_be_bytes().as_slice(),
+        )?;
+        self.fault_injector
+            .check(FaultPoint::RetentionCheckpointBeforeCommit)?;
+        let commit = transaction.commit()?;
+        debug_assert!(commit.is_none());
+        self.fault_injector
+            .check(FaultPoint::RetentionCheckpointAfterCommit)?;
+
+        let after = RetentionHistoryState::new(desired_floor, candidate.sequence(), candidate)?;
+        Ok(RetentionHistorySummary {
+            watermarks,
+            before,
+            after,
+            journal_records_pruned,
+            document_versions_pruned,
+            index_versions_pruned,
+        })
+    }
+
+    pub(crate) fn load_retention_checkpoint(
+        &self,
+    ) -> Result<(
+        MaterializedRetentionCheckpoint,
+        SequenceNumber,
+        Option<Vec<u8>>,
+    )> {
+        let checkpoint_blob =
+            self.metadata_blob(crate::retention::RETENTION_CHECKPOINT_METADATA_KEY)?;
+        let checkpoint = checkpoint_blob
+            .as_deref()
+            .map(crate::retention::deserialize_retention_checkpoint)
+            .transpose()?
+            .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
+        let physical_floor = self
+            .metadata_blob(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?
+            .as_deref()
+            .map(crate::retention::decode_retention_floor)
+            .transpose()?
+            .unwrap_or(SequenceNumber(0));
+        RetentionHistoryState::new(checkpoint.sequence(), physical_floor, checkpoint.clone())?;
+        Ok((checkpoint, physical_floor, checkpoint_blob))
+    }
+
+    pub(crate) fn install_imported_retention_checkpoint(
+        &self,
+        checkpoint: &MaterializedRetentionCheckpoint,
+    ) -> Result<()> {
+        checkpoint.validate()?;
+        let applied_head = self.journal_progress()?.applied_head;
+        if checkpoint.sequence().0 > applied_head.0 {
+            return Err(Error::InvalidInput(format!(
+                "imported retention checkpoint {} exceeds restored applied head {}",
+                checkpoint.sequence().0,
+                applied_head.0
+            )));
+        }
+        let checkpoint_blob = crate::retention::serialize_retention_checkpoint(checkpoint)?;
+        let mut transaction = self.begin_write_transaction()?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_CHECKPOINT_METADATA_KEY,
+            checkpoint_blob.as_slice(),
+        )?;
+        transaction.put_metadata(
+            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+            checkpoint.sequence().0.to_be_bytes().as_slice(),
+        )?;
+        let commit = transaction.commit()?;
+        debug_assert!(commit.is_none());
+        Ok(())
     }
 }
 

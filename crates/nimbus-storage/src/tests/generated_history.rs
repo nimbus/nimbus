@@ -560,6 +560,94 @@ fn generated_mvcc_history_required_seed_corpus_matches_pitr_and_cdc_models() {
 }
 
 #[test]
+fn generated_retained_checkpoint_restores_every_available_target() {
+    let history = GeneratedTaskHistory::seeded("retained-checkpoint", 97, 18);
+    let table = TableName::new(history.table()).expect("generated task table should be valid");
+    let store = TenantStore::create_in_memory().expect("store should open");
+    replay_generated_task_history(
+        &history,
+        |_slot, record| {
+            let document = Document::new(table.clone(), generated_task_fields(record));
+            let document_id = document.id.clone();
+            store.insert(&document)?;
+            Ok::<DocumentId, Error>(document_id)
+        },
+        |_slot, document_id, record| {
+            store.update(&table, document_id, &generated_task_fields(record))?;
+            Ok::<(), Error>(())
+        },
+        |_slot, document_id| {
+            store.delete(&table, document_id)?;
+            Ok::<(), Error>(())
+        },
+    )
+    .expect("generated retained history should replay");
+
+    let latest = store
+        .latest_sequence()
+        .expect("latest sequence should read");
+    let config = crate::RetentionGcConfig::new(6).expect("bounded retention should build");
+    let summary = store
+        .compact_retained_history(config)
+        .expect("generated retained history should compact");
+    let checkpoint = summary.after.confirmed_floor;
+    assert_eq!(checkpoint, SequenceNumber(latest.0 - 6));
+
+    for target in checkpoint.0..=latest.0 {
+        let archive = store
+            .export_point_in_time_restore_archive(
+                crate::PointInTimeRestoreTarget::Sequence(SequenceNumber(target)),
+                config,
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{}: {error}",
+                    history.failure_context(
+                        "retained checkpoint archive should export",
+                        Some(target as usize - 1),
+                    )
+                )
+            });
+        let restored = TenantStore::create_in_memory().expect("restore target should open");
+        restored
+            .import_point_in_time_restore_archive(&archive)
+            .expect("retained checkpoint archive should restore");
+        assert_eq!(
+            restored
+                .export_materialized_journal_snapshot()
+                .expect("restored snapshot should export")
+                .materialized_position()
+                .expect("restored position should compute"),
+            archive.target_position,
+            "target sequence {target}"
+        );
+        assert_eq!(
+            normalize_generated_task_documents(
+                restored
+                    .scan_table(&table)
+                    .expect("restored generated table should scan")
+            ),
+            history.model_through(target as usize).final_documents(),
+            "target sequence {target}"
+        );
+    }
+
+    let expired = store
+        .export_point_in_time_restore_archive(
+            crate::PointInTimeRestoreTarget::Sequence(SequenceNumber(checkpoint.0 - 1)),
+            config,
+        )
+        .expect_err("target before retained checkpoint should expire");
+    assert!(matches!(
+        expired,
+        Error::HistoricalRead {
+            kind: nimbus_core::HistoricalReadErrorKind::RetentionExpired,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn canonical_digest_generated_history_matches_redb_sqlite_pitr_cdc_and_rebuild_paths() {
     let clock = Arc::new(ManualWallClock::new(Timestamp(90_000)));
     let redb = TenantStore::create_in_memory_with_simulation(

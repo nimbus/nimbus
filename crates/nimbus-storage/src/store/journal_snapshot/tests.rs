@@ -45,7 +45,9 @@ fn materialized_snapshot_rejects_lifecycle_namespace_state_mismatch() {
         }],
         schema: nimbus_core::Schema::default(),
         documents: Vec::new(),
+        resource_path_bindings: Vec::new(),
         scheduled_execution_ids: Vec::new(),
+        trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
     };
 
     let error = snapshot
@@ -308,6 +310,12 @@ fn point_in_time_archive_restores_sequence_and_timestamp_to_matching_positions()
         sequence_archive.index_version_storage_format,
         crate::CURRENT_INDEX_VERSION_STORAGE_FORMAT
     );
+    let mut mismatched_timestamp = sequence_archive.clone();
+    mismatched_timestamp.target_timestamp = Timestamp(sequence_archive.target_timestamp.0 + 1);
+    assert!(
+        mismatched_timestamp.validate().is_err(),
+        "archive target timestamp must match the target sequence"
+    );
 
     let restored_from_sequence =
         TenantStore::create_in_memory().expect("sequence restore store should open");
@@ -417,6 +425,53 @@ fn point_in_time_archive_rejects_expired_retention_target() {
             ..
         }
     ));
+}
+
+#[test]
+fn point_in_time_archive_restores_from_retained_checkpoint_with_nonzero_base_snapshot() {
+    let live = TenantStore::create_in_memory().expect("store should open");
+    for rank in 1..=4 {
+        live.insert(&nimbus_core::Document::new(
+            TableName::new("retained_tasks").expect("table name should be valid"),
+            serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+        ))
+        .expect("document should insert");
+    }
+    let config = RetentionGcConfig::new(1).expect("retention config should build");
+    let summary = live
+        .compact_retained_history(config)
+        .expect("retained history should compact");
+    assert_eq!(summary.after.confirmed_floor, SequenceNumber(3));
+
+    let archive = live
+        .export_point_in_time_restore_archive(
+            PointInTimeRestoreTarget::Sequence(SequenceNumber(4)),
+            config,
+        )
+        .expect("archive should export from retained checkpoint");
+    assert_eq!(archive.base_snapshot.applied_sequence, SequenceNumber(3));
+    assert_eq!(archive.journal_tail.len(), 1);
+
+    let restored = TenantStore::create_in_memory().expect("restore target should open");
+    restored
+        .import_point_in_time_restore_archive(&archive)
+        .expect("validated nonzero base snapshot should restore");
+    assert_eq!(
+        restored
+            .export_materialized_journal_snapshot()
+            .expect("restored snapshot should export")
+            .materialized_position()
+            .expect("restored position should compute"),
+        archive.target_position
+    );
+    assert_eq!(
+        restored
+            .read_snapshot()
+            .expect("restored read snapshot should open")
+            .durable_journal_cursor_floor()
+            .expect("restored physical floor should read"),
+        SequenceNumber(3)
+    );
 }
 
 #[test]
@@ -561,6 +616,23 @@ fn journal_replay_base_validator_accepts_empty_and_rejects_each_populated_field(
         "a non-empty documents set must be rejected (a documents-only base must not pass)"
     );
 
+    let mut with_binding = empty.clone();
+    with_binding.resource_path_bindings = vec![nimbus_core::ResourcePathBinding::new(
+        nimbus_core::DocumentLocator::new(
+            table.clone(),
+            nimbus_core::DocumentId::from_key("bound-document").expect("document id should parse"),
+        ),
+        nimbus_core::DocumentPath::from_segments(["tasks", "bound-document"])
+            .expect("document path should parse"),
+    )];
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&with_binding),
+            Err(Error::InvalidInput(_))
+        ),
+        "a non-empty resource_path_bindings set must be rejected"
+    );
+
     let mut with_scheduled = empty.clone();
     with_scheduled.scheduled_execution_ids = vec!["exec-1".to_string()];
     assert!(
@@ -569,6 +641,17 @@ fn journal_replay_base_validator_accepts_empty_and_rejects_each_populated_field(
             Err(Error::InvalidInput(_))
         ),
         "a non-empty scheduled_execution_ids set must be rejected"
+    );
+
+    let mut with_trigger_cursor = empty;
+    with_trigger_cursor.trigger_delivery_cursor =
+        nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(1));
+    assert!(
+        matches!(
+            super::validate_materialized_journal_replay_base_is_empty(&with_trigger_cursor),
+            Err(Error::InvalidInput(_))
+        ),
+        "a nonzero trigger_delivery_cursor must be rejected"
     );
 }
 
@@ -630,7 +713,9 @@ fn assemble_snapshot(
         table_identities,
         schema,
         documents,
+        resource_path_bindings: Vec::new(),
         scheduled_execution_ids,
+        trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
     }
 }
 

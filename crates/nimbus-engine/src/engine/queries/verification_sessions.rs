@@ -139,7 +139,9 @@ impl VerificationSession {
             table_identities: Vec::new(),
             schema: nimbus_core::Schema::default(),
             documents: Vec::new(),
+            resource_path_bindings: Vec::new(),
             scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
         };
         self.shadow = MaterializedVerificationTracker::from_snapshot(&empty)
             .expect("empty test snapshot should build a tracker");
@@ -349,7 +351,9 @@ mod tests {
             table_identities: Vec::new(),
             schema: nimbus_core::Schema::default(),
             documents: Vec::new(),
+            resource_path_bindings: Vec::new(),
             scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
         };
         let bootstrap = nimbus_storage::DurableJournalBootstrap {
             snapshot: snapshot.clone(),

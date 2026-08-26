@@ -151,18 +151,19 @@ impl TenantReadSnapshot {
     }
 
     pub fn durable_journal_cursor_floor(&self) -> Result<SequenceNumber> {
+        let physical_floor = self.retained_journal_physical_floor()?;
         let table_handle = match self.read_txn.open_table(COMMIT_LOG) {
             Ok(table_handle) => table_handle,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(SequenceNumber(0)),
+            Err(TableError::TableDoesNotExist(_)) => return Ok(physical_floor),
             Err(error) => return Err(map_redb_error(error)),
         };
 
         let mut entries = table_handle.iter().map_err(map_redb_error)?;
         let Some(item) = entries.next() else {
-            return Ok(SequenceNumber(0));
+            return Ok(physical_floor);
         };
         let (key, _) = item.map_err(map_redb_error)?;
-        Ok(SequenceNumber(key.value().saturating_sub(1)))
+        Ok(physical_floor.max(SequenceNumber(key.value().saturating_sub(1))))
     }
 }
 

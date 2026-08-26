@@ -1554,7 +1554,9 @@ fn snapshot_with_table_identities(
         table_identities,
         schema: nimbus_core::Schema::default(),
         documents: Vec::new(),
+        resource_path_bindings: Vec::new(),
         scheduled_execution_ids: Vec::new(),
+        trigger_delivery_cursor: nimbus_core::TriggerDeliveryCursor::default(),
     }
 }
 

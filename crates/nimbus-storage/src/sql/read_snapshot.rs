@@ -26,7 +26,7 @@
 
 use nimbus_core::{
     CollectionName, Document, DocumentId, DocumentLocator, DocumentPath, Error, Filter,
-    ResourcePathBinding, Result, Schema, SequenceNumber, TableId, TableName,
+    ResourcePathBinding, Result, Schema, SequenceNumber, TableId, TableName, TriggerDeliveryCursor,
 };
 use serde_json::Value;
 
@@ -48,6 +48,7 @@ pub struct SqlReadSnapshot {
     pub(crate) documents: Vec<Document>,
     pub(crate) resource_path_bindings: Vec<ResourcePathBinding>,
     pub(crate) scheduled_execution_ids: Vec<String>,
+    pub(crate) trigger_delivery_cursor: TriggerDeliveryCursor,
 }
 
 impl SqlReadSnapshot {
@@ -79,7 +80,9 @@ impl SqlReadSnapshot {
             table_identities: self.table_identities.clone(),
             schema: self.schema.clone(),
             documents: self.documents.clone(),
+            resource_path_bindings: self.resource_path_bindings.clone(),
             scheduled_execution_ids: self.scheduled_execution_ids.clone(),
+            trigger_delivery_cursor: self.trigger_delivery_cursor,
         })
     }
 

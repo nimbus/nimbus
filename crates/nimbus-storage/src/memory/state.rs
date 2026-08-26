@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
-use crate::{JournalProgress, MaterializedJournalSnapshot};
+use crate::{JournalProgress, MaterializedJournalSnapshot, MaterializedRetentionCheckpoint};
 
 #[derive(Clone)]
 pub(super) struct MemoryTableIdentity {
@@ -28,6 +28,8 @@ pub(super) struct MemoryState {
     pub documents: BTreeMap<TableId, BTreeMap<DocumentId, Document>>,
     pub schema: Schema,
     pub durable_journal: BTreeMap<u64, TenantEventRecord>,
+    pub retention_checkpoint: Option<MaterializedRetentionCheckpoint>,
+    pub retention_physical_floor: SequenceNumber,
     pub durable_head: SequenceNumber,
     pub applied_head: SequenceNumber,
     pub scheduled_execution_ids: BTreeSet<String>,
@@ -57,6 +59,8 @@ impl MemoryState {
             documents: BTreeMap::new(),
             schema: Schema::default(),
             durable_journal: BTreeMap::new(),
+            retention_checkpoint: None,
+            retention_physical_floor: SequenceNumber(0),
             durable_head: SequenceNumber(0),
             applied_head: SequenceNumber(0),
             scheduled_execution_ids: BTreeSet::new(),
@@ -227,6 +231,15 @@ impl MemoryState {
             .filter_map(|table_id| self.documents.get(table_id))
             .flat_map(|documents| documents.values().cloned())
             .collect();
+        let mut resource_path_bindings =
+            self.resource_bindings.values().cloned().collect::<Vec<_>>();
+        resource_path_bindings.sort_by(|left, right| {
+            left.document_path
+                .to_string()
+                .cmp(&right.document_path.to_string())
+                .then_with(|| left.locator.table.cmp(&right.locator.table))
+                .then_with(|| left.locator.id.cmp(&right.locator.id))
+        });
         MaterializedJournalSnapshot {
             version: crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
             applied_sequence: self.applied_head,
@@ -234,7 +247,9 @@ impl MemoryState {
             table_identities,
             schema: self.schema.clone(),
             documents,
+            resource_path_bindings,
             scheduled_execution_ids: self.scheduled_execution_ids.iter().cloned().collect(),
+            trigger_delivery_cursor: self.trigger_delivery_cursor,
         }
     }
 }

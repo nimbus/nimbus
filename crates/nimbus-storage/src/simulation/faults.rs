@@ -22,6 +22,8 @@ pub enum FaultPoint {
     TriggerExecutionBeforeSave = 11,
     TenantCreateBeforeRegistration = 12,
     TriggerTransitionAfterHeadObservation = 13,
+    RetentionCheckpointBeforeCommit = 14,
+    RetentionCheckpointAfterCommit = 15,
 }
 
 impl FaultPoint {
@@ -48,6 +50,8 @@ impl FaultPoint {
             Self::TriggerTransitionAfterHeadObservation => {
                 "trigger_transition_after_head_observation"
             }
+            Self::RetentionCheckpointBeforeCommit => "retention_checkpoint_before_commit",
+            Self::RetentionCheckpointAfterCommit => "retention_checkpoint_after_commit",
         }
     }
 }

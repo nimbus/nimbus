@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nimbus_core::{Error, Result, SequenceNumber, TableId};
+use nimbus_core::{Error, Result, SequenceNumber, TableId, TenantEventRecord, Timestamp};
 use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[cfg(feature = "libsql")]
 use crate::LibsqlReplicaTenantStore;
@@ -12,7 +13,11 @@ use crate::LibsqlReplicaTenantStore;
 use crate::MySqlTenantStore;
 #[cfg(feature = "postgres")]
 use crate::PostgresTenantStore;
-use crate::{SqliteTenantStore, TenantStore};
+use crate::{MaterializedJournalSnapshot, MaterializedPosition, SqliteTenantStore, TenantStore};
+
+pub const MATERIALIZED_RETENTION_CHECKPOINT_VERSION: u16 = 1;
+pub(crate) const RETENTION_CHECKPOINT_METADATA_KEY: &str = "retention_materialized_checkpoint";
+pub(crate) const RETENTION_PHYSICAL_FLOOR_METADATA_KEY: &str = "retention_physical_floor";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,25 +35,73 @@ pub enum RetentionGcResource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetentionGcConfig {
-    pub history_window_sequences: u64,
+    pub document_version_window_sequences: u64,
+    pub index_version_window_sequences: u64,
+    pub cdc_window_sequences: u64,
+    pub pitr_window_sequences: u64,
 }
 
 impl RetentionGcConfig {
     pub const fn retain_all() -> Self {
         Self {
-            history_window_sequences: u64::MAX,
+            document_version_window_sequences: u64::MAX,
+            index_version_window_sequences: u64::MAX,
+            cdc_window_sequences: u64::MAX,
+            pitr_window_sequences: u64::MAX,
         }
     }
 
     pub fn new(history_window_sequences: u64) -> Result<Self> {
-        if history_window_sequences == 0 {
+        Self::with_windows(
+            history_window_sequences,
+            history_window_sequences,
+            history_window_sequences,
+            history_window_sequences,
+        )
+    }
+
+    pub fn with_windows(
+        document_version_window_sequences: u64,
+        index_version_window_sequences: u64,
+        cdc_window_sequences: u64,
+        pitr_window_sequences: u64,
+    ) -> Result<Self> {
+        if [
+            document_version_window_sequences,
+            index_version_window_sequences,
+            cdc_window_sequences,
+            pitr_window_sequences,
+        ]
+        .contains(&0)
+        {
             return Err(Error::InvalidInput(
-                "retention history window must retain at least one sequence".to_string(),
+                "retention windows must retain at least one sequence".to_string(),
             ));
         }
         Ok(Self {
-            history_window_sequences,
+            document_version_window_sequences,
+            index_version_window_sequences,
+            cdc_window_sequences,
+            pitr_window_sequences,
         })
+    }
+
+    fn window_for(self, resource: RetentionGcResource) -> u64 {
+        match resource {
+            RetentionGcResource::DocumentVersions => self.document_version_window_sequences,
+            RetentionGcResource::IndexVersions => self.index_version_window_sequences,
+            RetentionGcResource::CdcJournal => self.cdc_window_sequences,
+            RetentionGcResource::PitrExport => self.pitr_window_sequences,
+            RetentionGcResource::RegistryMetadata
+            | RetentionGcResource::ReadPolicyMetadata
+            | RetentionGcResource::ShadowMaterializer
+            | RetentionGcResource::EmbeddedReplica
+            | RetentionGcResource::TransactionSession => self
+                .document_version_window_sequences
+                .max(self.index_version_window_sequences)
+                .max(self.cdc_window_sequences)
+                .max(self.pitr_window_sequences),
+        }
     }
 }
 
@@ -84,6 +137,235 @@ pub struct RetentionGcWatermarks {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetentionGcSummary {
     pub watermarks: RetentionGcWatermarks,
+    pub document_versions_pruned: u64,
+    pub index_versions_pruned: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MaterializedRetentionCheckpoint {
+    pub version: u16,
+    pub checkpoint_timestamp: Timestamp,
+    pub snapshot: MaterializedJournalSnapshot,
+    pub position: MaterializedPosition,
+    pub snapshot_sha256: [u8; 32],
+}
+
+impl MaterializedRetentionCheckpoint {
+    pub fn genesis() -> Result<Self> {
+        Self::new(
+            MaterializedJournalSnapshot::empty_for_point_in_time_base(),
+            Timestamp(0),
+        )
+    }
+
+    pub fn new(
+        snapshot: MaterializedJournalSnapshot,
+        checkpoint_timestamp: Timestamp,
+    ) -> Result<Self> {
+        let position = snapshot.materialized_position()?;
+        let snapshot_sha256 =
+            retention_checkpoint_snapshot_digest(&snapshot, checkpoint_timestamp, &position)?;
+        let checkpoint = Self {
+            version: MATERIALIZED_RETENTION_CHECKPOINT_VERSION,
+            checkpoint_timestamp,
+            snapshot,
+            position,
+            snapshot_sha256,
+        };
+        checkpoint.validate()?;
+        Ok(checkpoint)
+    }
+
+    pub fn sequence(&self) -> SequenceNumber {
+        self.snapshot.applied_sequence
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.version != MATERIALIZED_RETENTION_CHECKPOINT_VERSION {
+            return Err(Error::InvalidInput(format!(
+                "unsupported materialized retention checkpoint version {}",
+                self.version
+            )));
+        }
+        self.snapshot.validate()?;
+        if self.snapshot.applied_sequence != self.snapshot.durable_head {
+            return Err(Error::InvalidInput(format!(
+                "materialized retention checkpoint applied sequence {} does not equal durable head {}",
+                self.snapshot.applied_sequence.0, self.snapshot.durable_head.0
+            )));
+        }
+        if self.position != self.snapshot.materialized_position()? {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                "materialized retention checkpoint position does not match its snapshot",
+            ));
+        }
+        let expected_snapshot_sha256 = retention_checkpoint_snapshot_digest(
+            &self.snapshot,
+            self.checkpoint_timestamp,
+            &self.position,
+        )?;
+        if self.snapshot_sha256 != expected_snapshot_sha256 {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                "materialized retention checkpoint snapshot digest does not match its contents",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn advance(
+        &self,
+        journal_tail: &[TenantEventRecord],
+        target: SequenceNumber,
+    ) -> Result<Self> {
+        self.validate()?;
+        if target.0 < self.sequence().0 {
+            return Err(Error::InvalidInput(format!(
+                "retention checkpoint target {} is behind confirmed checkpoint {}",
+                target.0,
+                self.sequence().0
+            )));
+        }
+        if target == self.sequence() {
+            return Ok(self.clone());
+        }
+        validate_retained_journal_range(self.sequence(), journal_tail, target)?;
+        let checkpoint_timestamp = journal_tail
+            .iter()
+            .find(|record| record.sequence == target)
+            .map(|record| record.timestamp)
+            .ok_or_else(|| {
+                Error::storage(
+                    nimbus_core::StorageErrorKind::Corruption,
+                    format!(
+                        "retention checkpoint journal is missing target sequence {}",
+                        target.0
+                    ),
+                )
+            })?;
+        let snapshot = crate::store::materialized_snapshot_after_rebuild(
+            &self.snapshot,
+            journal_tail,
+            target,
+        )?;
+        Self::new(snapshot, checkpoint_timestamp)
+    }
+}
+
+fn retention_checkpoint_snapshot_digest(
+    snapshot: &MaterializedJournalSnapshot,
+    checkpoint_timestamp: Timestamp,
+    position: &MaterializedPosition,
+) -> Result<[u8; 32]> {
+    let mut digest = Sha256::new();
+    digest.update(b"nimbus.materialized-retention-checkpoint.v1");
+    digest.update(snapshot.version.to_be_bytes());
+    digest.update(snapshot.applied_sequence.0.to_be_bytes());
+    digest.update(snapshot.durable_head.0.to_be_bytes());
+    digest.update(checkpoint_timestamp.0.to_be_bytes());
+    digest.update(position.version().to_be_bytes());
+    digest.update(position.applied_sequence().0.to_be_bytes());
+    digest.update((position.state_digest().len() as u64).to_be_bytes());
+    digest.update(position.state_digest().as_bytes());
+    digest.update(
+        snapshot
+            .trigger_delivery_cursor
+            .materialized_through
+            .0
+            .to_be_bytes(),
+    );
+
+    let mut bindings = snapshot.resource_path_bindings.clone();
+    bindings.sort_by(|left, right| {
+        left.document_path
+            .to_string()
+            .cmp(&right.document_path.to_string())
+            .then_with(|| left.locator.table.cmp(&right.locator.table))
+            .then_with(|| left.locator.id.cmp(&right.locator.id))
+    });
+    digest.update((bindings.len() as u64).to_be_bytes());
+    for binding in bindings {
+        let encoded = rmp_serde::to_vec_named(&binding)
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        digest.update((encoded.len() as u64).to_be_bytes());
+        digest.update(encoded);
+    }
+
+    Ok(digest.finalize().into())
+}
+
+fn validate_retained_journal_range(
+    base: SequenceNumber,
+    journal_tail: &[TenantEventRecord],
+    target: SequenceNumber,
+) -> Result<()> {
+    let mut expected = base.0.saturating_add(1);
+    for record in journal_tail
+        .iter()
+        .take_while(|record| record.sequence.0 <= target.0)
+    {
+        record.validate_integrity()?;
+        if record.sequence.0 != expected {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "retained journal expected sequence {expected}, got {}",
+                    record.sequence.0
+                ),
+            ));
+        }
+        expected = expected.saturating_add(1);
+    }
+    if expected != target.0.saturating_add(1) {
+        return Err(Error::storage(
+            nimbus_core::StorageErrorKind::Corruption,
+            format!("retained journal is missing target sequence {}", target.0),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetentionHistoryState {
+    pub desired_floor: SequenceNumber,
+    pub confirmed_floor: SequenceNumber,
+    pub physical_floor: SequenceNumber,
+    pub checkpoint: MaterializedRetentionCheckpoint,
+}
+
+impl RetentionHistoryState {
+    pub(crate) fn new(
+        desired_floor: SequenceNumber,
+        physical_floor: SequenceNumber,
+        checkpoint: MaterializedRetentionCheckpoint,
+    ) -> Result<Self> {
+        checkpoint.validate()?;
+        let confirmed_floor = checkpoint.sequence();
+        if physical_floor.0 > confirmed_floor.0 {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "physical retention floor {} exceeds confirmed checkpoint {}",
+                    physical_floor.0, confirmed_floor.0
+                ),
+            ));
+        }
+        Ok(Self {
+            desired_floor,
+            confirmed_floor,
+            physical_floor,
+            checkpoint,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetentionHistorySummary {
+    pub watermarks: RetentionGcWatermarks,
+    pub before: RetentionHistoryState,
+    pub after: RetentionHistoryState,
+    pub journal_records_pruned: u64,
     pub document_versions_pruned: u64,
     pub index_versions_pruned: u64,
 }
@@ -204,12 +486,12 @@ impl RetentionFloor {
         config: RetentionGcConfig,
     ) -> RetentionGcWatermarks {
         let pins = self.snapshot();
-        let window_floor = SequenceNumber(
-            latest_sequence
-                .0
-                .saturating_sub(config.history_window_sequences),
-        );
         let watermark = |resource| {
+            let window_floor = SequenceNumber(
+                latest_sequence
+                    .0
+                    .saturating_sub(config.window_for(resource)),
+            );
             let relevant = pins
                 .iter()
                 .filter(|pin| pin_protects_resource(pin, resource))
@@ -377,6 +659,270 @@ impl TenantStore {
             index_versions_pruned,
         })
     }
+
+    pub fn retention_history_state(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistoryState> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
+        RetentionHistoryState::new(
+            desired_journal_floor(&watermarks).max(checkpoint.sequence()),
+            physical_floor,
+            checkpoint,
+        )
+    }
+
+    pub fn compact_retained_history(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistorySummary> {
+        let watermarks = self.retention_gc_watermarks(config)?;
+        let (checkpoint, physical_floor, expected_checkpoint_blob) =
+            self.load_retention_checkpoint()?;
+        let desired_floor = desired_journal_floor(&watermarks).max(checkpoint.sequence());
+        let before = RetentionHistoryState::new(desired_floor, physical_floor, checkpoint.clone())?;
+        let journal_tail = self
+            .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
+        let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+        let candidate_blob = serialize_retention_checkpoint(&candidate)?;
+
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(crate::store::map_redb_error)?;
+        {
+            let metadata = write_txn
+                .open_table(crate::store::METADATA)
+                .map_err(crate::store::map_redb_error)?;
+            let current = metadata
+                .get(RETENTION_CHECKPOINT_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| value.value().to_vec());
+            if current != expected_checkpoint_blob {
+                return Err(Error::conflict(
+                    "retention checkpoint changed while compaction was prepared".to_string(),
+                ));
+            }
+        }
+        let applied_head =
+            redb_metadata_u64(&write_txn, crate::store::APPLIED_SEQUENCE_KEY)?.unwrap_or(0);
+        if candidate.sequence().0 > applied_head {
+            return Err(Error::conflict(format!(
+                "retention checkpoint target {} exceeds current applied head {}",
+                candidate.sequence().0,
+                applied_head
+            )));
+        }
+
+        let document_versions_pruned = prune_redb_document_versions_before(
+            &write_txn,
+            watermarks.document_versions.safe_prune_before,
+        )?;
+        let index_versions_pruned = prune_redb_index_versions_before(
+            &write_txn,
+            watermarks.index_versions.safe_prune_before,
+        )?;
+        let journal_records_pruned = prune_redb_journal_through(&write_txn, candidate.sequence())?;
+        {
+            let mut metadata = write_txn
+                .open_table(crate::store::METADATA)
+                .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(RETENTION_CHECKPOINT_METADATA_KEY, candidate_blob.as_slice())
+                .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(
+                    RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+                    candidate.sequence().0.to_be_bytes().as_slice(),
+                )
+                .map_err(crate::store::map_redb_error)?;
+        }
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionCheckpointBeforeCommit)?;
+        write_txn.commit().map_err(crate::store::map_redb_error)?;
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionCheckpointAfterCommit)?;
+
+        let after = RetentionHistoryState::new(desired_floor, candidate.sequence(), candidate)?;
+        Ok(RetentionHistorySummary {
+            watermarks,
+            before,
+            after,
+            journal_records_pruned,
+            document_versions_pruned,
+            index_versions_pruned,
+        })
+    }
+
+    pub(crate) fn load_retention_checkpoint(
+        &self,
+    ) -> Result<(
+        MaterializedRetentionCheckpoint,
+        SequenceNumber,
+        Option<Vec<u8>>,
+    )> {
+        let read_txn = self.db.begin_read().map_err(crate::store::map_redb_error)?;
+        let metadata = match read_txn.open_table(crate::store::METADATA) {
+            Ok(metadata) => metadata,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Ok((
+                    MaterializedRetentionCheckpoint::genesis()?,
+                    SequenceNumber(0),
+                    None,
+                ));
+            }
+            Err(error) => return Err(crate::store::map_redb_error(error)),
+        };
+        let checkpoint_blob = metadata
+            .get(RETENTION_CHECKPOINT_METADATA_KEY)
+            .map_err(crate::store::map_redb_error)?
+            .map(|value| value.value().to_vec());
+        let checkpoint = checkpoint_blob
+            .as_deref()
+            .map(deserialize_retention_checkpoint)
+            .transpose()?
+            .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
+        let physical_floor = metadata
+            .get(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
+            .map_err(crate::store::map_redb_error)?
+            .map(|value| decode_retention_floor(value.value()))
+            .transpose()?
+            .unwrap_or(SequenceNumber(0));
+        RetentionHistoryState::new(checkpoint.sequence(), physical_floor, checkpoint.clone())?;
+        Ok((checkpoint, physical_floor, checkpoint_blob))
+    }
+
+    pub(crate) fn install_imported_retention_checkpoint(
+        &self,
+        checkpoint: &MaterializedRetentionCheckpoint,
+    ) -> Result<()> {
+        checkpoint.validate()?;
+        let applied_head = self.journal_progress()?.applied_head;
+        if checkpoint.sequence().0 > applied_head.0 {
+            return Err(Error::InvalidInput(format!(
+                "imported retention checkpoint {} exceeds restored applied head {}",
+                checkpoint.sequence().0,
+                applied_head.0
+            )));
+        }
+        let checkpoint_blob = serialize_retention_checkpoint(checkpoint)?;
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(crate::store::map_redb_error)?;
+        {
+            let mut metadata = write_txn
+                .open_table(crate::store::METADATA)
+                .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(
+                    RETENTION_CHECKPOINT_METADATA_KEY,
+                    checkpoint_blob.as_slice(),
+                )
+                .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(
+                    RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+                    checkpoint.sequence().0.to_be_bytes().as_slice(),
+                )
+                .map_err(crate::store::map_redb_error)?;
+        }
+        write_txn.commit().map_err(crate::store::map_redb_error)
+    }
+}
+
+impl crate::TenantReadSnapshot {
+    pub(crate) fn retained_journal_physical_floor(&self) -> Result<SequenceNumber> {
+        let metadata = match self.read_txn.open_table(crate::store::METADATA) {
+            Ok(metadata) => metadata,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(SequenceNumber(0)),
+            Err(error) => return Err(crate::store::map_redb_error(error)),
+        };
+        metadata
+            .get(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
+            .map_err(crate::store::map_redb_error)?
+            .map(|value| decode_retention_floor(value.value()))
+            .transpose()
+            .map(|floor| floor.unwrap_or(SequenceNumber(0)))
+    }
+}
+
+pub(crate) fn desired_journal_floor(watermarks: &RetentionGcWatermarks) -> SequenceNumber {
+    watermarks
+        .cdc_journal
+        .safe_prune_before
+        .min(watermarks.pitr_exports.safe_prune_before)
+}
+
+pub(crate) fn serialize_retention_checkpoint(
+    checkpoint: &MaterializedRetentionCheckpoint,
+) -> Result<Vec<u8>> {
+    checkpoint.validate()?;
+    rmp_serde::to_vec_named(checkpoint).map_err(|error| Error::Serialization(error.to_string()))
+}
+
+pub(crate) fn deserialize_retention_checkpoint(
+    bytes: &[u8],
+) -> Result<MaterializedRetentionCheckpoint> {
+    let checkpoint: MaterializedRetentionCheckpoint =
+        rmp_serde::from_slice(bytes).map_err(|error| Error::Serialization(error.to_string()))?;
+    checkpoint.validate()?;
+    Ok(checkpoint)
+}
+
+pub(crate) fn decode_retention_floor(bytes: &[u8]) -> Result<SequenceNumber> {
+    let value: [u8; 8] = bytes.try_into().map_err(|_| {
+        Error::storage(
+            nimbus_core::StorageErrorKind::Corruption,
+            "retention physical floor metadata must contain eight bytes",
+        )
+    })?;
+    Ok(SequenceNumber(u64::from_be_bytes(value)))
+}
+
+fn redb_metadata_u64(write_txn: &redb::WriteTransaction, key: &str) -> Result<Option<u64>> {
+    let metadata = write_txn
+        .open_table(crate::store::METADATA)
+        .map_err(crate::store::map_redb_error)?;
+    metadata
+        .get(key)
+        .map_err(crate::store::map_redb_error)?
+        .map(|value| decode_retention_floor(value.value()).map(|sequence| sequence.0))
+        .transpose()
+}
+
+fn prune_redb_journal_through(
+    write_txn: &redb::WriteTransaction,
+    floor: SequenceNumber,
+) -> Result<u64> {
+    if floor.0 == 0 {
+        return Ok(0);
+    }
+    let mut journal = match write_txn.open_table(crate::store::COMMIT_LOG) {
+        Ok(journal) => journal,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(0),
+        Err(error) => return Err(crate::store::map_redb_error(error)),
+    };
+    let keys = journal
+        .range(..=floor.0)
+        .map_err(crate::store::map_redb_error)?
+        .map(|item| {
+            item.map(|(key, _)| key.value())
+                .map_err(crate::store::map_redb_error)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut pruned = 0_u64;
+    for key in keys {
+        if journal
+            .remove(key)
+            .map_err(crate::store::map_redb_error)?
+            .is_some()
+        {
+            pruned = pruned.saturating_add(1);
+        }
+    }
+    Ok(pruned)
 }
 
 macro_rules! impl_retention_floor_accessors {

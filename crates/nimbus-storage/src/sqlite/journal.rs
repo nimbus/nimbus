@@ -116,6 +116,14 @@ impl SqliteTenantStore {
             )
             .map_err(map_sqlite_error)?;
         }
+        for binding in &snapshot.resource_path_bindings {
+            upsert_resource_path_binding_in_conn(
+                &conn,
+                binding,
+                #[cfg(test)]
+                &self.path,
+            )?;
+        }
         for table_schema in snapshot.schema.tables.values() {
             create_sqlite_indexes_for_table_schema(&conn, table_schema)?;
         }
@@ -128,6 +136,11 @@ impl SqliteTenantStore {
             &conn,
             APPLIED_SEQUENCE_KEY,
             &encode_u64(snapshot.applied_sequence.0),
+        )?;
+        put_metadata_in_conn(
+            &conn,
+            TRIGGER_DELIVERY_CURSOR_KEY,
+            &encode_u64(snapshot.trigger_delivery_cursor.materialized_through.0),
         )?;
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
@@ -194,14 +207,17 @@ impl SqliteTenantStore {
         target: PointInTimeRestoreTarget,
         retention_config: RetentionGcConfig,
     ) -> Result<PointInTimeRestoreArchive> {
-        let records = self.read_durable_journal_from(SequenceNumber(1))?;
+        let (checkpoint, _, _) = self.load_retention_checkpoint()?;
+        let records = self
+            .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
         let progress = self.journal_progress()?;
         let watermarks = self.retention_gc_watermarks(retention_config)?;
-        crate::store::build_point_in_time_restore_archive(
+        crate::store::build_point_in_time_restore_archive_from_checkpoint(
             target,
             records,
             progress.durable_head,
-            watermarks.document_versions.safe_prune_before,
+            watermarks.pitr_exports.safe_prune_before,
+            checkpoint,
         )
     }
 
@@ -228,6 +244,10 @@ impl SqliteTenantStore {
                 ),
             ));
         }
+        self.install_imported_retention_checkpoint(&MaterializedRetentionCheckpoint::new(
+            archive.base_snapshot.clone(),
+            archive.base_checkpoint_timestamp,
+        )?)?;
         Ok(progress)
     }
 
@@ -391,6 +411,8 @@ impl SqliteTenantStore {
             || !snapshot.load_schema()?.tables.is_empty()
             || !snapshot.table_identities()?.is_empty()
             || !snapshot.scheduled_execution_ids()?.is_empty()
+            || !snapshot.scan_resource_path_bindings()?.is_empty()
+            || self.trigger_delivery_cursor()? != TriggerDeliveryCursor::default()
         {
             return Err(Error::Internal(
                 "materialized journal snapshot restore requires an empty tenant store".to_string(),
@@ -715,7 +737,7 @@ fn apply_document_write_in_conn(
                 &write.doc_id,
             )?;
             match existing {
-                Some(existing) if existing == *current => return Ok(()),
+                Some(existing) if existing == *current => {}
                 Some(_) => {
                     return Err(crate::commit_log::durable_replay_preimage_corruption(
                         sequence,
@@ -777,39 +799,38 @@ fn apply_document_write_in_conn(
                     "is missing the expected pre-image",
                 )
             })?;
-            if existing == *current {
-                return Ok(());
+            if existing != *current {
+                if existing != *previous {
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "update",
+                        write.doc_id.as_str(),
+                        "found a pre-image mismatch",
+                    ));
+                }
+                #[cfg(test)]
+                {
+                    observe_sqlite_current_document_encode(observation_path);
+                    observe_sqlite_cached_statement(
+                        observation_path,
+                        SqliteWriteStatementConcept::LiveDocumentUpdate,
+                    );
+                }
+                cached_execute(
+                    conn,
+                    "UPDATE documents
+                     SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
+                     WHERE table_id = ?1 AND id = ?2",
+                    params![
+                        write.table_id.as_str(),
+                        write.doc_id.to_string(),
+                        serialize_document_fields(current)?,
+                        serialize_document_typed_fields(current)?,
+                        current.creation_time.0,
+                        current.update_time.0,
+                    ],
+                )?;
             }
-            if existing != *previous {
-                return Err(crate::commit_log::durable_replay_preimage_corruption(
-                    sequence,
-                    "update",
-                    write.doc_id.as_str(),
-                    "found a pre-image mismatch",
-                ));
-            }
-            #[cfg(test)]
-            {
-                observe_sqlite_current_document_encode(observation_path);
-                observe_sqlite_cached_statement(
-                    observation_path,
-                    SqliteWriteStatementConcept::LiveDocumentUpdate,
-                );
-            }
-            cached_execute(
-                conn,
-                "UPDATE documents
-                 SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
-                 WHERE table_id = ?1 AND id = ?2",
-                params![
-                    write.table_id.as_str(),
-                    write.doc_id.to_string(),
-                    serialize_document_fields(current)?,
-                    serialize_document_typed_fields(current)?,
-                    current.creation_time.0,
-                    current.update_time.0,
-                ],
-            )?;
             if let Some(binding) = write.resource_path_binding.as_ref() {
                 upsert_resource_path_binding_in_conn(
                     conn,
@@ -851,7 +872,7 @@ fn apply_document_write_in_conn(
                         params![write.table_id.as_str(), write.doc_id.to_string()],
                     )?;
                 }
-                None => return Ok(()),
+                None => {}
             }
             remove_resource_path_binding_in_conn(
                 conn,
