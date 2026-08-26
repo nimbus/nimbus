@@ -70,6 +70,7 @@ async fn libsql_provider_retention_checkpoint_fault_rolls_back_every_delete() {
 #[serial]
 async fn libsql_provider_page_rejects_concurrent_retention_prune() {
     let (faults, rows_read, resume) = super::super::pause_after_retention_read_page();
+    let pause = Arc::clone(&faults);
     with_test_provider_with_faults(faults, |provider, _config| async move {
         let tenant = TenantId::new("retention-page-race").expect("tenant id should build");
         let opened = provider
@@ -79,6 +80,7 @@ async fn libsql_provider_page_rejects_concurrent_retention_prune() {
         super::super::exercise_provider_retention_concurrent_prune_page(
             opened.store,
             "libsql_retention_page",
+            pause,
             rows_read,
             resume,
         );

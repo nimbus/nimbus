@@ -231,7 +231,7 @@ fn memory_durable_journal_page_serializes_concurrent_prune_until_rows_return() {
     let (fault, rows_read, resume) = pause_after_retention_read_page();
     let store = Arc::new(MemoryTenantStore::with_simulation(
         Arc::new(nimbus_core::SystemWallClock),
-        fault,
+        Arc::clone(&fault) as Arc<dyn crate::FaultInjector>,
     ));
     for title in ["first", "second", "third"] {
         store
@@ -239,6 +239,7 @@ fn memory_durable_journal_page_serializes_concurrent_prune_until_rows_return() {
             .expect("insert should commit");
     }
 
+    fault.arm_next_page();
     let reader_store = Arc::clone(&store);
     let reader =
         std::thread::spawn(move || reader_store.stream_durable_journal(SequenceNumber(0), 1));

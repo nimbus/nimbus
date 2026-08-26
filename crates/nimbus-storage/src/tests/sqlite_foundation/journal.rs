@@ -1482,7 +1482,7 @@ fn sqlite_durable_journal_page_rejects_concurrent_prune_after_rows_are_read() {
         SqliteTenantStore::open_with_simulation(
             dir.path().join("concurrent-retention-page.sqlite3"),
             Arc::new(nimbus_core::SystemWallClock),
-            fault,
+            Arc::clone(&fault) as Arc<dyn crate::FaultInjector>,
         )
         .expect("SQLite store should open"),
     );
@@ -1492,6 +1492,7 @@ fn sqlite_durable_journal_page_rejects_concurrent_prune_after_rows_are_read() {
             .expect("insert should succeed");
     }
 
+    fault.arm_next_page();
     let reader_store = Arc::clone(&store);
     let reader =
         std::thread::spawn(move || reader_store.stream_durable_journal(SequenceNumber(0), 1));

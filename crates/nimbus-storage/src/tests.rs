@@ -42,6 +42,7 @@ mod commit_path_ownership;
 mod contract_scenarios;
 mod crud_and_journal;
 mod generated_history;
+pub(crate) mod historical_fixtures;
 #[cfg(feature = "libsql")]
 mod libsql_provider;
 mod memory_conformance;
@@ -822,12 +823,20 @@ where
 pub(crate) fn exercise_provider_retention_concurrent_prune_page<S>(
     store: Arc<S>,
     table_prefix: &str,
+    pause: Arc<retention_read_safety::PauseAfterRetentionReadPage>,
     rows_read: mpsc::Receiver<()>,
     resume: mpsc::SyncSender<()>,
 ) where
     S: ProviderRetentionStore + TenantPointRead + Send + Sync + 'static,
 {
     let fixture = prepare_provider_retention_rollback(store.as_ref(), table_prefix);
+    assert_eq!(
+        store
+            .get(&fixture.table, &fixture.current_document.id)
+            .expect("provider cache should catch up before the page race is armed"),
+        Some(fixture.current_document.clone()),
+    );
+    pause.arm_next_page();
     let reader_store = Arc::clone(&store);
     let reader =
         std::thread::spawn(move || reader_store.stream_durable_journal(SequenceNumber(0), 1));

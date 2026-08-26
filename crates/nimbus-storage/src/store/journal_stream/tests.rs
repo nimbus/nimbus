@@ -4,8 +4,10 @@ use std::time::Duration;
 use nimbus_core::{SequenceNumber, SystemWallClock};
 use serde_json::json;
 
+use crate::tests::historical_fixtures::{
+    historical_read_shape, indexed_rank_schema, ranked_document,
+};
 use crate::tests::pause_after_retention_read_page;
-use crate::tests::provider_support::{historical_read_shape, indexed_rank_schema, ranked_document};
 use crate::{PointInTimeRestoreTarget, RetentionGcConfig, TenantStore};
 
 fn sample_document(table: &str, title: &str) -> nimbus_core::Document {
@@ -59,8 +61,11 @@ fn durable_journal_stream_uses_cursor_floor_after_retention_cut() {
 fn durable_journal_page_rejects_concurrent_prune_after_rows_are_read() {
     let (fault, rows_read_rx, resume_tx) = pause_after_retention_read_page();
     let store = Arc::new(
-        TenantStore::create_in_memory_with_simulation(Arc::new(SystemWallClock), fault)
-            .expect("store should open"),
+        TenantStore::create_in_memory_with_simulation(
+            Arc::new(SystemWallClock),
+            Arc::clone(&fault) as Arc<dyn crate::FaultInjector>,
+        )
+        .expect("store should open"),
     );
     for title in ["first", "second", "third"] {
         store
@@ -68,6 +73,7 @@ fn durable_journal_page_rejects_concurrent_prune_after_rows_are_read() {
             .expect("insert should succeed");
     }
 
+    fault.arm_next_page();
     let reader_store = Arc::clone(&store);
     let reader =
         std::thread::spawn(move || reader_store.stream_durable_journal(SequenceNumber(0), 1));
@@ -96,8 +102,11 @@ fn durable_journal_page_rejects_concurrent_prune_after_rows_are_read() {
 fn point_in_time_archive_rejects_concurrent_prune_after_tail_read() {
     let (fault, rows_read_rx, resume_tx) = pause_after_retention_read_page();
     let store = Arc::new(
-        TenantStore::create_in_memory_with_simulation(Arc::new(SystemWallClock), fault)
-            .expect("store should open"),
+        TenantStore::create_in_memory_with_simulation(
+            Arc::new(SystemWallClock),
+            Arc::clone(&fault) as Arc<dyn crate::FaultInjector>,
+        )
+        .expect("store should open"),
     );
     for title in ["first", "second", "third"] {
         store
@@ -105,6 +114,7 @@ fn point_in_time_archive_rejects_concurrent_prune_after_tail_read() {
             .expect("insert should succeed");
     }
 
+    fault.arm_next_page();
     let reader_store = Arc::clone(&store);
     let reader = std::thread::spawn(move || {
         reader_store.export_point_in_time_restore_archive(
@@ -137,8 +147,11 @@ fn point_in_time_archive_rejects_concurrent_prune_after_tail_read() {
 fn historical_index_page_rejects_concurrent_prune_after_rows_are_read() {
     let (fault, rows_read_rx, resume_tx) = pause_after_retention_read_page();
     let store = Arc::new(
-        TenantStore::create_in_memory_with_simulation(Arc::new(SystemWallClock), fault)
-            .expect("store should open"),
+        TenantStore::create_in_memory_with_simulation(
+            Arc::new(SystemWallClock),
+            Arc::clone(&fault) as Arc<dyn crate::FaultInjector>,
+        )
+        .expect("store should open"),
     );
     let table =
         nimbus_core::TableName::new("retention_index_tasks").expect("table name should be valid");
@@ -160,6 +173,7 @@ fn historical_index_page_rejects_concurrent_prune_after_rows_are_read() {
     let expired_read_shape = read_shape.clone();
     let retained_read_shape = historical_read_shape(&table, &table_id, &schema, third.sequence);
 
+    fault.arm_next_page();
     let reader_store = Arc::clone(&store);
     let reader = std::thread::spawn(move || {
         reader_store

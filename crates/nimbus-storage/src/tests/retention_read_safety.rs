@@ -12,6 +12,12 @@ pub(crate) struct PauseAfterRetentionReadPage {
     resume: Mutex<mpsc::Receiver<()>>,
 }
 
+impl PauseAfterRetentionReadPage {
+    pub(crate) fn arm_next_page(&self) {
+        self.pause_next_page.store(true, Ordering::SeqCst);
+    }
+}
+
 impl FaultInjector for PauseAfterRetentionReadPage {
     fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
         if point == FaultPoint::RetentionReadAfterPage
@@ -39,7 +45,7 @@ pub(crate) fn pause_after_retention_read_page() -> (
     let (resume_tx, resume_rx) = mpsc::sync_channel(1);
     (
         Arc::new(PauseAfterRetentionReadPage {
-            pause_next_page: AtomicBool::new(true),
+            pause_next_page: AtomicBool::new(false),
             rows_read: rows_read_tx,
             resume: Mutex::new(resume_rx),
         }),

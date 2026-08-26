@@ -366,6 +366,12 @@ struct ReplicaCacheHandle {
     replica_path: PathBuf,
 }
 
+struct RemoteDurableJournalRead {
+    latest_sequence: SequenceNumber,
+    cursor_floor: SequenceNumber,
+    records: Vec<TenantEventRecord>,
+}
+
 #[derive(Clone)]
 pub struct LibsqlReplicaTenantStorage {
     store: Arc<LibsqlReplicaTenantStore>,
@@ -899,75 +905,141 @@ impl LibsqlReplicaTenantStore {
         .await
     }
 
+    async fn load_remote_durable_journal_read(
+        &self,
+        operation: &'static str,
+        sql: String,
+        record_capacity: usize,
+    ) -> Result<RemoteDurableJournalRead> {
+        retry_idempotent_remote_operation(&self.remote_session, operation, |conn| {
+            let sql = sql.clone();
+            async move {
+                let mut batch = conn
+                    .execute_batch(sql.as_str())
+                    .await
+                    .map_err(map_libsql_error)?;
+                let mut rows = match batch.next_stmt_row() {
+                    Some(Some(rows)) => rows,
+                    Some(None) => {
+                        return Err(Error::storage(
+                            StorageErrorKind::Corruption,
+                            format!("libSQL {operation} batch skipped its SELECT result"),
+                        ));
+                    }
+                    None => {
+                        return Err(Error::storage(
+                            StorageErrorKind::Corruption,
+                            format!("libSQL {operation} batch omitted its SELECT result"),
+                        ));
+                    }
+                };
+                let first = rows
+                    .next()
+                    .await
+                    .map_err(map_libsql_error)?
+                    .ok_or_else(|| {
+                        Error::storage(
+                            StorageErrorKind::Corruption,
+                            format!("libSQL {operation} SELECT returned no state row"),
+                        )
+                    })?;
+                if first.get::<i64>(0).map_err(map_libsql_error)? != 0 {
+                    return Err(Error::storage(
+                        StorageErrorKind::Corruption,
+                        format!("libSQL {operation} SELECT omitted its state row"),
+                    ));
+                }
+                let next_sequence_blob = first.get::<Vec<u8>>(3).map_err(map_libsql_error)?;
+                let persisted_floor_blob = first.get::<Vec<u8>>(4).map_err(map_libsql_error)?;
+                let mut latest_sequence = if next_sequence_blob.is_empty() {
+                    SequenceNumber(0)
+                } else {
+                    SequenceNumber(decode_u64(next_sequence_blob.as_slice())?.saturating_sub(1))
+                };
+                let cursor_floor = if persisted_floor_blob.is_empty() {
+                    SequenceNumber(0)
+                } else {
+                    crate::retention::decode_retention_floor(persisted_floor_blob.as_slice())?
+                };
+                let mut records = Vec::with_capacity(record_capacity);
+                while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                    if row.get::<i64>(0).map_err(map_libsql_error)? != 1 {
+                        return Err(Error::storage(
+                            StorageErrorKind::Corruption,
+                            format!("libSQL {operation} SELECT returned an invalid row kind"),
+                        ));
+                    }
+                    let sequence =
+                        sequence_from_i64(row.get::<i64>(1).map_err(map_libsql_error)?)?;
+                    let payload = row.get::<Vec<u8>>(2).map_err(map_libsql_error)?;
+                    let record = deserialize_tenant_event_record(payload.as_slice())?;
+                    if record.sequence != sequence {
+                        return Err(Error::storage(
+                            StorageErrorKind::Corruption,
+                            format!(
+                                "libSQL {operation} row sequence {} does not match record sequence {}",
+                                sequence.0, record.sequence.0
+                            ),
+                        ));
+                    }
+                    latest_sequence = latest_sequence.max(record.sequence);
+                    records.push(record);
+                }
+                if batch.next_stmt_row().is_some() {
+                    return Err(Error::storage(
+                        StorageErrorKind::Corruption,
+                        format!("libSQL {operation} batch returned an extra statement result"),
+                    ));
+                }
+                Ok(RemoteDurableJournalRead {
+                    latest_sequence,
+                    cursor_floor,
+                    records,
+                })
+            }
+        })
+        .await
+    }
+
     async fn load_remote_durable_records_from(
         &self,
         sequence: SequenceNumber,
     ) -> Result<Vec<TenantEventRecord>> {
-        let latest_sequence = self.load_remote_latest_sequence().await?;
-        let cursor_floor = self.load_remote_durable_journal_cursor_floor().await?;
-        let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(cursor_floor);
-        let sequence_i64 = i64_from_u64(suffix_after.0.saturating_add(1))?;
+        let requested_after = SequenceNumber(sequence.0.saturating_sub(1));
+        let sequence_i64 = i64_from_u64(sequence.0)?;
         let sql = format!(
-            "SELECT record_blob FROM commit_log WHERE sequence >= {sequence_i64} ORDER BY sequence"
+            "SELECT 0 AS row_kind, 0 AS sequence, NULL AS record_blob, \
+                    COALESCE(next_metadata.value_blob, X'') AS next_sequence_blob, \
+                    COALESCE(floor_metadata.value_blob, X'') AS floor_blob \
+             FROM (SELECT 1) AS state \
+             LEFT JOIN metadata AS next_metadata \
+               ON next_metadata.key = '{NEXT_SEQUENCE_KEY}' \
+             LEFT JOIN metadata AS floor_metadata \
+               ON floor_metadata.key = '{}' \
+             UNION ALL \
+             SELECT 1 AS row_kind, sequence, record_blob, X'', X'' \
+             FROM commit_log WHERE sequence >= {sequence_i64} \
+             ORDER BY row_kind, sequence",
+            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
         );
-        let records = retry_idempotent_remote_operation(
-            &self.remote_session,
-            "load durable journal records",
-            |conn| {
-                let sql = sql.clone();
-                async move {
-                    // Nimbus already materializes this ordered suffix before
-                    // reconciling it into the derivative cache. Use Hrana's
-                    // materialized pipeline response instead of its streaming
-                    // cursor endpoint so repeated freshness barriers reuse the
-                    // retained read lane rather than creating one HTTP cursor
-                    // connection per catch-up.
-                    let mut batch = conn
-                        .execute_batch(sql.as_str())
-                        .await
-                        .map_err(map_libsql_error)?;
-                    let mut rows = match batch.next_stmt_row() {
-                        Some(Some(rows)) => rows,
-                        Some(None) => {
-                            return Err(Error::storage(
-                                StorageErrorKind::Corruption,
-                                "libSQL durable journal batch skipped its SELECT result",
-                            ));
-                        }
-                        None => {
-                            return Err(Error::storage(
-                                StorageErrorKind::Corruption,
-                                "libSQL durable journal batch omitted its SELECT result",
-                            ));
-                        }
-                    };
-                    let mut records = Vec::new();
-                    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
-                        let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
-                        records.push(deserialize_tenant_event_record(payload.as_slice())?);
-                    }
-                    if batch.next_stmt_row().is_some() {
-                        return Err(Error::storage(
-                            StorageErrorKind::Corruption,
-                            "libSQL durable journal batch returned an extra statement result",
-                        ));
-                    }
-                    Ok(records)
-                }
-            },
-        )
-        .await?;
+        // The state row and records share one remote snapshot. This gives the
+        // internal catch-up path an atomic retention view without a second
+        // Hrana request for each freshness barrier.
+        let RemoteDurableJournalRead {
+            latest_sequence,
+            cursor_floor,
+            mut records,
+        } = self
+            .load_remote_durable_journal_read("load durable journal records", sql, 0)
+            .await?;
+        let cursor_floor = cursor_floor.max(self.retention_floor.published_read_floors().journal);
+        let suffix_after = requested_after.max(cursor_floor);
+        records.retain(|record| record.sequence.0 > suffix_after.0);
         let latest_sequence = records
             .last()
             .map(|record| record.sequence)
             .unwrap_or_default()
             .max(latest_sequence);
-        let authoritative_floor = self.load_remote_durable_journal_cursor_floor().await?;
-        crate::retention::validate_retention_after_page(
-            suffix_after,
-            authoritative_floor,
-            "durable journal suffix",
-        )?;
         crate::retention::validate_contiguous_journal_page(
             suffix_after,
             records.as_slice(),
@@ -982,8 +1054,39 @@ impl LibsqlReplicaTenantStore {
         after: SequenceNumber,
         limit: usize,
     ) -> Result<DurableJournalPage> {
-        let latest_sequence = self.load_remote_latest_sequence().await?;
-        let cursor_floor = self.load_remote_durable_journal_cursor_floor().await?;
+        let after_i64 = i64_from_u64(after.0)?;
+        let fetch_limit_i64 = i64_from_u64(limit.saturating_add(1) as u64)?;
+        let sql = format!(
+            "SELECT 0 AS row_kind, 0 AS sequence, NULL AS record_blob, \
+                    COALESCE(next_metadata.value_blob, X'') AS next_sequence_blob, \
+                    COALESCE(floor_metadata.value_blob, X'') AS floor_blob \
+             FROM (SELECT 1) AS state \
+             LEFT JOIN metadata AS next_metadata \
+               ON next_metadata.key = '{NEXT_SEQUENCE_KEY}' \
+             LEFT JOIN metadata AS floor_metadata \
+               ON floor_metadata.key = '{}' \
+             UNION ALL \
+             SELECT 1 AS row_kind, sequence, record_blob, X'', X'' \
+             FROM ( \
+               SELECT sequence, record_blob FROM commit_log \
+               WHERE sequence > {after_i64} \
+               ORDER BY sequence LIMIT {fetch_limit_i64} \
+             ) AS journal_page \
+             ORDER BY row_kind, sequence",
+            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+        );
+        let RemoteDurableJournalRead {
+            latest_sequence,
+            cursor_floor,
+            records,
+        } = self
+            .load_remote_durable_journal_read(
+                "load durable journal page",
+                sql,
+                limit.saturating_add(1),
+            )
+            .await?;
+        let cursor_floor = cursor_floor.max(self.retention_floor.published_read_floors().journal);
         crate::retention::validate_retention_after_page(
             after,
             cursor_floor,
@@ -995,42 +1098,13 @@ impl LibsqlReplicaTenantStore {
                 after.0, latest_sequence.0
             )));
         }
-
-        let conn = self.remote_connection()?;
-        let mut rows = conn
-            .query(
-                "SELECT record_blob FROM commit_log WHERE sequence > ?1 ORDER BY sequence LIMIT ?2",
-                libsql::params![
-                    i64_from_u64(after.0)?,
-                    i64_from_u64(limit.saturating_add(1) as u64)?
-                ],
-            )
-            .await
-            .map_err(map_libsql_error)?;
-        let mut records = Vec::with_capacity(limit);
-        let mut has_more = false;
-        let mut observed_latest_sequence = latest_sequence;
-        while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
-            let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
-            let record = deserialize_tenant_event_record(payload.as_slice())?;
-            observed_latest_sequence = observed_latest_sequence.max(record.sequence);
-            if records.len() == limit {
-                has_more = true;
-                continue;
-            }
-            records.push(record);
-        }
-        let latest_sequence = observed_latest_sequence;
+        let has_more = records.len() > limit;
+        let mut records = records;
+        records.truncate(limit);
         let next_cursor = records
             .last()
             .map(|record| record.sequence)
             .unwrap_or(after);
-        let authoritative_floor = self.load_remote_durable_journal_cursor_floor().await?;
-        crate::retention::validate_retention_after_page(
-            after,
-            authoritative_floor,
-            "durable journal page",
-        )?;
         crate::retention::validate_contiguous_journal_page(
             after,
             records.as_slice(),
@@ -1041,60 +1115,55 @@ impl LibsqlReplicaTenantStore {
             records,
             next_cursor,
             latest_sequence,
-            cursor_floor: authoritative_floor,
+            cursor_floor,
             has_more,
         })
     }
 
-    async fn load_remote_durable_journal_cursor_floor(&self) -> Result<SequenceNumber> {
-        let conn = self.remote_connection()?;
-        let rows = conn
-            .query("SELECT MIN(sequence) FROM commit_log", ())
-            .await
-            .map_err(map_libsql_error)?;
-        let Some(row) = take_single_remote_row(rows).await? else {
-            return Ok(SequenceNumber(0));
-        };
-        let min_sequence = row.get::<Option<i64>>(0).map_err(map_libsql_error)?;
-        let inferred_floor = match min_sequence {
-            Some(sequence) => SequenceNumber(sequence_from_i64(sequence)?.0.saturating_sub(1)),
-            None => SequenceNumber(0),
-        };
-        let read_floors = self.load_remote_retention_read_floors().await?;
-        Ok(inferred_floor.max(read_floors.journal))
-    }
-
     async fn load_remote_retention_read_floors(&self) -> Result<crate::RetentionReadFloors> {
-        let conn = self.remote_connection()?;
-        let document_versions = load_remote_metadata_blob(
-            &conn,
-            crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+        let document_floor_key = crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY;
+        let index_floor_key = crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY;
+        let journal_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
+        let sql = format!(
+            "SELECT key, value_blob FROM metadata \
+             WHERE key = '{document_floor_key}' \
+                OR key = '{index_floor_key}' \
+                OR key = '{journal_floor_key}' \
+             ORDER BY key"
+        );
+        retry_idempotent_remote_operation(
+            &self.remote_session,
+            "load retention read floors",
+            |conn| {
+                let sql = sql.clone();
+                async move {
+                    let mut rows = conn
+                        .query(sql.as_str(), ())
+                        .await
+                        .map_err(map_libsql_error)?;
+                    let mut read_floors = crate::RetentionReadFloors::default();
+                    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                        let key = row.get::<String>(0).map_err(map_libsql_error)?;
+                        let value = row.get::<Vec<u8>>(1).map_err(map_libsql_error)?;
+                        let floor = crate::retention::decode_retention_floor(value.as_slice())?;
+                        if key == document_floor_key {
+                            read_floors.document_versions = floor;
+                        } else if key == index_floor_key {
+                            read_floors.index_versions = floor;
+                        } else if key == journal_floor_key {
+                            read_floors.journal = floor;
+                        } else {
+                            return Err(Error::storage(
+                                StorageErrorKind::Corruption,
+                                format!("libSQL retention-floor query returned unknown key {key}"),
+                            ));
+                        }
+                    }
+                    Ok(read_floors)
+                }
+            },
         )
-        .await?
-        .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
-        .transpose()?
-        .unwrap_or_default();
-        let index_versions = load_remote_metadata_blob(
-            &conn,
-            crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
-        )
-        .await?
-        .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
-        .transpose()?
-        .unwrap_or_default();
-        let journal = load_remote_metadata_blob(
-            &conn,
-            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
-        )
-        .await?
-        .map(|value| crate::retention::decode_retention_floor(value.as_slice()))
-        .transpose()?
-        .unwrap_or_default();
-        Ok(crate::RetentionReadFloors::new(
-            document_versions,
-            index_versions,
-            journal,
-        ))
+        .await
     }
 
     async fn load_remote_scheduled_jobs(&self, table: &str) -> Result<Vec<ScheduledJob>> {
