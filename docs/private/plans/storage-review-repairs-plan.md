@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-26
 Baseline: main @ `b57a2d680891de852d5576e65ccaea787b005431`
 Proof root: `proof/storage-review-repairs/`
-Next action: add the SRR1 fail-before tests for resource bindings and the trigger cursor
+Next action: add the SRR2 fail-before tests for import rollback and base-sequence MVCC reads
 
 ## Outcome
 
@@ -73,8 +73,8 @@ After:
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | SRR0 | Pin and adjudicate the aggregate review baseline. | `done` | Opus 5 reviewed 169 files in three passes. Independent checks confirmed five findings and rejected four. See `proof/storage-review-repairs/srr0-baseline.md`. |
-| SRR1 | Extend canonical materialized identity through full and incremental verification. | `in_progress` | |
-| SRR2 | Make nonzero-base PITR import atomic and seed MVCC anchors. | `todo` | |
+| SRR1 | Extend canonical materialized identity through full and incremental verification. | `done` | Commit `0a4ba6119`; storage 395 passed and 3 ignored; focused storage, engine, CLI, and server checks passed. See `proof/storage-review-repairs/srr1-materialized-identity.md`. |
+| SRR2 | Make nonzero-base PITR import atomic and seed MVCC anchors. | `in_progress` | |
 | SRR3 | Require per-backend retention verifier evidence and test its failure behavior. | `todo` | |
 | SRR4 | Replace the IMV7 relative-only gate with measured absolute limits and negative tests. | `todo` | |
 | SRR5 | Run repository gates and a fresh Nimbus autoreview. | `todo` | |
@@ -198,3 +198,5 @@ gates pass, and SRR9 waits only for the final merge.
 |---|---|---|---|
 | 2026-08-26 | SRR0 | completed | Pinned `b57a2d680`; Opus 5 reviewed 169 files in three passes; direct checks confirmed F1 through F5 and rejected F6 through F9. No production behavior changed. |
 | 2026-08-26 | SRR1 | started | Accepted canonical materialized identity as the first implementation task. |
+| 2026-08-26 | SRR1 | completed | Commit `0a4ba6119` covers bindings and trigger progress in position v3 and verification root v2. Full storage tests passed 395 with three planned ignores. |
+| 2026-08-26 | SRR2 | started | Accepted atomic nonzero-base PITR import and base-sequence MVCC anchors as one recovery contract. |
