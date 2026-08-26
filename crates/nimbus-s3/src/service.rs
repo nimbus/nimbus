@@ -8,9 +8,10 @@ use http::HeaderMap;
 use nimbus_blob::BlobHash;
 use nimbus_core::TenantId;
 use nimbus_storage::{
-    ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
-    ObjectManifestAttributes, ObjectMultipartPart, ObjectMultipartUpload,
-    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
+    ObjectChunkRef, ObjectConditionOutcome, ObjectDeleteConditionOutcome,
+    ObjectDeleteExpectedState, ObjectExpectedState, ObjectManifest, ObjectManifestAttributes,
+    ObjectMultipartPart, ObjectMultipartUpload, ObjectUploadConditionOutcome,
+    ObjectUploadExpectedState,
 };
 use s3s::dto::ChecksumAlgorithm;
 use s3s::dto::{
@@ -26,7 +27,7 @@ use serde_json::{Map, Value};
 
 use crate::auth::AccessKeyRegistry;
 use crate::backend::{S3TenantObjects, S3TenantResolver, put_manifest_unconditional};
-use crate::checksum::{ComputedChecksums, decode_md5_base64, multipart_etag};
+use crate::checksum::{ComputedChecksums, crc64nvme_for_chunks, decode_md5_base64, multipart_etag};
 use crate::object_io;
 
 const DEFAULT_MAX_KEYS: i32 = 1000;
@@ -278,13 +279,24 @@ impl s3s::S3 for NimbusS3 {
         let tenant = self.tenant(&req)?;
         let ctx = self.resolve(&tenant).await?;
         let input = req.input;
-        if let Some((_, manifest)) = ctx
+        let expected = delete_condition_clauses(
+            input.if_match.as_ref(),
+            input.if_match_size,
+            input.if_match_last_modified_time.as_ref(),
+        );
+        match ctx
             .meta
-            .delete_manifest(&input.bucket, &input.key)
+            .delete_manifest_conditional(&input.bucket, &input.key, expected)
             .await
             .map_err(map_core_error)?
         {
-            self.release_manifest_blobs(&ctx, &manifest).await?;
+            ObjectDeleteConditionOutcome::Deleted { previous, .. } => {
+                self.release_manifest_blobs(&ctx, &previous).await?;
+            }
+            ObjectDeleteConditionOutcome::Absent => {}
+            ObjectDeleteConditionOutcome::Rejected { unmet, .. } => {
+                return Err(delete_condition_rejected(&unmet));
+            }
         }
         Ok(S3Response::new(DeleteObjectOutput::default()))
     }
@@ -317,31 +329,43 @@ impl s3s::S3 for NimbusS3 {
         let mut seen_prefixes = BTreeSet::new();
         let mut emitted = 0;
         let mut next_token = None;
+        let mut last_consumed_key = None;
 
-        for manifest in manifests {
-            if start_after
-                .as_deref()
-                .is_some_and(|cursor| manifest.key.as_str() <= cursor)
-            {
-                continue;
-            }
-            if emitted >= max_keys {
-                next_token = Some(manifest.key.clone());
-                break;
-            }
-            if let Some(delimiter) = delimiter.as_deref()
-                && let Some(common_prefix) = common_prefix(&prefix, &manifest.key, delimiter)
-            {
-                if seen_prefixes.insert(common_prefix.clone()) {
+        if max_keys > 0 {
+            for manifest in manifests {
+                if start_after
+                    .as_deref()
+                    .is_some_and(|cursor| manifest.key.as_str() <= cursor)
+                {
+                    continue;
+                }
+                if let Some(delimiter) = delimiter.as_deref()
+                    && let Some(common_prefix) = common_prefix(&prefix, &manifest.key, delimiter)
+                {
+                    if seen_prefixes.contains(&common_prefix) {
+                        last_consumed_key = Some(manifest.key);
+                        continue;
+                    }
+                    if emitted >= max_keys {
+                        next_token = last_consumed_key;
+                        break;
+                    }
+                    seen_prefixes.insert(common_prefix.clone());
                     common_prefixes.push(CommonPrefix {
                         prefix: Some(common_prefix),
                     });
                     emitted += 1;
+                    last_consumed_key = Some(manifest.key);
+                    continue;
                 }
-                continue;
+                if emitted >= max_keys {
+                    next_token = last_consumed_key;
+                    break;
+                }
+                last_consumed_key = Some(manifest.key.clone());
+                contents.push(object_summary(&manifest)?);
+                emitted += 1;
             }
-            contents.push(object_summary(&manifest)?);
-            emitted += 1;
         }
 
         Ok(S3Response::new(ListObjectsV2Output {
@@ -620,10 +644,25 @@ impl s3s::S3 for NimbusS3 {
             offset += part.size;
         }
         let etag = multipart_etag(&md5_parts);
+        let checksum_crc64nvme = if let Some(expected) = input.checksum_crc64nvme.as_deref() {
+            let blobs = ctx.blobs().await.map_err(map_core_error)?;
+            let computed = crc64nvme_for_chunks(blobs.as_ref(), &chunks)
+                .await
+                .map_err(map_core_error)?;
+            if computed != expected {
+                return Err(S3Error::with_message(
+                    S3ErrorCode::BadDigest,
+                    "CRC64NVME checksum does not match the completed object",
+                ));
+            }
+            Some(computed)
+        } else {
+            None
+        };
         let mut attributes = ObjectManifestAttributes::new(etag.clone(), current_millis());
         attributes.content_type = upload.content_type.clone();
         attributes.user_metadata = upload.user_metadata.clone();
-        attributes.checksums.crc64nvme = input.checksum_crc64nvme.clone();
+        attributes.checksums.crc64nvme = checksum_crc64nvme.clone();
         let manifest = ObjectManifest::chunked(
             input.bucket.clone(),
             input.key.clone(),
@@ -666,7 +705,7 @@ impl s3s::S3 for NimbusS3 {
             bucket: Some(input.bucket.clone()),
             key: Some(input.key.clone()),
             e_tag: Some(ETag::Strong(etag)),
-            checksum_crc64nvme: input.checksum_crc64nvme,
+            checksum_crc64nvme,
             location: Some(format!("/{}/{}", input.bucket, input.key)),
             ..Default::default()
         }))
@@ -939,6 +978,55 @@ fn write_condition_clauses(
         }
     }
     Ok(clauses)
+}
+
+/// Translates DeleteObject's wire conditions without reading object state.
+///
+/// Every clause succeeds when the object is absent, as required by S3's
+/// idempotent delete contract. The committer evaluates the clauses against a
+/// present manifest before it assigns a sequence number.
+fn delete_condition_clauses(
+    if_match: Option<&ETagCondition>,
+    if_match_size: Option<i64>,
+    if_match_last_modified_time: Option<&Timestamp>,
+) -> Vec<ObjectDeleteExpectedState> {
+    let mut clauses = Vec::new();
+    if let Some(condition) = if_match
+        && !condition.is_any()
+    {
+        let clause = condition
+            .as_etag()
+            .and_then(ETag::as_strong)
+            .map(|expected| ObjectDeleteExpectedState::EtagMatches(expected.to_string()))
+            .unwrap_or(ObjectDeleteExpectedState::NeverMatchesPresent);
+        clauses.push(clause);
+    }
+    if let Some(size) = if_match_size {
+        clauses.push(ObjectDeleteExpectedState::SizeMatches(size));
+    }
+    if let Some(last_modified) = if_match_last_modified_time {
+        let last_modified: time::OffsetDateTime = last_modified.clone().into();
+        clauses.push(ObjectDeleteExpectedState::LastModifiedSecondsMatch(
+            last_modified.unix_timestamp(),
+        ));
+    }
+    clauses
+}
+
+fn delete_condition_rejected(unmet: &ObjectDeleteExpectedState) -> S3Error {
+    let message = match unmet {
+        ObjectDeleteExpectedState::EtagMatches(_)
+        | ObjectDeleteExpectedState::NeverMatchesPresent => {
+            "If-Match did not match the current ETag"
+        }
+        ObjectDeleteExpectedState::SizeMatches(_) => {
+            "x-amz-if-match-size did not match the current object size"
+        }
+        ObjectDeleteExpectedState::LastModifiedSecondsMatch(_) => {
+            "x-amz-if-match-last-modified-time did not match the current modification time"
+        }
+    };
+    precondition_failed(message)
 }
 
 /// Maps the clause the commit authority found unmet onto its S3 response.

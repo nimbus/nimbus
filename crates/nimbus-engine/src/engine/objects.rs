@@ -6,8 +6,9 @@ use nimbus_core::{
     TenantId, Timestamp, WriteOp, WriteOpType,
 };
 use nimbus_storage::{
-    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectConditionOutcome, ObjectExpectedState,
-    ObjectManifest, ObjectMultipartUpload, ObjectUploadConditionOutcome, ObjectUploadExpectedState,
+    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectConditionOutcome,
+    ObjectDeleteConditionOutcome, ObjectDeleteExpectedState, ObjectExpectedState, ObjectManifest,
+    ObjectMultipartUpload, ObjectUploadConditionOutcome, ObjectUploadExpectedState,
     multipart_upload_document_id, object_manifest_document_id,
 };
 
@@ -87,6 +88,9 @@ enum ObjectMetaWrite {
     DeleteManifest {
         bucket: String,
         key: String,
+        /// Every clause the committer must find true when a manifest is
+        /// present. Empty means an unconditional delete.
+        expected: Vec<ObjectDeleteExpectedState>,
     },
     PutMultipart {
         upload: Box<ObjectMultipartUpload>,
@@ -106,25 +110,25 @@ enum ObjectMetaWrite {
 /// concepts, two clause vocabularies, one committer that decides both before
 /// it assigns a sequence.
 enum ObjectMetaCondition<'a> {
-    Manifest(&'a [ObjectExpectedState]),
+    ManifestWrite(&'a [ObjectExpectedState]),
+    ManifestDelete(&'a [ObjectDeleteExpectedState]),
     Upload(&'a [ObjectUploadExpectedState]),
 }
 
 /// The first clause that did not hold, tagged the same way.
 enum ObjectMetaUnmet {
-    Manifest(ObjectExpectedState),
+    ManifestWrite(ObjectExpectedState),
+    ManifestDelete(ObjectDeleteExpectedState),
     Upload(ObjectUploadExpectedState),
 }
 
 impl ObjectMetaWrite {
     /// Expected-state clauses this write carries, in the vocabulary of the
-    /// row it addresses. Manifest deletes are unconditional by shape, not by
-    /// a silent default: `CompleteMultipartUpload` and `DeleteObject` take no
-    /// preconditions on the wire.
+    /// row and operation it addresses.
     fn condition(&self) -> ObjectMetaCondition<'_> {
         match self {
-            Self::PutManifest { expected, .. } => ObjectMetaCondition::Manifest(expected),
-            Self::DeleteManifest { .. } => ObjectMetaCondition::Manifest(&[]),
+            Self::PutManifest { expected, .. } => ObjectMetaCondition::ManifestWrite(expected),
+            Self::DeleteManifest { expected, .. } => ObjectMetaCondition::ManifestDelete(expected),
             Self::PutMultipart { expected, .. } | Self::DeleteMultipart { expected, .. } => {
                 ObjectMetaCondition::Upload(expected)
             }
@@ -139,7 +143,7 @@ impl ObjectMetaWrite {
                 let document = manifest.to_document()?;
                 Ok((document.table.clone(), document.id.clone(), Some(document)))
             }
-            Self::DeleteManifest { bucket, key } => Ok((
+            Self::DeleteManifest { bucket, key, .. } => Ok((
                 TableName::new(OBJECT_MANIFEST_TABLE)?,
                 object_manifest_document_id(bucket, key)?,
                 None,
@@ -204,7 +208,7 @@ impl TenantObjectMeta {
                 })
             }
             ObjectMetaWriteOutcome::ConditionRejected { unmet, current } => {
-                let ObjectMetaUnmet::Manifest(unmet) = unmet else {
+                let ObjectMetaUnmet::ManifestWrite(unmet) = unmet else {
                     return Err(Error::Internal(
                         "a manifest write can only be rejected by a manifest clause".to_string(),
                     ));
@@ -256,13 +260,18 @@ impl TenantObjectMeta {
             .await
     }
 
-    pub async fn delete_manifest(
+    pub async fn delete_manifest_conditional(
         &self,
         bucket: String,
         key: String,
-    ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
+        expected: Vec<ObjectDeleteExpectedState>,
+    ) -> Result<ObjectDeleteConditionOutcome> {
         match self
-            .commit_meta_write(ObjectMetaWrite::DeleteManifest { bucket, key })
+            .commit_meta_write(ObjectMetaWrite::DeleteManifest {
+                bucket,
+                key,
+                expected,
+            })
             .await?
         {
             ObjectMetaWriteOutcome::Committed { commit, previous } => {
@@ -271,11 +280,46 @@ impl TenantObjectMeta {
                         "committed manifest delete must carry the removed document".to_string(),
                     )
                 })?;
-                Ok(Some((commit, ObjectManifest::from_document(&previous)?)))
+                Ok(ObjectDeleteConditionOutcome::Deleted {
+                    commit,
+                    previous: ObjectManifest::from_document(&previous)?,
+                })
             }
-            ObjectMetaWriteOutcome::AbsentTarget => Ok(None),
-            ObjectMetaWriteOutcome::ConditionRejected { .. } => Err(Error::Internal(
-                "manifest delete carries no condition and cannot be rejected".to_string(),
+            ObjectMetaWriteOutcome::AbsentTarget => Ok(ObjectDeleteConditionOutcome::Absent),
+            ObjectMetaWriteOutcome::ConditionRejected { unmet, current } => {
+                let ObjectMetaUnmet::ManifestDelete(unmet) = unmet else {
+                    return Err(Error::Internal(
+                        "a manifest delete can only be rejected by a delete clause".to_string(),
+                    ));
+                };
+                let current = current.ok_or_else(|| {
+                    Error::Internal(
+                        "a rejected manifest delete must carry the present document".to_string(),
+                    )
+                })?;
+                Ok(ObjectDeleteConditionOutcome::Rejected {
+                    unmet,
+                    current: ObjectManifest::from_document(&current)?,
+                })
+            }
+        }
+    }
+
+    pub async fn delete_manifest(
+        &self,
+        bucket: String,
+        key: String,
+    ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
+        match self
+            .delete_manifest_conditional(bucket, key, Vec::new())
+            .await?
+        {
+            ObjectDeleteConditionOutcome::Deleted { commit, previous } => {
+                Ok(Some((commit, previous)))
+            }
+            ObjectDeleteConditionOutcome::Absent => Ok(None),
+            ObjectDeleteConditionOutcome::Rejected { .. } => Err(Error::Internal(
+                "a manifest delete with no expected state cannot be rejected".to_string(),
             )),
         }
     }
@@ -623,7 +667,7 @@ fn evaluate_object_condition(
     current: Option<&Document>,
 ) -> Result<Option<ObjectMetaUnmet>> {
     match condition {
-        ObjectMetaCondition::Manifest(expected) => {
+        ObjectMetaCondition::ManifestWrite(expected) => {
             if expected.is_empty() {
                 return Ok(None);
             }
@@ -634,7 +678,18 @@ fn evaluate_object_condition(
             Ok(
                 ObjectExpectedState::first_unmet(expected, current_etag.as_deref())
                     .cloned()
-                    .map(ObjectMetaUnmet::Manifest),
+                    .map(ObjectMetaUnmet::ManifestWrite),
+            )
+        }
+        ObjectMetaCondition::ManifestDelete(expected) => {
+            if expected.is_empty() {
+                return Ok(None);
+            }
+            let current = current.map(ObjectManifest::from_document).transpose()?;
+            Ok(
+                ObjectDeleteExpectedState::first_unmet(expected, current.as_ref())
+                    .cloned()
+                    .map(ObjectMetaUnmet::ManifestDelete),
             )
         }
         ObjectMetaCondition::Upload(expected) => {

@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use nimbus_blob::BlobStore;
 use nimbus_core::{CommitEntry, Error, Result, TenantId};
 use nimbus_storage::{
-    ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectMultipartUpload,
-    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
+    ObjectConditionOutcome, ObjectDeleteConditionOutcome, ObjectDeleteExpectedState,
+    ObjectExpectedState, ObjectManifest, ObjectMultipartUpload, ObjectUploadConditionOutcome,
+    ObjectUploadExpectedState,
 };
 
 /// One tenant's byte-plane accessor plus named-metadata handle, resolved once
@@ -72,11 +73,14 @@ pub trait S3ObjectMeta: Send + Sync + 'static {
         expected: Vec<ObjectExpectedState>,
     ) -> Result<ObjectConditionOutcome>;
     async fn get_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>>;
-    async fn delete_manifest(
+    /// Deletes a manifest only if every clause holds against the commit
+    /// authority's own read. Empty means an unconditional delete.
+    async fn delete_manifest_conditional(
         &self,
         bucket: &str,
         key: &str,
-    ) -> Result<Option<(CommitEntry, ObjectManifest)>>;
+        expected: Vec<ObjectDeleteExpectedState>,
+    ) -> Result<ObjectDeleteConditionOutcome>;
     async fn list_manifests(
         &self,
         bucket: &str,
@@ -132,6 +136,27 @@ pub async fn put_manifest_unconditional(
         ObjectConditionOutcome::Committed { previous, .. } => Ok(previous),
         ObjectConditionOutcome::Rejected { .. } => Err(Error::Internal(
             "a manifest write with no expected state cannot be rejected".to_string(),
+        )),
+    }
+}
+
+/// Deletes one manifest with no expected-state clauses.
+///
+/// # Errors
+/// Fails if the delete fails. A clause-free delete cannot be rejected.
+pub async fn delete_manifest_unconditional(
+    meta: &dyn S3ObjectMeta,
+    bucket: &str,
+    key: &str,
+) -> Result<Option<(CommitEntry, ObjectManifest)>> {
+    match meta
+        .delete_manifest_conditional(bucket, key, Vec::new())
+        .await?
+    {
+        ObjectDeleteConditionOutcome::Deleted { commit, previous } => Ok(Some((commit, previous))),
+        ObjectDeleteConditionOutcome::Absent => Ok(None),
+        ObjectDeleteConditionOutcome::Rejected { .. } => Err(Error::Internal(
+            "a manifest delete with no expected state cannot be rejected".to_string(),
         )),
     }
 }

@@ -11,15 +11,16 @@ use nimbus_core::{
     CommitEntry, Error, Result, SequenceNumber, SystemWallClock, TenantId, WallClock,
 };
 use nimbus_storage::{
-    ObjectBlobLayout, ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
-    ObjectManifestAttributes, ObjectMultipartUpload, ObjectUploadConditionOutcome,
-    ObjectUploadExpectedState,
+    ObjectBlobLayout, ObjectChunkRef, ObjectConditionOutcome, ObjectDeleteConditionOutcome,
+    ObjectDeleteExpectedState, ObjectExpectedState, ObjectManifest, ObjectManifestAttributes,
+    ObjectMultipartUpload, ObjectUploadConditionOutcome, ObjectUploadExpectedState,
 };
 use s3s::auth::{Credentials, SecretKey};
 use s3s::dto::{
     ChecksumAlgorithm, CompleteMultipartUploadInput, CompletedMultipartUpload, CompletedPart,
-    CreateMultipartUploadInput, ETag, ETagCondition, GetObjectInput, HeadObjectInput,
-    ListObjectsV2Input, PutObjectInput, Range, StreamingBlob, UploadPartInput,
+    CreateMultipartUploadInput, DeleteObjectInput, ETag, ETagCondition, GetObjectInput,
+    HeadObjectInput, ListObjectsV2Input, PutObjectInput, Range, StreamingBlob, Timestamp,
+    UploadPartInput,
 };
 use s3s::{Body, S3, S3ErrorCode, S3Request, S3Result};
 
@@ -276,18 +277,29 @@ impl S3ObjectMeta for InMemoryTenantMeta {
             .cloned())
     }
 
-    async fn delete_manifest(
+    async fn delete_manifest_conditional(
         &self,
         bucket: &str,
         key: &str,
-    ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
-        Ok(self
-            .inner
-            .manifests
-            .lock()
-            .unwrap()
-            .remove(&(self.tenant.clone(), bucket.to_string(), key.to_string()))
-            .map(|manifest| (commit(), manifest)))
+        expected: Vec<ObjectDeleteExpectedState>,
+    ) -> Result<ObjectDeleteConditionOutcome> {
+        tokio::task::yield_now().await;
+        let mut manifests = self.inner.manifests.lock().unwrap();
+        let slot = (self.tenant.clone(), bucket.to_string(), key.to_string());
+        let current = manifests.get(&slot).cloned();
+        if let Some(unmet) = ObjectDeleteExpectedState::first_unmet(&expected, current.as_ref()) {
+            return Ok(ObjectDeleteConditionOutcome::Rejected {
+                unmet: unmet.clone(),
+                current: current.expect("a delete clause cannot reject an absent manifest"),
+            });
+        }
+        Ok(match manifests.remove(&slot) {
+            Some(previous) => ObjectDeleteConditionOutcome::Deleted {
+                commit: commit(),
+                previous,
+            },
+            None => ObjectDeleteConditionOutcome::Absent,
+        })
     }
 
     async fn list_manifests(
@@ -562,6 +574,106 @@ async fn put_get_range_and_list_are_s3_shaped() {
 }
 
 #[tokio::test]
+async fn list_objects_v2_continuation_returns_every_key_exactly_once() {
+    let service = service();
+    for key in ["page/a", "page/b", "page/c", "page/d"] {
+        put(&service, ACCESS_KEY_A, key, b"value").await;
+    }
+
+    let mut continuation_token = None;
+    let mut listed = Vec::new();
+    loop {
+        let page = service
+            .list_objects_v2(req(
+                ListObjectsV2Input {
+                    bucket: BUCKET.to_string(),
+                    prefix: Some("page/".to_string()),
+                    max_keys: Some(2),
+                    continuation_token,
+                    ..Default::default()
+                },
+                ACCESS_KEY_A,
+            ))
+            .await
+            .expect("list page should succeed")
+            .output;
+        assert_eq!(
+            page.is_truncated,
+            Some(page.next_continuation_token.is_some()),
+            "IsTruncated must be true exactly when a continuation token is present"
+        );
+        listed.extend(
+            page.contents
+                .unwrap_or_default()
+                .into_iter()
+                .map(|object| object.key.expect("listed object should have a key")),
+        );
+        let Some(next) = page.next_continuation_token else {
+            break;
+        };
+        continuation_token = Some(next);
+    }
+
+    assert_eq!(listed, ["page/a", "page/b", "page/c", "page/d"]);
+}
+
+#[tokio::test]
+async fn list_objects_v2_continuation_returns_each_common_prefix_once() {
+    let service = service();
+    for key in ["tree/a/one", "tree/a/two", "tree/b/one"] {
+        put(&service, ACCESS_KEY_A, key, b"value").await;
+    }
+
+    let first = service
+        .list_objects_v2(req(
+            ListObjectsV2Input {
+                bucket: BUCKET.to_string(),
+                prefix: Some("tree/".to_string()),
+                delimiter: Some("/".to_string()),
+                max_keys: Some(1),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("first prefix page should succeed")
+        .output;
+    assert_eq!(
+        first.common_prefixes.expect("first common prefix")[0]
+            .prefix
+            .as_deref(),
+        Some("tree/a/")
+    );
+    let continuation_token = first
+        .next_continuation_token
+        .expect("another common prefix should remain");
+
+    let second = service
+        .list_objects_v2(req(
+            ListObjectsV2Input {
+                bucket: BUCKET.to_string(),
+                prefix: Some("tree/".to_string()),
+                delimiter: Some("/".to_string()),
+                max_keys: Some(1),
+                continuation_token: Some(continuation_token),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("second prefix page should succeed")
+        .output;
+    assert_eq!(
+        second.common_prefixes.expect("second common prefix")[0]
+            .prefix
+            .as_deref(),
+        Some("tree/b/")
+    );
+    assert_eq!(second.is_truncated, Some(false));
+    assert!(second.next_continuation_token.is_none());
+}
+
+#[tokio::test]
 async fn access_keys_scope_objects_to_their_own_tenant_and_reject_cross_tenant_fetch_of_the_same_key_path()
  {
     let service = service();
@@ -776,6 +888,91 @@ async fn conditional_requests_enforce_s3_etag_preconditions() {
         .await
         .expect("current If-Match should allow HEAD");
     assert_eq!(head.output.content_length, Some(7));
+}
+
+#[tokio::test]
+async fn conditional_delete_checks_etag_size_and_last_modified_before_deleting() {
+    let service = service();
+    let etag = put(&service, ACCESS_KEY_A, "conditional-delete.txt", b"payload").await;
+    let head = service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional-delete.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("head should succeed")
+        .output;
+    let last_modified = head.last_modified.expect("last-modified timestamp");
+
+    for (label, if_match, if_match_size, if_match_last_modified_time) in [
+        (
+            "ETag",
+            Some(ETagCondition::ETag(ETag::Strong("stale".to_string()))),
+            None,
+            None,
+        ),
+        ("size", None, Some(8), None),
+        ("last-modified", None, None, Some(Timestamp::default())),
+    ] {
+        let error = service
+            .delete_object(req(
+                DeleteObjectInput {
+                    bucket: BUCKET.to_string(),
+                    key: "conditional-delete.txt".to_string(),
+                    if_match,
+                    if_match_size,
+                    if_match_last_modified_time,
+                    ..Default::default()
+                },
+                ACCESS_KEY_A,
+            ))
+            .await
+            .expect_err("a mismatched delete condition must reject before deleting");
+        assert_eq!(
+            error.code(),
+            &S3ErrorCode::PreconditionFailed,
+            "{label} mismatch must return PreconditionFailed"
+        );
+        assert_eq!(
+            head_etag(&service, "conditional-delete.txt").await,
+            etag,
+            "{label} mismatch must leave the object intact"
+        );
+    }
+
+    service
+        .delete_object(req(
+            DeleteObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional-delete.txt".to_string(),
+                if_match: Some(ETagCondition::ETag(ETag::Strong(etag))),
+                if_match_size: Some(7),
+                if_match_last_modified_time: Some(last_modified),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("matching delete conditions should delete the object");
+
+    service
+        .delete_object(req(
+            DeleteObjectInput {
+                bucket: BUCKET.to_string(),
+                key: "conditional-delete.txt".to_string(),
+                if_match: Some(ETagCondition::ETag(ETag::Strong("stale".to_string()))),
+                if_match_size: Some(-1),
+                if_match_last_modified_time: Some(Timestamp::default()),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("conditional delete of an absent object should remain idempotent");
 }
 
 /// Issues one `PutObject` carrying write preconditions and returns the new
@@ -1220,6 +1417,102 @@ async fn multipart_upload_assembles_chunks_and_etag() {
         collect(fetched.output.body.unwrap()).await,
         Bytes::from_static(b"hello world")
     );
+}
+
+#[tokio::test]
+async fn multipart_completion_recomputes_or_rejects_crc64nvme() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    let key = "large/checksummed.txt";
+    let created = service
+        .create_multipart_upload(req(
+            CreateMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("create multipart should succeed");
+    let upload_id = created.output.upload_id.expect("upload id");
+    let part = service
+        .upload_part(req(
+            UploadPartInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                upload_id: upload_id.clone(),
+                part_number: 1,
+                body: Some(blob(b"hello world")),
+                content_length: Some(11),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("part should upload")
+        .output
+        .e_tag
+        .expect("part etag");
+    let multipart_upload = || CompletedMultipartUpload {
+        parts: Some(vec![CompletedPart {
+            part_number: Some(1),
+            e_tag: Some(part.clone()),
+            ..Default::default()
+        }]),
+    };
+
+    let error = service
+        .complete_multipart_upload(req(
+            CompleteMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                upload_id: upload_id.clone(),
+                multipart_upload: Some(multipart_upload()),
+                checksum_crc64nvme: Some("AAAAAAAAAAA=".to_string()),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect_err("wrong full-object CRC64NVME must be rejected");
+    assert_eq!(error.code(), &S3ErrorCode::BadDigest);
+    assert_eq!(
+        backend.durable_part_numbers(&tenant("tenant-a"), &upload_id),
+        vec![1],
+        "checksum rejection must not consume the multipart upload"
+    );
+
+    let expected =
+        ComputedChecksums::for_bytes(&Bytes::from_static(b"hello world")).crc64nvme_base64;
+    let completed = service
+        .complete_multipart_upload(req(
+            CompleteMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                upload_id,
+                multipart_upload: Some(multipart_upload()),
+                checksum_crc64nvme: Some(expected.clone()),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("correct full-object CRC64NVME should complete");
+    assert_eq!(completed.output.checksum_crc64nvme, Some(expected.clone()));
+
+    let head = service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("completed object should be head-able");
+    assert_eq!(head.output.checksum_crc64nvme, Some(expected));
 }
 
 #[tokio::test]
