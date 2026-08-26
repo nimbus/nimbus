@@ -283,8 +283,26 @@ pub(super) const MATRIX: &[WriterEffects] = &[
     // Provider history retention publishes the checkpoint and deletes the
     // corresponding journal/MVCC prefixes in one lease-fenced transaction.
     WriterEffects {
-        writer: "fenced_compact_retained_history",
+        writer: "fenced_finalize_retained_history",
         shape: Shape::Direct,
+        admission: Admission::AlwaysAdmitted,
+        lease: Lease::Fenced,
+        condition: Condition::ExpectedState,
+        document: DocumentEffect::None,
+        index: IndexEffect::PrunedWithVersions,
+        version: VersionEffect::PrunesRetained,
+        catalog: CatalogEffect::RetentionCheckpoint,
+        scheduler: SchedulerEffect::None,
+        trigger: TriggerEffect::None,
+        journal: JournalEffect::DurableRecordsPruned,
+        watermark: WatermarkEffect::NotAdvanced,
+        outcome: Outcome::RetentionHistorySummary,
+    },
+    // Compatibility wrapper: preparation is read-only, then finalization owns
+    // the lease-fenced storage effects above.
+    WriterEffects {
+        writer: "fenced_compact_retained_history",
+        shape: Shape::Composes(&["fenced_finalize_retained_history"]),
         admission: Admission::AlwaysAdmitted,
         lease: Lease::Fenced,
         condition: Condition::ExpectedState,
@@ -1177,6 +1195,10 @@ pub(super) const VERIFICATION_MATRIX: &[(&str, VerificationEffect)] = &[
     ),
     (
         "compact_retained_versions",
+        VerificationEffect::NoMaterializedState,
+    ),
+    (
+        "fenced_finalize_retained_history",
         VerificationEffect::NoMaterializedState,
     ),
     (

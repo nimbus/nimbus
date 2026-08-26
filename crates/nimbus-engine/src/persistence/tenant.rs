@@ -15,9 +15,10 @@ use nimbus_storage::PostgresTenantStore;
 use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
     DurableJournalPage, FaultPoint, JournalProgress, PointInTimeRestoreArchive,
-    PointInTimeRestoreTarget, ProviderWritePipelineDiagnostic, ResolvedScheduleOp,
-    RetentionGcConfig, SchedulerWrite, SchedulerWriteOutcomeStore, SchedulerWriteResult,
-    SchedulerWriteStore, SqliteTenantStore, TenantStore as RedbTenantStore,
+    PointInTimeRestoreTarget, PreparedRetentionHistory, ProviderWritePipelineDiagnostic,
+    ResolvedScheduleOp, RetentionGcConfig, RetentionHistoryState, RetentionHistorySummary,
+    SchedulerWrite, SchedulerWriteOutcomeStore, SchedulerWriteResult, SchedulerWriteStore,
+    SqliteTenantStore, TenantStore as RedbTenantStore,
 };
 #[cfg(feature = "libsql")]
 use nimbus_storage::{LibsqlReplicaFreshnessStats, LibsqlReplicaTenantStore};
@@ -48,6 +49,72 @@ macro_rules! delegate_store_method {
 }
 
 impl TenantPersistence {
+    pub(crate) fn retention_history_state(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistoryState> {
+        match_tenant_persistence!(self, |store| store.retention_history_state(config))
+    }
+
+    pub(crate) fn prepare_retained_history(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<PreparedRetentionHistory> {
+        match_tenant_persistence!(self, |store| store.prepare_retained_history(config))
+    }
+
+    pub(crate) fn finalize_retained_history(
+        &self,
+        prepared: PreparedRetentionHistory,
+    ) -> Result<RetentionHistorySummary> {
+        match self {
+            Self::Redb(store) => store.finalize_retained_history(prepared),
+            Self::Sqlite(store) => store.finalize_retained_history(prepared),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(store) => store.finalize_retained_history(prepared),
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => Err(nimbus_core::Error::Internal(
+                "provider retention finalization requires a committer lease".to_string(),
+            )),
+            #[cfg(feature = "postgres")]
+            Self::Postgres(_) => Err(nimbus_core::Error::Internal(
+                "provider retention finalization requires a committer lease".to_string(),
+            )),
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => Err(nimbus_core::Error::Internal(
+                "provider retention finalization requires a committer lease".to_string(),
+            )),
+        }
+    }
+
+    pub(crate) fn fenced_finalize_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        prepared: PreparedRetentionHistory,
+    ) -> nimbus_storage::CommitterLeaseResult<RetentionHistorySummary> {
+        match self {
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(store) => {
+                store.fenced_finalize_retained_history(owner_id, epoch, durable_sequence, prepared)
+            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => {
+                store.fenced_finalize_retained_history(owner_id, epoch, durable_sequence, prepared)
+            }
+            #[cfg(feature = "mysql")]
+            Self::MySql(store) => {
+                store.fenced_finalize_retained_history(owner_id, epoch, durable_sequence, prepared)
+            }
+            Self::Redb(_) | Self::Sqlite(_) => {
+                Err(nimbus_storage::CommitterLeaseError::Unsupported)
+            }
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(nimbus_storage::CommitterLeaseError::Unsupported),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn prune_durable_journal_through_for_testing(
         &self,

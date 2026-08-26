@@ -6,6 +6,7 @@ mod encryption;
 mod execution_units;
 mod kv;
 mod latency;
+pub(crate) mod metadata_retention;
 mod mutations;
 pub(crate) use mutations::durable_outcome::{
     DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error,
@@ -49,7 +50,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
-use crate::persistence_config::EnginePersistenceConfig;
+use crate::persistence_config::{EnginePersistenceConfig, MetadataRetentionProfile};
 use crate::tenant::{
     LeaseRenewalClock, PublisherErrorCounts, SystemLeaseRenewalClock, TenantRuntime,
     TenantRuntimeEnvironment,
@@ -70,6 +71,7 @@ pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use execution_units::{CommitFaultHandle, Fault, labels as commit_fault_labels};
+pub use metadata_retention::{MetadataRetentionDiagnosticsSnapshot, MetadataRetentionRunResult};
 pub use mutations::phase_metrics::CommitPhaseMetricsSnapshot;
 pub(crate) use mutations::phase_metrics::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitTraceSample, maybe_emit_commit_trace,
@@ -123,6 +125,7 @@ pub struct Engine {
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
+    metadata_retention: MetadataRetentionProfile,
     // Declared last so provider and executor fields drop before the OS locks.
     _process_fence: process_fence::EngineProcessFence,
 }
@@ -198,6 +201,7 @@ pub(super) struct EngineBootstrapParts {
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
+    metadata_retention: MetadataRetentionProfile,
     process_fence: process_fence::EngineProcessFence,
 }
 
@@ -496,6 +500,7 @@ impl Engine {
             engine_executor: parts.engine_executor,
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,
+            metadata_retention: parts.metadata_retention,
             _process_fence: parts.process_fence,
         }
     }
@@ -579,6 +584,14 @@ impl Engine {
             tenants: Arc::downgrade(&self.tenants),
             publisher_failure_diagnostics: Arc::downgrade(&self.publisher_failure_diagnostics),
         };
+        let metadata_retention = runtime.metadata_retention_controller();
+        metadata_retention.mark_started()?;
+        let retention_runtime = Arc::downgrade(&runtime);
+        let retention_engine_shutdown = self.engine_executor.shutdown_token();
+        spawn_permit.spawn(ENGINE_BACKGROUND_TASK.scope(
+            "metadata_retention",
+            metadata_retention.run(retention_runtime, retention_engine_shutdown),
+        ));
         let runtime = Arc::downgrade(&runtime);
         spawn_permit.spawn(
             ENGINE_BACKGROUND_TASK.scope("mutation_committer", async move {
@@ -605,6 +618,7 @@ impl Engine {
             .cloned()
             .collect::<Vec<_>>();
         for runtime in &runtimes {
+            runtime.shutdown_metadata_retention();
             runtime.shutdown_committer_lease_renewal();
         }
         self.engine_executor.quiesce().await;
@@ -703,6 +717,7 @@ impl Engine {
                 self.committer_lease_clock.clone(),
                 self.committer_owner_id_for_store(&store),
                 self.id_source.clone(),
+                self.metadata_retention,
             ),
         )?);
         self.restore_publisher_error_counts(&runtime);

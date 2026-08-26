@@ -11,7 +11,10 @@ use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
     PointInTimeRestoreArchive, PointInTimeRestoreTarget, describe_materialized_position,
 };
-use crate::{MaterializedRetentionCheckpoint, RetentionHistoryState, RetentionHistorySummary};
+use crate::{
+    MaterializedRetentionCheckpoint, PreparedRetentionHistory, RetentionHistoryState,
+    RetentionHistorySummary,
+};
 
 use super::MemoryTenantStore;
 use super::state::{MemoryState, MemoryTableIdentity};
@@ -281,16 +284,17 @@ impl MemoryTenantStore {
             .clone()
             .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
         RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
             crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence()),
             state.retention_physical_floor,
             checkpoint,
         )
     }
 
-    pub fn compact_retained_history(
+    pub fn prepare_retained_history(
         &self,
         config: RetentionGcConfig,
-    ) -> Result<RetentionHistorySummary> {
+    ) -> Result<PreparedRetentionHistory> {
         let watermarks = self.retention_gc_watermarks(config)?;
         let prepared = self.read_state()?.clone();
         let checkpoint = prepared
@@ -300,6 +304,7 @@ impl MemoryTenantStore {
         let desired_floor =
             crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence());
         let before = RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
             desired_floor,
             prepared.retention_physical_floor,
             checkpoint.clone(),
@@ -310,11 +315,33 @@ impl MemoryTenantStore {
             .map(|(_, record)| record.clone())
             .collect::<Vec<_>>();
         let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+        self.check_fault(FaultPoint::RetentionCheckpointAfterPrepare)?;
+        Ok(PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_checkpoint_blob: None,
+            expected_revision: Some(prepared.revision),
+        })
+    }
+
+    pub fn finalize_retained_history(
+        &self,
+        prepared: PreparedRetentionHistory,
+    ) -> Result<RetentionHistorySummary> {
+        let _pin_barrier = self
+            .retention_floor
+            .guard_prepared_watermarks(&prepared.watermarks)?;
+        let PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_revision,
+            ..
+        } = prepared;
 
         let mut live = self.write_state()?;
-        if live.revision != prepared.revision
-            || live.retention_checkpoint != prepared.retention_checkpoint
-        {
+        if Some(live.revision) != expected_revision {
             return Err(Error::conflict(
                 "memory retention state changed while compaction was prepared".to_string(),
             ));
@@ -344,7 +371,12 @@ impl MemoryTenantStore {
         drop(live);
         self.check_fault(FaultPoint::RetentionCheckpointAfterCommit)?;
 
-        let after = RetentionHistoryState::new(desired_floor, candidate.sequence(), candidate)?;
+        let after = RetentionHistoryState::new(
+            before.latest_sequence,
+            before.desired_floor,
+            candidate.sequence(),
+            candidate,
+        )?;
         Ok(RetentionHistorySummary {
             watermarks,
             before,
@@ -353,6 +385,13 @@ impl MemoryTenantStore {
             document_versions_pruned: 0,
             index_versions_pruned: 0,
         })
+    }
+
+    pub fn compact_retained_history(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistorySummary> {
+        self.finalize_retained_history(self.prepare_retained_history(config)?)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

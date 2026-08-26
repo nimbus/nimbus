@@ -12,6 +12,51 @@ async fn tenant_engine_metrics_route_returns_not_found_for_missing_tenant() {
 }
 
 #[tokio::test]
+async fn tenant_metadata_retention_route_runs_one_cycle_and_updates_diagnostics() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        api.insert_document("demo", "tasks", json!({ "title": "Ada" }))
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+
+    let response = server
+        .client()
+        .post(server.http_url("/debug/tenants/demo/engine/retention"))
+        .send()
+        .await
+        .expect("manual retention request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("manual retention result should parse");
+    assert_eq!(result["compacted"], json!(true));
+    assert_eq!(result["confirmed_floor"], result["physical_floor"]);
+
+    let metrics = api.tenant_engine_metrics("demo").await;
+    assert_eq!(metrics.status(), StatusCode::OK);
+    let body = metrics
+        .json::<serde_json::Value>()
+        .await
+        .expect("tenant engine metrics response should parse");
+    let retention = &body["diagnostics"]["metadata_retention"];
+    assert_eq!(retention["profile"]["mode"], json!("bounded"));
+    assert_eq!(retention["run_count"], json!(1));
+    assert_eq!(retention["success_count"], json!(1));
+    assert_eq!(retention["retention_failure_count"], json!(0));
+    assert_eq!(retention["confirmed_floor"], retention["physical_floor"]);
+}
+
+#[tokio::test]
 async fn tenant_engine_metrics_route_surfaces_worker_and_serving_health_after_mixed_traffic() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_engine(fixture.engine())).await;

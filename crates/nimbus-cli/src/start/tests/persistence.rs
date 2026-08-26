@@ -20,6 +20,53 @@ async fn server_auto_tenant_uses_provider_lifecycle() {
 }
 
 #[test]
+fn metadata_retention_defaults_bounded_and_cli_overrides_env_and_file() {
+    let default_cli = parse_start(["nimbus", "start"]);
+    let default_config = persistence_config_from_sources(
+        &default_cli,
+        &PersistenceFileConfig::default(),
+        &PersistenceEnv::default(),
+    )
+    .expect("default retention config should build");
+    assert_eq!(
+        default_config.metadata_retention,
+        nimbus::MetadataRetentionProfile::shipped()
+    );
+
+    let cli = parse_start(["nimbus", "start", "--metadata-retention", "bounded"]);
+    let env = PersistenceEnv {
+        metadata_retention: Some(CliMetadataRetention::RetainAll),
+        ..PersistenceEnv::default()
+    };
+    let file = PersistenceFileConfig {
+        metadata_retention: Some(CliMetadataRetention::RetainAll),
+        ..PersistenceFileConfig::default()
+    };
+    let config = persistence_config_from_sources(&cli, &file, &env)
+        .expect("CLI retention override should build");
+    assert_eq!(
+        config.metadata_retention,
+        nimbus::MetadataRetentionProfile::shipped(),
+        "CLI must retain command > environment > file precedence"
+    );
+}
+
+#[test]
+fn metadata_retention_retain_all_is_an_explicit_operator_profile() {
+    let cli = parse_start(["nimbus", "start", "--metadata-retention", "retain-all"]);
+    let config = persistence_config_from_sources(
+        &cli,
+        &PersistenceFileConfig::default(),
+        &PersistenceEnv::default(),
+    )
+    .expect("retain-all config should build");
+    assert_eq!(
+        config.metadata_retention,
+        nimbus::MetadataRetentionProfile::retain_all()
+    );
+}
+
+#[test]
 fn cli_builds_postgres_typed_config_with_overrides() {
     let cli = parse_start([
         "nimbus",

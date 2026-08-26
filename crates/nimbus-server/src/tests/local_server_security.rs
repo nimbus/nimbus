@@ -139,6 +139,23 @@ async fn native_api_and_debug_routes_require_local_admin_auth() {
         .await
         .expect("authorized debug request should send");
     assert_eq!(debug_allowed.status(), StatusCode::OK);
+
+    let retention_denied = server
+        .client()
+        .post(server.http_url("/debug/tenants/demo/engine/retention"))
+        .send()
+        .await
+        .expect("unauthorized retention request should send");
+    assert_eq!(retention_denied.status(), StatusCode::UNAUTHORIZED);
+
+    let retention_allowed = server
+        .client()
+        .post(server.http_url("/debug/tenants/demo/engine/retention"))
+        .bearer_auth(&token.token)
+        .send()
+        .await
+        .expect("authorized retention request should send");
+    assert_eq!(retention_allowed.status(), StatusCode::OK);
 }
 
 #[tokio::test]

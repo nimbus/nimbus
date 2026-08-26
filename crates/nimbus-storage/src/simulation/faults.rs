@@ -24,6 +24,7 @@ pub enum FaultPoint {
     TriggerTransitionAfterHeadObservation = 13,
     RetentionCheckpointBeforeCommit = 14,
     RetentionCheckpointAfterCommit = 15,
+    RetentionCheckpointAfterPrepare = 16,
 }
 
 impl FaultPoint {
@@ -52,6 +53,7 @@ impl FaultPoint {
             }
             Self::RetentionCheckpointBeforeCommit => "retention_checkpoint_before_commit",
             Self::RetentionCheckpointAfterCommit => "retention_checkpoint_after_commit",
+            Self::RetentionCheckpointAfterPrepare => "retention_checkpoint_after_prepare",
         }
     }
 }

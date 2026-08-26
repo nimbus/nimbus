@@ -135,6 +135,20 @@ pub(crate) async fn tenant_engine_diagnostics(
     }))
 }
 
+/// Runs one ordered metadata-retention cycle and returns its durable result.
+pub(crate) async fn run_tenant_metadata_retention(
+    State(state): State<Arc<AppState>>,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<nimbus_engine::MetadataRetentionRunResult>, AppError> {
+    let tenant = parse_operator_tenant_context(tenant_id, "native_http.metadata.retention")?;
+    let result = state
+        .engine
+        .clone()
+        .run_metadata_retention_now(tenant.tenant_id().clone())
+        .await?;
+    Ok(Json(result))
+}
+
 #[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct ConsistencyReportQuery {
     #[serde(default)]

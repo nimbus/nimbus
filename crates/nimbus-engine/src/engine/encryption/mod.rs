@@ -129,6 +129,7 @@ mod tests {
             },
             control_plane: crate::persistence_config::ControlPlaneConfig::EmbeddedRedb { data_dir },
             local_encryption: encryption,
+            metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
         }
     }
 
@@ -148,6 +149,7 @@ mod tests {
             },
             control_plane: crate::persistence_config::ControlPlaneConfig::EmbeddedRedb { data_dir },
             local_encryption: encryption,
+            metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
         }
     }
 
@@ -224,6 +226,7 @@ mod tests {
                 data_dir: control_data_dir,
             },
             local_encryption: encryption,
+            metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
         }
     }
 

@@ -16,10 +16,10 @@ pub use nimbus_engine::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionStatus,
     EncryptionValidationError, Engine, EnginePersistenceConfig, InitializedKeyProvider,
     KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig, LocalKeyProviderConfig,
-    LocalPersistenceFamily, MasterKeyFileConfig, MonthlyActiveUsersSnapshot, PersistenceDialect,
-    PersistenceTopology, PoolConfig, ProviderCredentials, SubscriptionUpdate,
-    TenantAdmissionOutcome, TenantProviderConfig, TenantRoutingConfig, evaluate_paginated,
-    evaluate_query, run_scheduler,
+    LocalPersistenceFamily, MasterKeyFileConfig, MetadataRetentionProfile,
+    MonthlyActiveUsersSnapshot, PersistenceDialect, PersistenceTopology, PoolConfig,
+    ProviderCredentials, SubscriptionUpdate, TenantAdmissionOutcome, TenantProviderConfig,
+    TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,
 };
 // Runtime execution contract and limits.
 pub use nimbus_runtime::{

@@ -258,6 +258,7 @@ impl Engine {
                     self.committer_lease_clock.clone(),
                     committer_owner_id,
                     self.id_source.clone(),
+                    self.metadata_retention,
                 ),
             )
             .await?,
@@ -354,12 +355,8 @@ impl Engine {
         };
         if let Some(runtime) = runtime {
             let _deletion = runtime.begin_delete();
-            runtime.shutdown_trigger_candidates();
-            runtime.shutdown_trigger_execution();
-            runtime.shutdown_subscription_delivery();
-            runtime
-                .subscriptions
-                .shutdown_all(format!("tenant deleted: {tenant_id}"));
+            runtime.begin_explicit_delete_shutdown();
+            runtime.wait_for_metadata_retention_finished_blocking();
         }
         self.publisher_failure_diagnostics
             .write()
@@ -682,6 +679,7 @@ impl Engine {
                 self.committer_lease_clock.clone(),
                 self.committer_owner_id_for_store(&opened.persistence),
                 self.id_source.clone(),
+                self.metadata_retention,
             ),
         ));
         runtime.mark_scheduler_recovery_pending();

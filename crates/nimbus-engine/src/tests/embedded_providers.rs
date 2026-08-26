@@ -258,6 +258,7 @@ async fn committer_worker_group_rejected_after_quiesce_preserves_all_receivers()
                 Arc::new(SystemLeaseRenewalClock),
                 None,
                 Arc::new(nimbus_core::SystemIdSource),
+                crate::persistence_config::MetadataRetentionProfile::shipped(),
             ),
         )
         .expect("unstarted runtime should construct"),
@@ -580,6 +581,7 @@ async fn typed_persistence_config_supports_separate_embedded_control_plane_direc
         ),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
+        metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
     };
     let engine = Arc::new(
         Engine::new_with_persistence_config(config.clone())

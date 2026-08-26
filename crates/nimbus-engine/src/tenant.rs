@@ -161,6 +161,7 @@ pub struct TenantRuntime {
     mutation_isolate_admission: Arc<MutationIsolateAdmission>,
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
+    metadata_retention: Arc<crate::engine::metadata_retention::MetadataRetentionController>,
     committer_lease: Option<Arc<CommitterLeaseLifecycle>>,
     scheduler_recovery: SchedulerRecoveryIntent,
     publisher: Arc<PublisherHandoff>,
@@ -274,6 +275,7 @@ pub(crate) struct TenantRuntimeEnvironment {
     renewal_clock: Arc<dyn LeaseRenewalClock>,
     committer_owner_id: Option<String>,
     id_source: Arc<dyn IdSource>,
+    metadata_retention: crate::persistence_config::MetadataRetentionProfile,
 }
 
 impl TenantRuntimeEnvironment {
@@ -282,12 +284,14 @@ impl TenantRuntimeEnvironment {
         renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
         id_source: Arc<dyn IdSource>,
+        metadata_retention: crate::persistence_config::MetadataRetentionProfile,
     ) -> Self {
         Self {
             monotonic_clock,
             renewal_clock,
             committer_owner_id,
             id_source,
+            metadata_retention,
         }
     }
 }
@@ -319,6 +323,7 @@ pub struct TenantEngineDiagnosticsSnapshot {
     pub query_planning: QueryPlanningStats,
     pub commit_phases: CommitPhaseMetricsSnapshot,
     pub tenant_write_rate: TenantWriteRateStats,
+    pub metadata_retention: crate::engine::MetadataRetentionDiagnosticsSnapshot,
     #[cfg(feature = "libsql")]
     pub libsql_replica_freshness: Option<LibsqlReplicaFreshnessStats>,
     pub provider_write_pipeline: Option<nimbus_storage::ProviderWritePipelineDiagnostic>,
@@ -377,6 +382,10 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
+            metadata_retention: crate::engine::metadata_retention::MetadataRetentionController::new(
+                environment.metadata_retention,
+                environment.monotonic_clock.clone(),
+            ),
             committer_lease: environment.committer_owner_id.map(|owner_id| {
                 Arc::new(CommitterLeaseLifecycle::new(
                     owner_id,
@@ -660,6 +669,7 @@ impl TenantRuntime {
     /// committer, publisher, trigger, or subscription work can still issue
     /// storage requests.
     pub(crate) fn begin_explicit_delete_shutdown(&self) {
+        self.shutdown_metadata_retention();
         self.shutdown_committer_lease_renewal();
         self.shutdown_committer();
         self.shutdown_trigger_candidates();
@@ -672,6 +682,7 @@ impl TenantRuntime {
     /// Waits until accepted tenant work and the mutation publication pipeline
     /// have released provider storage before explicit deletion proceeds.
     pub(crate) async fn wait_for_explicit_delete_shutdown(&self) {
+        self.wait_for_metadata_retention_finished().await;
         self.wait_for_delete_operation_drain().await;
         if self.uses_ordered_publisher() {
             self.wait_for_publisher_finished().await;
@@ -684,6 +695,7 @@ impl TenantRuntime {
         if !self.lifecycle.begin_eviction() {
             return false;
         }
+        self.shutdown_metadata_retention();
         self.shutdown_committer_lease_renewal();
         self.mutation_journal.fail_applied_waiters(Error::storage(
             nimbus_core::StorageErrorKind::Unavailable,
@@ -782,6 +794,7 @@ impl TenantRuntime {
             query_planning: self.query_planning_stats(),
             commit_phases,
             tenant_write_rate: self.write_rate.stats(),
+            metadata_retention: self.metadata_retention.snapshot(),
             #[cfg(feature = "libsql")]
             libsql_replica_freshness: self.store.libsql_replica_freshness_stats(),
             provider_write_pipeline: self.store.provider_write_pipeline_diagnostic(),
