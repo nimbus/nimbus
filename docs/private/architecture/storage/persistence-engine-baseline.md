@@ -292,6 +292,30 @@ not a property of the materialized state. A sequence alone is not an identity:
 two artifacts at the same applied sequence with different state must compare
 unequal.
 
+Repeated consistency checks use a separate, derived
+`VerificationPosition`: root format version, exact applied sequence, and a
+deterministic Merkle root over the same canonical logical leaves. The root is
+process-local and disposable. It is not stored in a provider schema and never
+replaces `MaterializedPosition` in an artifact, recovery, bootstrap, or PITR
+contract. A verification session retains independent authoritative, shadow,
+and embedded-replica indexes. Each writer publishes exact post-apply deltas or
+invalidates the index before a later fast result can pass.
+
+An incremental result compares those three roots at one applied sequence. It
+also names the `MaterializedPosition` from its last full scrub. The result has
+incremental assurance only. It proves contiguous tracked change since that
+anchor, not a new read of all provider state.
+
+Nimbus runs a full scrub for
+cold start, restart, cache clear, or five minutes of idle time. It also scrubs
+for a 15-minute anchor age, sequence gap or rewind, retention loss, index
+invalidation, root mismatch, or an operator request.
+The full scrub reads actual materialized state, rebuilds the disposable roots,
+and detects same-sequence provider tamper that journal replay alone cannot see.
+The registry bounds admission to 64 tenants and 256 MiB of total root-index
+memory. Exhaustion can refuse the optional check but cannot block tenant reads
+or writes.
+
 CDC/changefeed uses typed `ChangefeedHandle`, `ChangefeedCursor`,
 `ChangefeedBootstrap`, `ChangefeedPage`, and `ChangefeedEvent` over the same
 tenant event journal. The initial snapshot cut and journal handoff are explicit

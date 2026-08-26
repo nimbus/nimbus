@@ -268,8 +268,46 @@ fn main() -> Result<()> {
         let data_dir = tempfile::tempdir().map_err(|error| {
             Error::Internal(format!("failed to create benchmark root: {error}"))
         })?;
-        runtime.block_on(seed_fixture(data_dir.path(), documents, payload_bytes))?;
         let payload = vec![b'x'; payload_bytes];
+        if let Err(error) =
+            runtime.block_on(seed_fixture(data_dir.path(), documents, payload_bytes))
+        {
+            let Error::ResourceExhausted(message) = error else {
+                return Err(error);
+            };
+            eprintln!(
+                "recording resource-limited setup for {documents} documents with \
+                 {payload_bytes}-byte payloads: {message}"
+            );
+            let candidate = CandidateTreap::build(documents, &payload);
+            for &churn_basis_points in churn_rungs {
+                let churn_documents = churn_count(documents, churn_basis_points);
+                matrix.push(MatrixMeasurement {
+                    documents,
+                    payload_bytes,
+                    payload_state_bytes: (documents as u64).saturating_mul(payload_bytes as u64),
+                    churn_basis_points,
+                    churn_requested_documents: churn_documents,
+                    churn_applied_documents: 0,
+                    churn_setup_elapsed_ns: 0,
+                    churn_setup_status: "resource_limited_seed",
+                    full: skipped_full_measurement(
+                        documents,
+                        format!("fixture seed exhausted local resources: {message}"),
+                    ),
+                    candidate: measure_candidate(&candidate, "resource_limited_setup"),
+                });
+            }
+            if arguments.output.is_some() {
+                let checkpoint = benchmark_report(
+                    arguments.full_samples,
+                    matrix.clone(),
+                    write_overhead.clone(),
+                );
+                write_report(arguments.output.as_deref(), &checkpoint)?;
+            }
+            continue;
+        }
         let mut candidate = CandidateTreap::build(documents, &payload);
         let mut churn_start = 0;
 

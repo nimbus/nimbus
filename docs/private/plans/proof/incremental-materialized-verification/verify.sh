@@ -260,12 +260,71 @@ else
 fi
 
 # 15. Final matched performance proves the accepted branch still meets budget.
-if [ -f "$PROOF/imv7-performance.md" ] \
+if python3 - "$PROOF/imv7-raw.json" <<'PY' \
   && grok "$PROOF/imv7-performance.md" "accepted verdict" \
-  && grep -qE 'STREAMING_ACCEPTED|MERKLE_REQUIRED' "$PROOF/imv7-performance.md"; then
+  && grok "$PROOF/imv7-performance.md" "MERKLE_REQUIRED" \
+  && grok "$PROOF/imv7-performance.md" "measured margin"; then
+import itertools
+import json
+import sys
+
+try:
+    report = json.load(open(sys.argv[1]))
+    expected = set(itertools.product(
+        (10_000, 100_000, 1_000_000),
+        (256, 1_024, 8 * 1_024),
+        (0, 10, 100, 1_000),
+    ))
+    actual = {
+        (row["documents"], row["payload_bytes"], row["churn_basis_points"])
+        for row in report["matrix"]
+    }
+    decisive = next(
+        row for row in report["matrix"]
+        if (row["documents"], row["payload_bytes"], row["churn_basis_points"])
+        == (100_000, 1_024, 10)
+    )
+    million = next(
+        row for row in report["matrix"]
+        if (row["documents"], row["payload_bytes"], row["churn_basis_points"])
+        == (1_000_000, 1_024, 10)
+    )
+    decisive_full_p95 = decisive["full"]["summary"]["p95_ns"]
+    decisive_extra_rss_p95 = sorted(
+        sample["extra_peak_rss_bytes"] for sample in decisive["full"]["samples"]
+    )[-1]
+    million_summary = million["full"]["summary"]
+    million_censored = million["full"]["censored_lower_bound_summary"]
+    million_full_p95 = (
+        million_summary["p95_ns"]
+        if million_summary is not None
+        else million_censored["p95_ns"]
+    )
+    write = report["write_overhead"]
+    valid = (
+        report["format_version"] == 2
+        and report["interval_seconds"] == 60
+        and len(report["matrix"]) == 36
+        and actual == expected
+        and decisive["churn_setup_status"] == "measured"
+        and (
+            decisive_full_p95 > 1_000_000_000
+            or decisive_extra_rss_p95 > 256 * 1024 * 1024
+        )
+        and decisive_full_p95 >= 5 * decisive["candidate"]["summary"]["p95_ns"]
+        and decisive["candidate"]["resident_bytes_per_leaf"] <= 192
+        and million["churn_setup_status"] == "measured"
+        and million_full_p95 >= 10 * million["candidate"]["summary"]["p95_ns"]
+        and abs(write["throughput_change_percent"]) <= 5
+        and abs(write["p99_commit_latency_change_percent"]) <= 5
+    )
+except (OSError, KeyError, StopIteration, TypeError, ValueError):
+    valid = False
+sys.exit(0 if valid else 1)
+PY
   ok "15. final matched performance proves the accepted IMV2 branch"
 else
-  no "15. closeout performance" "the final matched-run proof is missing"
+  no "15. closeout performance" "the final matrix, verdict, or ratified margin is missing"
 fi
 
 # 16. Architecture and operating docs state the accepted assurance contract.

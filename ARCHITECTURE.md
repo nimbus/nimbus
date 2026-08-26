@@ -169,6 +169,13 @@ handled by the engine. A triggers subsystem
 MySQL, and libSQL, plus a simulation provider for tests. The at-rest format is
 backend-conditional — SQLite stores documents in JSON columns, while the redb
 store uses a MessagePack document codec — behind the same provider traits.
+Storage also owns two provider-neutral state bindings.
+
+`MaterializedPosition` is the canonical artifact and recovery identity.
+`VerificationPosition` is a
+derived, process-local Merkle root used only to accelerate repeated consistency
+checks. The root is disposable: loss, invalidation, expiry, or mismatch causes
+a full state scrub and never blocks normal reads, writes, recovery, or restore.
 → <https://nimbusdocs.com/concepts/architecture/storage/>
 
 ### Runtime & isolates

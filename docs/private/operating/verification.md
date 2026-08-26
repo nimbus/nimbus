@@ -236,6 +236,12 @@ of about 439 needs `--features libsql,mysql,postgres` plus live fixtures for
 the provider lanes. `make` entrypoints and `--workspace` runs are unaffected
 because workspace feature unification enables the providers.
 
+A determinism or canonicality invariant must also run from a crate in the
+shipped binary dependency graph. A storage-only test cannot prove that feature
+unification leaves serialization, ordering, hashing, or equality unchanged.
+Keep the focused test for diagnosis. Add one golden or equivalence test in an
+engine, server, CLI, or binary graph that resolves the shipped features.
+
 A lane that cannot run is `UNVERIFIED`. It is never reported as green, and it is
 never converted into a passing claim by a skip. Storage enforces that rule as a
 test rather than as a convention: a closed matrix qualifies every tenant
@@ -256,6 +262,50 @@ surface.
 ```bash
 cargo test -p nimbus-storage sqlite_physical_durability -- --nocapture
 ```
+
+## Materialized-state consistency
+
+The local operator endpoint runs consistency verification on demand. Nimbus
+does not schedule this endpoint periodically. The one-minute interval in the
+performance proof is a service-level budget, not an automatic scheduler.
+
+```text
+GET /debug/tenants/{tenant_id}/consistency
+GET /debug/tenants/{tenant_id}/consistency?force_full=true
+DELETE /debug/tenants/{tenant_id}/consistency
+```
+
+The first request after process start, session loss, or cache clear runs a
+full scrub. A full scrub reads authoritative, shadow, and embedded-replica
+materialized state and compares their canonical `MaterializedPosition` values.
+It then rebuilds three process-local Merkle indexes. It also runs after an
+anchor expires, a session is idle, sequence order rewinds, or retention has a
+gap. An invalid index, root difference, or `force_full=true` also causes it.
+
+A warm request can use an incremental check. It applies one contiguous journal
+suffix to each retained index. It compares the three `VerificationPosition`
+roots at the same applied sequence and names the full-scrub anchor in the
+report.
+
+This result proves tracked consistency since that anchor. It does not claim
+that the current provider rows were fully read again. A mismatch escalates to
+a full scrub. Persistent same-sequence provider tamper returns a failed report
+and keeps the next request on the full path.
+
+`DELETE` removes only the disposable session and returns `204 No Content`. It
+is safe to repeat and does not change tenant data. The next `GET` runs a cold
+full scrub. The registry bounds session storage to 64 tenants and 256 MiB of
+resident index data. It expires sessions after five minutes idle or a
+15-minute anchor age. If all slots are active, Nimbus can refuse this optional
+diagnostic without blocking tenant reads or writes.
+
+Read `mode`, `anchor`, `event_count`, `escalation_reason`, the three root
+fingerprints, and `mismatches` before you call a report green. The fixed metrics
+are `full_scrub_total`, `incremental_total`, the two duration totals,
+`resident_index_bytes_current`, `resident_index_bytes_peak`,
+`verified_leaves_total`, `rebuild_total`, `mismatch_total`, `sessions_current`,
+and `evictions_total`. They have no tenant, document, table, SQL, or state
+labels.
 
 ## Application verification
 

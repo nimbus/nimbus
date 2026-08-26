@@ -135,9 +135,16 @@ no longer reject valid storage concurrency.
 
 The correction passes the 26-test materialized-verification lane, all eight
 engine consistency tests, the libSQL-feature test compile, and focused Clippy.
-Its real-provider rerun remains the hosted merge gate. A local fixture attempt
-was `UNVERIFIED`: Docker Desktop's credential helper blocked before it started
-the pinned libSQL image.
+A local fixture attempt was `UNVERIFIED`: Docker Desktop's credential helper
+blocked before it started the pinned libSQL image.
+
+The corrected hosted run qualified all three remote providers. PostgreSQL
+passed in 4 minutes 6 seconds, MySQL passed in 4 minutes 58 seconds, and libSQL
+passed in 6 minutes 44 seconds. The complete libSQL lane passed the four PPSC
+cases that exposed the overlap defect. Every other hosted check also passed.
+This includes the four PPSC seed-farm shards, the three workspace shards,
+both engine-harness shards, all four server-harness shards, and the storage
+harness. PR #309 squash-merged as `f5f813366`.
 
 The fixed verifier reports:
 
