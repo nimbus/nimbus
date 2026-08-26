@@ -10,13 +10,15 @@ struct BlockingRetentionCommit {
 
 impl BlockingRetentionCommit {
     fn wait_until_entered(&self) {
-        let mut state = self.state.lock().expect("blocking fault lock should hold");
-        while !state.0 {
-            state = self
-                .changed
-                .wait(state)
-                .expect("blocking fault wait should hold");
-        }
+        let state = self.state.lock().expect("blocking fault lock should hold");
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, BLOCKING_TEST_RELEASE_TIMEOUT, |state| !state.0)
+            .expect("blocking fault wait should hold");
+        assert!(
+            state.0,
+            "retention compaction did not reach its pre-commit boundary within {BLOCKING_TEST_RELEASE_TIMEOUT:?}"
+        );
     }
 
     fn release(&self) {
@@ -34,11 +36,14 @@ impl FaultInjector for BlockingRetentionCommit {
         let mut state = self.state.lock().expect("blocking fault lock should hold");
         state.0 = true;
         self.changed.notify_all();
-        while !state.1 {
-            state = self
-                .changed
-                .wait(state)
-                .expect("blocking fault wait should hold");
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, BLOCKING_TEST_RELEASE_TIMEOUT, |state| !state.1)
+            .expect("blocking fault wait should hold");
+        if !state.1 {
+            return Err(Error::Internal(format!(
+                "retention checkpoint test release did not arrive within {BLOCKING_TEST_RELEASE_TIMEOUT:?}"
+            )));
         }
         Ok(())
     }
