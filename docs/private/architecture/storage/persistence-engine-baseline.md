@@ -322,14 +322,34 @@ tenant event journal. The initial snapshot cut and journal handoff are explicit
 so consumers do not miss or duplicate events.
 
 Durable journal streams expose a retained `cursor_floor`; cursors before that
-floor fail closed as expired history. redb, SQLite, Postgres, MySQL, and libSQL
-derive that floor from the retained commit-log minimum sequence.
+floor fail closed as expired history. Nimbus persists separate document,
+index, and journal read floors on memory, redb, SQLite, Postgres, MySQL, and
+libSQL. Each page validates the relevant authoritative floor before and after
+its read. A concurrent prune can return `RetentionExpired`, but it cannot
+return a partial page, a sequence gap, or a missing record as an empty logical
+event.
 
 Retention GC computes separate safe watermarks for document versions, index
 versions, registry metadata, read-policy metadata, CDC, PITR exports, shadow
 materializers, embedded replicas, and transaction sessions. Document pruning
 preserves the latest anchor at or before the safe floor for each document;
 index pruning removes only closed intervals whose `visible_until` is safe.
+
+A `MaterializedRetentionCheckpoint` binds a materialized snapshot, applied and
+durable heads, timestamp, `MaterializedPosition`, and checkpoint digest. The
+maintenance transaction validates the prior checkpoint and current authority,
+publishes the next checkpoint and read floors, prunes the journal through that
+checkpoint, and compacts eligible MVCC rows atomically. Desired, confirmed,
+and physical floors remain distinct operator-visible state. A fault can retain
+extra history, but it cannot publish a floor without its rebuild base.
+
+The Engine runs one bounded, single-flight controller for each loaded tenant.
+The shipped profile retains 100,000 document-version, index-version, and PITR
+sequences, 50,000 CDC sequences, and becomes eligible after 10,000 new applied
+sequences. It prepares the checkpoint off the mutation path and finalizes it
+through the existing ordered maintenance route. Embedded stores use the
+process fence; provider stores validate the current committer lease inside the
+maintenance transaction. `retain-all` is an explicit operator profile.
 
 ### Diagnostics and format gates
 
