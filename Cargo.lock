@@ -6789,6 +6789,7 @@ version = "0.1.45"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
+ "fs2",
  "futures",
  "hkdf",
  "hyper 0.14.32",

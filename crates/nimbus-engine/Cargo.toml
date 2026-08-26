@@ -38,6 +38,7 @@ postgres = ["nimbus-storage/postgres"]
 arc-swap.workspace = true
 base64.workspace = true
 futures.workspace = true
+fs2.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-storage = { path = "../nimbus-storage", default-features = false }

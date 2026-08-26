@@ -16,6 +16,7 @@ use nimbus_storage::{MySqlProvider, MySqlProviderConfig};
 #[cfg(feature = "postgres")]
 use nimbus_storage::{PostgresProvider, PostgresProviderConfig};
 
+use super::process_fence::EngineProcessFence;
 use super::{BackgroundExecutor, Engine, EngineBootstrapParts, encryption};
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider};
 use crate::persistence_config::{
@@ -117,7 +118,7 @@ pub(super) fn build_memory_engine(
     storage_fault_injector: Arc<dyn FaultInjector>,
     id_source: Arc<dyn IdSource>,
 ) -> Result<Engine> {
-    std::fs::create_dir_all(&data_dir).map_err(internal_error)?;
+    let process_fence = EngineProcessFence::acquire([data_dir.clone()])?;
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
         build_control_plane_provider(data_dir.clone(), None, &storage_executor)?;
@@ -140,6 +141,7 @@ pub(super) fn build_memory_engine(
         engine_executor,
         storage_executor,
         encryption_status: None,
+        process_fence,
     }))
 }
 
@@ -211,10 +213,11 @@ fn build_embedded_from_plan(
     simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
-    std::fs::create_dir_all(&plan.data_dir).map_err(internal_error)?;
-    if control_data_dir != plan.data_dir {
-        std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
-    }
+    let process_fence = EngineProcessFence::acquire([
+        engine_data_dir.clone(),
+        control_data_dir.clone(),
+        plan.data_dir.clone(),
+    ])?;
 
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider = build_control_plane_provider(
@@ -278,6 +281,7 @@ fn build_embedded_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        process_fence,
     }))
 }
 
@@ -295,7 +299,8 @@ async fn build_postgres_from_plan(
     simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
-    std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
+    let process_fence =
+        EngineProcessFence::acquire([engine_data_dir.clone(), control_data_dir.clone()])?;
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
         build_control_plane_provider(control_data_dir, encryption_provider, &storage_executor)?;
@@ -328,6 +333,7 @@ async fn build_postgres_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        process_fence,
     }))
 }
 
@@ -342,7 +348,11 @@ async fn build_libsql_replica_from_plan(
     simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
-    std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
+    let process_fence = EngineProcessFence::acquire([
+        engine_data_dir.clone(),
+        control_data_dir.clone(),
+        plan.replica_cache_dir.clone(),
+    ])?;
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider = build_control_plane_provider(
         control_data_dir,
@@ -386,6 +396,7 @@ async fn build_libsql_replica_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        process_fence,
     }))
 }
 
@@ -400,7 +411,8 @@ async fn build_mysql_from_plan(
     simulation: EngineSimulationSeams,
     encryption_status: Option<encryption::EncryptionStatus>,
 ) -> Result<Engine> {
-    std::fs::create_dir_all(&control_data_dir).map_err(internal_error)?;
+    let process_fence =
+        EngineProcessFence::acquire([engine_data_dir.clone(), control_data_dir.clone()])?;
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
         build_control_plane_provider(control_data_dir, encryption_provider, &storage_executor)?;
@@ -433,6 +445,7 @@ async fn build_mysql_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        process_fence,
     }))
 }
 
