@@ -7,8 +7,9 @@ use nimbus_core::{
 use serde_json::json;
 
 use crate::{
-    MaterializedJournalSnapshot, MaterializedPosition, NoopFaultInjector, PointInTimeRestoreTarget,
-    RetentionGcConfig, TableIdentitySnapshotEntry, TenantStore,
+    MaterializedJournalSnapshot, MaterializedPosition, NoopFaultInjector,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, RetentionGcConfig,
+    TableIdentitySnapshotEntry, TenantStore,
 };
 
 fn tasks_schema() -> TableSchema {
@@ -916,4 +917,66 @@ fn pitr_rejects_invalid_target_position_before_first_write() {
         assert!(destination_snapshot.documents.is_empty());
         assert!(destination_snapshot.schema.tables.is_empty());
     }
+}
+
+#[test]
+fn pitr_json_decode_reports_legacy_archive_before_nested_position() {
+    let legacy = br#"{
+        "version": 1,
+        "target_position": {
+            "version": 1,
+            "applied_sequence": 0,
+            "state_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+    }"#;
+
+    let error = PointInTimeRestoreArchive::decode_json(legacy)
+        .expect_err("legacy PITR JSON must fail before nested position decoding");
+    let message = error.to_string();
+    assert!(
+        message.contains("unsupported point-in-time restore archive version 1")
+            && message.contains("materialized-position digest codec"),
+        "legacy archive diagnostics must name the owning container and codec change: {message}"
+    );
+}
+
+#[test]
+fn pitr_json_decode_validates_current_archive() {
+    let store = TenantStore::create_in_memory().expect("store should open");
+    let archive = store
+        .export_point_in_time_restore_archive(
+            PointInTimeRestoreTarget::Sequence(SequenceNumber(0)),
+            RetentionGcConfig::retain_all(),
+        )
+        .expect("current archive should export");
+    let encoded = serde_json::to_vec(&archive).expect("current archive should encode");
+
+    let decoded = PointInTimeRestoreArchive::decode_json(&encoded)
+        .expect("current archive should decode and validate");
+    assert_eq!(decoded, archive);
+}
+
+#[test]
+fn pitr_json_decode_reports_future_archive_before_nested_position() {
+    let future = br#"{
+        "version": 3,
+        "target_position": {
+            "version": 1,
+            "applied_sequence": 0,
+            "state_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+    }"#;
+
+    let error = PointInTimeRestoreArchive::decode_json(future)
+        .expect_err("future PITR JSON must fail before nested position decoding");
+    let message = error.to_string();
+    assert!(
+        message.contains("unsupported point-in-time restore archive version 3")
+            && message.contains("this binary supports 2"),
+        "future archive diagnostics must name the archive versions: {message}"
+    );
+    assert!(
+        !message.contains("predates"),
+        "future archive diagnostics must not describe the format as legacy: {message}"
+    );
 }

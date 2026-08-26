@@ -72,6 +72,11 @@ pub struct PointInTimeRestoreArchive {
     pub target_position: MaterializedPosition,
 }
 
+#[derive(Deserialize)]
+struct PointInTimeRestoreArchiveHeader {
+    version: u16,
+}
+
 impl MaterializedJournalSnapshot {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.version != MATERIALIZED_JOURNAL_SNAPSHOT_VERSION {
@@ -256,6 +261,32 @@ impl MaterializedJournalSnapshot {
 }
 
 impl PointInTimeRestoreArchive {
+    /// Decodes and validates the JSON form used by backup containers.
+    ///
+    /// The archive header is decoded first so an older container reports its
+    /// owning format version instead of failing inside a nested payload whose
+    /// codec changed with that version.
+    pub fn decode_json(bytes: &[u8]) -> Result<Self> {
+        let header: PointInTimeRestoreArchiveHeader = serde_json::from_slice(bytes)
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        if header.version != POINT_IN_TIME_RESTORE_ARCHIVE_VERSION {
+            let codec_context = (header.version < POINT_IN_TIME_RESTORE_ARCHIVE_VERSION).then_some(
+                "; this archive predates materialized-position digest codec version 2 and must be recreated with a current Nimbus binary",
+            );
+            return Err(Error::InvalidInput(format!(
+                "unsupported point-in-time restore archive version {} (this binary supports {}){}",
+                header.version,
+                POINT_IN_TIME_RESTORE_ARCHIVE_VERSION,
+                codec_context.unwrap_or_default(),
+            )));
+        }
+
+        let archive: Self = serde_json::from_slice(bytes)
+            .map_err(|error| Error::Serialization(error.to_string()))?;
+        archive.validate()?;
+        Ok(archive)
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         if self.version != POINT_IN_TIME_RESTORE_ARCHIVE_VERSION {
             return Err(Error::InvalidInput(format!(

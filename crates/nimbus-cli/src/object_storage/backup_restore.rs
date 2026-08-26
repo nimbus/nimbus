@@ -168,7 +168,7 @@ pub(super) async fn run_restore_object_store(
         escrow_bytes,
         &command.key_escrow_file,
     )?);
-    let archive = serde_json::from_slice(bundle.manifest_snapshot())?;
+    let archive = decode_manifest_snapshot(bundle.manifest_snapshot())?;
     // Everything validated — now mutate, under exclusive byte-plane
     // ownership FIRST: the raw-leg flocks exclude a live server (and its
     // resolver, which acquires the leg before it touches key material),
@@ -199,6 +199,10 @@ pub(super) async fn run_restore_object_store(
         command.input.display()
     ));
     Ok(())
+}
+
+fn decode_manifest_snapshot(bytes: &[u8]) -> Result<PointInTimeRestoreArchive, Box<dyn Error>> {
+    PointInTimeRestoreArchive::decode_json(bytes).map_err(Into::into)
 }
 
 fn read_key_escrow(id: &str, path: &Path) -> Result<KeyEscrow, Box<dyn Error>> {
@@ -502,6 +506,27 @@ mod tests {
 
     use super::super::ObjectStorageProvider;
     use super::*;
+
+    #[test]
+    fn restore_manifest_decode_reports_archive_version_before_nested_position() {
+        let legacy = br#"{
+            "version": 1,
+            "target_position": {
+                "version": 1,
+                "applied_sequence": 0,
+                "state_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+        }"#;
+
+        let error = decode_manifest_snapshot(legacy)
+            .expect_err("legacy object manifest must fail before nested position decoding");
+        let message = error.to_string();
+        assert!(
+            message.contains("unsupported point-in-time restore archive version 1")
+                && message.contains("materialized-position digest codec"),
+            "legacy object-manifest diagnostics must name the archive and codec change: {message}"
+        );
+    }
 
     #[tokio::test]
     async fn backup_restore_round_trips_ciphertext_for_encrypted_tenant() {
