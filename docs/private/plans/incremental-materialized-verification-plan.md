@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-19.
 Baseline: main @ 137cc632a1c8585545d200ea49f44bd236478175.
 Proof root: `docs/private/plans/proof/incremental-materialized-verification/`.
-Next action: push `codex/imv7-closeout`, open the closeout pull request,
-require hosted CI to qualify the two locally unavailable process-list cases,
-then merge when every required check is green.
+Next action: push `codex/imv7-closeout` and open the closeout pull request.
+Require hosted CI to qualify the two locally unavailable process-list cases.
+Merge when every required check is green.
 
 ## Outcome
 
