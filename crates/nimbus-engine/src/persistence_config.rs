@@ -1,14 +1,157 @@
 use std::path::PathBuf;
 
 use nimbus_core::Error;
-use nimbus_storage::EmbeddedProviderKind;
+use nimbus_storage::{EmbeddedProviderKind, RetentionGcConfig};
 use serde::Serialize;
+
+pub const DEFAULT_DOCUMENT_VERSION_WINDOW_SEQUENCES: u64 = 100_000;
+pub const DEFAULT_INDEX_VERSION_WINDOW_SEQUENCES: u64 = 100_000;
+pub const DEFAULT_CDC_WINDOW_SEQUENCES: u64 = 50_000;
+pub const DEFAULT_PITR_WINDOW_SEQUENCES: u64 = 100_000;
+pub const DEFAULT_RETENTION_MAINTENANCE_STEP_SEQUENCES: u64 = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnginePersistenceConfig {
     pub tenant_provider: TenantProviderConfig,
     pub control_plane: ControlPlaneConfig,
     pub local_encryption: LocalEncryptionConfig,
+    pub metadata_retention: MetadataRetentionProfile,
+}
+
+/// Production policy for durable metadata-history retention.
+///
+/// Nimbus ships with bounded history. Operators who need an unbounded archive
+/// must select [`Self::retain_all`] explicitly so diagnostics can distinguish
+/// that choice from a controller that has stopped making progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum MetadataRetentionProfile {
+    Bounded {
+        document_version_window_sequences: u64,
+        index_version_window_sequences: u64,
+        cdc_window_sequences: u64,
+        pitr_window_sequences: u64,
+        maintenance_step_sequences: u64,
+    },
+    RetainAll,
+}
+
+impl MetadataRetentionProfile {
+    pub const fn shipped() -> Self {
+        Self::Bounded {
+            document_version_window_sequences: DEFAULT_DOCUMENT_VERSION_WINDOW_SEQUENCES,
+            index_version_window_sequences: DEFAULT_INDEX_VERSION_WINDOW_SEQUENCES,
+            cdc_window_sequences: DEFAULT_CDC_WINDOW_SEQUENCES,
+            pitr_window_sequences: DEFAULT_PITR_WINDOW_SEQUENCES,
+            maintenance_step_sequences: DEFAULT_RETENTION_MAINTENANCE_STEP_SEQUENCES,
+        }
+    }
+
+    pub const fn retain_all() -> Self {
+        Self::RetainAll
+    }
+
+    pub fn bounded(
+        document_version_window_sequences: u64,
+        index_version_window_sequences: u64,
+        cdc_window_sequences: u64,
+        pitr_window_sequences: u64,
+        maintenance_step_sequences: u64,
+    ) -> nimbus_core::Result<Self> {
+        RetentionGcConfig::with_windows(
+            document_version_window_sequences,
+            index_version_window_sequences,
+            cdc_window_sequences,
+            pitr_window_sequences,
+        )?;
+        if maintenance_step_sequences == 0 {
+            return Err(Error::InvalidInput(
+                "retention maintenance step must be at least one sequence".to_string(),
+            ));
+        }
+        Ok(Self::Bounded {
+            document_version_window_sequences,
+            index_version_window_sequences,
+            cdc_window_sequences,
+            pitr_window_sequences,
+            maintenance_step_sequences,
+        })
+    }
+
+    /// Rejects profiles that bypassed the checked constructor, such as values
+    /// assembled through the public enum variants.
+    pub fn validate(self) -> nimbus_core::Result<()> {
+        match self {
+            Self::Bounded {
+                document_version_window_sequences,
+                index_version_window_sequences,
+                cdc_window_sequences,
+                pitr_window_sequences,
+                maintenance_step_sequences,
+            } => Self::bounded(
+                document_version_window_sequences,
+                index_version_window_sequences,
+                cdc_window_sequences,
+                pitr_window_sequences,
+                maintenance_step_sequences,
+            )
+            .map(|_| ()),
+            Self::RetainAll => Ok(()),
+        }
+    }
+
+    pub(crate) fn retention_config(self) -> RetentionGcConfig {
+        match self {
+            Self::Bounded {
+                document_version_window_sequences,
+                index_version_window_sequences,
+                cdc_window_sequences,
+                pitr_window_sequences,
+                ..
+            } => RetentionGcConfig::with_windows(
+                document_version_window_sequences,
+                index_version_window_sequences,
+                cdc_window_sequences,
+                pitr_window_sequences,
+            )
+            .expect("validated metadata-retention profile must remain valid"),
+            Self::RetainAll => RetentionGcConfig::retain_all(),
+        }
+    }
+
+    pub(crate) const fn maintenance_step_sequences(self) -> Option<u64> {
+        match self {
+            Self::Bounded {
+                maintenance_step_sequences,
+                ..
+            } => Some(maintenance_step_sequences),
+            Self::RetainAll => None,
+        }
+    }
+
+    pub(crate) fn minimum_window_sequences(self) -> Option<u64> {
+        match self {
+            Self::Bounded {
+                document_version_window_sequences,
+                index_version_window_sequences,
+                cdc_window_sequences,
+                pitr_window_sequences,
+                ..
+            } => Some(
+                document_version_window_sequences
+                    .min(index_version_window_sequences)
+                    .min(cdc_window_sequences)
+                    .min(pitr_window_sequences),
+            ),
+            Self::RetainAll => None,
+        }
+    }
+}
+
+impl Default for MetadataRetentionProfile {
+    fn default() -> Self {
+        Self::shipped()
+    }
 }
 
 /// Configuration for optional encryption at rest of Nimbus-owned local files.
@@ -278,6 +421,7 @@ impl EnginePersistenceConfig {
             ),
             control_plane: ControlPlaneConfig::embedded_redb(data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
+            metadata_retention: MetadataRetentionProfile::shipped(),
         }
     }
 
@@ -289,6 +433,7 @@ impl EnginePersistenceConfig {
             tenant_provider: TenantProviderConfig::postgres(connection_string),
             control_plane: ControlPlaneConfig::embedded_redb(control_data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
+            metadata_retention: MetadataRetentionProfile::shipped(),
         }
     }
 
@@ -310,6 +455,7 @@ impl EnginePersistenceConfig {
             ),
             control_plane: ControlPlaneConfig::embedded_redb(control_data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
+            metadata_retention: MetadataRetentionProfile::shipped(),
         }
     }
 
@@ -321,12 +467,19 @@ impl EnginePersistenceConfig {
             tenant_provider: TenantProviderConfig::mysql(connection_string),
             control_plane: ControlPlaneConfig::embedded_redb(control_data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
+            metadata_retention: MetadataRetentionProfile::shipped(),
         }
     }
 
     /// Sets the local encryption config for this persistence config.
     pub fn with_local_encryption(mut self, config: LocalEncryptionConfig) -> Self {
         self.local_encryption = config;
+        self
+    }
+
+    /// Sets the durable metadata-history retention policy.
+    pub fn with_metadata_retention(mut self, profile: MetadataRetentionProfile) -> Self {
+        self.metadata_retention = profile;
         self
     }
 
@@ -730,6 +883,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn metadata_retention_profile_validation_rejects_unchecked_zero_values() {
+        let invalid_window = MetadataRetentionProfile::Bounded {
+            document_version_window_sequences: 0,
+            index_version_window_sequences: 1,
+            cdc_window_sequences: 1,
+            pitr_window_sequences: 1,
+            maintenance_step_sequences: 1,
+        };
+        assert!(invalid_window.validate().is_err());
+
+        let invalid_step = MetadataRetentionProfile::Bounded {
+            document_version_window_sequences: 1,
+            index_version_window_sequences: 1,
+            cdc_window_sequences: 1,
+            pitr_window_sequences: 1,
+            maintenance_step_sequences: 0,
+        };
+        assert!(invalid_step.validate().is_err());
+        assert!(MetadataRetentionProfile::retain_all().validate().is_ok());
+    }
+
+    #[test]
     fn embedded_bootstrap_plan_preserves_tenant_and_control_plane_dirs() {
         let config = EnginePersistenceConfig {
             tenant_provider: TenantProviderConfig::embedded(
@@ -738,6 +913,7 @@ mod tests {
             ),
             control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
             local_encryption: LocalEncryptionConfig::Disabled,
+            metadata_retention: MetadataRetentionProfile::shipped(),
         };
 
         let plan = config
@@ -780,6 +956,7 @@ mod tests {
             },
             control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
             local_encryption: LocalEncryptionConfig::Disabled,
+            metadata_retention: MetadataRetentionProfile::shipped(),
         };
 
         let plan = config
@@ -814,6 +991,7 @@ mod tests {
             ),
             control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
             local_encryption,
+            metadata_retention: MetadataRetentionProfile::shipped(),
         }
     }
 

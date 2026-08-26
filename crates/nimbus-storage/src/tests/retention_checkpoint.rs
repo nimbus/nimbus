@@ -1,5 +1,5 @@
 use super::*;
-use crate::{PointInTimeRestoreTarget, RetentionGcConfig};
+use crate::{PointInTimeRestoreTarget, RetentionGcConfig, RetentionParticipant};
 use nimbus_core::{DocumentLocator, DocumentPath, ResourcePathBinding};
 
 #[derive(Default)]
@@ -725,6 +725,81 @@ fn retain_all_keeps_checkpoint_at_current_confirmed_floor() {
     assert_eq!(summary.after.confirmed_floor, SequenceNumber(2));
     assert_eq!(summary.after.physical_floor, SequenceNumber(2));
     assert_eq!(summary.journal_records_pruned, 0);
+}
+
+#[test]
+fn prepared_retention_conflicts_when_a_new_pin_lowers_the_safe_floor() {
+    let config = RetentionGcConfig::new(1).expect("bounded retention config should build");
+
+    let redb = TenantStore::create_in_memory().expect("redb tenant store should open");
+    insert_documents_redb(&redb, 4);
+    let prepared = redb
+        .prepare_retained_history(config)
+        .expect("redb retention should prepare");
+    let _redb_pin = redb.pin_retention_participant(
+        RetentionParticipant::CdcSubscription,
+        SequenceNumber(1),
+        None,
+        "concurrent CDC reader",
+    );
+    let error = redb
+        .finalize_retained_history(prepared)
+        .expect_err("redb must reject a cut invalidated by a new pin");
+    assert!(error.to_string().contains("invalidated"));
+    assert_eq!(
+        redb.retention_history_state(config)
+            .expect("redb retention state should load")
+            .physical_floor,
+        SequenceNumber(0)
+    );
+
+    let dir = tempdir().expect("temporary directory should create");
+    let sqlite = SqliteTenantStore::open(dir.path().join("pin-race.sqlite3"))
+        .expect("SQLite tenant store should open");
+    insert_documents_sqlite(&sqlite, 4);
+    let prepared = sqlite
+        .prepare_retained_history(config)
+        .expect("SQLite retention should prepare");
+    let _sqlite_pin = sqlite.pin_retention_participant(
+        RetentionParticipant::CdcSubscription,
+        SequenceNumber(1),
+        None,
+        "concurrent CDC reader",
+    );
+    let error = sqlite
+        .finalize_retained_history(prepared)
+        .expect_err("SQLite must reject a cut invalidated by a new pin");
+    assert!(error.to_string().contains("invalidated"));
+    assert_eq!(
+        sqlite
+            .retention_history_state(config)
+            .expect("SQLite retention state should load")
+            .physical_floor,
+        SequenceNumber(0)
+    );
+
+    let memory = MemoryTenantStore::new();
+    insert_documents_memory(&memory, 4);
+    let prepared = memory
+        .prepare_retained_history(config)
+        .expect("memory retention should prepare");
+    let _memory_pin = memory.pin_retention_participant(
+        RetentionParticipant::CdcSubscription,
+        SequenceNumber(1),
+        None,
+        "concurrent CDC reader",
+    );
+    let error = memory
+        .finalize_retained_history(prepared)
+        .expect_err("memory must reject a cut invalidated by a new pin");
+    assert!(error.to_string().contains("invalidated"));
+    assert_eq!(
+        memory
+            .retention_history_state(config)
+            .expect("memory retention state should load")
+            .physical_floor,
+        SequenceNumber(0)
+    );
 }
 
 #[test]

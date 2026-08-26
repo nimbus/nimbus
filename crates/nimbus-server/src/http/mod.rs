@@ -54,7 +54,8 @@ pub(crate) use machines::{
 };
 pub(crate) use metadata::{
     clear_tenant_consistency_session, encryption_status, examples_redirect, health, license_status,
-    runtime_diagnostics, tenant_consistency_report, tenant_engine_diagnostics,
+    run_tenant_metadata_retention, runtime_diagnostics, tenant_consistency_report,
+    tenant_engine_diagnostics,
 };
 pub(crate) use queries::{
     bootstrap_journal, query_documents, query_documents_paginated, read_journal,

@@ -15,8 +15,9 @@ mod verification;
 pub use engine::{
     AsyncMutationContext, CommitPhaseMetricsSnapshot, CommittedMutationEvent,
     CommittedMutationObserver, CommittedMutationObserverWorkStats, DocumentReadFilter,
-    EncryptionStatus, Engine, InitializedKeyProvider, MutationActor, MutationExecutionUnit,
-    MutationIsolatePermit, ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
+    EncryptionStatus, Engine, InitializedKeyProvider, MetadataRetentionDiagnosticsSnapshot,
+    MetadataRetentionRunResult, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
+    ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
     SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
     TenantAdmissionOutcome, TenantDeletionLease, TenantObjectMeta, TenantRuntimeLoadedEvent,
     TenantRuntimeObserver, TenantRuntimeObserverIdentity,
@@ -46,8 +47,8 @@ pub use nimbus_storage::{
 pub use persistence_config::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionValidationError,
     EnginePersistenceConfig, KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig,
-    LocalKeyProviderConfig, LocalPersistenceFamily, MasterKeyFileConfig, PersistenceDialect,
-    PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
+    LocalKeyProviderConfig, LocalPersistenceFamily, MasterKeyFileConfig, MetadataRetentionProfile,
+    PersistenceDialect, PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
     TenantRoutingConfig,
 };
 pub use replica::EmbeddedReplica;

@@ -1190,6 +1190,7 @@ where
         local_encryption: LocalEncryptionConfig::Enabled(LocalKeyProviderConfig::MasterKeyFile(
             MasterKeyFileConfig { path: key_path },
         )),
+        metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
     };
 
     run_libsql_test_with_namespace_cleanup(
@@ -1247,6 +1248,7 @@ where
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
+        metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
     };
     let engine_config_b = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
@@ -1259,6 +1261,7 @@ where
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
+        metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
     };
 
     run_libsql_test_with_namespace_cleanup(

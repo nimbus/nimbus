@@ -3,7 +3,10 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, StorageErrorKind, Timestamp};
-use nimbus_storage::{CommitterLease, CommitterLeaseError, SchedulerWriteReconciliation};
+use nimbus_storage::{
+    CommitterLease, CommitterLeaseError, PreparedRetentionHistory, RetentionHistorySummary,
+    SchedulerWriteReconciliation,
+};
 
 use crate::engine::{ProjectionToken, begin_durable_recovery_eviction};
 
@@ -123,6 +126,27 @@ pub(crate) struct CommitterLeaseLifecycle {
 }
 
 impl TenantRuntime {
+    /// Finalizes one metadata-retention checkpoint inside the ordered
+    /// committer route. Provider stores validate the runtime's lease and
+    /// durable head in the same transaction that publishes the checkpoint and
+    /// deletes history. Embedded stores use their process-local writer.
+    pub(crate) fn finalize_retained_history_in_actor(
+        self: &Arc<Self>,
+        prepared: PreparedRetentionHistory,
+    ) -> Result<RetentionHistorySummary> {
+        self.ensure_committer_lease_for_assignment()?;
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.finalize_retained_history(prepared);
+        };
+        let durable_sequence = self.durable_head();
+        self.map_fenced_write_result(self.store.fenced_finalize_retained_history(
+            &owner_id,
+            epoch,
+            durable_sequence,
+            prepared,
+        ))
+    }
+
     /// Ensures provider sequence authority before the ordered publisher can
     /// assign ahead of durability.
     ///
@@ -1307,6 +1331,7 @@ mod tests {
                     clock.clone(),
                     Some("lease-owner".to_string()),
                     Arc::new(nimbus_core::SystemIdSource),
+                    crate::persistence_config::MetadataRetentionProfile::shipped(),
                 ),
             )
             .expect("test runtime should construct"),

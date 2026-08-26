@@ -27,8 +27,8 @@ use crate::store::{
 };
 use crate::{
     MaterializedRetentionCheckpoint, MaterializedVerificationGeneration,
-    MaterializedVerificationInvalidator, RetentionFloor, RetentionGcConfig, RetentionGcSummary,
-    RetentionHistoryState, RetentionHistorySummary,
+    MaterializedVerificationInvalidator, PreparedRetentionHistory, RetentionFloor,
+    RetentionGcConfig, RetentionGcSummary, RetentionHistoryState, RetentionHistorySummary,
 };
 use nimbus_crypto::DataEncryptionKey;
 
@@ -233,6 +233,9 @@ impl SqliteTenantStore {
         config: RetentionGcConfig,
     ) -> Result<RetentionGcSummary> {
         let watermarks = self.retention_gc_watermarks(config)?;
+        let _pin_barrier = self
+            .retention_floor
+            .guard_prepared_watermarks(&watermarks)?;
         let document_prune_before = watermarks.document_versions.safe_prune_before;
         let index_prune_before = watermarks.index_versions.safe_prune_before;
         if document_prune_before.0 == 0 && index_prune_before.0 == 0 {
@@ -268,25 +271,56 @@ impl SqliteTenantStore {
         let watermarks = self.retention_gc_watermarks(config)?;
         let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
         RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
             crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence()),
             physical_floor,
             checkpoint,
         )
     }
 
-    pub fn compact_retained_history(
+    pub fn prepare_retained_history(
         &self,
         config: RetentionGcConfig,
-    ) -> Result<RetentionHistorySummary> {
+    ) -> Result<PreparedRetentionHistory> {
         let watermarks = self.retention_gc_watermarks(config)?;
         let (checkpoint, physical_floor, expected_checkpoint_blob) =
             self.load_retention_checkpoint()?;
         let desired_floor =
             crate::retention::desired_journal_floor(&watermarks).max(checkpoint.sequence());
-        let before = RetentionHistoryState::new(desired_floor, physical_floor, checkpoint.clone())?;
+        let before = RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
+            desired_floor,
+            physical_floor,
+            checkpoint.clone(),
+        )?;
         let journal_tail = self
             .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
         let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+        self.fault_injector
+            .check(FaultPoint::RetentionCheckpointAfterPrepare)?;
+        Ok(PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_checkpoint_blob,
+            expected_revision: None,
+        })
+    }
+
+    pub fn finalize_retained_history(
+        &self,
+        prepared: PreparedRetentionHistory,
+    ) -> Result<RetentionHistorySummary> {
+        let _pin_barrier = self
+            .retention_floor
+            .guard_prepared_watermarks(&prepared.watermarks)?;
+        let PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_checkpoint_blob,
+            ..
+        } = prepared;
         let candidate_blob = crate::retention::serialize_retention_checkpoint(&candidate)?;
 
         let mut transaction = self.begin_write_transaction()?;
@@ -354,7 +388,12 @@ impl SqliteTenantStore {
         self.fault_injector
             .check(FaultPoint::RetentionCheckpointAfterCommit)?;
 
-        let after = RetentionHistoryState::new(desired_floor, candidate.sequence(), candidate)?;
+        let after = RetentionHistoryState::new(
+            before.latest_sequence,
+            before.desired_floor,
+            candidate.sequence(),
+            candidate,
+        )?;
         Ok(RetentionHistorySummary {
             watermarks,
             before,
@@ -363,6 +402,13 @@ impl SqliteTenantStore {
             document_versions_pruned,
             index_versions_pruned,
         })
+    }
+
+    pub fn compact_retained_history(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistorySummary> {
+        self.finalize_retained_history(self.prepare_retained_history(config)?)
     }
 
     pub(crate) fn load_retention_checkpoint(
@@ -385,7 +431,12 @@ impl SqliteTenantStore {
             .map(crate::retention::decode_retention_floor)
             .transpose()?
             .unwrap_or(SequenceNumber(0));
-        RetentionHistoryState::new(checkpoint.sequence(), physical_floor, checkpoint.clone())?;
+        RetentionHistoryState::new(
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+            physical_floor,
+            checkpoint.clone(),
+        )?;
         Ok((checkpoint, physical_floor, checkpoint_blob))
     }
 

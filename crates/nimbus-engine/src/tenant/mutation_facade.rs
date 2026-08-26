@@ -539,6 +539,24 @@ impl TenantRuntime {
         self.mutation_journal.mark_durable_head(sequence);
     }
 
+    pub(crate) fn metadata_retention_controller(
+        &self,
+    ) -> Arc<crate::engine::metadata_retention::MetadataRetentionController> {
+        self.metadata_retention.clone()
+    }
+
+    pub(crate) fn shutdown_metadata_retention(&self) {
+        self.metadata_retention.shutdown();
+    }
+
+    pub(crate) fn wait_for_metadata_retention_finished_blocking(&self) {
+        self.metadata_retention.wait_finished_blocking();
+    }
+
+    pub(crate) async fn wait_for_metadata_retention_finished(&self) {
+        self.metadata_retention.wait_finished().await;
+    }
+
     pub(crate) fn mark_applied_head(&self, sequence: SequenceNumber) {
         debug_assert!(
             sequence <= self.write_log.published_through(),
@@ -547,6 +565,7 @@ impl TenantRuntime {
             self.write_log.published_through()
         );
         self.mutation_journal.mark_applied_head(sequence);
+        self.metadata_retention.notify_progress(sequence);
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

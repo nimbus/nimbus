@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::{Error, Result, SequenceNumber, TableId, TenantEventRecord, Timestamp};
 use redb::ReadableTable;
@@ -328,20 +328,44 @@ fn validate_retained_journal_range(
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetentionHistoryState {
+    pub latest_sequence: SequenceNumber,
     pub desired_floor: SequenceNumber,
     pub confirmed_floor: SequenceNumber,
     pub physical_floor: SequenceNumber,
     pub checkpoint: MaterializedRetentionCheckpoint,
 }
 
+/// Immutable checkpoint work prepared before entering a store's serial write
+/// boundary. Finalization validates the captured checkpoint identity again,
+/// so a concurrent writer produces a conflict instead of publishing stale
+/// materialized state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedRetentionHistory {
+    pub watermarks: RetentionGcWatermarks,
+    pub before: RetentionHistoryState,
+    pub(crate) candidate: MaterializedRetentionCheckpoint,
+    pub(crate) expected_checkpoint_blob: Option<Vec<u8>>,
+    pub(crate) expected_revision: Option<u64>,
+}
+
 impl RetentionHistoryState {
     pub(crate) fn new(
+        latest_sequence: SequenceNumber,
         desired_floor: SequenceNumber,
         physical_floor: SequenceNumber,
         checkpoint: MaterializedRetentionCheckpoint,
     ) -> Result<Self> {
         checkpoint.validate()?;
         let confirmed_floor = checkpoint.sequence();
+        if desired_floor.0 > latest_sequence.0 || confirmed_floor.0 > latest_sequence.0 {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "retention floors desired {} and confirmed {} exceed latest sequence {}",
+                    desired_floor.0, confirmed_floor.0, latest_sequence.0
+                ),
+            ));
+        }
         if physical_floor.0 > confirmed_floor.0 {
             return Err(Error::storage(
                 nimbus_core::StorageErrorKind::Corruption,
@@ -352,6 +376,7 @@ impl RetentionHistoryState {
             ));
         }
         Ok(Self {
+            latest_sequence,
             desired_floor,
             confirmed_floor,
             physical_floor,
@@ -413,6 +438,12 @@ pub struct RetentionFloor {
 pub struct RetentionPinGuard {
     floor: Arc<RetentionFloor>,
     pin_id: u64,
+}
+
+/// Holds the participant-pin set stable while one prepared retention cut is
+/// finalized. New pins wait until the storage transaction commits or aborts.
+pub(crate) struct RetentionFinalizationGuard<'a> {
+    _pins: MutexGuard<'a, BTreeMap<u64, RetentionPin>>,
 }
 
 impl RetentionFloor {
@@ -526,6 +557,36 @@ impl RetentionFloor {
         }
     }
 
+    pub(crate) fn guard_prepared_watermarks(
+        &self,
+        watermarks: &RetentionGcWatermarks,
+    ) -> Result<RetentionFinalizationGuard<'_>> {
+        let pins = self
+            .pins
+            .lock()
+            .expect("retention floor mutex should not be poisoned");
+        for watermark in [
+            &watermarks.document_versions,
+            &watermarks.index_versions,
+            &watermarks.cdc_journal,
+            &watermarks.pitr_exports,
+        ] {
+            if let Some(pin) = pins.values().find(|pin| {
+                pin_protects_resource(pin, watermark.resource)
+                    && pin.sequence < watermark.safe_prune_before
+            }) {
+                return Err(Error::conflict(format!(
+                    "retention participant {:?} at sequence {} invalidated the prepared {:?} floor {}",
+                    pin.participant,
+                    pin.sequence.0,
+                    watermark.resource,
+                    watermark.safe_prune_before.0,
+                )));
+            }
+        }
+        Ok(RetentionFinalizationGuard { _pins: pins })
+    }
+
     pub fn hard_delete_decision(
         &self,
         table_id: &TableId,
@@ -634,6 +695,9 @@ impl TenantStore {
         config: RetentionGcConfig,
     ) -> Result<RetentionGcSummary> {
         let watermarks = self.retention_gc_watermarks(config)?;
+        let _pin_barrier = self
+            .retention_floor
+            .guard_prepared_watermarks(&watermarks)?;
         let document_prune_before = watermarks.document_versions.safe_prune_before;
         let index_prune_before = watermarks.index_versions.safe_prune_before;
         if document_prune_before.0 == 0 && index_prune_before.0 == 0 {
@@ -667,24 +731,55 @@ impl TenantStore {
         let watermarks = self.retention_gc_watermarks(config)?;
         let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
         RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
             desired_journal_floor(&watermarks).max(checkpoint.sequence()),
             physical_floor,
             checkpoint,
         )
     }
 
-    pub fn compact_retained_history(
+    pub fn prepare_retained_history(
         &self,
         config: RetentionGcConfig,
-    ) -> Result<RetentionHistorySummary> {
+    ) -> Result<PreparedRetentionHistory> {
         let watermarks = self.retention_gc_watermarks(config)?;
         let (checkpoint, physical_floor, expected_checkpoint_blob) =
             self.load_retention_checkpoint()?;
         let desired_floor = desired_journal_floor(&watermarks).max(checkpoint.sequence());
-        let before = RetentionHistoryState::new(desired_floor, physical_floor, checkpoint.clone())?;
+        let before = RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
+            desired_floor,
+            physical_floor,
+            checkpoint.clone(),
+        )?;
         let journal_tail = self
             .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
         let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionCheckpointAfterPrepare)?;
+        Ok(PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_checkpoint_blob,
+            expected_revision: None,
+        })
+    }
+
+    pub fn finalize_retained_history(
+        &self,
+        prepared: PreparedRetentionHistory,
+    ) -> Result<RetentionHistorySummary> {
+        let _pin_barrier = self
+            .retention_floor
+            .guard_prepared_watermarks(&prepared.watermarks)?;
+        let PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_checkpoint_blob,
+            ..
+        } = prepared;
         let candidate_blob = serialize_retention_checkpoint(&candidate)?;
 
         let write_txn = self
@@ -744,7 +839,12 @@ impl TenantStore {
         self.fault_injector
             .check(crate::FaultPoint::RetentionCheckpointAfterCommit)?;
 
-        let after = RetentionHistoryState::new(desired_floor, candidate.sequence(), candidate)?;
+        let after = RetentionHistoryState::new(
+            before.latest_sequence,
+            before.desired_floor,
+            candidate.sequence(),
+            candidate,
+        )?;
         Ok(RetentionHistorySummary {
             watermarks,
             before,
@@ -753,6 +853,13 @@ impl TenantStore {
             document_versions_pruned,
             index_versions_pruned,
         })
+    }
+
+    pub fn compact_retained_history(
+        &self,
+        config: RetentionGcConfig,
+    ) -> Result<RetentionHistorySummary> {
+        self.finalize_retained_history(self.prepare_retained_history(config)?)
     }
 
     pub(crate) fn load_retention_checkpoint(
@@ -789,7 +896,12 @@ impl TenantStore {
             .map(|value| decode_retention_floor(value.value()))
             .transpose()?
             .unwrap_or(SequenceNumber(0));
-        RetentionHistoryState::new(checkpoint.sequence(), physical_floor, checkpoint.clone())?;
+        RetentionHistoryState::new(
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+            physical_floor,
+            checkpoint.clone(),
+        )?;
         Ok((checkpoint, physical_floor, checkpoint_blob))
     }
 

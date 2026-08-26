@@ -720,6 +720,10 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
             get(http::tenant_engine_diagnostics),
         )
         .route(
+            "/debug/tenants/{tenant_id}/engine/retention",
+            post(http::run_tenant_metadata_retention),
+        )
+        .route(
             "/api/tenants",
             post(http::create_tenant).get(http::list_tenants),
         )

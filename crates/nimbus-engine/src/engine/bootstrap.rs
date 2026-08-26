@@ -21,14 +21,15 @@ use super::{BackgroundExecutor, Engine, EngineBootstrapParts, encryption};
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider};
 use crate::persistence_config::{
     ControlPlaneBootstrapPlan, EmbeddedTenantBootstrapPlan, EngineBootstrapPlan,
-    EnginePersistenceConfig, LibsqlReplicaTenantBootstrapPlan, MySqlTenantBootstrapPlan,
-    PostgresTenantBootstrapPlan, TenantProviderBootstrapPlan,
+    EnginePersistenceConfig, LibsqlReplicaTenantBootstrapPlan, MetadataRetentionProfile,
+    MySqlTenantBootstrapPlan, PostgresTenantBootstrapPlan, TenantProviderBootstrapPlan,
 };
 
 struct EngineSimulationSeams {
     clock: Arc<dyn WallClock>,
     id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
+    metadata_retention: MetadataRetentionProfile,
     #[cfg(feature = "libsql")]
     libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
 }
@@ -56,6 +57,8 @@ pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
     libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
     id_source: Arc<dyn IdSource>,
 ) -> Result<Engine> {
+    config.metadata_retention.validate()?;
+    let metadata_retention = config.metadata_retention;
     let key_provider = encryption::initialize_encryption(&config)?;
     let encryption_status = encryption::EncryptionStatus::from_config(&config);
     let plan = config.bootstrap_plan()?;
@@ -69,6 +72,7 @@ pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
         clock,
         id_source,
         storage_fault_injector,
+        metadata_retention,
         #[cfg(feature = "libsql")]
         libsql_replica_fault_injector,
     };
@@ -95,6 +99,7 @@ pub(super) fn build_embedded_engine(
         clock,
         id_source,
         storage_fault_injector,
+        metadata_retention: MetadataRetentionProfile::shipped(),
         #[cfg(feature = "libsql")]
         libsql_replica_fault_injector: None,
     };
@@ -141,6 +146,7 @@ pub(super) fn build_memory_engine(
         engine_executor,
         storage_executor,
         encryption_status: None,
+        metadata_retention: MetadataRetentionProfile::shipped(),
         process_fence,
     }))
 }
@@ -281,6 +287,7 @@ fn build_embedded_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        metadata_retention: simulation.metadata_retention,
         process_fence,
     }))
 }
@@ -333,6 +340,7 @@ async fn build_postgres_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        metadata_retention: simulation.metadata_retention,
         process_fence,
     }))
 }
@@ -396,6 +404,7 @@ async fn build_libsql_replica_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        metadata_retention: simulation.metadata_retention,
         process_fence,
     }))
 }
@@ -445,6 +454,7 @@ async fn build_mysql_from_plan(
         engine_executor,
         storage_executor,
         encryption_status,
+        metadata_retention: simulation.metadata_retention,
         process_fence,
     }))
 }

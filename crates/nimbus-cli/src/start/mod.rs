@@ -18,8 +18,8 @@ pub(crate) use self::boot::resolve_start_app_dir;
 pub(crate) use self::boot::{run_start_command, run_start_command_with_prepared_network};
 pub(crate) use self::config::persistence_config_from_start_command;
 pub(crate) use self::config::{
-    CliKeyProvider, CliTenantProvider, RuntimeConfigFile, network_root_from_start_command,
-    runtime_config_from_start_command,
+    CliKeyProvider, CliMetadataRetention, CliTenantProvider, RuntimeConfigFile,
+    network_root_from_start_command, runtime_config_from_start_command,
 };
 use self::runtime_limits::{
     default_runtime_control_plane_reserve_millicpus, default_runtime_heap_mb,
@@ -266,6 +266,11 @@ pub(crate) struct StartCommand {
     #[arg(long)]
     pub(crate) mysql_max_connections: Option<usize>,
 
+    /// Durable metadata-history retention profile. Nimbus ships bounded;
+    /// retain-all is an explicit operator override.
+    #[arg(long, value_enum)]
+    pub(crate) metadata_retention: Option<CliMetadataRetention>,
+
     /// Optional app directory with generated .nimbus/convex/ runtime artifacts.
     #[arg(long)]
     pub(crate) app_dir: Option<PathBuf>,
@@ -471,6 +476,7 @@ impl Default for StartCommand {
             mysql_tenant_database_prefix: None,
             mysql_min_connections: None,
             mysql_max_connections: None,
+            metadata_retention: None,
             app_dir: None,
             skip_codegen: false,
             debug_node_apis: false,

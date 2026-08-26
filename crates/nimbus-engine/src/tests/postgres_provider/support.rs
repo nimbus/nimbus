@@ -70,11 +70,13 @@ where
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
+        metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
     };
     let engine_config_b = EnginePersistenceConfig {
         tenant_provider: engine_config_a.tenant_provider.clone(),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
+        metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
     };
 
     test(engine_config_a, engine_config_b, provider_config.clone()).await;

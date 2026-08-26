@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 use nimbus::{
     AwsKmsConfig, EmbeddedProviderKind, EnginePersistenceConfig, Error, KeyDirectoryConfig,
-    LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig,
+    LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig, MetadataRetentionProfile,
 };
 use nimbus_operator::LocalNodeNetworkRoot;
 use serde::Deserialize;
@@ -35,6 +35,7 @@ const MYSQL_METADATA_DATABASE_ENV: &str = "NIMBUS_MYSQL_METADATA_DATABASE";
 const MYSQL_TENANT_DATABASE_PREFIX_ENV: &str = "NIMBUS_MYSQL_TENANT_DATABASE_PREFIX";
 const MYSQL_MIN_CONNECTIONS_ENV: &str = "NIMBUS_MYSQL_MIN_CONNECTIONS";
 const MYSQL_MAX_CONNECTIONS_ENV: &str = "NIMBUS_MYSQL_MAX_CONNECTIONS";
+const METADATA_RETENTION_ENV: &str = "NIMBUS_METADATA_RETENTION";
 
 // Encryption config environment variables
 const ENCRYPTION_KEY_PROVIDER_ENV: &str = "NIMBUS_ENCRYPTION_KEY_PROVIDER";
@@ -52,6 +53,32 @@ pub(crate) enum CliTenantProvider {
     Redb,
     Postgres,
     Mysql,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum CliMetadataRetention {
+    Bounded,
+    RetainAll,
+}
+
+impl CliMetadataRetention {
+    fn parse_name(value: &str) -> nimbus::Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "bounded" => Ok(Self::Bounded),
+            "retain-all" | "retain_all" => Ok(Self::RetainAll),
+            other => Err(Error::InvalidInput(format!(
+                "unsupported metadata retention profile '{other}'; expected bounded or retain-all"
+            ))),
+        }
+    }
+
+    const fn into_profile(self) -> MetadataRetentionProfile {
+        match self {
+            Self::Bounded => MetadataRetentionProfile::shipped(),
+            Self::RetainAll => MetadataRetentionProfile::retain_all(),
+        }
+    }
 }
 
 impl CliTenantProvider {
@@ -136,6 +163,7 @@ pub(crate) struct PersistenceInputs {
     pub(crate) mysql_tenant_database_prefix: Option<String>,
     pub(crate) mysql_min_connections: Option<usize>,
     pub(crate) mysql_max_connections: Option<usize>,
+    pub(crate) metadata_retention: Option<CliMetadataRetention>,
     // Encryption config
     pub(crate) encryption_key_provider: Option<CliKeyProvider>,
     pub(crate) encryption_master_key_file: Option<PathBuf>,
@@ -172,6 +200,7 @@ impl PersistenceInputs {
             mysql_tenant_database_prefix: std::env::var(MYSQL_TENANT_DATABASE_PREFIX_ENV).ok(),
             mysql_min_connections: optional_env_usize(MYSQL_MIN_CONNECTIONS_ENV)?,
             mysql_max_connections: optional_env_usize(MYSQL_MAX_CONNECTIONS_ENV)?,
+            metadata_retention: optional_env_metadata_retention(METADATA_RETENTION_ENV)?,
             // Encryption config
             encryption_key_provider: optional_env_key_provider(ENCRYPTION_KEY_PROVIDER_ENV)?,
             encryption_master_key_file: std::env::var_os(ENCRYPTION_MASTER_KEY_FILE_ENV)
@@ -205,6 +234,7 @@ impl PersistenceInputs {
             mysql_tenant_database_prefix: command.mysql_tenant_database_prefix.clone(),
             mysql_min_connections: command.mysql_min_connections,
             mysql_max_connections: command.mysql_max_connections,
+            metadata_retention: command.metadata_retention,
             encryption_key_provider: command.encryption_key_provider,
             encryption_master_key_file: command.encryption_master_key_file.clone(),
             encryption_key_dir: command.encryption_key_dir.clone(),
@@ -271,6 +301,7 @@ impl PersistenceInputs {
             &mut self.mysql_max_connections,
             &fallback.mysql_max_connections,
         );
+        fill_missing(&mut self.metadata_retention, &fallback.metadata_retention);
         fill_missing(
             &mut self.encryption_key_provider,
             &fallback.encryption_key_provider,
@@ -324,6 +355,7 @@ struct ResolvedPersistenceInputs {
     mysql_tenant_database_prefix: Option<String>,
     mysql_min_connections: Option<usize>,
     mysql_max_connections: Option<usize>,
+    metadata_retention: Option<CliMetadataRetention>,
     // Encryption config
     encryption_key_provider: Option<CliKeyProvider>,
     encryption_master_key_file: Option<PathBuf>,
@@ -587,6 +619,7 @@ impl ResolvedTenantProviderConfig {
                 tenant_provider: nimbus::TenantProviderConfig::embedded(data_dir, provider_kind),
                 control_plane: nimbus::ControlPlaneConfig::embedded_redb(control_data_dir),
                 local_encryption: LocalEncryptionConfig::Disabled,
+                metadata_retention: MetadataRetentionProfile::shipped(),
             }),
             Self::LibsqlReplica {
                 control_data_dir,
@@ -710,6 +743,7 @@ impl ResolvedPersistenceInputs {
             mysql_tenant_database_prefix: inputs.mysql_tenant_database_prefix,
             mysql_min_connections: inputs.mysql_min_connections,
             mysql_max_connections: inputs.mysql_max_connections,
+            metadata_retention: inputs.metadata_retention,
             encryption_key_provider: inputs.encryption_key_provider,
             encryption_master_key_file: inputs.encryption_master_key_file,
             encryption_key_dir: inputs.encryption_key_dir,
@@ -720,11 +754,17 @@ impl ResolvedPersistenceInputs {
     }
 
     fn into_persistence_config(self) -> nimbus::Result<EnginePersistenceConfig> {
+        let metadata_retention = self
+            .metadata_retention
+            .unwrap_or(CliMetadataRetention::Bounded)
+            .into_profile();
         let encryption_config =
             ResolvedEncryptionInputs::from_inputs(&self).into_local_encryption_config()?;
         let base_config =
             ResolvedTenantProviderConfig::from_inputs(self)?.into_persistence_config()?;
-        let config = base_config.with_local_encryption(encryption_config);
+        let config = base_config
+            .with_local_encryption(encryption_config)
+            .with_metadata_retention(metadata_retention);
 
         // Validate the encryption config against the provider
         config.validate_encryption().map_err(|error| {
@@ -913,6 +953,13 @@ fn optional_env_tenant_provider(key: &str) -> nimbus::Result<Option<CliTenantPro
     std::env::var(key)
         .ok()
         .map(|value| CliTenantProvider::parse_name(&value))
+        .transpose()
+}
+
+fn optional_env_metadata_retention(key: &str) -> nimbus::Result<Option<CliMetadataRetention>> {
+    std::env::var(key)
+        .ok()
+        .map(|value| CliMetadataRetention::parse_name(&value))
         .transpose()
 }
 

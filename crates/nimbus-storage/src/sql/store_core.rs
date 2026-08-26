@@ -54,8 +54,8 @@ use crate::async_storage::{
     TenantWriteOutcome, map_executor_join_error, map_executor_permit_error,
 };
 use crate::retention::{
-    MaterializedRetentionCheckpoint, RetentionFloor, RetentionGcConfig, RetentionGcSummary,
-    RetentionGcWatermarks, RetentionHistoryState, RetentionHistorySummary,
+    MaterializedRetentionCheckpoint, PreparedRetentionHistory, RetentionFloor, RetentionGcConfig,
+    RetentionGcSummary, RetentionGcWatermarks, RetentionHistoryState, RetentionHistorySummary,
     deserialize_retention_checkpoint, desired_journal_floor, serialize_retention_checkpoint,
 };
 use crate::sql::commit_effects::{
@@ -371,6 +371,9 @@ pub(crate) trait SqlStoreCore: Sized {
 
     fn compact_retained_versions(&self, config: RetentionGcConfig) -> Result<RetentionGcSummary> {
         let watermarks = self.retention_gc_watermarks(config)?;
+        let _pin_barrier = self
+            .retention_floor()
+            .guard_prepared_watermarks(&watermarks)?;
         let document_prune_before = watermarks.document_versions.safe_prune_before;
         let index_prune_before = watermarks.index_versions.safe_prune_before;
         let committed = self.execute_write(move |transaction| {
@@ -397,7 +400,12 @@ pub(crate) trait SqlStoreCore: Sized {
             .map(deserialize_retention_checkpoint)
             .transpose()?
             .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
-        RetentionHistoryState::new(checkpoint.sequence(), physical_floor, checkpoint.clone())?;
+        RetentionHistoryState::new(
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+            physical_floor,
+            checkpoint.clone(),
+        )?;
         Ok((checkpoint, physical_floor, checkpoint_blob))
     }
 
@@ -405,29 +413,59 @@ pub(crate) trait SqlStoreCore: Sized {
         let watermarks = self.retention_gc_watermarks(config)?;
         let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
         RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
             desired_journal_floor(&watermarks).max(checkpoint.sequence()),
             physical_floor,
             checkpoint,
         )
     }
 
-    /// Atomically publish a materialized checkpoint and prune the provider's
-    /// retained history while the caller still owns the committer lease.
-    fn fenced_compact_retained_history(
+    fn prepare_retained_history(
         &self,
-        owner_id: &str,
-        epoch: u64,
-        durable_sequence: SequenceNumber,
         config: RetentionGcConfig,
-    ) -> CommitterLeaseResult<RetentionHistorySummary> {
+    ) -> Result<PreparedRetentionHistory> {
         let watermarks = self.retention_gc_watermarks(config)?;
         let (checkpoint, physical_floor, expected_checkpoint_blob) =
             self.load_retention_checkpoint()?;
         let desired_floor = desired_journal_floor(&watermarks).max(checkpoint.sequence());
-        let before = RetentionHistoryState::new(desired_floor, physical_floor, checkpoint.clone())?;
+        let before = RetentionHistoryState::new(
+            watermarks.document_versions.latest_sequence,
+            desired_floor,
+            physical_floor,
+            checkpoint.clone(),
+        )?;
         let journal_tail = self
             .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
         let candidate = checkpoint.advance(&journal_tail, desired_floor)?;
+        Ok(PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_checkpoint_blob,
+            expected_revision: None,
+        })
+    }
+
+    /// Atomically publish a prepared materialized checkpoint and prune the
+    /// provider's retained history while the caller still owns the committer
+    /// lease.
+    fn fenced_finalize_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        prepared: PreparedRetentionHistory,
+    ) -> CommitterLeaseResult<RetentionHistorySummary> {
+        let _pin_barrier = self
+            .retention_floor()
+            .guard_prepared_watermarks(&prepared.watermarks)?;
+        let PreparedRetentionHistory {
+            watermarks,
+            before,
+            candidate,
+            expected_checkpoint_blob,
+            ..
+        } = prepared;
         let candidate_blob = serialize_retention_checkpoint(&candidate)?;
         let candidate_sequence = candidate.sequence();
         let document_prune_before = watermarks.document_versions.safe_prune_before;
@@ -448,7 +486,7 @@ pub(crate) trait SqlStoreCore: Sized {
             let (current_checkpoint_blob, current_physical_floor) =
                 transaction.load_retention_metadata()?;
             if current_checkpoint_blob != expected_checkpoint_blob
-                || current_physical_floor != physical_floor
+                || current_physical_floor != before.physical_floor
             {
                 return Err(Error::conflict(
                     "retention checkpoint changed while compaction was prepared".to_string(),
@@ -475,7 +513,12 @@ pub(crate) trait SqlStoreCore: Sized {
         });
         let committed = map_fenced_write_result(result, fenced_owner_id, epoch)?;
         debug_assert!(committed.commit.is_none());
-        let after = RetentionHistoryState::new(desired_floor, candidate_sequence, candidate)?;
+        let after = RetentionHistoryState::new(
+            before.latest_sequence,
+            before.desired_floor,
+            candidate_sequence,
+            candidate,
+        )?;
         Ok(RetentionHistorySummary {
             watermarks,
             before,
@@ -484,6 +527,17 @@ pub(crate) trait SqlStoreCore: Sized {
             document_versions_pruned: committed.value.1,
             index_versions_pruned: committed.value.2,
         })
+    }
+
+    fn fenced_compact_retained_history(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+        config: RetentionGcConfig,
+    ) -> CommitterLeaseResult<RetentionHistorySummary> {
+        let prepared = self.prepare_retained_history(config)?;
+        self.fenced_finalize_retained_history(owner_id, epoch, durable_sequence, prepared)
     }
 
     // -------------------------------------------------------------------- PITR
@@ -1341,6 +1395,20 @@ macro_rules! sql_store_core_facade {
 
             pub fn retention_history_state(&self, config: crate::retention::RetentionGcConfig) -> nimbus_core::Result<crate::retention::RetentionHistoryState> {
                 <Self as crate::sql::store_core::SqlStoreCore>::retention_history_state(self, config)
+            }
+
+            pub fn prepare_retained_history(&self, config: crate::retention::RetentionGcConfig) -> nimbus_core::Result<crate::retention::PreparedRetentionHistory> {
+                <Self as crate::sql::store_core::SqlStoreCore>::prepare_retained_history(self, config)
+            }
+
+            pub fn fenced_finalize_retained_history(
+                &self,
+                owner_id: &str,
+                epoch: u64,
+                durable_sequence: nimbus_core::SequenceNumber,
+                prepared: crate::retention::PreparedRetentionHistory,
+            ) -> crate::traits::CommitterLeaseResult<crate::retention::RetentionHistorySummary> {
+                <Self as crate::sql::store_core::SqlStoreCore>::fenced_finalize_retained_history(self, owner_id, epoch, durable_sequence, prepared)
             }
 
             pub fn fenced_compact_retained_history(

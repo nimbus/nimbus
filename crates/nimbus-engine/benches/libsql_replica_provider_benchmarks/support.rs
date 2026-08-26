@@ -174,6 +174,7 @@ pub(super) fn libsql_replica_engine_config(
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir),
         local_encryption,
+        metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
     })
 }
 

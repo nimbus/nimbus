@@ -117,9 +117,9 @@ pub use query_read::QueryReadStore;
 pub use range_bound::IndexRangeBound;
 pub use retention::{
     HardDeleteDecision, MATERIALIZED_RETENTION_CHECKPOINT_VERSION, MaterializedRetentionCheckpoint,
-    RetentionFloor, RetentionGcConfig, RetentionGcResource, RetentionGcSummary,
-    RetentionGcWatermark, RetentionGcWatermarks, RetentionHistoryState, RetentionHistorySummary,
-    RetentionParticipant, RetentionPin, RetentionPinGuard,
+    PreparedRetentionHistory, RetentionFloor, RetentionGcConfig, RetentionGcResource,
+    RetentionGcSummary, RetentionGcWatermark, RetentionGcWatermarks, RetentionHistoryState,
+    RetentionHistorySummary, RetentionParticipant, RetentionPin, RetentionPinGuard,
 };
 pub use scheduler::{
     PreparedScheduleBatch, PreparedSchedulerWrite, ScheduleBatchReconciliation, SchedulerWrite,

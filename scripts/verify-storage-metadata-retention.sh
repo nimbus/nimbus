@@ -182,11 +182,12 @@ else
 fi
 
 if contains 'metadata_retention' crates/nimbus-engine/src \
-  && contains 'compact_retained_history' crates/nimbus-engine/src \
+  && contains 'prepare_retained_history' crates/nimbus-engine/src \
+  && contains 'finalize_retained_history' crates/nimbus-engine/src \
   && contains 'retain_all' crates/nimbus-engine/src; then
-  pass 'the Engine lifecycle runs bounded maintenance and exposes retain-all explicitly'
+  pass 'the Engine lifecycle prepares off-route, finalizes in order, and exposes retain-all explicitly'
 else
-  fail 'the Engine lifecycle runs bounded maintenance and exposes retain-all explicitly'
+  fail 'the Engine lifecycle prepares off-route, finalizes in order, and exposes retain-all explicitly'
 fi
 
 if contains 'validate_retention_after_page|post_read_retention' \
