@@ -435,7 +435,10 @@ fn write_typed_scalar(writer: &mut impl Write, value: &TypedScalarValue) -> io::
     if let TypedScalarValue::SpecialDouble { value } = value {
         write_tag(writer, 0x05)?;
         return match value {
-            SpecialDouble::NegativeZero => write_f64(writer, -0.0),
+            // This stored scalar projects to the client-visible "-0" sentinel.
+            // Preserve its sign bit so replica verification can detect drift to
+            // a plain positive-zero value.
+            SpecialDouble::NegativeZero => write_finite_f64(writer, -0.0),
             SpecialDouble::Nan => write_f64(writer, f64::NAN),
             SpecialDouble::PositiveInfinity => write_f64(writer, f64::INFINITY),
             SpecialDouble::NegativeInfinity => write_f64(writer, f64::NEG_INFINITY),
@@ -542,11 +545,15 @@ fn write_f64(writer: &mut impl Write, value: f64) -> io::Result<()> {
     } else if value == f64::NEG_INFINITY {
         0x03
     } else {
-        write_tag(writer, 0x00)?;
         let normalized = if value == 0.0 { 0.0 } else { value };
-        return writer.write_all(&normalized.to_bits().to_be_bytes());
+        return write_finite_f64(writer, normalized);
     };
     write_tag(writer, tag)
+}
+
+fn write_finite_f64(writer: &mut impl Write, value: f64) -> io::Result<()> {
+    write_tag(writer, 0x00)?;
+    writer.write_all(&value.to_bits().to_be_bytes())
 }
 
 fn write_bool(writer: &mut impl Write, value: bool) -> io::Result<()> {
@@ -792,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_leaf_normalizes_negative_zero() {
+    fn canonical_leaf_distinguishes_scalar_negative_zero() {
         let zero = document_with_value(json!(0.0));
         let mut negative_zero = document_with_value(Value::Null);
         negative_zero.set_typed_field(
@@ -802,13 +809,42 @@ mod tests {
             },
         );
 
-        assert_eq!(
+        assert_ne!(
             state_with_document(zero)
                 .digest()
                 .expect("zero digest should compute"),
             state_with_document(negative_zero)
                 .digest()
                 .expect("negative-zero digest should compute")
+        );
+    }
+
+    #[test]
+    fn canonical_leaf_normalizes_geo_point_negative_zero() {
+        let mut zero = document_with_value(Value::Null);
+        zero.set_typed_field(
+            "value",
+            TypedScalarValue::GeoPoint {
+                latitude: 0.0,
+                longitude: 0.0,
+            },
+        );
+        let mut negative_zero = document_with_value(Value::Null);
+        negative_zero.set_typed_field(
+            "value",
+            TypedScalarValue::GeoPoint {
+                latitude: -0.0,
+                longitude: -0.0,
+            },
+        );
+
+        assert_eq!(
+            state_with_document(zero)
+                .digest()
+                .expect("zero GeoPoint digest should compute"),
+            state_with_document(negative_zero)
+                .digest()
+                .expect("negative-zero GeoPoint digest should compute")
         );
     }
 
