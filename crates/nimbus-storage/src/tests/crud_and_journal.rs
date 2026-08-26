@@ -369,6 +369,17 @@ fn redb_retention_gc_preserves_document_anchor_and_respects_pins() {
     );
     assert_eq!(released_summary.document_versions_pruned, 1);
     assert_eq!(released_summary.index_versions_pruned, 1);
+    assert_eq!(
+        store
+            .load_retention_checkpoint()
+            .expect("retention floors should load after version compaction")
+            .1,
+        crate::RetentionReadFloors::new(update_v3.sequence, update_v3.sequence, SequenceNumber(0))
+    );
+    assert_eq!(
+        store.retention_floor().published_read_floors(),
+        crate::RetentionReadFloors::new(update_v3.sequence, update_v3.sequence, SequenceNumber(0))
+    );
     let at_floor = store
         .get_document_version_at(&table_id, &document.id, update_v3.sequence)
         .expect("floor version should load")

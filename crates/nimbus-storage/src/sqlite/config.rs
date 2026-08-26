@@ -680,10 +680,16 @@ impl SqliteTenantStore {
     pub fn read_snapshot(&self) -> Result<SqliteReadSnapshot> {
         let conn = self.acquire_read_connection()?;
         conn.execute_batch("BEGIN").map_err(map_sqlite_error)?;
-        Ok(SqliteReadSnapshot {
+        let snapshot = SqliteReadSnapshot {
             conn,
             schema_cache: self.schema_cache.clone(),
-        })
+            retention_floor: self.retention_floor.clone(),
+            fault_injector: self.fault_injector.clone(),
+        };
+        snapshot
+            .retention_floor
+            .observe_published_read_floors(snapshot.retained_history_read_floors()?);
+        Ok(snapshot)
     }
 
     pub fn begin_write_transaction(&self) -> Result<SqliteWriteTransaction> {

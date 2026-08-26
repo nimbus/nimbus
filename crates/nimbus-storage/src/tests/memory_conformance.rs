@@ -227,6 +227,59 @@ fn memory_tenant_store_durable_journal_conformance() {
 }
 
 #[test]
+fn memory_durable_journal_page_serializes_concurrent_prune_until_rows_return() {
+    let (fault, rows_read, resume) = pause_after_retention_read_page();
+    let store = Arc::new(MemoryTenantStore::with_simulation(
+        Arc::new(nimbus_core::SystemWallClock),
+        Arc::clone(&fault) as Arc<dyn crate::FaultInjector>,
+    ));
+    for title in ["first", "second", "third"] {
+        store
+            .insert_document(&sample_document("memory_retention_page", title))
+            .expect("insert should commit");
+    }
+
+    fault.arm_next_page();
+    let reader_store = Arc::clone(&store);
+    let reader =
+        std::thread::spawn(move || reader_store.stream_durable_journal(SequenceNumber(0), 1));
+    rows_read
+        .recv_timeout(Duration::from_secs(5))
+        .expect("memory reader should reach the post-page boundary");
+
+    let (compacted_tx, compacted_rx) = mpsc::sync_channel(1);
+    let compactor_store = Arc::clone(&store);
+    let compactor = std::thread::spawn(move || {
+        let result = compactor_store.compact_retained_history(
+            crate::RetentionGcConfig::new(1).expect("retention config should be valid"),
+        );
+        compacted_tx
+            .send(result)
+            .expect("compaction result receiver should remain open");
+    });
+    assert!(
+        compacted_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "memory compaction must wait for the page's state read guard"
+    );
+    resume
+        .send(())
+        .expect("memory reader should still wait at the page boundary");
+
+    let page = reader
+        .join()
+        .expect("memory reader should not panic")
+        .expect("the page linearized before retention should succeed");
+    assert_eq!(page.records.len(), 1);
+    compacted_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("memory compaction should finish after the page releases its read guard")
+        .expect("memory compaction should succeed");
+    compactor.join().expect("memory compactor should not panic");
+}
+
+#[test]
 fn redb_disabled_cron_job_still_reports_scheduled_work() {
     let store = TenantStore::create_in_memory().expect("redb store should open");
     exercise_disabled_cron_job_still_reports_scheduled_work(&store);

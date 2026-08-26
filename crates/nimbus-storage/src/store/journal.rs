@@ -28,8 +28,59 @@ use super::table_catalog::{
 use super::{
     APPLIED_SEQUENCE_KEY, COMMIT_LOG, DOCUMENTS, EMPTY_TABLE_VALUE, INDEXES, JournalProgress,
     METADATA, NEXT_SEQUENCE_KEY, SCHEDULED_JOB_EXECUTIONS, SCHEMAS, TRIGGER_DELIVERY_CURSOR_KEY,
-    TenantStore, map_redb_error,
+    TenantReadSnapshot, TenantStore, map_redb_error,
 };
+
+impl TenantReadSnapshot {
+    pub fn read_durable_journal_from(
+        &self,
+        sequence: SequenceNumber,
+    ) -> Result<Vec<TenantEventRecord>> {
+        let snapshot_floor = self
+            .retained_journal_physical_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
+        let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(snapshot_floor);
+        let latest_sequence = self.latest_sequence()?;
+        let table_handle = match self.read_txn.open_table(COMMIT_LOG) {
+            Ok(table_handle) => table_handle,
+            Err(TableError::TableDoesNotExist(_)) => {
+                crate::retention::validate_contiguous_journal_page(
+                    suffix_after,
+                    &[],
+                    latest_sequence,
+                    false,
+                )?;
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        let mut records = Vec::new();
+        for item in table_handle
+            .range(suffix_after.0.saturating_add(1)..)
+            .map_err(map_redb_error)?
+        {
+            let (_, value) = item.map_err(map_redb_error)?;
+            records.push(crate::commit_log::deserialize_tenant_event_record(
+                value.value(),
+            )?);
+        }
+        let authoritative_floor =
+            snapshot_floor.max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            suffix_after,
+            authoritative_floor,
+            "durable journal suffix",
+        )?;
+        crate::retention::validate_contiguous_journal_page(
+            suffix_after,
+            records.as_slice(),
+            latest_sequence,
+            false,
+        )?;
+        Ok(records)
+    }
+}
 
 impl TenantStore {
     pub fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {
@@ -44,21 +95,7 @@ impl TenantStore {
         &self,
         sequence: SequenceNumber,
     ) -> Result<Vec<TenantEventRecord>> {
-        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
-        let table_handle = match read_txn.open_table(COMMIT_LOG) {
-            Ok(table_handle) => table_handle,
-            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
-            Err(error) => return Err(map_redb_error(error)),
-        };
-
-        let mut entries = Vec::new();
-        for item in table_handle.range(sequence.0..).map_err(map_redb_error)? {
-            let (_, value) = item.map_err(map_redb_error)?;
-            entries.push(crate::commit_log::deserialize_tenant_event_record(
-                value.value(),
-            )?);
-        }
-        Ok(entries)
+        self.read_snapshot()?.read_durable_journal_from(sequence)
     }
 
     pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {

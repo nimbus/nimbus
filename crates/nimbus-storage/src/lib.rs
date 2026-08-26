@@ -120,6 +120,7 @@ pub use retention::{
     PreparedRetentionHistory, RetentionFloor, RetentionGcConfig, RetentionGcResource,
     RetentionGcSummary, RetentionGcWatermark, RetentionGcWatermarks, RetentionHistoryState,
     RetentionHistorySummary, RetentionParticipant, RetentionPin, RetentionPinGuard,
+    RetentionReadFloors,
 };
 pub use scheduler::{
     PreparedScheduleBatch, PreparedSchedulerWrite, ScheduleBatchReconciliation, SchedulerWrite,

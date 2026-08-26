@@ -378,6 +378,17 @@ fn sqlite_retention_gc_preserves_document_anchor_and_respects_pins() {
     );
     assert_eq!(released_summary.document_versions_pruned, 1);
     assert_eq!(released_summary.index_versions_pruned, 1);
+    assert_eq!(
+        store
+            .load_retention_checkpoint()
+            .expect("retention floors should load after version compaction")
+            .1,
+        crate::RetentionReadFloors::new(update_v3.sequence, update_v3.sequence, SequenceNumber(0))
+    );
+    assert_eq!(
+        store.retention_floor().published_read_floors(),
+        crate::RetentionReadFloors::new(update_v3.sequence, update_v3.sequence, SequenceNumber(0))
+    );
     let at_floor = store
         .get_document_version_at(&document.table, &table_id, &document.id, update_v3.sequence)
         .expect("floor version should load")
@@ -1447,10 +1458,11 @@ fn sqlite_durable_journal_stream_uses_cursor_floor_after_retention_cut() {
     let error = store
         .stream_durable_journal(SequenceNumber(0), 10)
         .expect_err("cursor behind the retained floor should fail");
-    assert!(matches!(
-        error,
-        Error::InvalidInput(message) if message.contains("behind the retention floor 1")
-    ));
+    assert_eq!(
+        error.historical_read_kind(),
+        Some(nimbus_core::HistoricalReadErrorKind::RetentionExpired)
+    );
+    assert!(error.to_string().contains("behind the retention floor 1"));
 
     let page = store
         .stream_durable_journal(SequenceNumber(1), 10)
@@ -1460,6 +1472,49 @@ fn sqlite_durable_journal_stream_uses_cursor_floor_after_retention_cut() {
     assert_eq!(page.next_cursor, SequenceNumber(2));
     assert_eq!(page.records.len(), 1);
     assert_eq!(page.records[0].sequence, SequenceNumber(2));
+}
+
+#[test]
+fn sqlite_durable_journal_page_rejects_concurrent_prune_after_rows_are_read() {
+    let dir = tempdir().expect("temporary directory should create");
+    let (fault, rows_read_rx, resume_tx) = pause_after_retention_read_page();
+    let store = Arc::new(
+        SqliteTenantStore::open_with_simulation(
+            dir.path().join("concurrent-retention-page.sqlite3"),
+            Arc::new(nimbus_core::SystemWallClock),
+            Arc::clone(&fault) as Arc<dyn crate::FaultInjector>,
+        )
+        .expect("SQLite store should open"),
+    );
+    for title in ["first", "second", "third"] {
+        store
+            .insert(&sample_document("sqlite_retention_page", title))
+            .expect("insert should succeed");
+    }
+
+    fault.arm_next_page();
+    let reader_store = Arc::clone(&store);
+    let reader =
+        std::thread::spawn(move || reader_store.stream_durable_journal(SequenceNumber(0), 1));
+    rows_read_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("SQLite reader should reach the post-page boundary");
+    let compact_result = store.compact_retained_history(
+        RetentionGcConfig::new(1).expect("retention config should be valid"),
+    );
+    resume_tx
+        .send(())
+        .expect("SQLite reader should still wait at the page boundary");
+    compact_result.expect("concurrent SQLite retention should commit");
+
+    let error = reader
+        .join()
+        .expect("SQLite reader should not panic")
+        .expect_err("a concurrent SQLite prune must invalidate the page");
+    assert_eq!(
+        error.historical_read_kind(),
+        Some(nimbus_core::HistoricalReadErrorKind::RetentionExpired)
+    );
 }
 
 #[test]

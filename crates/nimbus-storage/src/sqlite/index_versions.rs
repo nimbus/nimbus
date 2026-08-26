@@ -236,18 +236,42 @@ impl SqliteReadSnapshot {
             check_cancel,
         } = page;
         plan.validate_page_request(read_shape, after, limit)?;
-        if plan.empty {
-            return finish_historical_index_page(read_shape, plan, after, limit, Vec::new());
-        }
-        let entries = self.visible_historical_index_entries_for_tuple_bounds(
-            read_shape,
-            &plan.index,
-            plan.match_prefix.as_slice(),
-            plan.start_key.as_deref(),
-            plan.end_key.as_deref(),
-            check_cancel,
+        let read_sequence = read_shape.read_snapshot().sequence().sequence();
+        let initial_floor = self
+            .retained_history_read_floors()?
+            .max(self.retention_floor.published_read_floors())
+            .historical_index();
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            initial_floor,
+            "historical index page",
         )?;
-        finish_historical_index_page(read_shape, plan, after, limit, entries)
+        let entries = if plan.empty {
+            Vec::new()
+        } else {
+            self.visible_historical_index_entries_for_tuple_bounds(
+                read_shape,
+                &plan.index,
+                plan.match_prefix.as_slice(),
+                plan.start_key.as_deref(),
+                plan.end_key.as_deref(),
+                check_cancel,
+            )?
+        };
+        let result = finish_historical_index_page(read_shape, plan, after, limit, entries)?;
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionReadAfterPage)?;
+        let authoritative_floor = initial_floor.max(
+            self.retention_floor
+                .published_read_floors()
+                .historical_index(),
+        );
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            authoritative_floor,
+            "historical index page",
+        )?;
+        Ok(result)
     }
 
     fn visible_historical_index_entries_for_tuple_bounds(

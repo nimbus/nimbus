@@ -1,13 +1,14 @@
 //! Checks the writer ownership matrix against the source it describes.
 //!
 //! The matrix alone would only be a list. This gate makes it a contract: it
-//! reads `sql/store_core.rs` as text, classifies every `SqlStoreCore` method,
-//! and requires that the two agree. A new writer with no row fails. A row for a
-//! writer that no longer exists fails. A row whose effects contradict the
-//! writer's own body fails. Reading source rather than registering writers at
-//! run time is deliberate — several writers are provider-feature-gated, and the
-//! bare `cargo test -p nimbus-storage` the plan verifier runs does not compile
-//! them, so a runtime registry would report success over an empty set.
+//! reads `sql/store_core.rs` plus its concept-owned retention orchestration as
+//! text, classifies every `SqlStoreCore` method, and requires that the two
+//! agree. A new writer with no row fails. A row for a writer that no longer
+//! exists fails. A row whose effects contradict the writer's own body fails.
+//! Reading source rather than registering writers at run time is deliberate —
+//! several writers are provider-feature-gated, and the bare
+//! `cargo test -p nimbus-storage` the plan verifier runs does not compile them,
+//! so a runtime registry would report success over an empty set.
 
 use super::effect_matrix::{
     Admission, CatalogEffect, Condition, DocumentEffect, IndexEffect, JournalEffect, Lease, MATRIX,
@@ -21,8 +22,9 @@ use super::effect_matrix::{
 const PRIMITIVES: [&str; 2] = ["execute_write", "execute_write_cancellable"];
 
 /// Bodiless `SqlStoreCore` methods that only read.
-const PROVIDER_READERS: [&str; 5] = [
+const PROVIDER_READERS: [&str; 6] = [
     "retention_floor",
+    "check_retention_read_page",
     "journal_progress",
     "load_retention_metadata_snapshot",
     "read_durable_journal_from",
@@ -108,11 +110,18 @@ fn source_function<'a>(source: &'a str, symbol: &str) -> &'a str {
         .find(&marker)
         .unwrap_or_else(|| panic!("writer function {symbol} must exist"));
     let tail = &source[start + marker.len()..];
-    let end = ["\n    fn ", "\n    pub fn ", "\n    pub(crate) fn "]
-        .into_iter()
-        .filter_map(|next| tail.find(next))
-        .min()
-        .unwrap_or(tail.len());
+    let end = [
+        "\nfn ",
+        "\npub fn ",
+        "\npub(crate) fn ",
+        "\n    fn ",
+        "\n    pub fn ",
+        "\n    pub(crate) fn ",
+    ]
+    .into_iter()
+    .filter_map(|next| tail.find(next))
+    .min()
+    .unwrap_or(tail.len());
     &source[start..start + marker.len() + end]
 }
 
@@ -124,6 +133,9 @@ fn scan_core() -> CoreScan {
         .to_path_buf();
     let source = std::fs::read_to_string(&path)
         .expect("sql/store_core.rs must exist — it owns the shared store writers");
+    let retention_source =
+        std::fs::read_to_string(repo_root().join("crates/nimbus-storage/src/sql/retention.rs"))
+            .expect("sql/retention.rs must exist — it owns shared retention orchestration");
 
     let lines: Vec<&str> = source.lines().collect();
     let start = lines
@@ -167,7 +179,7 @@ fn scan_core() -> CoreScan {
             (None, Some(_)) => true,
             _ => false,
         };
-        let (signature, body) = match (bodiless, brace) {
+        let (signature, mut body) = match (bodiless, brace) {
             (false, Some(brace)) => (
                 collapse_whitespace(&code[..brace]),
                 code[brace..].to_string(),
@@ -177,6 +189,9 @@ fn scan_core() -> CoreScan {
                 String::new(),
             ),
         };
+        if body.contains("crate::sql::retention::") {
+            body = source_function(&retention_source, &name).replace("store.", "self.");
+        }
         let shape = if bodiless {
             ScannedShape::Bodiless
         } else if body.contains("execute_write") {

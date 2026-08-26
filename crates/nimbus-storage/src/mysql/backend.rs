@@ -10,6 +10,7 @@ use crate::mysql::document_versions::{
 use crate::mysql::index_versions::{
     record_index_versions_for_events_in_session, record_index_versions_for_writes_in_session,
 };
+use crate::retention::{validate_contiguous_journal_page, validate_retention_after_page};
 
 pub(super) fn validate_identifier_input(value: &str, label: &str) -> Result<()> {
     if value.is_empty() {
@@ -357,7 +358,12 @@ where
         .map_err(map_mysql_error)?
         .flatten()
         .unwrap_or(0);
-    Ok(SequenceNumber(value))
+    let journal_head = SequenceNumber(value);
+    let applied_head = load_metadata_u64_from_session(session, database_name, APPLIED_SEQUENCE_KEY)
+        .await?
+        .map(SequenceNumber)
+        .unwrap_or_default();
+    Ok(journal_head.max(applied_head))
 }
 
 pub(super) async fn load_durable_journal_cursor_floor_from_session<C>(
@@ -377,7 +383,51 @@ where
         .map_err(map_mysql_error)?
         .flatten()
         .unwrap_or(0);
-    Ok(SequenceNumber(value.saturating_sub(1)))
+    let inferred_floor = SequenceNumber(value.saturating_sub(1));
+    let read_floors = load_retention_read_floors_from_session(session, database_name).await?;
+    Ok(inferred_floor.max(read_floors.journal))
+}
+
+pub(super) async fn load_retention_read_floors_from_session<C>(
+    session: &mut C,
+    database_name: &str,
+) -> Result<crate::RetentionReadFloors>
+where
+    C: Queryable,
+{
+    let query = format!(
+        "SELECT key_name, value_blob FROM {} WHERE key_name IN (?, ?, ?)",
+        qualified_table(database_name, "metadata")
+    );
+    let document_floor_key = crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY;
+    let index_floor_key = crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY;
+    let journal_floor_key = crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY;
+    let rows: Vec<Row> = session
+        .exec(
+            query,
+            (document_floor_key, index_floor_key, journal_floor_key),
+        )
+        .await
+        .map_err(map_mysql_error)?;
+    let mut read_floors = crate::RetentionReadFloors::default();
+    for row in rows {
+        let (key, value): (String, Option<Vec<u8>>) = mysql_async::from_row(row);
+        let value = value.ok_or_else(|| {
+            Error::storage(
+                StorageErrorKind::Corruption,
+                format!("retention metadata key {key} has no blob value"),
+            )
+        })?;
+        let floor = crate::retention::decode_retention_floor(value.as_slice())?;
+        if key == document_floor_key {
+            read_floors.document_versions = floor;
+        } else if key == index_floor_key {
+            read_floors.index_versions = floor;
+        } else if key == journal_floor_key {
+            read_floors.journal = floor;
+        }
+    }
+    Ok(read_floors)
 }
 
 pub(super) async fn load_metadata_u64_from_session<C>(
@@ -493,20 +543,35 @@ pub(super) async fn load_durable_records_from_session<C>(
 where
     C: Queryable,
 {
+    let latest_sequence = load_latest_sequence_from_session(session, database_name).await?;
+    let cursor_floor =
+        load_durable_journal_cursor_floor_from_session(session, database_name).await?;
+    let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(cursor_floor);
     let query = format!(
         "SELECT record_blob FROM {} WHERE sequence >= ? ORDER BY sequence",
         qualified_table(database_name, "commit_log")
     );
     let rows: Vec<Row> = session
-        .exec(query, (sequence.0,))
+        .exec(query, (suffix_after.0.saturating_add(1),))
         .await
         .map_err(map_mysql_error)?;
-    rows.into_iter()
+    let records = rows
+        .into_iter()
         .map(|row| {
             let (record_blob,): (Vec<u8>,) = mysql_async::from_row(row);
             deserialize_tenant_event_record(record_blob.as_slice())
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    let latest_sequence = records
+        .last()
+        .map(|record| record.sequence)
+        .unwrap_or_default()
+        .max(latest_sequence);
+    let authoritative_floor =
+        load_durable_journal_cursor_floor_from_session(session, database_name).await?;
+    validate_retention_after_page(suffix_after, authoritative_floor, "durable journal suffix")?;
+    validate_contiguous_journal_page(suffix_after, records.as_slice(), latest_sequence, false)?;
+    Ok(records)
 }
 
 pub(super) async fn load_documents_by_id_prefix_from_session<C>(

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -50,6 +52,27 @@ async fn postgres_provider_retention_checkpoint_fault_rolls_back_every_delete() 
         super::super::exercise_provider_retention_fault_rollback(
             opened.store.as_ref(),
             "postgres_retention_fault",
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_provider_page_rejects_concurrent_retention_prune() {
+    let (faults, rows_read, resume) = super::super::pause_after_retention_read_page();
+    let pause = Arc::clone(&faults);
+    with_test_provider_and_fault_injector(faults, |provider, _config| async move {
+        let tenant = TenantId::new("retention-page-race").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        super::super::exercise_provider_retention_concurrent_prune_page(
+            opened.store,
+            "postgres_retention_page",
+            pause,
+            rows_read,
+            resume,
         );
     })
     .await;

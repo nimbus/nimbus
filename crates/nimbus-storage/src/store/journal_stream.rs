@@ -56,14 +56,15 @@ impl TenantReadSnapshot {
         let latest_sequence = self.latest_sequence()?;
         let latest_sequence_elapsed = latest_sequence_started.elapsed();
         let cursor_floor_started = Instant::now();
-        let cursor_floor = self.durable_journal_cursor_floor()?;
+        let cursor_floor = self
+            .durable_journal_cursor_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
         let cursor_floor_elapsed = cursor_floor_started.elapsed();
-        if after.0 < cursor_floor.0 {
-            return Err(Error::InvalidInput(format!(
-                "journal cursor {} is behind the retention floor {}",
-                after.0, cursor_floor.0
-            )));
-        }
+        crate::retention::validate_retention_after_page(
+            after,
+            cursor_floor,
+            "durable journal cursor",
+        )?;
         if after.0 > latest_sequence.0 {
             return Err(Error::InvalidInput(format!(
                 "journal cursor {} is ahead of the latest durable sequence {}",
@@ -75,11 +76,26 @@ impl TenantReadSnapshot {
         let table_handle = match self.read_txn.open_table(COMMIT_LOG) {
             Ok(table_handle) => table_handle,
             Err(TableError::TableDoesNotExist(_)) => {
+                self.fault_injector
+                    .check(crate::FaultPoint::RetentionReadAfterPage)?;
+                let authoritative_floor =
+                    cursor_floor.max(self.retention_floor.published_read_floors().journal);
+                crate::retention::validate_retention_after_page(
+                    after,
+                    authoritative_floor,
+                    "durable journal page",
+                )?;
+                crate::retention::validate_contiguous_journal_page(
+                    after,
+                    &[],
+                    latest_sequence,
+                    false,
+                )?;
                 return Ok(DurableJournalPage {
                     records: Vec::new(),
                     next_cursor: after,
                     latest_sequence,
-                    cursor_floor,
+                    cursor_floor: authoritative_floor,
                     has_more: false,
                 });
             }
@@ -107,6 +123,21 @@ impl TenantReadSnapshot {
             .last()
             .map(|record| record.sequence)
             .unwrap_or(after);
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionReadAfterPage)?;
+        let authoritative_floor =
+            cursor_floor.max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            after,
+            authoritative_floor,
+            "durable journal page",
+        )?;
+        crate::retention::validate_contiguous_journal_page(
+            after,
+            records.as_slice(),
+            latest_sequence,
+            has_more,
+        )?;
         maybe_emit_redb_journal_profile(format_args!(
             "redb-journal-profile op=stream latest_sequence={:?} cursor_floor={:?} open_table={:?} scan={:?} records={} has_more={} total={:?}",
             latest_sequence_elapsed,
@@ -121,7 +152,7 @@ impl TenantReadSnapshot {
             records,
             next_cursor,
             latest_sequence,
-            cursor_floor,
+            cursor_floor: authoritative_floor,
             has_more,
         })
     }
@@ -132,7 +163,14 @@ impl TenantReadSnapshot {
         let snapshot = self.export_materialized_journal_snapshot()?;
         let snapshot_elapsed = snapshot_started.elapsed();
         let cursor_floor_started = Instant::now();
-        let cursor_floor = self.durable_journal_cursor_floor()?;
+        let cursor_floor = self
+            .durable_journal_cursor_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            snapshot.applied_sequence,
+            cursor_floor,
+            "durable journal bootstrap",
+        )?;
         let cursor_floor_elapsed = cursor_floor_started.elapsed();
         maybe_emit_redb_journal_profile(format_args!(
             "redb-journal-profile op=bootstrap snapshot={:?} cursor_floor={:?} documents={} scheduled_execution_ids={} total={:?}",

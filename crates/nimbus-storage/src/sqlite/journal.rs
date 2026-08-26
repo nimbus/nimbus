@@ -207,9 +207,29 @@ impl SqliteTenantStore {
         target: PointInTimeRestoreTarget,
         retention_config: RetentionGcConfig,
     ) -> Result<PointInTimeRestoreArchive> {
-        let (checkpoint, _, _) = self.load_retention_checkpoint()?;
-        let records = self
-            .read_durable_journal_from(SequenceNumber(checkpoint.sequence().0.saturating_add(1)))?;
+        let (checkpoint, initial_read_floors, _) = self.load_retention_checkpoint()?;
+        let base_sequence = checkpoint.sequence();
+        crate::retention::validate_retention_after_page(
+            base_sequence,
+            initial_read_floors
+                .journal
+                .max(self.retention_floor.published_read_floors().journal),
+            "point-in-time archive base",
+        )?;
+        let records =
+            self.read_durable_journal_from(SequenceNumber(base_sequence.0.saturating_add(1)))?;
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionReadAfterPage)?;
+        let (authoritative_checkpoint, authoritative_read_floors, _) =
+            self.load_retention_checkpoint()?;
+        crate::retention::validate_retention_after_page(
+            base_sequence,
+            authoritative_checkpoint
+                .sequence()
+                .max(authoritative_read_floors.journal)
+                .max(self.retention_floor.published_read_floors().journal),
+            "point-in-time archive base",
+        )?;
         let progress = self.journal_progress()?;
         let watermarks = self.retention_gc_watermarks(retention_config)?;
         crate::store::build_point_in_time_restore_archive_from_checkpoint(

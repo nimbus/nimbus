@@ -2,7 +2,7 @@ pub(crate) use std::collections::BTreeMap;
 pub(crate) use std::num::NonZeroU64;
 pub(crate) use std::sync::Arc;
 pub(crate) use std::sync::atomic::{AtomicBool, Ordering};
-pub(crate) use std::sync::{Condvar, Mutex};
+pub(crate) use std::sync::{Condvar, Mutex, mpsc};
 
 pub(crate) use nimbus_core::{
     DependencySet, Document, DocumentId, Error, FieldSchema, FieldType, IndexDefinition,
@@ -42,6 +42,7 @@ mod commit_path_ownership;
 mod contract_scenarios;
 mod crud_and_journal;
 mod generated_history;
+pub(crate) mod historical_fixtures;
 #[cfg(feature = "libsql")]
 mod libsql_provider;
 mod memory_conformance;
@@ -54,15 +55,18 @@ mod provider_contract_matrix;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 mod provider_scenarios;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
-mod provider_support;
+pub(crate) mod provider_support;
 mod recovery;
 mod retention_checkpoint;
+mod retention_read_safety;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 mod sql_pair_scenarios;
 mod sqlite_foundation;
 mod sqlite_physical_durability;
 mod store_basics;
 mod usage_store;
+
+pub(crate) use retention_read_safety::pause_after_retention_read_page;
 
 const BLOCKING_TEST_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -328,6 +332,8 @@ pub(crate) trait ProviderRetentionStore: CommitterLeaseStore + DurableJournal {
         config: crate::RetentionGcConfig,
     ) -> nimbus_core::Result<crate::RetentionHistoryState>;
 
+    fn retention_read_floors(&self) -> crate::RetentionReadFloors;
+
     fn fenced_compact_retained_history(
         &self,
         owner_id: &str,
@@ -354,6 +360,10 @@ impl ProviderRetentionStore for crate::PostgresTenantStore {
         config: crate::RetentionGcConfig,
     ) -> nimbus_core::Result<crate::RetentionHistoryState> {
         crate::PostgresTenantStore::retention_history_state(self, config)
+    }
+
+    fn retention_read_floors(&self) -> crate::RetentionReadFloors {
+        self.retention_floor().published_read_floors()
     }
 
     fn fenced_compact_retained_history(
@@ -392,6 +402,10 @@ impl ProviderRetentionStore for crate::MySqlTenantStore {
         crate::MySqlTenantStore::retention_history_state(self, config)
     }
 
+    fn retention_read_floors(&self) -> crate::RetentionReadFloors {
+        self.retention_floor().published_read_floors()
+    }
+
     fn fenced_compact_retained_history(
         &self,
         owner_id: &str,
@@ -426,6 +440,10 @@ impl ProviderRetentionStore for crate::LibsqlReplicaTenantStore {
         config: crate::RetentionGcConfig,
     ) -> nimbus_core::Result<crate::RetentionHistoryState> {
         crate::LibsqlReplicaTenantStore::retention_history_state(self, config)
+    }
+
+    fn retention_read_floors(&self) -> crate::RetentionReadFloors {
+        self.retention_floor().published_read_floors()
     }
 
     fn fenced_compact_retained_history(
@@ -574,6 +592,11 @@ where
         "a stale generation must publish no floor"
     );
     assert_eq!(
+        store.retention_read_floors(),
+        crate::RetentionReadFloors::default(),
+        "a stale generation must publish none of the three read floors"
+    );
+    assert_eq!(
         store
             .read_durable_journal_from(SequenceNumber(1))
             .expect("fenced retention must preserve journal history")
@@ -607,16 +630,28 @@ where
         .expect("retained journal tail should read");
     assert_eq!(retained.len(), 1);
     assert_eq!(retained[0].sequence, latest_sequence);
-    assert!(matches!(
-        store.stream_durable_journal(SequenceNumber(0), 10),
-        Err(Error::InvalidInput(message))
-            if message.contains(format!("retention floor {}", expected_floor.0).as_str())
-    ));
+    let error = store
+        .stream_durable_journal(SequenceNumber(0), 10)
+        .expect_err("a provider cursor below the retained floor must fail");
+    assert_eq!(
+        error.historical_read_kind(),
+        Some(nimbus_core::HistoricalReadErrorKind::RetentionExpired)
+    );
+    assert!(
+        error
+            .to_string()
+            .contains(format!("retention floor {}", expected_floor.0).as_str())
+    );
     let persisted = store
         .retention_history_state(config)
         .expect("published provider retention state should read");
     assert_eq!(persisted.confirmed_floor, expected_floor);
     assert_eq!(persisted.physical_floor, expected_floor);
+    assert_eq!(
+        store.retention_read_floors(),
+        crate::RetentionReadFloors::new(expected_floor, expected_floor, expected_floor),
+        "provider compaction must publish all three read floors with the checkpoint transaction"
+    );
     expected_floor
 }
 
@@ -720,6 +755,11 @@ pub(crate) fn assert_provider_retention_rollback<S>(
         SequenceNumber(0)
     );
     assert_eq!(
+        store.retention_read_floors(),
+        crate::RetentionReadFloors::default(),
+        "a rolled-back retention transaction must publish none of the three read floors"
+    );
+    assert_eq!(
         store
             .read_durable_journal_from(SequenceNumber(1))
             .expect("rolled-back journal should remain complete")
@@ -777,6 +817,51 @@ where
     ));
     assert_provider_retention_rollback(store, &fixture);
     finish_provider_retention_rollback(store, fixture);
+}
+
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) fn exercise_provider_retention_concurrent_prune_page<S>(
+    store: Arc<S>,
+    table_prefix: &str,
+    pause: Arc<retention_read_safety::PauseAfterRetentionReadPage>,
+    rows_read: mpsc::Receiver<()>,
+    resume: mpsc::SyncSender<()>,
+) where
+    S: ProviderRetentionStore + TenantPointRead + Send + Sync + 'static,
+{
+    let fixture = prepare_provider_retention_rollback(store.as_ref(), table_prefix);
+    assert_eq!(
+        store
+            .get(&fixture.table, &fixture.current_document.id)
+            .expect("provider cache should catch up before the page race is armed"),
+        Some(fixture.current_document.clone()),
+    );
+    pause.arm_next_page();
+    let reader_store = Arc::clone(&store);
+    let reader =
+        std::thread::spawn(move || reader_store.stream_durable_journal(SequenceNumber(0), 1));
+    rows_read
+        .recv_timeout(Duration::from_secs(5))
+        .expect("provider reader should reach the post-page boundary");
+    let compact_result = store.fenced_compact_retained_history(
+        &fixture.lease.owner_id,
+        fixture.lease.epoch,
+        SequenceNumber(3),
+        fixture.config,
+    );
+    resume
+        .send(())
+        .expect("provider reader should still wait at the page boundary");
+    compact_result.expect("concurrent provider retention should commit");
+
+    let error = reader
+        .join()
+        .expect("provider reader should not panic")
+        .expect_err("a concurrent provider prune must invalidate the page");
+    assert_eq!(
+        error.historical_read_kind(),
+        Some(nimbus_core::HistoricalReadErrorKind::RetentionExpired)
+    );
 }
 
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]

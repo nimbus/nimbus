@@ -173,6 +173,21 @@ impl SqliteTenantStore {
 }
 
 impl SqliteReadSnapshot {
+    pub(crate) fn retained_history_read_floors(&self) -> Result<crate::RetentionReadFloors> {
+        let load_floor = |key| {
+            self.metadata_blob(key)?
+                .as_deref()
+                .map(crate::retention::decode_retention_floor)
+                .transpose()
+                .map(|floor| floor.unwrap_or_default())
+        };
+        Ok(crate::RetentionReadFloors::new(
+            load_floor(crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)?,
+            load_floor(crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)?,
+            load_floor(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?,
+        ))
+    }
+
     pub fn load_schema(&self) -> Result<Schema> {
         Ok(self
             .schema_cache
@@ -185,6 +200,11 @@ impl SqliteReadSnapshot {
         &self,
         sequence: SequenceNumber,
     ) -> Result<Vec<TenantEventRecord>> {
+        let snapshot_floor = self
+            .durable_journal_cursor_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
+        let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(snapshot_floor);
+        let latest_sequence = self.latest_sequence()?;
         let mut stmt = self
             .conn
             .prepare(
@@ -194,12 +214,27 @@ impl SqliteReadSnapshot {
                  ORDER BY sequence",
             )
             .map_err(map_sqlite_error)?;
-        let mut rows = stmt.query(params![sequence.0]).map_err(map_sqlite_error)?;
+        let mut rows = stmt
+            .query(params![suffix_after.0.saturating_add(1)])
+            .map_err(map_sqlite_error)?;
         let mut records = Vec::new();
         while let Some(row) = rows.next().map_err(map_sqlite_error)? {
             let payload: Vec<u8> = row.get(0).map_err(map_sqlite_error)?;
             records.push(deserialize_tenant_event_record(payload.as_slice())?);
         }
+        let authoritative_floor =
+            snapshot_floor.max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            suffix_after,
+            authoritative_floor,
+            "durable journal suffix",
+        )?;
+        crate::retention::validate_contiguous_journal_page(
+            suffix_after,
+            records.as_slice(),
+            latest_sequence,
+            false,
+        )?;
         Ok(records)
     }
 
@@ -211,13 +246,14 @@ impl SqliteReadSnapshot {
         validate_durable_journal_stream_limit(limit)?;
 
         let latest_sequence = self.latest_sequence()?;
-        let cursor_floor = self.durable_journal_cursor_floor()?;
-        if after.0 < cursor_floor.0 {
-            return Err(Error::InvalidInput(format!(
-                "journal cursor {} is behind the retention floor {}",
-                after.0, cursor_floor.0
-            )));
-        }
+        let cursor_floor = self
+            .durable_journal_cursor_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            after,
+            cursor_floor,
+            "durable journal cursor",
+        )?;
         if after.0 > latest_sequence.0 {
             return Err(Error::InvalidInput(format!(
                 "journal cursor {} is ahead of the latest durable sequence {}",
@@ -256,18 +292,40 @@ impl SqliteReadSnapshot {
             .last()
             .map(|record| record.sequence)
             .unwrap_or(after);
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionReadAfterPage)?;
+        let authoritative_floor =
+            cursor_floor.max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            after,
+            authoritative_floor,
+            "durable journal page",
+        )?;
+        crate::retention::validate_contiguous_journal_page(
+            after,
+            records.as_slice(),
+            latest_sequence,
+            has_more,
+        )?;
         Ok(DurableJournalPage {
             records,
             next_cursor,
             latest_sequence,
-            cursor_floor,
+            cursor_floor: authoritative_floor,
             has_more,
         })
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
         let snapshot = self.export_materialized_journal_snapshot()?;
-        let cursor_floor = self.durable_journal_cursor_floor()?;
+        let cursor_floor = self
+            .durable_journal_cursor_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            snapshot.applied_sequence,
+            cursor_floor,
+            "durable journal bootstrap",
+        )?;
         Ok(DurableJournalBootstrap {
             resume_after: snapshot.applied_sequence,
             bootstrap_cut: snapshot.durable_head,

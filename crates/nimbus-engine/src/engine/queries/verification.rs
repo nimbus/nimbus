@@ -731,6 +731,10 @@ fn duration_millis_u64(duration: std::time::Duration) -> u64 {
 
 fn session_suffix_requires_rebuild(error: &Error) -> bool {
     match error {
+        Error::HistoricalRead {
+            kind: nimbus_core::HistoricalReadErrorKind::RetentionExpired,
+            ..
+        } => true,
         Error::InvalidInput(message) => message.contains("behind the retention floor"),
         Error::Internal(message) => {
             message.starts_with("journal stream made no progress while advancing verification")

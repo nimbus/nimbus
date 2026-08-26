@@ -35,6 +35,9 @@ use crate::store::HistoricalIndexDocumentPage;
 /// inherent method the facade below generates. Inherent methods win method-call
 /// resolution, so the facade is not recursive.
 pub(crate) trait SqlHistoricalIndexStore {
+    fn retention_read_floors(&self) -> Result<crate::RetentionReadFloors>;
+    fn check_retention_read_page(&self) -> Result<()>;
+
     /// Loads the index entries visible at `read_shape`'s sequence whose encoded
     /// tuples fall within `[start_key, end_key]` and match `match_prefix`.
     fn visible_historical_index_entries(
@@ -217,20 +220,36 @@ pub(crate) trait SqlHistoricalIndexStore {
             check_cancel,
         } = page;
         plan.validate_page_request(read_shape, after, limit)?;
-        if plan.empty {
-            return finish_historical_index_page(read_shape, plan, after, limit, Vec::new());
-        }
-        let entries = self.visible_historical_index_entries(
-            read_shape,
-            &plan.index,
-            &plan.match_prefix,
-            plan.start_key.as_deref(),
-            plan.end_key.as_deref(),
+        let read_sequence = read_shape.read_snapshot().sequence().sequence();
+        let initial_floor = self.retention_read_floors()?.historical_index();
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            initial_floor,
+            "historical index page",
         )?;
+        let entries = if plan.empty {
+            Vec::new()
+        } else {
+            self.visible_historical_index_entries(
+                read_shape,
+                &plan.index,
+                &plan.match_prefix,
+                plan.start_key.as_deref(),
+                plan.end_key.as_deref(),
+            )?
+        };
         for _ in &entries {
             check_cancel()?;
         }
-        finish_historical_index_page(read_shape, plan, after, limit, entries)
+        let result = finish_historical_index_page(read_shape, plan, after, limit, entries)?;
+        self.check_retention_read_page()?;
+        let authoritative_floor = self.retention_read_floors()?.historical_index();
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            authoritative_floor,
+            "historical index page",
+        )?;
+        Ok(result)
     }
 }
 

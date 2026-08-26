@@ -15,9 +15,17 @@ use crate::MySqlTenantStore;
 use crate::PostgresTenantStore;
 use crate::{MaterializedJournalSnapshot, MaterializedPosition, SqliteTenantStore, TenantStore};
 
+mod read_safety;
+
+pub use read_safety::RetentionReadFloors;
+pub(crate) use read_safety::{validate_contiguous_journal_page, validate_retention_after_page};
+
 pub const MATERIALIZED_RETENTION_CHECKPOINT_VERSION: u16 = 1;
 pub(crate) const RETENTION_CHECKPOINT_METADATA_KEY: &str = "retention_materialized_checkpoint";
 pub(crate) const RETENTION_PHYSICAL_FLOOR_METADATA_KEY: &str = "retention_physical_floor";
+pub(crate) const RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY: &str =
+    "retention_document_version_floor";
+pub(crate) const RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY: &str = "retention_index_version_floor";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -345,6 +353,7 @@ pub struct PreparedRetentionHistory {
     pub before: RetentionHistoryState,
     pub(crate) candidate: MaterializedRetentionCheckpoint,
     pub(crate) expected_checkpoint_blob: Option<Vec<u8>>,
+    pub(crate) expected_read_floors: RetentionReadFloors,
     pub(crate) expected_revision: Option<u64>,
 }
 
@@ -433,6 +442,7 @@ pub enum HardDeleteDecision {
 pub struct RetentionFloor {
     next_pin_id: AtomicU64,
     pins: Mutex<BTreeMap<u64, RetentionPin>>,
+    published_read_floors: Mutex<RetentionReadFloors>,
 }
 
 pub struct RetentionPinGuard {
@@ -509,6 +519,39 @@ impl RetentionFloor {
             .values()
             .map(|pin| pin.sequence)
             .min_by_key(|sequence| sequence.0)
+    }
+
+    pub fn published_read_floors(&self) -> RetentionReadFloors {
+        *self
+            .published_read_floors
+            .lock()
+            .expect("retention read-floor mutex should not be poisoned")
+    }
+
+    pub(crate) fn observe_published_read_floors(&self, floors: RetentionReadFloors) {
+        let mut published = self
+            .published_read_floors
+            .lock()
+            .expect("retention read-floor mutex should not be poisoned");
+        *published = published.max(floors);
+    }
+
+    pub(crate) fn publish_read_floors_with_commit<T, E>(
+        &self,
+        floors: RetentionReadFloors,
+        commit: impl FnOnce() -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        // Readers acquire this mutex after they load a page. Holding it across
+        // the durable commit makes the page linearize on one side of pruning:
+        // it either returns before the commit or observes the new floors.
+        // A failed commit leaves the process-local floors unchanged.
+        let mut published = self
+            .published_read_floors
+            .lock()
+            .expect("retention read-floor mutex should not be poisoned");
+        let value = commit()?;
+        *published = published.max(floors);
+        Ok(value)
     }
 
     pub fn gc_watermarks(
@@ -698,9 +741,16 @@ impl TenantStore {
         let _pin_barrier = self
             .retention_floor
             .guard_prepared_watermarks(&watermarks)?;
-        let document_prune_before = watermarks.document_versions.safe_prune_before;
-        let index_prune_before = watermarks.index_versions.safe_prune_before;
-        if document_prune_before.0 == 0 && index_prune_before.0 == 0 {
+        let (_, expected_read_floors, expected_checkpoint_blob) =
+            self.load_retention_checkpoint()?;
+        self.retention_floor
+            .observe_published_read_floors(expected_read_floors);
+        let published_read_floors = expected_read_floors.max(RetentionReadFloors::new(
+            watermarks.document_versions.safe_prune_before,
+            watermarks.index_versions.safe_prune_before,
+            expected_read_floors.journal,
+        ));
+        if published_read_floors == expected_read_floors {
             return Ok(RetentionGcSummary {
                 watermarks,
                 document_versions_pruned: 0,
@@ -712,11 +762,68 @@ impl TenantStore {
             .db
             .begin_write()
             .map_err(crate::store::map_redb_error)?;
-        let document_versions_pruned =
-            prune_redb_document_versions_before(&write_txn, document_prune_before)?;
+        {
+            let metadata = write_txn
+                .open_table(crate::store::METADATA)
+                .map_err(crate::store::map_redb_error)?;
+            let current_checkpoint_blob = metadata
+                .get(RETENTION_CHECKPOINT_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| value.value().to_vec());
+            let load_floor = |key| -> Result<SequenceNumber> {
+                metadata
+                    .get(key)
+                    .map_err(crate::store::map_redb_error)?
+                    .map(|value| decode_retention_floor(value.value()))
+                    .transpose()
+                    .map(|floor| floor.unwrap_or_default())
+            };
+            let current_read_floors = RetentionReadFloors::new(
+                load_floor(RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)?,
+                load_floor(RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)?,
+                load_floor(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)?,
+            );
+            if current_checkpoint_blob != expected_checkpoint_blob
+                || current_read_floors != expected_read_floors
+            {
+                return Err(Error::conflict(
+                    "retention metadata changed while version compaction was prepared".to_string(),
+                ));
+            }
+        }
+        let document_versions_pruned = prune_redb_document_versions_before(
+            &write_txn,
+            published_read_floors.document_versions,
+        )?;
         let index_versions_pruned =
-            prune_redb_index_versions_before(&write_txn, index_prune_before)?;
-        write_txn.commit().map_err(crate::store::map_redb_error)?;
+            prune_redb_index_versions_before(&write_txn, published_read_floors.index_versions)?;
+        {
+            let mut metadata = write_txn
+                .open_table(crate::store::METADATA)
+                .map_err(crate::store::map_redb_error)?;
+            for (key, floor) in [
+                (
+                    RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+                    published_read_floors.document_versions,
+                ),
+                (
+                    RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+                    published_read_floors.index_versions,
+                ),
+                (
+                    RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+                    published_read_floors.journal,
+                ),
+            ] {
+                metadata
+                    .insert(key, floor.0.to_be_bytes().as_slice())
+                    .map_err(crate::store::map_redb_error)?;
+            }
+        }
+        self.retention_floor
+            .publish_read_floors_with_commit(published_read_floors, || {
+                write_txn.commit().map_err(crate::store::map_redb_error)
+            })?;
         Ok(RetentionGcSummary {
             watermarks,
             document_versions_pruned,
@@ -729,11 +836,13 @@ impl TenantStore {
         config: RetentionGcConfig,
     ) -> Result<RetentionHistoryState> {
         let watermarks = self.retention_gc_watermarks(config)?;
-        let (checkpoint, physical_floor, _) = self.load_retention_checkpoint()?;
+        let (checkpoint, read_floors, _) = self.load_retention_checkpoint()?;
+        self.retention_floor
+            .observe_published_read_floors(read_floors);
         RetentionHistoryState::new(
             watermarks.document_versions.latest_sequence,
             desired_journal_floor(&watermarks).max(checkpoint.sequence()),
-            physical_floor,
+            read_floors.journal,
             checkpoint,
         )
     }
@@ -743,13 +852,15 @@ impl TenantStore {
         config: RetentionGcConfig,
     ) -> Result<PreparedRetentionHistory> {
         let watermarks = self.retention_gc_watermarks(config)?;
-        let (checkpoint, physical_floor, expected_checkpoint_blob) =
+        let (checkpoint, expected_read_floors, expected_checkpoint_blob) =
             self.load_retention_checkpoint()?;
+        self.retention_floor
+            .observe_published_read_floors(expected_read_floors);
         let desired_floor = desired_journal_floor(&watermarks).max(checkpoint.sequence());
         let before = RetentionHistoryState::new(
             watermarks.document_versions.latest_sequence,
             desired_floor,
-            physical_floor,
+            expected_read_floors.journal,
             checkpoint.clone(),
         )?;
         let journal_tail = self
@@ -762,6 +873,7 @@ impl TenantStore {
             before,
             candidate,
             expected_checkpoint_blob,
+            expected_read_floors,
             expected_revision: None,
         })
     }
@@ -778,9 +890,15 @@ impl TenantStore {
             before,
             candidate,
             expected_checkpoint_blob,
+            expected_read_floors,
             ..
         } = prepared;
         let candidate_blob = serialize_retention_checkpoint(&candidate)?;
+        let published_read_floors = expected_read_floors.max(RetentionReadFloors::new(
+            watermarks.document_versions.safe_prune_before,
+            watermarks.index_versions.safe_prune_before,
+            candidate.sequence(),
+        ));
 
         let write_txn = self
             .db
@@ -799,6 +917,31 @@ impl TenantStore {
                     "retention checkpoint changed while compaction was prepared".to_string(),
                 ));
             }
+            let current_read_floors = RetentionReadFloors::new(
+                metadata
+                    .get(RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)
+                    .map_err(crate::store::map_redb_error)?
+                    .map(|value| decode_retention_floor(value.value()))
+                    .transpose()?
+                    .unwrap_or_default(),
+                metadata
+                    .get(RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)
+                    .map_err(crate::store::map_redb_error)?
+                    .map(|value| decode_retention_floor(value.value()))
+                    .transpose()?
+                    .unwrap_or_default(),
+                metadata
+                    .get(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
+                    .map_err(crate::store::map_redb_error)?
+                    .map(|value| decode_retention_floor(value.value()))
+                    .transpose()?
+                    .unwrap_or_default(),
+            );
+            if current_read_floors != expected_read_floors {
+                return Err(Error::conflict(
+                    "retention read floors changed while compaction was prepared".to_string(),
+                ));
+            }
         }
         let applied_head =
             redb_metadata_u64(&write_txn, crate::store::APPLIED_SEQUENCE_KEY)?.unwrap_or(0);
@@ -812,12 +955,10 @@ impl TenantStore {
 
         let document_versions_pruned = prune_redb_document_versions_before(
             &write_txn,
-            watermarks.document_versions.safe_prune_before,
+            published_read_floors.document_versions,
         )?;
-        let index_versions_pruned = prune_redb_index_versions_before(
-            &write_txn,
-            watermarks.index_versions.safe_prune_before,
-        )?;
+        let index_versions_pruned =
+            prune_redb_index_versions_before(&write_txn, published_read_floors.index_versions)?;
         let journal_records_pruned = prune_redb_journal_through(&write_txn, candidate.sequence())?;
         {
             let mut metadata = write_txn
@@ -829,20 +970,43 @@ impl TenantStore {
             metadata
                 .insert(
                     RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
-                    candidate.sequence().0.to_be_bytes().as_slice(),
+                    published_read_floors.journal.0.to_be_bytes().as_slice(),
+                )
+                .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(
+                    RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+                    published_read_floors
+                        .document_versions
+                        .0
+                        .to_be_bytes()
+                        .as_slice(),
+                )
+                .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(
+                    RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+                    published_read_floors
+                        .index_versions
+                        .0
+                        .to_be_bytes()
+                        .as_slice(),
                 )
                 .map_err(crate::store::map_redb_error)?;
         }
         self.fault_injector
             .check(crate::FaultPoint::RetentionCheckpointBeforeCommit)?;
-        write_txn.commit().map_err(crate::store::map_redb_error)?;
+        self.retention_floor
+            .publish_read_floors_with_commit(published_read_floors, || {
+                write_txn.commit().map_err(crate::store::map_redb_error)
+            })?;
         self.fault_injector
             .check(crate::FaultPoint::RetentionCheckpointAfterCommit)?;
 
         let after = RetentionHistoryState::new(
             before.latest_sequence,
             before.desired_floor,
-            candidate.sequence(),
+            published_read_floors.journal,
             candidate,
         )?;
         Ok(RetentionHistorySummary {
@@ -866,7 +1030,7 @@ impl TenantStore {
         &self,
     ) -> Result<(
         MaterializedRetentionCheckpoint,
-        SequenceNumber,
+        RetentionReadFloors,
         Option<Vec<u8>>,
     )> {
         let read_txn = self.db.begin_read().map_err(crate::store::map_redb_error)?;
@@ -875,7 +1039,7 @@ impl TenantStore {
             Err(redb::TableError::TableDoesNotExist(_)) => {
                 return Ok((
                     MaterializedRetentionCheckpoint::genesis()?,
-                    SequenceNumber(0),
+                    RetentionReadFloors::default(),
                     None,
                 ));
             }
@@ -890,19 +1054,33 @@ impl TenantStore {
             .map(deserialize_retention_checkpoint)
             .transpose()?
             .unwrap_or(MaterializedRetentionCheckpoint::genesis()?);
-        let physical_floor = metadata
-            .get(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
-            .map_err(crate::store::map_redb_error)?
-            .map(|value| decode_retention_floor(value.value()))
-            .transpose()?
-            .unwrap_or(SequenceNumber(0));
+        let read_floors = RetentionReadFloors::new(
+            metadata
+                .get(RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| decode_retention_floor(value.value()))
+                .transpose()?
+                .unwrap_or_default(),
+            metadata
+                .get(RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| decode_retention_floor(value.value()))
+                .transpose()?
+                .unwrap_or_default(),
+            metadata
+                .get(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| decode_retention_floor(value.value()))
+                .transpose()?
+                .unwrap_or_default(),
+        );
         RetentionHistoryState::new(
             checkpoint.sequence(),
             checkpoint.sequence(),
-            physical_floor,
+            read_floors.journal,
             checkpoint.clone(),
         )?;
-        Ok((checkpoint, physical_floor, checkpoint_blob))
+        Ok((checkpoint, read_floors, checkpoint_blob))
     }
 
     pub(crate) fn install_imported_retention_checkpoint(
@@ -939,24 +1117,63 @@ impl TenantStore {
                     checkpoint.sequence().0.to_be_bytes().as_slice(),
                 )
                 .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(
+                    RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+                    checkpoint.sequence().0.to_be_bytes().as_slice(),
+                )
+                .map_err(crate::store::map_redb_error)?;
+            metadata
+                .insert(
+                    RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+                    checkpoint.sequence().0.to_be_bytes().as_slice(),
+                )
+                .map_err(crate::store::map_redb_error)?;
         }
-        write_txn.commit().map_err(crate::store::map_redb_error)
+        write_txn.commit().map_err(crate::store::map_redb_error)?;
+        self.retention_floor
+            .observe_published_read_floors(RetentionReadFloors::new(
+                checkpoint.sequence(),
+                checkpoint.sequence(),
+                checkpoint.sequence(),
+            ));
+        Ok(())
     }
 }
 
 impl crate::TenantReadSnapshot {
-    pub(crate) fn retained_journal_physical_floor(&self) -> Result<SequenceNumber> {
+    pub(crate) fn retained_history_read_floors(&self) -> Result<RetentionReadFloors> {
         let metadata = match self.read_txn.open_table(crate::store::METADATA) {
             Ok(metadata) => metadata,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(SequenceNumber(0)),
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Ok(RetentionReadFloors::default());
+            }
             Err(error) => return Err(crate::store::map_redb_error(error)),
         };
-        metadata
-            .get(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
-            .map_err(crate::store::map_redb_error)?
-            .map(|value| decode_retention_floor(value.value()))
-            .transpose()
-            .map(|floor| floor.unwrap_or(SequenceNumber(0)))
+        Ok(RetentionReadFloors::new(
+            metadata
+                .get(RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| decode_retention_floor(value.value()))
+                .transpose()?
+                .unwrap_or_default(),
+            metadata
+                .get(RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| decode_retention_floor(value.value()))
+                .transpose()?
+                .unwrap_or_default(),
+            metadata
+                .get(RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
+                .map_err(crate::store::map_redb_error)?
+                .map(|value| decode_retention_floor(value.value()))
+                .transpose()?
+                .unwrap_or_default(),
+        ))
+    }
+
+    pub(crate) fn retained_journal_physical_floor(&self) -> Result<SequenceNumber> {
+        Ok(self.retained_history_read_floors()?.journal)
     }
 }
 

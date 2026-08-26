@@ -356,6 +356,16 @@ impl TenantReadSnapshot {
         if let Some(cursor) = after {
             cursor.validate_context(read_shape, index, &query)?;
         }
+        let read_sequence = read_shape.read_snapshot().sequence().sequence();
+        let initial_floor = self
+            .retained_history_read_floors()?
+            .max(self.retention_floor.published_read_floors())
+            .historical_index();
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            initial_floor,
+            "historical index page",
+        )?;
         let mut entries = match key_bounds {
             HistoricalIndexKeyBounds::Empty => Vec::new(),
             HistoricalIndexKeyBounds::Bounds {
@@ -402,10 +412,23 @@ impl TenantReadSnapshot {
         } else {
             None
         };
-        Ok(HistoricalIndexDocumentPage {
+        let result = HistoricalIndexDocumentPage {
             documents: selected.into_iter().map(|entry| entry.document).collect(),
             next_cursor,
-        })
+        };
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionReadAfterPage)?;
+        let authoritative_floor = initial_floor.max(
+            self.retention_floor
+                .published_read_floors()
+                .historical_index(),
+        );
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            authoritative_floor,
+            "historical index page",
+        )?;
+        Ok(result)
     }
 
     fn visible_historical_index_entries_for_bounds(

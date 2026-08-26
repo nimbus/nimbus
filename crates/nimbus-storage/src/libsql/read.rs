@@ -3,6 +3,37 @@ use crate::IndexRangeBound;
 use crate::index::history_scan::HistoricalIndexPageRequest;
 
 impl LibsqlReplicaTenantStore {
+    fn with_retention_validated_historical_index_page<T, F>(
+        &self,
+        read_shape: &HistoricalReadShape,
+        load: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        let read_sequence = read_shape.read_snapshot().sequence().sequence();
+        let initial_floor = self
+            .block_on(self.load_remote_retention_read_floors())?
+            .historical_index();
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            initial_floor,
+            "historical index page",
+        )?;
+        let result = load()?;
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
+        let authoritative_floor = self
+            .block_on(self.load_remote_retention_read_floors())?
+            .max(self.retention_floor.published_read_floors())
+            .historical_index();
+        crate::retention::validate_retention_after_page(
+            read_sequence,
+            authoritative_floor,
+            "historical index page",
+        )?;
+        Ok(result)
+    }
+
     pub fn read_snapshot(&self) -> Result<SqliteReadSnapshot> {
         let store = self.current_query_cache_store()?;
         store.read_snapshot()
@@ -128,15 +159,39 @@ impl LibsqlReplicaTenantStore {
         limit: usize,
     ) -> Result<DurableJournalPage> {
         validate_durable_journal_stream_limit(limit)?;
-        self.block_on(self.load_remote_durable_journal_page(after, limit))
+        let mut page = self.block_on(self.load_remote_durable_journal_page(after, limit))?;
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
+        let authoritative_floor = self
+            .block_on(self.load_remote_retention_read_floors())?
+            .journal
+            .max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            after,
+            authoritative_floor,
+            "durable journal page",
+        )?;
+        page.cursor_floor = page.cursor_floor.max(authoritative_floor);
+        Ok(page)
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
         self.freshness_metrics
             .note_refresh_request(LibsqlReplicaRefreshCause::BootstrapExport);
         self.refresh_local_cache()?;
-        self.active_cache_store()?
-            .export_durable_journal_bootstrap()
+        let mut bootstrap = self
+            .active_cache_store()?
+            .export_durable_journal_bootstrap()?;
+        let authoritative_floor = self
+            .block_on(self.load_remote_retention_read_floors())?
+            .journal
+            .max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            bootstrap.resume_after,
+            authoritative_floor,
+            "durable journal bootstrap",
+        )?;
+        bootstrap.cursor_floor = bootstrap.cursor_floor.max(authoritative_floor);
+        Ok(bootstrap)
     }
 
     pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
@@ -450,16 +505,18 @@ impl LibsqlReplicaTenantStore {
         limit: usize,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        self.current_query_cache_store()?
-            .read_snapshot()?
-            .historical_index_scan_eq_page_cancellable(
-                read_shape,
-                index_name,
-                value,
-                after,
-                limit,
-                check_cancel,
-            )
+        self.with_retention_validated_historical_index_page(read_shape, || {
+            self.current_query_cache_store()?
+                .read_snapshot()?
+                .historical_index_scan_eq_page_cancellable(
+                    read_shape,
+                    index_name,
+                    value,
+                    after,
+                    limit,
+                    check_cancel,
+                )
+        })
     }
 
     pub fn historical_index_scan_prefix_cancellable(
@@ -489,16 +546,18 @@ impl LibsqlReplicaTenantStore {
         limit: usize,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        self.current_query_cache_store()?
-            .read_snapshot()?
-            .historical_index_scan_prefix_page_cancellable(
-                read_shape,
-                index_name,
-                prefix_values,
-                after,
-                limit,
-                check_cancel,
-            )
+        self.with_retention_validated_historical_index_page(read_shape, || {
+            self.current_query_cache_store()?
+                .read_snapshot()?
+                .historical_index_scan_prefix_page_cancellable(
+                    read_shape,
+                    index_name,
+                    prefix_values,
+                    after,
+                    limit,
+                    check_cancel,
+                )
+        })
     }
 
     pub fn historical_index_scan_range_cancellable(
@@ -531,9 +590,13 @@ impl LibsqlReplicaTenantStore {
         end: IndexRangeBound<'_>,
         page: HistoricalIndexPageRequest<'_, '_>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        self.current_query_cache_store()?
-            .read_snapshot()?
-            .historical_index_scan_range_page_cancellable(read_shape, index_name, start, end, page)
+        self.with_retention_validated_historical_index_page(read_shape, || {
+            self.current_query_cache_store()?
+                .read_snapshot()?
+                .historical_index_scan_range_page_cancellable(
+                    read_shape, index_name, start, end, page,
+                )
+        })
     }
 
     pub fn historical_index_scan_composite_range_cancellable(
@@ -569,15 +632,17 @@ impl LibsqlReplicaTenantStore {
         end: IndexRangeBound<'_>,
         page: HistoricalIndexPageRequest<'_, '_>,
     ) -> Result<HistoricalIndexDocumentPage> {
-        self.current_query_cache_store()?
-            .read_snapshot()?
-            .historical_index_scan_composite_range_page_cancellable(
-                read_shape,
-                index_name,
-                exact_prefix,
-                start,
-                end,
-                page,
-            )
+        self.with_retention_validated_historical_index_page(read_shape, || {
+            self.current_query_cache_store()?
+                .read_snapshot()?
+                .historical_index_scan_composite_range_page_cancellable(
+                    read_shape,
+                    index_name,
+                    exact_prefix,
+                    start,
+                    end,
+                    page,
+                )
+        })
     }
 }

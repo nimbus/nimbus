@@ -281,10 +281,21 @@ impl PostgresTenantStore {
 
         let provider = self.provider.clone();
         let schema_name = self.schema_name.clone();
-        self.block_on(async move {
+        let mut page = self.block_on(async move {
             let client = provider.client().await?;
             stream_durable_journal_from_session(&client, &schema_name, after, limit).await
-        })
+        })?;
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
+        let authoritative_floor = self
+            .durable_journal_cursor_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            after,
+            authoritative_floor,
+            "durable journal page",
+        )?;
+        page.cursor_floor = page.cursor_floor.max(authoritative_floor);
+        Ok(page)
     }
 
     pub async fn stream_durable_journal_async(
@@ -295,14 +306,35 @@ impl PostgresTenantStore {
         validate_durable_journal_stream_limit(limit)?;
 
         let client = self.provider.client().await?;
-        stream_durable_journal_from_session(&client, &self.schema_name, after, limit).await
+        let mut page =
+            stream_durable_journal_from_session(&client, &self.schema_name, after, limit).await?;
+        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
+        let remote_authoritative_floor =
+            load_durable_journal_cursor_floor_from_session(&client, &self.schema_name).await?;
+        drop(client);
+        let authoritative_floor =
+            remote_authoritative_floor.max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            after,
+            authoritative_floor,
+            "durable journal page",
+        )?;
+        page.cursor_floor = page.cursor_floor.max(authoritative_floor);
+        Ok(page)
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
         let snapshot = self
             .read_snapshot()?
             .export_materialized_journal_snapshot()?;
-        let cursor_floor = self.durable_journal_cursor_floor()?;
+        let cursor_floor = self
+            .durable_journal_cursor_floor()?
+            .max(self.retention_floor.published_read_floors().journal);
+        crate::retention::validate_retention_after_page(
+            snapshot.applied_sequence,
+            cursor_floor,
+            "durable journal bootstrap",
+        )?;
         Ok(DurableJournalBootstrap {
             resume_after: snapshot.applied_sequence,
             bootstrap_cut: snapshot.durable_head,
