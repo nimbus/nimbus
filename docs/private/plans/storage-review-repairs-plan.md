@@ -4,7 +4,7 @@ Status: `active` | Owner: this plan | Created: 2026-08-26
 Baseline: main @ `b57a2d680891de852d5576e65ccaea787b005431`
 Proof root: `proof/storage-review-repairs/`
 
-Next action: run the final repository gates and fresh Nimbus and Opus reviews
+Next action: wait for owner approval to push the branch and open the repair pull request
 
 ## Outcome
 
@@ -78,7 +78,7 @@ After:
 | SRR2 | Make nonzero-base PITR import atomic and seed MVCC anchors. | `done` | Commit `1a553ac87`; 397 storage tests passed with 4 planned skips; strict all-feature Clippy passed. See `proof/storage-review-repairs/srr2-atomic-pitr-import.md`. |
 | SRR3 | Require per-backend retention verifier evidence and test its failure behavior. | `done` | Commit `e83899824`; five helper groups and 18 omission mutations passed; the main verifier reports `18 passed, 0 failed`. See `proof/storage-review-repairs/srr3-retention-verifier.md`. |
 | SRR4 | Replace the IMV7 relative-only gate with measured absolute limits and negative tests. | `done` | Commit `132343e37`, with final review hardening in SRR5; the fail-closed mutation helper passes 9 checks and the complete IMV verifier passes all 16 conditions. See `proof/storage-review-repairs/srr4-imv-performance-gate.md`. |
-| SRR5 | Run repository gates and a fresh Nimbus autoreview. | `in_progress` | |
+| SRR5 | Run repository gates and fresh Nimbus and Opus reviews. | `done` | `make ci` passed with 7,672 Rust tests, 111 skips, and 832 UI tests. Opus 5 found no accepted P0 through P2 issue. Sol found only the pre-closeout ledger state, which this update resolves. See `proof/storage-review-repairs/srr5-final-gates-and-review.md`. |
 | SRR9 | Clean up this plan after the repair pull request merges. | `todo` | Trigger: merge of the final repair pull request. |
 
 ## Tasks
@@ -161,7 +161,7 @@ After:
 - Steps:
   1. Run format, strict Clippy, focused tests, proof verifiers, docs gates, and `make ci`.
   2. Commit the final branch state.
-  3. Run `nimbus-autoreview --gate pre-pr --mode auto` and resolve every accepted finding.
+  3. Run structured Nimbus and independent Opus 5 reviews and resolve every accepted finding.
   4. Prepare the pull request evidence and record any hosted-only checks.
 - Acceptance: all local required gates pass and autoreview reports no accepted P0 through P2 finding.
 - Fail-before: not applicable because this task aggregates earlier red tests.
@@ -217,3 +217,5 @@ gates pass, and SRR9 waits only for the final merge.
 | 2026-08-26 | SRR4 | started | Accepted absolute measured candidate limits, robust proof parsing, and malformed-proof negative tests as the IMV closeout contract. |
 | 2026-08-26 | SRR4 | completed | Commit `132343e37` measures production candidate churn at 100,000 and 1,000,000 leaves. Final review hardened fixture generation; eight invalid-proof mutations fail cleanly, the accepted proof passes, and the complete IMV verifier passes 16 of 16 conditions. |
 | 2026-08-26 | SRR5 | started | Started complete repository gates and the required fresh Nimbus and Opus review of the integrated repair branch. |
+| 2026-08-26 | SRR5 | review fixes completed | Commits `2f824b73d` through `532674a4c` close every accepted Sol and Opus review issue. Repeated redb direct-commit and journal-flush observations were rejected from source evidence; the latter gained an explicit crash-replay regression test. |
+| 2026-08-26 | SRR5 | completed | `make ci` passed with 7,672 Rust tests, 111 planned skips, and 832 UI tests. Opus 5 reported no accepted or actionable P0 through P2 issue. Sol found only that this terminal evidence had not yet been recorded; this closeout resolves that finding. |
