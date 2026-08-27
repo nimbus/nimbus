@@ -1,5 +1,13 @@
+use std::process::ExitCode;
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ExitCode {
     tracing_subscriber::fmt::init();
-    nimbus_cli::run_from_env().await
+    match nimbus_cli::run_from_env().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
