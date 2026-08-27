@@ -31,8 +31,9 @@ describe("ConfigurationSection runtime diagnostics", () => {
     );
 
     expect(screen.getByText("Runtime lanes")).toBeInTheDocument();
-    expect(screen.getByTestId("settings-runtime-memory-enforcement"))
-      .toHaveTextContent("v8_isolate_heap_limit");
+    expect(
+      screen.getByTestId("settings-runtime-memory-enforcement"),
+    ).toHaveTextContent("v8_isolate_heap_limit");
 
     const defaultLane = screen.getByTestId("settings-runtime-lane-default");
     expect(within(defaultLane).getByText("default")).toBeInTheDocument();
@@ -43,20 +44,20 @@ describe("ConfigurationSection runtime diagnostics", () => {
     );
     expect(within(defaultLane).getByText("built_in")).toBeInTheDocument();
     expect(within(defaultLane).getByText("lazy")).toBeInTheDocument();
-    expect(within(defaultLane).getByText("v8_isolate_heap_limit"))
-      .toBeInTheDocument();
+    expect(
+      within(defaultLane).getByText("v8_isolate_heap_limit"),
+    ).toBeInTheDocument();
 
     for (const laneName of ["node20", "node22", "node24"]) {
       const nodeLane = screen.getByTestId(`settings-runtime-lane-${laneName}`);
       expect(within(nodeLane).getAllByText(laneName).length).toBeGreaterThan(0);
       expect(within(nodeLane).getByText("v8")).toBeInTheDocument();
-      expect(within(nodeLane).getAllByText("linked").length).toBeGreaterThan(
-        0,
-      );
+      expect(within(nodeLane).getAllByText("linked").length).toBeGreaterThan(0);
       expect(within(nodeLane).getByText("built_in")).toBeInTheDocument();
       expect(within(nodeLane).getByText("lazy")).toBeInTheDocument();
-      expect(within(nodeLane).getByText("v8_isolate_heap_limit"))
-        .toBeInTheDocument();
+      expect(
+        within(nodeLane).getByText("v8_isolate_heap_limit"),
+      ).toBeInTheDocument();
     }
 
     const bunLane = screen.getByTestId("settings-runtime-lane-bun_jsc");
@@ -64,12 +65,15 @@ describe("ConfigurationSection runtime diagnostics", () => {
     expect(within(bunLane).getAllByText("not_linked").length).toBeGreaterThan(
       0,
     );
-    expect(within(bunLane).getByText("build_feature_disabled"))
-      .toBeInTheDocument();
-    expect(within(bunLane).getByText("nimbus-bun-jsc-proof-main-20260709"))
-      .toBeInTheDocument();
+    expect(
+      within(bunLane).getByText("build_feature_disabled"),
+    ).toBeInTheDocument();
+    expect(
+      within(bunLane).getByText("nimbus-bun-jsc-proof-main-20260709"),
+    ).toBeInTheDocument();
     expect(within(bunLane).getByText("lazy")).toBeInTheDocument();
-    expect(within(bunLane).getByText("outer_quota_required"))
-      .toBeInTheDocument();
+    expect(
+      within(bunLane).getByText("outer_quota_required"),
+    ).toBeInTheDocument();
   });
 });

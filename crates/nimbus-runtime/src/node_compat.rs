@@ -33,6 +33,18 @@ use crate::backends::v8::embedder::{JsErrorBox, ModuleSpecifier};
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime_capabilities::{RuntimePathPolicy, build_module_read_permissions_container};
 
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error(
+    "native addon module `{}` requires a service/microVM route; production in-process Node profiles do not grant ffi/native-addon authority",
+    path.display()
+)]
+#[class(generic)]
+#[property("code" = "ERR_DLOPEN_DISABLED")]
+#[property("path" = self.path.display().to_string())]
+struct NativeAddonDisabledError {
+    path: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ScopedInNpmPackageChecker;
 
@@ -579,10 +591,9 @@ pub(crate) fn classify_resolved_module_kind(
                 Ok(ResolvedNodeModuleKind::CommonJs)
             }
         }
-        Some("node") => Err(JsErrorBox::generic(format!(
-            "native addon module `{}` requires a service/microVM route; production in-process Node profiles do not grant ffi/native-addon authority",
-            path.display()
-        ))),
+        Some("node") => Err(JsErrorBox::from_err(NativeAddonDisabledError {
+            path: path.to_path_buf(),
+        })),
         Some(other) => Err(JsErrorBox::generic(format!(
             "unsupported runtime module extension `.{other}` for {}",
             path.display()
@@ -727,6 +738,27 @@ mod tests {
             node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node24),
             NodeCodeTranslatorMode::ModuleLoader
         ));
+    }
+
+    #[test]
+    fn native_addon_denial_carries_a_stable_error_code_and_path() {
+        let path = PathBuf::from("/runtime/node_modules/addon/build/Release/addon.node");
+        let error = classify_resolved_module_kind(&path, build_package_json_resolver().as_ref())
+            .expect_err("native addon should require a service or microVM route");
+
+        assert_error_code(&error, "ERR_DLOPEN_DISABLED");
+        let denied_path = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "path")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(
+            denied_path.as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
+        assert!(
+            error.to_string().contains("service/microVM route"),
+            "unexpected native addon denial: {error}"
+        );
     }
 
     fn assert_error_code(error: &JsErrorBox, expected: &str) {

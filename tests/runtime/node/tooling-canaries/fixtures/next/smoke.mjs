@@ -44,12 +44,12 @@ try {
   const ok = await requestText(`http://127.0.0.1:${port}/`);
   const missing = await requestText(`http://127.0.0.1:${port}/missing`);
   console.log(
-    JSON.stringify({
+    `NIMBUS_NEXT_SMOKE_RESULT=${JSON.stringify({
       okStatus: ok.statusCode,
       okBodyIncludes: ok.body.includes("next-canary-ok"),
       missingStatus: missing.statusCode,
       missingBodyIncludes: missing.body.includes("next-canary-not-found"),
-    }),
+    })}`,
   );
 } finally {
   await new Promise((resolve, reject) => {

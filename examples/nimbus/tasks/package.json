@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@nimbus/nimbus": "*",
-    "ws": "8.20.1"
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
     "@types/ws": "8.18.1",
     "typescript": "6.0.3",
-    "vite": "8.0.9"
+    "vite": "8.2.2"
   }
 }

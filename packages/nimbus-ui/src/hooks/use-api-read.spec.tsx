@@ -29,11 +29,9 @@ function deferred<T>() {
 
 describe("useApiRead", () => {
   it("resolves a successful body to a LoadingValue ok", async () => {
-    server.use(
-      http.get("*/api/thing", () => HttpResponse.json({ n: 42 })),
-    );
+    server.use(http.get("*/api/thing", () => HttpResponse.json({ n: 42 })));
     const { result } = renderHook(() =>
-      useApiRead<{ n: number }>("/api/thing", []),
+      useApiRead<{ n: number }>("/api/thing"),
     );
     expect(result.current).toEqual({ kind: "loading" });
     await waitFor(() =>
@@ -47,7 +45,7 @@ describe("useApiRead", () => {
         HttpResponse.json({ error: { message: "boom" } }, { status: 500 }),
       ),
     );
-    const { result } = renderHook(() => useApiRead("/api/thing", []));
+    const { result } = renderHook(() => useApiRead("/api/thing"));
     await waitFor(() =>
       expect(result.current).toEqual({ kind: "error", message: "boom" }),
     );
@@ -66,7 +64,7 @@ describe("useApiRead", () => {
     );
 
     const { result, unmount } = renderHook(() =>
-      useApiRead<{ n: number }>("/api/thing", []),
+      useApiRead<{ n: number }>("/api/thing"),
     );
 
     await waitFor(() => expect(capturedSignal).not.toBeNull());
@@ -82,5 +80,34 @@ describe("useApiRead", () => {
     expect(result.current).toEqual({ kind: "loading" });
     expect(errorSpy).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it("aborts the old read and fetches again when the path changes", async () => {
+    const oldGate = deferred<void>();
+    let oldSignal: AbortSignal | null = null;
+    server.use(
+      http.get("*/api/old", async ({ request }) => {
+        oldSignal = request.signal;
+        await oldGate.promise;
+        return HttpResponse.json({ n: 1 });
+      }),
+      http.get("*/api/new", () => HttpResponse.json({ n: 2 })),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ path }) => useApiRead<{ n: number }>(path),
+      { initialProps: { path: "/api/old" } },
+    );
+
+    await waitFor(() => expect(oldSignal).not.toBeNull());
+    rerender({ path: "/api/new" });
+    await waitFor(() =>
+      expect(result.current).toEqual({ kind: "ok", value: { n: 2 } }),
+    );
+    expect((oldSignal as unknown as AbortSignal).aborted).toBe(true);
+
+    oldGate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(result.current).toEqual({ kind: "ok", value: { n: 2 } });
   });
 });

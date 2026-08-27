@@ -90,7 +90,9 @@ describe("resolveLensView", () => {
   });
 
   it("strips query strings and hash before matching", () => {
-    expect(resolveLensView("/developer/storage?tenant=demo").kind).toBe("tables");
+    expect(resolveLensView("/developer/storage?tenant=demo").kind).toBe(
+      "tables",
+    );
     expect(resolveLensView("/operator/machines#detail").kind).toBe("machines");
   });
 

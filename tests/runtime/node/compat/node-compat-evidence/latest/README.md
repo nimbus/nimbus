@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-07-10T18:59:53.275575+00:00`
+- evidence_generated_at: `2026-08-27T17:13:10.029302+00:00`
 - publish_root: `tests/runtime/node/compat/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -27,9 +27,9 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 
 - representative Node test checks: 0
 - package/framework canary claims: 79
-- package/framework canary checks: 99
-- canary artifact bundles: 5
-- oracle reports: 4
+- package/framework canary checks: 101
+- canary artifact bundles: 2
+- oracle reports: 0
 - required canary gaps: 0
 
 ## Trend Coverage

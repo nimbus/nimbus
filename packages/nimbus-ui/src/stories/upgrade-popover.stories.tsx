@@ -79,16 +79,18 @@ function StoryFrame({
         hasDesktopBridge={hasDesktopBridge}
         onUpdate={() => undefined}
         onCopyCommand={() => undefined}
-        trigger={<span>{info.current} → {info.latest ?? "?"}</span>}
+        trigger={
+          <span>
+            {info.current} → {info.latest ?? "?"}
+          </span>
+        }
       />
     </div>
   );
 }
 
 export const LocalWithBridge: Story = {
-  render: () => (
-    <StoryFrame info={HOMEBREW_INFO} isLocal hasDesktopBridge />
-  ),
+  render: () => <StoryFrame info={HOMEBREW_INFO} isLocal hasDesktopBridge />,
 };
 
 export const LocalWithoutBridge: Story = {
@@ -99,21 +101,13 @@ export const LocalWithoutBridge: Story = {
 
 export const RemoteHost: Story = {
   render: () => (
-    <StoryFrame
-      info={REMOTE_INFO}
-      isLocal={false}
-      hasDesktopBridge={false}
-    />
+    <StoryFrame info={REMOTE_INFO} isLocal={false} hasDesktopBridge={false} />
   ),
 };
 
 export const FallbackNoCommand: Story = {
   render: () => (
-    <StoryFrame
-      info={FALLBACK_INFO}
-      isLocal
-      hasDesktopBridge={false}
-    />
+    <StoryFrame info={FALLBACK_INFO} isLocal hasDesktopBridge={false} />
   ),
 };
 
@@ -151,13 +145,9 @@ export const NotAvailable: Story = {
 };
 
 export const StaleCheck: Story = {
-  render: () => (
-    <StoryFrame info={STALE_CHECK_INFO} isLocal hasDesktopBridge />
-  ),
+  render: () => <StoryFrame info={STALE_CHECK_INFO} isLocal hasDesktopBridge />,
 };
 
 export const ErrorCheck: Story = {
-  render: () => (
-    <StoryFrame info={ERROR_CHECK_INFO} isLocal hasDesktopBridge />
-  ),
+  render: () => <StoryFrame info={ERROR_CHECK_INFO} isLocal hasDesktopBridge />,
 };

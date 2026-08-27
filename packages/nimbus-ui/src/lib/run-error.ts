@@ -21,6 +21,9 @@ export function parseRunError(error: unknown): ParsedRunError {
 
 /** The 1-based line from a `module:line` location, or undefined if malformed. */
 export function locationLine(location: string): number | undefined {
-  const line = Number.parseInt(location.slice(location.lastIndexOf(":") + 1), 10);
+  const line = Number.parseInt(
+    location.slice(location.lastIndexOf(":") + 1),
+    10,
+  );
   return Number.isFinite(line) && line > 0 ? line : undefined;
 }

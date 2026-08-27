@@ -15,15 +15,15 @@
   },
   "dependencies": {
     "convex": "*",
-    "react": "19.2.5",
-    "react-dom": "19.2.5"
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.1",
+    "@vitejs/plugin-react": "6.1.0",
     "typescript": "6.0.3",
-    "vite": "8.0.9"
+    "vite": "8.2.2"
   }
 }

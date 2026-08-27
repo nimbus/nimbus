@@ -2,9 +2,9 @@
 
 - Representative Node test checks: 0
 - Package/framework canary claims: 79
-- Package/framework canary checks: 99
-- Canary artifact bundles: 5
-- Oracle reports: 4
+- Package/framework canary checks: 101
+- Canary artifact bundles: 2
+- Oracle reports: 0
 - Inventory reports: 0
 
 ## Suite Status
@@ -53,12 +53,12 @@
 | `application-platform-file-path-roundtrip` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-platform-stream-timer` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-platform-crypto-fetch-http` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-express` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-express-middleware` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-express-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-fastify` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-fastify-hooks` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-fastify-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-express` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-express-middleware` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-express-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-fastify` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-fastify-hooks` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-fastify-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-networking-socket-io` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-networking-socket-io-websocket-events` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-networking-undici` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
@@ -131,10 +131,4 @@
 - none
 
 ## Oracle Reports
-
-| Lane | Fixture | Runtime | Oracle | Drift | Node | Role |
-| --- | --- | --- | --- | --- | --- | --- |
-| `node20` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v20.20.2` | `legacy/legacy_contract` |
-| `node22` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v22.23.1` | `supported/supported_contract` |
-| `node24` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v24.16.0` | `default/default_contract` |
-| `node26` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v26.0.0` | `current/current_contract` |
+- none

@@ -197,13 +197,17 @@ jobs:
           heartbeat_pid=$!
           trap 'kill "$heartbeat_pid" 2>/dev/null || true' EXIT
           cargo_features="$(bash scripts/nimbus-release-rust-features.sh --target aarch64-unknown-linux-gnu --format cargo-args)"
+          cargo_feature_args=()
+          if [[ -n "${cargo_features}" ]]; then
+            read -r -a cargo_feature_args <<< "${cargo_features}"
+          fi
           echo "release runtime features: ${cargo_features:-<none>}"
           # V8 startup snapshots are platform-specific; GENERATE this target's embedded anchor blob
           # (not committed) before the release build so the binary embeds a target-correct snapshot
           # (~19ms deserialize) instead of falling back to the ~4.18s first-request build. Native
           # build, so the generator runs on its own target.
           make build-node22-anchor-snapshot-on
-          cargo build --release -p nimbus-bin ${cargo_features} -j 1
+          cargo build --release -p nimbus-bin "${cargo_feature_args[@]}" -j 1
 
       - name: Prove SQLCipher release lane
         shell: bash
@@ -355,6 +359,10 @@ jobs:
         shell: bash
         run: |
           cargo_features="$(bash scripts/nimbus-release-rust-features.sh --target "${{ matrix.target }}" --format cargo-args)"
+          cargo_feature_args=()
+          if [[ -n "${cargo_features}" ]]; then
+            read -r -a cargo_feature_args <<< "${cargo_features}"
+          fi
           echo "release runtime features: ${cargo_features:-<none>}"
           # V8 startup snapshots are platform-specific; GENERATE this target's embedded anchor blob
           # (not committed) for the pointer-compression release config before the build, so the binary
@@ -364,7 +372,7 @@ jobs:
           if echo "${cargo_features}" | grep -q v8-pointer-compression; then
             cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
           fi
-          cargo build --release -p nimbus-bin ${cargo_features}
+          cargo build --release -p nimbus-bin "${cargo_feature_args[@]}"
 
       - name: Prove SQLCipher release lane
         shell: bash

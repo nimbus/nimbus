@@ -77,7 +77,7 @@ See [shim and boundary inventory](reference/shims-and-boundaries.md) for source 
 ## Canary Summary
 
 - package/framework canary claims: `79`
-- package/framework canary checks: `99`
+- package/framework canary checks: `101`
 - diagnostic canary claims: `11`
 - required canary gaps: `0`
 

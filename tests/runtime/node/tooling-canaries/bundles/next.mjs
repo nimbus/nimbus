@@ -1,16 +1,21 @@
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+const SMOKE_RESULT_PREFIX = "NIMBUS_NEXT_SMOKE_RESULT=";
+
 function cliName(baseName) {
   return process.platform === "win32" ? `${baseName}.cmd` : baseName;
 }
 
 function parseSmokeResult(text) {
-  const trimmed = String(text ?? "").trim();
-  if (!trimmed) {
-    return null;
+  const lines = String(text ?? "").split(/\r?\n/u);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    if (line.startsWith(SMOKE_RESULT_PREFIX)) {
+      return JSON.parse(line.slice(SMOKE_RESULT_PREFIX.length));
+    }
   }
-  return JSON.parse(trimmed);
+  throw new Error("Next smoke output did not contain the Nimbus result sentinel");
 }
 
 globalThis.__nimbusInvoke = function () {

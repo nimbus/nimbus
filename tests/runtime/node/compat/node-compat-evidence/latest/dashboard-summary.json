@@ -2,10 +2,10 @@
   "schema_version": 2,
   "artifacts_root": "target/node-compat",
   "slice_report_count": 0,
-  "canary_report_count": 5,
+  "canary_report_count": 2,
   "canary_claim_count": 79,
-  "canary_check_count": 99,
-  "oracle_report_count": 4,
+  "canary_check_count": 101,
+  "oracle_report_count": 0,
   "inventory_report_count": 0,
   "suite_status_report": {
     "path": "target/node-compat/status/status-summary.json",
@@ -96226,12 +96226,27 @@
   "slice_reports": [],
   "canary_reports": [
     {
-      "path": "target/node-compat/canaries/preset-application-node22.json",
+      "path": "target/node-compat/canaries/preset-application.json",
       "runtime_preset": "Application",
-      "canary_count": 32,
-      "passed": 32,
+      "canary_count": 91,
+      "passed": 91,
       "failed": 0,
       "lane_summaries": [
+        {
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "cargo_tests": [
+            "nimbus-runtime::application_node20_networking_legacy_canary_batch"
+          ],
+          "canary_count": 2,
+          "passed": 2,
+          "failed": 0
+        },
         {
           "lane": "node22",
           "compatibility_target": "Node22",
@@ -96250,9 +96265,91 @@
           "canary_count": 32,
           "passed": 32,
           "failed": 0
+        },
+        {
+          "lane": "node24",
+          "compatibility_target": "Node24",
+          "upstream_fixture_line": "Node24",
+          "lane_role": "default",
+          "public_contract_role": "default_contract",
+          "runtime_execution_target": "Node24",
+          "runtime_limits_preset": "application_node24",
+          "cargo_tests": [
+            "nimbus-runtime::application_node24_networking_package_canary_batch",
+            "nimbus-convex::convex_use_node_action_package_canary_node24",
+            "nimbus-server::convex_use_node_real_app_canary_node24",
+            "nimbus-runtime::application_node24_sdk_package_canary_batch",
+            "nimbus-runtime::application_node24_host_heavy_diagnostic_canary_batch"
+          ],
+          "canary_count": 32,
+          "passed": 32,
+          "failed": 0
+        },
+        {
+          "lane": "node26",
+          "compatibility_target": "Node26",
+          "upstream_fixture_line": "Node26",
+          "lane_role": "current",
+          "public_contract_role": "current_contract",
+          "runtime_execution_target": "Node26",
+          "runtime_limits_preset": "application_node26",
+          "cargo_tests": [
+            "nimbus-server::convex_use_node_real_app_canary_node26_current",
+            "nimbus-runtime::application_node26_sdk_package_canary_batch",
+            "nimbus-runtime::application_node26_host_heavy_diagnostic_canary_batch"
+          ],
+          "canary_count": 25,
+          "passed": 25,
+          "failed": 0
         }
       ],
       "canary_results": [
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-express",
+            "application-networking-express-middleware",
+            "application-networking-express-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-fastify",
+            "application-networking-fastify-hooks",
+            "application-networking-fastify-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
         {
           "id": "anthropic",
           "package": "@anthropic-ai/sdk",
@@ -96966,37 +97063,7 @@
           "runtime_execution_target": "Node22",
           "runtime_limits_preset": "application_node22",
           "status": "pass"
-        }
-      ]
-    },
-    {
-      "path": "target/node-compat/canaries/preset-application-node24.json",
-      "runtime_preset": "Application",
-      "canary_count": 32,
-      "passed": 32,
-      "failed": 0,
-      "lane_summaries": [
-        {
-          "lane": "node24",
-          "compatibility_target": "Node24",
-          "upstream_fixture_line": "Node24",
-          "lane_role": "default",
-          "public_contract_role": "default_contract",
-          "runtime_execution_target": "Node24",
-          "runtime_limits_preset": "application_node24",
-          "cargo_tests": [
-            "nimbus-runtime::application_node24_networking_package_canary_batch",
-            "nimbus-convex::convex_use_node_action_package_canary_node24",
-            "nimbus-server::convex_use_node_real_app_canary_node24",
-            "nimbus-runtime::application_node24_sdk_package_canary_batch",
-            "nimbus-runtime::application_node24_host_heavy_diagnostic_canary_batch"
-          ],
-          "canary_count": 32,
-          "passed": 32,
-          "failed": 0
-        }
-      ],
-      "canary_results": [
+        },
         {
           "id": "anthropic",
           "package": "@anthropic-ai/sdk",
@@ -97710,35 +97777,7 @@
           "runtime_execution_target": "Node24",
           "runtime_limits_preset": "application_node24",
           "status": "pass"
-        }
-      ]
-    },
-    {
-      "path": "target/node-compat/canaries/preset-application-node26.json",
-      "runtime_preset": "Application",
-      "canary_count": 25,
-      "passed": 25,
-      "failed": 0,
-      "lane_summaries": [
-        {
-          "lane": "node26",
-          "compatibility_target": "Node26",
-          "upstream_fixture_line": "Node26",
-          "lane_role": "current",
-          "public_contract_role": "current_contract",
-          "runtime_execution_target": "Node26",
-          "runtime_limits_preset": "application_node26",
-          "cargo_tests": [
-            "nimbus-server::convex_use_node_real_app_canary_node26_current",
-            "nimbus-runtime::application_node26_sdk_package_canary_batch",
-            "nimbus-runtime::application_node26_host_heavy_diagnostic_canary_batch"
-          ],
-          "canary_count": 25,
-          "passed": 25,
-          "failed": 0
-        }
-      ],
-      "canary_results": [
+        },
         {
           "id": "anthropic",
           "package": "@anthropic-ai/sdk",
@@ -98294,10 +98333,10 @@
       ]
     },
     {
-      "path": "target/node-compat/canaries/preset-tooling-node22.json",
+      "path": "target/node-compat/canaries/preset-tooling.json",
       "runtime_preset": "Tooling",
-      "canary_count": 5,
-      "passed": 5,
+      "canary_count": 10,
+      "passed": 10,
       "failed": 0,
       "lane_summaries": [
         {
@@ -98314,123 +98353,7 @@
           "canary_count": 5,
           "passed": 5,
           "failed": 0
-        }
-      ],
-      "canary_results": [
-        {
-          "id": "jest",
-          "package": "jest",
-          "pinned_version": "30.4.2",
-          "runtime_preset": "Tooling",
-          "evidence_kind": "positive_support",
-          "support_status": "supported",
-          "claim_ids": [
-            "tooling-loader-jest"
-          ],
-          "lane": "node22",
-          "compatibility_target": "Node22",
-          "cargo_package": "nimbus-runtime",
-          "cargo_test": "tooling_node22_package_canary_batch",
-          "upstream_fixture_line": "Node22",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
-          "runtime_execution_target": "Node22",
-          "runtime_limits_preset": "application_node22",
-          "status": "pass"
         },
-        {
-          "id": "next",
-          "package": "next",
-          "pinned_version": "16.2.6",
-          "runtime_preset": "Tooling",
-          "evidence_kind": "positive_support",
-          "support_status": "supported",
-          "claim_ids": [
-            "tooling-loader-next"
-          ],
-          "lane": "node22",
-          "compatibility_target": "Node22",
-          "cargo_package": "nimbus-runtime",
-          "cargo_test": "tooling_node22_package_canary_batch",
-          "upstream_fixture_line": "Node22",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
-          "runtime_execution_target": "Node22",
-          "runtime_limits_preset": "application_node22",
-          "status": "pass"
-        },
-        {
-          "id": "prisma",
-          "package": "prisma",
-          "pinned_version": "7.8.0",
-          "runtime_preset": "Tooling",
-          "evidence_kind": "positive_support",
-          "support_status": "supported",
-          "claim_ids": [
-            "tooling-loader-prisma"
-          ],
-          "lane": "node22",
-          "compatibility_target": "Node22",
-          "cargo_package": "nimbus-runtime",
-          "cargo_test": "tooling_node22_package_canary_batch",
-          "upstream_fixture_line": "Node22",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
-          "runtime_execution_target": "Node22",
-          "runtime_limits_preset": "application_node22",
-          "status": "pass"
-        },
-        {
-          "id": "ts-node",
-          "package": "ts-node",
-          "pinned_version": "10.9.2",
-          "runtime_preset": "Tooling",
-          "evidence_kind": "positive_support",
-          "support_status": "supported",
-          "claim_ids": [
-            "tooling-loader-ts-node"
-          ],
-          "lane": "node22",
-          "compatibility_target": "Node22",
-          "cargo_package": "nimbus-runtime",
-          "cargo_test": "tooling_node22_package_canary_batch",
-          "upstream_fixture_line": "Node22",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
-          "runtime_execution_target": "Node22",
-          "runtime_limits_preset": "application_node22",
-          "status": "pass"
-        },
-        {
-          "id": "tsx",
-          "package": "tsx",
-          "pinned_version": "4.21.0",
-          "runtime_preset": "Tooling",
-          "evidence_kind": "positive_support",
-          "support_status": "supported",
-          "claim_ids": [
-            "tooling-loader-tsx"
-          ],
-          "lane": "node22",
-          "compatibility_target": "Node22",
-          "cargo_package": "nimbus-runtime",
-          "cargo_test": "tooling_node22_package_canary_batch",
-          "upstream_fixture_line": "Node22",
-          "lane_role": "supported",
-          "public_contract_role": "supported_contract",
-          "runtime_execution_target": "Node22",
-          "runtime_limits_preset": "application_node22",
-          "status": "pass"
-        }
-      ]
-    },
-    {
-      "path": "target/node-compat/canaries/preset-tooling-node24.json",
-      "runtime_preset": "Tooling",
-      "canary_count": 5,
-      "passed": 5,
-      "failed": 0,
-      "lane_summaries": [
         {
           "lane": "node24",
           "compatibility_target": "Node24",
@@ -98458,6 +98381,111 @@
           "claim_ids": [
             "tooling-loader-jest"
           ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "supported",
+          "public_contract_role": "supported_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_preset": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "next",
+          "package": "next",
+          "pinned_version": "16.2.6",
+          "runtime_preset": "Tooling",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "tooling-loader-next"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "supported",
+          "public_contract_role": "supported_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_preset": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "prisma",
+          "package": "prisma",
+          "pinned_version": "7.8.0",
+          "runtime_preset": "Tooling",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "tooling-loader-prisma"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "supported",
+          "public_contract_role": "supported_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_preset": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "ts-node",
+          "package": "ts-node",
+          "pinned_version": "10.9.2",
+          "runtime_preset": "Tooling",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "tooling-loader-ts-node"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "supported",
+          "public_contract_role": "supported_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_preset": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "tsx",
+          "package": "tsx",
+          "pinned_version": "4.21.0",
+          "runtime_preset": "Tooling",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "tooling-loader-tsx"
+          ],
+          "lane": "node22",
+          "compatibility_target": "Node22",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "tooling_node22_package_canary_batch",
+          "upstream_fixture_line": "Node22",
+          "lane_role": "supported",
+          "public_contract_role": "supported_contract",
+          "runtime_execution_target": "Node22",
+          "runtime_limits_preset": "application_node22",
+          "status": "pass"
+        },
+        {
+          "id": "jest",
+          "package": "jest",
+          "pinned_version": "30.4.2",
+          "runtime_preset": "Tooling",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "tooling-loader-jest"
+          ],
           "lane": "node24",
           "compatibility_target": "Node24",
           "cargo_package": "nimbus-runtime",
@@ -98556,72 +98584,7 @@
       ]
     }
   ],
-  "oracle_reports": [
-    {
-      "path": "target/node-compat/oracle/node20/test-parallel-test-buffer-alloc-js/oracle-node20-test-parallel-test-buffer-alloc-js.json",
-      "family": "core-semantics",
-      "slice": "assert-and-buffer-foundation",
-      "lane": "node20",
-      "upstream_fixture_line": "Node20",
-      "lane_role": "legacy",
-      "public_contract_role": "legacy_contract",
-      "runtime_execution_target": "Node20",
-      "runtime_limits_preset": "application_node20",
-      "fixture": "test/parallel/test-buffer-alloc.js",
-      "runtime_state": "pass",
-      "oracle_state": "pass",
-      "drift_class": "agreement_pass",
-      "node_version": "v20.20.2"
-    },
-    {
-      "path": "target/node-compat/oracle/node22/test-parallel-test-buffer-alloc-js/oracle-node22-test-parallel-test-buffer-alloc-js.json",
-      "family": "core-semantics",
-      "slice": "assert-and-buffer-foundation",
-      "lane": "node22",
-      "upstream_fixture_line": "Node22",
-      "lane_role": "supported",
-      "public_contract_role": "supported_contract",
-      "runtime_execution_target": "Node22",
-      "runtime_limits_preset": "application_node22",
-      "fixture": "test/parallel/test-buffer-alloc.js",
-      "runtime_state": "pass",
-      "oracle_state": "pass",
-      "drift_class": "agreement_pass",
-      "node_version": "v22.23.1"
-    },
-    {
-      "path": "target/node-compat/oracle/node24/test-parallel-test-buffer-alloc-js/oracle-node24-test-parallel-test-buffer-alloc-js.json",
-      "family": "core-semantics",
-      "slice": "assert-and-buffer-foundation",
-      "lane": "node24",
-      "upstream_fixture_line": "Node24",
-      "lane_role": "default",
-      "public_contract_role": "default_contract",
-      "runtime_execution_target": "Node24",
-      "runtime_limits_preset": "application_node24",
-      "fixture": "test/parallel/test-buffer-alloc.js",
-      "runtime_state": "pass",
-      "oracle_state": "pass",
-      "drift_class": "agreement_pass",
-      "node_version": "v24.16.0"
-    },
-    {
-      "path": "target/node-compat/oracle/node26/test-parallel-test-buffer-alloc-js/oracle-node26-test-parallel-test-buffer-alloc-js.json",
-      "family": "core-semantics",
-      "slice": "assert-and-buffer-foundation",
-      "lane": "node26",
-      "upstream_fixture_line": "Node26",
-      "lane_role": "current",
-      "public_contract_role": "current_contract",
-      "runtime_execution_target": "Node26",
-      "runtime_limits_preset": "application_node26",
-      "fixture": "test/parallel/test-buffer-alloc.js",
-      "runtime_state": "pass",
-      "oracle_state": "pass",
-      "drift_class": "agreement_pass",
-      "node_version": "v26.0.0"
-    }
-  ],
+  "oracle_reports": [],
   "claim_summaries": [
     {
       "id": "application-platform-builtins",
@@ -99130,6 +99093,12 @@
       "missing_lanes": [],
       "observed_lane_metadata": [
         {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
+        },
+        {
           "lane": "node22",
           "upstream_fixture_line": "Node22",
           "lane_role": "supported",
@@ -99143,6 +99112,29 @@
         }
       ],
       "observed_results": [
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-express",
+            "application-networking-express-middleware",
+            "application-networking-express-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
         {
           "id": "express",
           "package": "express",
@@ -99206,6 +99198,12 @@
       "missing_lanes": [],
       "observed_lane_metadata": [
         {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
+        },
+        {
           "lane": "node22",
           "upstream_fixture_line": "Node22",
           "lane_role": "supported",
@@ -99219,6 +99217,29 @@
         }
       ],
       "observed_results": [
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-express",
+            "application-networking-express-middleware",
+            "application-networking-express-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
         {
           "id": "express",
           "package": "express",
@@ -99282,6 +99303,12 @@
       "missing_lanes": [],
       "observed_lane_metadata": [
         {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
+        },
+        {
           "lane": "node22",
           "upstream_fixture_line": "Node22",
           "lane_role": "supported",
@@ -99295,6 +99322,29 @@
         }
       ],
       "observed_results": [
+        {
+          "id": "express",
+          "package": "express",
+          "pinned_version": "4.19.2",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-express",
+            "application-networking-express-middleware",
+            "application-networking-express-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
         {
           "id": "express",
           "package": "express",
@@ -99358,6 +99408,12 @@
       "missing_lanes": [],
       "observed_lane_metadata": [
         {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
+        },
+        {
           "lane": "node22",
           "upstream_fixture_line": "Node22",
           "lane_role": "supported",
@@ -99371,6 +99427,29 @@
         }
       ],
       "observed_results": [
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-fastify",
+            "application-networking-fastify-hooks",
+            "application-networking-fastify-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
         {
           "id": "fastify",
           "package": "fastify",
@@ -99434,6 +99513,12 @@
       "missing_lanes": [],
       "observed_lane_metadata": [
         {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
+        },
+        {
           "lane": "node22",
           "upstream_fixture_line": "Node22",
           "lane_role": "supported",
@@ -99447,6 +99532,29 @@
         }
       ],
       "observed_results": [
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-fastify",
+            "application-networking-fastify-hooks",
+            "application-networking-fastify-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
         {
           "id": "fastify",
           "package": "fastify",
@@ -99510,6 +99618,12 @@
       "missing_lanes": [],
       "observed_lane_metadata": [
         {
+          "lane": "node20",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract"
+        },
+        {
           "lane": "node22",
           "upstream_fixture_line": "Node22",
           "lane_role": "supported",
@@ -99523,6 +99637,29 @@
         }
       ],
       "observed_results": [
+        {
+          "id": "fastify",
+          "package": "fastify",
+          "pinned_version": "4.28.1",
+          "runtime_preset": "Application",
+          "evidence_kind": "positive_support",
+          "support_status": "supported",
+          "claim_ids": [
+            "application-networking-fastify",
+            "application-networking-fastify-hooks",
+            "application-networking-fastify-error-handler"
+          ],
+          "lane": "node20",
+          "compatibility_target": "Node20",
+          "cargo_package": "nimbus-runtime",
+          "cargo_test": "application_node20_networking_legacy_canary_batch",
+          "upstream_fixture_line": "Node20",
+          "lane_role": "legacy",
+          "public_contract_role": "legacy_contract",
+          "runtime_execution_target": "Node20",
+          "runtime_limits_preset": "application_node20",
+          "status": "pass"
+        },
         {
           "id": "fastify",
           "package": "fastify",

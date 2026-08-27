@@ -30,7 +30,7 @@ async function mountAppearancePropagation() {
 }
 
 describe("appearance propagation", () => {
-  it("clicking each mode button updates the <html data-theme> attribute and persists", async () => {
+  it("clicking each mode radio updates the <html data-theme> attribute and persists", async () => {
     const user = userEvent.setup();
     await mountAppearancePropagation();
 
@@ -47,7 +47,7 @@ describe("appearance propagation", () => {
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
   });
 
-  it("clicking each palette button updates the <html data-palette> attribute and persists", async () => {
+  it("clicking each palette radio updates the <html data-palette> attribute and persists", async () => {
     const user = userEvent.setup();
     await mountAppearancePropagation();
 
@@ -172,9 +172,9 @@ describe("palette swatch preview", () => {
     await user.click(screen.getByTestId("appearance-mode-dark"));
 
     for (const id of PALETTE_IDS) {
-      const button = screen.getByTestId(`appearance-palette-${id}`);
-      expect(button.hasAttribute("disabled")).toBe(false);
-      await user.click(button);
+      const radio = screen.getByTestId(`appearance-palette-${id}`);
+      expect(radio.hasAttribute("disabled")).toBe(false);
+      await user.click(radio);
       expect(document.documentElement.dataset.palette).toBe(id);
     }
   });

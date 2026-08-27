@@ -46,9 +46,9 @@ describe("tenant-scope", () => {
     });
 
     it("returns the tenant id for kind: 'specific'", () => {
-      expect(
-        serializeTenantScope({ kind: "specific", tenantId: "beta" }),
-      ).toBe("beta");
+      expect(serializeTenantScope({ kind: "specific", tenantId: "beta" })).toBe(
+        "beta",
+      );
     });
   });
 
@@ -58,9 +58,9 @@ describe("tenant-scope", () => {
     });
 
     it("returns the tenant id for kind: 'specific'", () => {
-      expect(
-        describeTenantScope({ kind: "specific", tenantId: "beta" }),
-      ).toBe("beta");
+      expect(describeTenantScope({ kind: "specific", tenantId: "beta" })).toBe(
+        "beta",
+      );
     });
   });
 

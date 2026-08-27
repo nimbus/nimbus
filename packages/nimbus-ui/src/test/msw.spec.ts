@@ -66,13 +66,7 @@ describe("msw handlers", () => {
       ["node20", "v8", "node20", "linked", "v8_isolate_heap_limit"],
       ["node22", "v8", "node22", "linked", "v8_isolate_heap_limit"],
       ["node24", "v8", "node24", "linked", "v8_isolate_heap_limit"],
-      [
-        "bun_jsc",
-        "bun_jsc",
-        "bun_jsc",
-        "not_linked",
-        "outer_quota_required",
-      ],
+      ["bun_jsc", "bun_jsc", "bun_jsc", "not_linked", "outer_quota_required"],
     ] as const;
     for (const [
       laneName,

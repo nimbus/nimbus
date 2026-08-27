@@ -15,14 +15,14 @@ import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
-import { EmptyState } from "../../components/empty-state";
 import { Td, Th } from "../../components/data-table";
+import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
+import { fetchTenants } from "../../hooks/use-tenant-list";
+import { tenants as tenantApi } from "../../lib/api-mutations";
 import { cn } from "../../lib/cn";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { TableDoc } from "../../lib/types/table";
-import { fetchTenants } from "../../hooks/use-tenant-list";
-import { tenants as tenantApi } from "../../lib/api-mutations";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,

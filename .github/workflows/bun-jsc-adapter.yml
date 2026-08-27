@@ -118,9 +118,11 @@ jobs:
           [[ -n "${ver}" ]] || { echo "could not parse WEBKIT_VERSION from bun/scripts/build/deps/webkit.ts" >&2; exit 1; }
           src="${RUNNER_TEMP}/webkit-src"
           bun_build="${RUNNER_TEMP}/bun-build-${{ matrix.platform_arch }}"
-          echo "version=${ver}" >> "${GITHUB_OUTPUT}"
-          echo "src=${src}" >> "${GITHUB_OUTPUT}"
-          echo "webkit_build=${bun_build}/deps/WebKit" >> "${GITHUB_OUTPUT}"
+          {
+            echo "version=${ver}"
+            echo "src=${src}"
+            echo "webkit_build=${bun_build}/deps/WebKit"
+          } >> "${GITHUB_OUTPUT}"
           # Pin a stable, cacheable Bun build dir so the WebKit output persists
           # across runs (the artifact script honors NIMBUS_BUN_BUILD_DIR).
           echo "NIMBUS_BUN_BUILD_DIR=${bun_build}" >> "${GITHUB_ENV}"

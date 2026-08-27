@@ -32,7 +32,8 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Package | Preset | Pinned version | Evidence | Support boundary | Status |
 | --- | --- | --- | --- | --- | --- |
-| none in current snapshot | n/a | n/a | n/a | n/a | n/a |
+| `express` | Application | `4.19.2` | Support | Supported | Passed |
+| `fastify` | Application | `4.28.1` | Support | Supported | Passed |
 
 ## Claim Boundary
 

@@ -5,7 +5,7 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 ## Snapshot
 
-- generated at: `2026-07-10T18:59:53.275575+00:00`
+- generated at: `2026-08-27T17:13:10.029302+00:00`
 - status source: `tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json`
 - dashboard source: `tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json`
 - trend source: `tests/runtime/node/compat/node-compat-evidence/latest/trend-summary.json`
@@ -23,6 +23,8 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 | Package | Preset | Lane | Pinned version | Evidence | Support boundary | Status |
 | --- | --- | --- | --- | --- | --- | --- |
+| `express` | Application | Node20 | `4.19.2` | Support | Supported | Passed |
+| `fastify` | Application | Node20 | `4.28.1` | Support | Supported | Passed |
 | `@anthropic-ai/sdk` | Application | Node22 | `0.100.0` | Support | Supported | Passed |
 | `@aws-sdk/client-s3` | Application | Node22 | `3.1056.0` | Support | Supported | Passed |
 | `axios` | Application | Node22 | `1.7.7` | Support | Supported | Passed |
@@ -127,10 +129,6 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 | Lane | Fixture | Runtime | Oracle | Drift | Node oracle |
 | --- | --- | --- | --- | --- | --- |
-| Node20 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v20.20.2` |
-| Node22 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v22.23.1` |
-| Node24 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v24.16.0` |
-| Node26 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v26.0.0` |
 
 ## Notes
 

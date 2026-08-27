@@ -1,10 +1,9 @@
-import { describe, expectTypeOf, it } from "vitest";
-
 import {
   type QueryEntry,
   type QueryReference,
   queryEntry,
 } from "@nimbus/nimbus/browser";
+import { describe, expectTypeOf, it } from "vitest";
 
 import { api } from "../../convex/_generated/api";
 
