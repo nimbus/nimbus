@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
-    EmbeddedProviderKind, Engine, EnginePersistenceConfig, ErasureBlobStore, ErasureConfig,
-    ErasureHealer, Error as NimbusError, HealPacing, HealReport, LocalLeg, LocalPackStore,
-    ObjectPlacement, ObjectStorageConfig, ObjectStorePlacementTarget,
+    ControlPlaneConfig, EmbeddedProviderKind, Engine, EnginePersistenceConfig, ErasureBlobStore,
+    ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport, LocalLeg,
+    LocalPackStore, ObjectPlacement, ObjectStorageConfig, ObjectStorePlacementTarget,
     ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy, TenantId,
     object_blob_root,
 };
@@ -111,6 +111,10 @@ pub(crate) struct SetPlacementCommand {
     /// Local data directory of the deployment.
     #[arg(long, default_value = "./data")]
     pub(crate) data_dir: PathBuf,
+    /// Control-plane directory used by the stopped deployment. Defaults to
+    /// the data directory.
+    #[arg(long)]
+    pub(crate) control_data_dir: Option<PathBuf>,
     /// Embedded tenant persistence provider.
     #[arg(long, value_enum, default_value_t = ObjectStorageProvider::Sqlite)]
     pub(crate) provider: ObjectStorageProvider,
@@ -151,6 +155,8 @@ pub(crate) struct SetPlacementCommand {
 pub(crate) struct BackupObjectStoreCommand {
     #[arg(long, default_value = "./data")]
     pub(crate) data_dir: PathBuf,
+    #[arg(long)]
+    pub(crate) control_data_dir: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = ObjectStorageProvider::Sqlite)]
     pub(crate) provider: ObjectStorageProvider,
     #[arg(long)]
@@ -170,6 +176,8 @@ pub(crate) struct RestoreObjectStoreCommand {
     pub(crate) input: PathBuf,
     #[arg(long, default_value = "./data")]
     pub(crate) data_dir: PathBuf,
+    #[arg(long)]
+    pub(crate) control_data_dir: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = ObjectStorageProvider::Sqlite)]
     pub(crate) provider: ObjectStorageProvider,
     #[arg(long)]
@@ -230,6 +238,10 @@ pub(crate) struct ErasureHealCommand {
 pub(crate) struct TenantRemoveCommand {
     #[arg(long, default_value = "./data")]
     pub(crate) data_dir: PathBuf,
+    /// Control-plane directory used by the stopped deployment. Defaults to
+    /// the data directory.
+    #[arg(long)]
+    pub(crate) control_data_dir: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = ObjectStorageProvider::Sqlite)]
     pub(crate) provider: ObjectStorageProvider,
     #[arg(long)]
@@ -261,7 +273,12 @@ pub(crate) async fn run_object_storage_command(
 async fn run_set_placement(command: SetPlacementCommand) -> Result<(), Box<dyn Error>> {
     let tenant = TenantId::new(command.tenant.clone())?;
     let policy = placement_policy_from_command(&command)?;
-    let engine = open_engine(&command.data_dir, command.provider).await?;
+    let engine = open_engine(
+        &command.data_dir,
+        command.control_data_dir.as_deref(),
+        command.provider,
+    )
+    .await?;
     let placement = ObjectPlacement::new(tenant.clone(), policy, current_unix_ms()?);
     engine.set_object_placement(placement)?;
     engine.quiesce().await;
@@ -596,7 +613,12 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         None
     };
 
-    let engine = open_engine(&command.data_dir, command.provider).await?;
+    let engine = open_engine(
+        &command.data_dir,
+        command.control_data_dir.as_deref(),
+        command.provider,
+    )
+    .await?;
     match engine.delete_tenant_async(tenant.clone()).await {
         Ok(()) => {}
         // Idempotent re-run after a partial prior failure.
@@ -721,9 +743,13 @@ fn credentials_from_command(
 
 async fn open_engine(
     data_dir: &Path,
+    control_data_dir: Option<&Path>,
     provider: ObjectStorageProvider,
 ) -> Result<Arc<Engine>, Box<dyn Error>> {
-    let config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind());
+    let mut config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind());
+    if let Some(control_data_dir) = control_data_dir {
+        config.control_plane = ControlPlaneConfig::embedded_redb(control_data_dir);
+    }
     Ok(Arc::new(Engine::new_with_persistence_config(config).await?))
 }
 
@@ -799,6 +825,8 @@ mod tests {
             "nimbus",
             "object-storage",
             "set-placement",
+            "--control-data-dir",
+            "./control",
             "--tenant",
             "tenant-a",
             "--mode",
@@ -816,11 +844,14 @@ mod tests {
         };
         assert_eq!(command.tenant, "tenant-a");
         assert_eq!(command.mode, ObjectPlacementMode::Mirror);
+        assert_eq!(command.control_data_dir, Some(PathBuf::from("./control")));
 
         let cli = Cli::parse_from([
             "nimbus",
             "object-storage",
             "backup-object-store",
+            "--control-data-dir",
+            "./control",
             "--tenant",
             "tenant-a",
             "--out",
@@ -830,15 +861,18 @@ mod tests {
             "--key-escrow-file",
             "tenant-a.key",
         ]);
-        assert!(matches!(
-            cli.command,
-            Command::ObjectStorage(ObjectStorageCommand::BackupObjectStore(_))
-        ));
+        let Command::ObjectStorage(ObjectStorageCommand::BackupObjectStore(command)) = cli.command
+        else {
+            panic!("backup-object-store should parse");
+        };
+        assert_eq!(command.control_data_dir, Some(PathBuf::from("./control")));
 
         let cli = Cli::parse_from([
             "nimbus",
             "object-storage",
             "restore-object-store",
+            "--control-data-dir",
+            "./restored-control",
             "--tenant",
             "tenant-a",
             "--in",
@@ -848,10 +882,14 @@ mod tests {
             "--key-escrow-file",
             "tenant-a.key",
         ]);
-        assert!(matches!(
-            cli.command,
-            Command::ObjectStorage(ObjectStorageCommand::RestoreObjectStore(_))
-        ));
+        let Command::ObjectStorage(ObjectStorageCommand::RestoreObjectStore(command)) = cli.command
+        else {
+            panic!("restore-object-store should parse");
+        };
+        assert_eq!(
+            command.control_data_dir,
+            Some(PathBuf::from("./restored-control"))
+        );
 
         let cli = Cli::parse_from([
             "nimbus",
@@ -910,16 +948,73 @@ mod tests {
             "object-storage",
             "tenant",
             "rm",
+            "--control-data-dir",
+            "./control",
             "--tenant",
             "tenant-a",
             "--yes",
         ]);
+        let Command::ObjectStorage(ObjectStorageCommand::Tenant(TenantObjectStorageCommand::Rm(
+            command,
+        ))) = cli.command
+        else {
+            panic!("tenant rm should parse");
+        };
+        assert_eq!(command.control_data_dir, Some(PathBuf::from("./control")));
+    }
+
+    #[tokio::test]
+    async fn set_placement_uses_separate_control_root() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let data_dir = temp.path().join("data");
+        let control_data_dir = temp.path().join("control");
+        let tenant = TenantId::new("split-control").expect("tenant should build");
+        let engine = open_engine(
+            &data_dir,
+            Some(&control_data_dir),
+            ObjectStorageProvider::Sqlite,
+        )
+        .await
+        .expect("engine should open");
+        engine
+            .create_tenant(tenant.clone())
+            .expect("tenant should create");
+        engine.quiesce().await;
+        drop(engine);
+
+        run_set_placement(SetPlacementCommand {
+            data_dir: data_dir.clone(),
+            control_data_dir: Some(control_data_dir.clone()),
+            provider: ObjectStorageProvider::Sqlite,
+            tenant: tenant.as_str().to_string(),
+            mode: ObjectPlacementMode::Local,
+            target_provider: ObjectTargetProvider::S3,
+            bucket: None,
+            region: None,
+            endpoint: None,
+            prefix: String::new(),
+            credentials: ObjectCredentialSource::Environment,
+            secret_ref: None,
+            require_ack: false,
+        })
+        .await
+        .expect("placement should persist in the configured control root");
+
+        let reopened = open_engine(
+            &data_dir,
+            Some(&control_data_dir),
+            ObjectStorageProvider::Sqlite,
+        )
+        .await
+        .expect("engine should reopen");
         assert!(matches!(
-            cli.command,
-            Command::ObjectStorage(ObjectStorageCommand::Tenant(
-                TenantObjectStorageCommand::Rm(_)
-            ))
+            reopened
+                .object_placement(&tenant)
+                .expect("placement should read")
+                .map(|placement| placement.policy),
+            Some(PlacementPolicy::LocalOnly)
         ));
+        reopened.quiesce().await;
     }
 
     #[test]
