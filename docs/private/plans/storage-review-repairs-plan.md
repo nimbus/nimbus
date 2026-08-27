@@ -77,7 +77,7 @@ After:
 | SRR1 | Extend canonical materialized identity through full and incremental verification. | `done` | Commit `0a4ba6119`; storage 395 passed and 3 ignored; focused storage, engine, CLI, and server checks passed. See `proof/storage-review-repairs/srr1-materialized-identity.md`. |
 | SRR2 | Make nonzero-base PITR import atomic and seed MVCC anchors. | `done` | Commit `1a553ac87`; 397 storage tests passed with 4 planned skips; strict all-feature Clippy passed. See `proof/storage-review-repairs/srr2-atomic-pitr-import.md`. |
 | SRR3 | Require per-backend retention verifier evidence and test its failure behavior. | `done` | Commit `e83899824`; five helper groups and 18 omission mutations passed; the main verifier reports `18 passed, 0 failed`. See `proof/storage-review-repairs/srr3-retention-verifier.md`. |
-| SRR4 | Replace the IMV7 relative-only gate with measured absolute limits and negative tests. | `done` | Commit `132343e37`; the mutation helper passes 6 checks and the complete IMV verifier passes all 16 conditions. See `proof/storage-review-repairs/srr4-imv-performance-gate.md`. |
+| SRR4 | Replace the IMV7 relative-only gate with measured absolute limits and negative tests. | `done` | Commit `132343e37`, with final review hardening in SRR5; the fail-closed mutation helper passes 9 checks and the complete IMV verifier passes all 16 conditions. See `proof/storage-review-repairs/srr4-imv-performance-gate.md`. |
 | SRR5 | Run repository gates and a fresh Nimbus autoreview. | `in_progress` | |
 | SRR9 | Clean up this plan after the repair pull request merges. | `todo` | Trigger: merge of the final repair pull request. |
 
@@ -104,6 +104,16 @@ After:
 - Acceptance: either omitted field changes the position and incremental roots equal full recomputation.
 - Fail-before: new binding-only and cursor-only drift tests fail against the baseline.
 - Verification: run focused `nimbus-storage` and `nimbus-engine` materialized verification tests.
+- Size ownership exception: `materialized_verification.rs` is 2,051 lines.
+- Size evidence: production code ends at line 1,104. Private contract tests
+  occupy the remaining lines.
+- Exception reason: the private treap, logical leaves, invalidation generations,
+  and provider delta tracker form one concept. A split would widen visibility
+  or separate invariant tests from their owner. It would not create a stable
+  child concept.
+- Exception limit: keep this exception while production code stays below 1,500
+  lines. Decompose the file if a stable child concept appears or the production
+  section reaches that limit.
 
 ### SRR2 Make nonzero-base PITR import atomic
 
@@ -205,5 +215,5 @@ gates pass, and SRR9 waits only for the final merge.
 | 2026-08-26 | SRR3 | started | Accepted per-backend source evidence and mutation-tested verifier failures as the proof-tooling contract. |
 | 2026-08-26 | SRR3 | completed | Commit `e83899824` replaces aggregate path searches with explicit per-path checks. Five helper groups prove that each of 18 individual omissions fails closed; the main verifier stays green at 18 of 18 conditions. |
 | 2026-08-26 | SRR4 | started | Accepted absolute measured candidate limits, robust proof parsing, and malformed-proof negative tests as the IMV closeout contract. |
-| 2026-08-26 | SRR4 | completed | Commit `132343e37` measures production candidate churn at 100,000 and 1,000,000 leaves. Five invalid-proof mutations fail cleanly, and the complete IMV verifier passes 16 of 16 conditions. |
+| 2026-08-26 | SRR4 | completed | Commit `132343e37` measures production candidate churn at 100,000 and 1,000,000 leaves. Final review hardened fixture generation; eight invalid-proof mutations fail cleanly, the accepted proof passes, and the complete IMV verifier passes 16 of 16 conditions. |
 | 2026-08-26 | SRR5 | started | Started complete repository gates and the required fresh Nimbus and Opus review of the integrated repair branch. |

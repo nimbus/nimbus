@@ -55,9 +55,13 @@ write changes are -1.517947% throughput and +0.693269% p99 latency.
 
 ## Negative Tests
 
-The mutation helper passes six checks. The accepted proof passes. Malformed
-JSON, empty samples, censored status, excessive candidate latency, and excessive
-resident memory each fail with a concise error and no traceback.
+The mutation helper passes nine checks. The accepted proof passes. Five invalid
+mutations cover malformed JSON, empty samples, censored status, excessive
+candidate latency, and excessive resident memory. Three more cover a truncated
+decisive full sample set, the wrong full-matrix host class, and a missing
+candidate host class. Each mutation fails with a concise error and no traceback. Fixture
+generation also runs under `set -e`, so a generator error fails the helper
+instead of becoming an accepted missing-file mutation.
 
 ## Verification
 
@@ -65,7 +69,7 @@ resident memory each fail with a concise error and no traceback.
 | --- | --- |
 | Focused candidate benchmark | Completed both rungs and wrote the retained JSON artifact. |
 | IMV7 performance parser | Passed with the measurements above. |
-| IMV7 mutation helper | `Summary: 6 passed, 0 failed`. |
+| IMV7 mutation helper | `Summary: 9 passed, 0 failed`. |
 | Complete IMV verifier | `Summary: 16 passed, 0 failed`. |
 | Engine benchmark `cargo check` | Passed. |
 | Strict engine benchmark Clippy | Passed; existing vendored warnings remain. |

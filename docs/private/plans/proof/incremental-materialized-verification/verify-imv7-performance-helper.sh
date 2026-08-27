@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mutation tests for the IMV7 performance proof parser.
-set -uo pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 cd "$ROOT" || { echo "cannot cd to repository root"; exit 2; }
@@ -20,8 +20,11 @@ no() { printf '  FAIL  %s  [%s]\n' "$1" "$2"; fail=$((fail + 1)); }
 
 expect_failure() {
   local label="$1" full="$2" candidate="$3" output status
-  output="$(python3 "$VERIFIER" "$full" "$candidate" 2>&1)"
-  status=$?
+  if output="$(python3 "$VERIFIER" "$full" "$candidate" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
   if [ "$status" -ne 0 ] \
     && [[ "$output" == IMV7\ performance\ proof\ invalid:* ]] \
     && [[ "$output" != *Traceback* ]]; then
