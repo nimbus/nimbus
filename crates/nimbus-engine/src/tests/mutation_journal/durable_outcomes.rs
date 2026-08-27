@@ -623,14 +623,10 @@ async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str)
             FaultPoint::StorageCommitBeforeVisibility
         }
     };
-    // Restore first commits its empty sequence-zero base snapshot, then appends
-    // the archive tail. The advanced-head case must fail the second boundary so
-    // the durable journal record, rather than only the empty base, is visible.
-    let faults = if matches!(case, OutcomeCase::Advanced) {
-        ArmedOneShotDirectFaultInjector::new_on_visit(point, 2)
-    } else {
-        ArmedOneShotDirectFaultInjector::new(point)
-    };
+    // Restore publishes the base snapshot, archive tail, history anchors, and
+    // retention checkpoint at one visibility boundary. A post-visibility fault
+    // therefore leaves the complete archive visible for crash-and-replay.
+    let faults = ArmedOneShotDirectFaultInjector::new(point);
     let destination_dir = tempdir().expect("restore destination tempdir should build");
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
