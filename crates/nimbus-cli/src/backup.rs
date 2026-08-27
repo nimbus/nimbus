@@ -108,7 +108,16 @@ struct BackupFilePayload {
     tenants: BTreeMap<String, serde_json::Value>,
 }
 
-pub(crate) async fn run_backup_command(command: BackupCommand) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run_backup_command(
+    command: BackupCommand,
+    persistence_config: &EnginePersistenceConfig,
+) -> Result<(), Box<dyn Error>> {
+    if persistence_config.local_encryption.is_enabled() {
+        return Err(
+            "`nimbus backup` does not support encrypted data directories; stop Nimbus and cold-copy the complete data and control directories with every `.nimbus-enc` sidecar, then protect the key material separately"
+                .into(),
+        );
+    }
     match command {
         BackupCommand::Create(command) => run_backup_create(command).await,
         BackupCommand::Restore(command) => run_backup_restore(command).await,
@@ -123,10 +132,19 @@ async fn run_backup_create(command: BackupCreateCommand) -> Result<(), Box<dyn E
         )
         .into());
     }
-    let engine = open_engine(&command.data_dir, command.provider).await?;
+    let engine = open_engine(&command.data_dir, command.provider)
+        .await
+        .map_err(|error| {
+            format!(
+                "failed to open backup source {}: {error}",
+                command.data_dir.display()
+            )
+        })?;
     let mut tenants = BTreeMap::new();
     for tenant_id in engine.list_tenants()? {
-        let archive = engine.export_latest_point_in_time_restore_archive(&tenant_id)?;
+        let archive = engine
+            .export_latest_point_in_time_restore_archive(&tenant_id)
+            .map_err(|error| format!("failed to export tenant {tenant_id}: {error}"))?;
         tenants.insert(tenant_id.as_str().to_string(), archive);
     }
     let backup = BackupFile {
@@ -160,11 +178,20 @@ async fn run_backup_restore(command: BackupRestoreCommand) -> Result<(), Box<dyn
         )
     })?;
     let backup = decode_backup_file(&raw, &command.input)?;
-    let engine = open_engine(&command.data_dir, command.provider).await?;
+    let engine = open_engine(&command.data_dir, command.provider)
+        .await
+        .map_err(|error| {
+            format!(
+                "failed to open restore target {}: {error}",
+                command.data_dir.display()
+            )
+        })?;
     for (tenant_name, archive) in &backup.tenants {
         let tenant_id = TenantId::new(tenant_name)?;
         engine.create_tenant(tenant_id.clone())?; // tenant-lifecycle: embedded-only
-        engine.import_point_in_time_restore_archive(&tenant_id, archive)?;
+        engine
+            .import_point_in_time_restore_archive(&tenant_id, archive)
+            .map_err(|error| format!("failed to restore tenant {tenant_id}: {error}"))?;
     }
     engine.quiesce().await;
     emit_backup_info(format!(
@@ -247,7 +274,7 @@ fn emit_backup_info(message: impl AsRef<str>) {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use nimbus::TableName;
+    use nimbus::{LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig, TableName};
     use serde_json::json;
 
     use super::*;
@@ -352,7 +379,6 @@ mod tests {
         let source_dir = temp.path().join("source");
         let backup_path = temp.path().join("backups/deployment.json");
         let restore_dir = temp.path().join("restored");
-
         // Seed two tenants with distinct documents.
         let table = TableName::new("notes").expect("table should build");
         let alpha = TenantId::new("alpha").expect("tenant should build");
@@ -432,5 +458,41 @@ mod tests {
             );
         }
         restored_engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn backup_rejects_encrypted_data_with_cold_copy_guidance() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let key_path = temp.path().join("master.key");
+        std::fs::write(&key_path, [0x42; 32]).expect("master key should write");
+        let persistence_config = EnginePersistenceConfig::embedded_default(temp.path())
+            .with_local_encryption(LocalEncryptionConfig::Enabled(
+                LocalKeyProviderConfig::MasterKeyFile(MasterKeyFileConfig { path: key_path }),
+            ));
+        let output = temp.path().join("deployment.json");
+
+        let error = run_backup_command(
+            BackupCommand::Create(BackupCreateCommand {
+                data_dir: temp.path().join("data"),
+                provider: BackupProvider::Sqlite,
+                out: output.clone(),
+            }),
+            &persistence_config,
+        )
+        .await
+        .expect_err("encrypted data must fail before the backup engine opens");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("does not support encrypted data directories")
+                && message.contains("cold-copy")
+                && message.contains(".nimbus-enc")
+                && message.contains("key material"),
+            "diagnostic must give the complete encrypted backup procedure: {message}"
+        );
+        assert!(
+            !output.exists(),
+            "rejected backup must not create an output"
+        );
     }
 }

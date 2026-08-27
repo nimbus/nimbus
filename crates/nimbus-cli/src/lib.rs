@@ -175,7 +175,11 @@ async fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::ObjectStorage(command) => run_object_storage_command(command).await?,
         Command::Token(command) => run_token_command(command).await?,
         Command::Auth(command) => run_auth_command(command).await?,
-        Command::Backup(command) => run_backup_command(command).await?,
+        Command::Backup(command) => {
+            let persistence_config =
+                persistence_config_from_start_command(&StartCommand::default())?;
+            run_backup_command(command, &persistence_config).await?;
+        }
         Command::Ui(command) => run_ui_command(command).await?,
         Command::Machine(command) => {
             run_machine_command(command).await?;
