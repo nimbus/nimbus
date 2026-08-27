@@ -471,16 +471,27 @@ fn ensure_materialized_journal_restore_target_is_empty_in_conn(conn: &Connection
         )
         .map_err(map_sqlite_error)?
         != 0;
-    let import_metadata_exists = conn
+    let metadata_u64 = |key| -> Result<Option<u64>> {
+        conn.query_row(
+            "SELECT value_blob FROM metadata WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .map(|bytes| decode_u64(bytes.as_slice()))
+        .transpose()
+    };
+    let journal_metadata_is_nondefault = metadata_u64(APPLIED_SEQUENCE_KEY)?.unwrap_or(0) != 0
+        || metadata_u64(NEXT_SEQUENCE_KEY)?.is_some_and(|next| next != 1)
+        || metadata_u64(TRIGGER_DELIVERY_CURSOR_KEY)?.unwrap_or(0) != 0;
+    let retention_metadata_exists = conn
         .query_row(
             "SELECT EXISTS (
                  SELECT 1 FROM metadata
-                 WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 WHERE key IN (?1, ?2, ?3, ?4)
              )",
             params![
-                APPLIED_SEQUENCE_KEY,
-                NEXT_SEQUENCE_KEY,
-                TRIGGER_DELIVERY_CURSOR_KEY,
                 crate::retention::RETENTION_CHECKPOINT_METADATA_KEY,
                 crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
                 crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
@@ -490,7 +501,7 @@ fn ensure_materialized_journal_restore_target_is_empty_in_conn(conn: &Connection
         )
         .map_err(map_sqlite_error)?
         != 0;
-    if tables_have_rows || import_metadata_exists {
+    if tables_have_rows || journal_metadata_is_nondefault || retention_metadata_exists {
         return Err(Error::Internal(
             "materialized journal snapshot restore requires an empty tenant store".to_string(),
         ));
