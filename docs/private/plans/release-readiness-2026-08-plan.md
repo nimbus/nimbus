@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: run the macOS candidate product smoke in RRC2 while RRC1 waits for
-an owner-approved, reachable Deno ref
+Next action: run all nine application and adapter cases in RRC3 with the
+provisional integrated binary and supported Node 24
 
 ## Outcome
 
@@ -85,8 +85,8 @@ renamed, duplicated, or unsupported condition.
 |---|---|---|---|
 | RRC0 | Pin both repositories, hosts, published state, and the red release verifier. | `done` | `proof/release-readiness-2026-08/rrc0-baseline.md` |
 | RRC1 | Audit source, advertised claims, dependency security, workflows, and release configuration. | `blocked(Deno WebSocket hook needs a reachable ref)` | `proof/release-readiness-2026-08/rrc1-audit.md`, `proof/release-readiness-2026-08/rrc1-capability-trace.md` |
-| RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `in_progress` | |
-| RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `todo` | |
+| RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc2-product-smoke.md` |
+| RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `in_progress` | |
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `todo` | |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `todo` | |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `todo` | |
@@ -288,3 +288,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-27 | RRC1 | checkpoint | Committed the workflow, JavaScript, UI, canary, desktop dependency, and vendored warning repairs in Nimbus commits `adcfa82ce`, `2f43b116f`, and `0e15e58aa`, desktop commit `4ee5c83`, and Deno commit `4136492f7f`. The capability trace covers all 42 advertised rows and all three client mutation paths. |
 | 2026-08-27 | RRC1 | blocked | The WebSocket egress repair passes focused tests and full Clippy with local Deno paths. A clean Nimbus dependency cannot consume Deno commits `5d07e09121` and `4136492f7f` until they have a reachable ref. This plan does not authorize a push or tag. |
 | 2026-08-27 | RRC2 | started | Began the macOS candidate build and end-to-end product smoke while the independent RRC1 publication blocker remains recorded. |
+| 2026-08-27 | RRC2 | finding | The embedded-UI smoke exposed three stale test contracts: an incomplete system-service fixture, old Operator System identifiers, and an implicit only-tenant assumption. The repaired test uses the current schema, Operator Nodes page, and real tenant selector. TypeScript and the 10-step Chromium smoke pass. See `proof/release-readiness-2026-08/rrc2-product-smoke.md`. |
+| 2026-08-27 | RRC2 | finding | Public-bind refusals returned Rust enum debug text instead of the existing actionable operator messages. Commit `c7a27c74b` fixes top-level CLI error rendering and adds a subprocess regression test. |
+| 2026-08-27 | RRC2 | blocked | Debug and optimized provisional binaries pass the full product smoke, graceful shutdown, same-root restart, and cleanup. Exact-candidate replay waits only for the RRC1 Deno reference. See `proof/release-readiness-2026-08/rrc2-product-smoke.md`. |
+| 2026-08-27 | RRC3 | started | Began all nine repository application cases and adapter lanes with the repaired provisional binary and Node 24.19.0. |
