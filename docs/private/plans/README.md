@@ -57,6 +57,11 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   from the 2026-08-26 Opus 5 aggregate review: complete materialized identity,
   atomic nonzero-base PITR import with MVCC anchors, and proof-gate repairs.
   It preserves the closed Band SA ledger and does not act on rejected claims.
+- `release-readiness-2026-08-plan.md` - `active`. Owns the product-wide release
+  candidate audit, local application and protocol smoke matrix, macOS and Linux
+  host proof, desktop validation, repair triage, and the final GO or NO-GO
+  verdict. It consumes the storage-repair branch and routes public package
+  publication back to `distribution-plan.md`.
 - `archive/storage-metadata-retention-plan.md` - `complete, archived`
   (2026-08-26; PRs #313–#321). Delivered checkpoint-backed commit-log pruning,
   production MVCC compaction, bounded CDC and PITR history, fail-closed trimmed
