@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: run the RRC4 embedded-provider, encryption, backup/restore,
-consistency, and restart-recovery matrix with the provisional integrated binary
+Next action: run the RRC5 macOS and Linux workload matrix with the provisional
+integrated binary and `nimbus@minicloud`
 
 ## Outcome
 
@@ -87,8 +87,8 @@ renamed, duplicated, or unsupported condition.
 | RRC1 | Audit source, advertised claims, dependency security, workflows, and release configuration. | `blocked(Deno WebSocket hook needs a reachable ref)` | `proof/release-readiness-2026-08/rrc1-audit.md`, `proof/release-readiness-2026-08/rrc1-capability-trace.md` |
 | RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc2-product-smoke.md` |
 | RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc3-app-adapter-smoke.md` |
-| RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `in_progress` | |
-| RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `todo` | |
+| RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
+| RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `in_progress` | |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `todo` | |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `todo` | |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `todo` | |
@@ -296,3 +296,8 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-27 | RRC3 | finding | Fixed the split CORS/origin policy in `5caf5c2cf` and portable browser packaging, origin defaults, Convex provisioning, run instructions, and favicon cleanup in `ef589a825`. All three Playwright task apps pass their lifecycle with zero console diagnostics. |
 | 2026-08-27 | RRC3 | blocked | All nine application cases, direct S3, RESP, Cloudflare KV, and three browser flows pass on the provisional integrated binary. Exact-candidate replay waits only for the RRC1 Deno reference. See `proof/release-readiness-2026-08/rrc3-app-adapter-smoke.md`. |
 | 2026-08-27 | RRC4 | started | Began the storage-provider, encryption, backup/restore, object, consistency, and restart-recovery matrix while the independent RRC1 publication blocker remains recorded. |
+| 2026-08-27 | RRC4 | finding | Encrypted SQLite backup produced a false corruption diagnostic, and quiesce stopped the committer before the trigger-candidate worker. Commit `965bfd379` adds the encrypted cold-copy rejection and repairs the shutdown order with regressions. |
+| 2026-08-27 | RRC4 | finding | redb backup and restore ignored a separate control root. Commit `464e30596` adds the explicit control-root contract, regression coverage, and public operator documentation. |
+| 2026-08-27 | RRC4 | finding | Object placement, backup, restore, and removal ignored a separate control root. Commit `652fb93b6` repairs all four administration paths and adds split-root live and automated recovery evidence. |
+| 2026-08-27 | RRC4 | blocked | All provider, encryption, backup/restore, object, consistency, durability, restart, and process-fence lanes pass provisionally. Exact-candidate replay waits only for RRC1. See `proof/release-readiness-2026-08/rrc4-storage-recovery.md`. |
+| 2026-08-27 | RRC5 | started | Began the macOS and `nimbus@minicloud` workload-host matrix while the independent RRC1 publication blocker remains recorded. |
