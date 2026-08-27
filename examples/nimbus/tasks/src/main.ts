@@ -19,7 +19,8 @@ interface TenantList {
 
 const tenantId = "demo";
 const table = "tasks";
-const baseUrl = new URLSearchParams(window.location.search).get("server") ?? "http://localhost:8080";
+const baseUrl = new URLSearchParams(window.location.search).get("server")
+  ?? window.location.origin;
 const http = new NimbusRestClient(baseUrl);
 const live = new NimbusSubscriptionClient(baseUrl, tenantId);
 const query: SubscribeQuery = {

@@ -20,9 +20,9 @@ The app implements the full shared [`tasks` spec](../../specs/tasks.md).
 >   Nimbus-only flag; the official `convex` CLI rejects it, so `npm run dev`,
 >   `build`, `codegen`, and `smoke` fail loudly at codegen.
 > - Even past that, the app does not quietly talk to Convex Cloud: the React
->   client pins `http://localhost:8080/convex/demo` (setting
+>   client targets the current page's `/convex/demo` route (setting
 >   `skipConvexDeploymentUrlCheck`), and the smoke uses its own local-server
->   default. A copied-out app keeps targeting your local Nimbus server.
+>   default. A copied-out app still expects a Nimbus-compatible route.
 >
 > Until the `nimbus init --example` scaffolder ships (it rewrites the `convex`
 > workspace dependency to a published Nimbus pin), run this example in place,
@@ -52,13 +52,17 @@ remaining anchors.
 ## Running
 
 ```bash
-nimbus dev
+npm run build -w convex-tasks
+nimbus dev --app-dir examples/convex/tasks --no-open
 nimbus deploy [TARGET] --convex-silo demo
 ```
 
 `TARGET` is a URL or configured target name; omit it to use the local target.
-Tenant creation in browser code is a local-development convenience. Provision
-tenants separately before deploying beyond your own environment.
+`nimbus dev` creates and binds the local `demo` tenant. Provision tenants
+separately before deploying beyond your own environment. Open
+`http://127.0.0.1:3210/examples/convex/tasks/dist/` to run the built browser
+app. It defaults to its page origin; use `?server=<url>` or the documented Vite
+environment variables only when Nimbus is at another origin.
 
 `smoke.ts` requires Node.js >=22 <25 (runs via `--experimental-strip-types`).
 
