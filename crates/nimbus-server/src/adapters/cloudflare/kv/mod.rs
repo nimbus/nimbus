@@ -10,7 +10,7 @@ use axum::{Extension, Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nimbus_core::{Error, SystemWallClock, TenantId, WallClock};
-use nimbus_storage::KvPut;
+use nimbus_storage::{KvEntry, KvPut, KvScanPage};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -25,6 +25,7 @@ const MAX_VALUE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 1024;
 const MIN_EXPIRATION_TTL_SECONDS: i64 = 60;
 pub(super) const DEFAULT_LIST_LIMIT: usize = 1000;
+pub(super) const MIN_LIST_LIMIT: usize = 1;
 pub(super) const MAX_LIST_LIMIT: usize = 1000;
 
 pub(crate) fn router(config: Arc<CloudflareConfig>) -> Router<Arc<AppState>> {
@@ -170,19 +171,17 @@ async fn list_keys(
     ensure_tenant(&state, &tenant_id).await?;
     let namespace = resolve_namespace(&config, &params.account_id, &params.namespace_id)?;
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
-    if limit > MAX_LIST_LIMIT {
-        return Err(KvRestError::bad_request(format!(
-            "Workers KV list limit must be at most {MAX_LIST_LIMIT}"
-        )));
-    }
+    validate_list_limit(limit)?;
+    let scan_limit = limit + 1;
     let prefix = storage_prefix(&namespace, query.prefix.as_deref().unwrap_or_default())?;
     let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
     let page = state
         .engine
-        .tenant_kv_scan(&tenant_id, &prefix, cursor.as_deref(), limit, now_ms())
+        .tenant_kv_scan(&tenant_id, &prefix, cursor.as_deref(), scan_limit, now_ms())
         .map_err(KvRestError::from_core)?;
-    let mut keys = Vec::with_capacity(page.entries.len());
-    for entry in page.entries {
+    let (entries, cursor) = finalize_list_page(page, limit);
+    let mut keys = Vec::with_capacity(entries.len());
+    for entry in entries {
         let name = display_key(&namespace, &entry.key)?;
         let metadata = decode_metadata(&entry.metadata);
         keys.push(KvListedKey {
@@ -191,9 +190,7 @@ async fn list_keys(
             metadata: (!metadata.is_null()).then_some(metadata),
         });
     }
-    let cursor = page
-        .next_cursor
-        .map(|cursor| URL_SAFE_NO_PAD.encode(cursor));
+    let cursor = cursor.map(|cursor| URL_SAFE_NO_PAD.encode(cursor));
     Ok(Json(KvListEnvelope {
         success: true,
         errors: Vec::new(),
@@ -205,6 +202,32 @@ async fn list_keys(
         },
     })
     .into_response())
+}
+
+pub(super) fn validate_list_limit(limit: usize) -> Result<(), KvRestError> {
+    if !(MIN_LIST_LIMIT..=MAX_LIST_LIMIT).contains(&limit) {
+        return Err(KvRestError::bad_request(format!(
+            "Workers KV list limit must be between {MIN_LIST_LIMIT} and {MAX_LIST_LIMIT}"
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn finalize_list_page(
+    page: KvScanPage,
+    requested_limit: usize,
+) -> (Vec<KvEntry>, Option<Vec<u8>>) {
+    let mut entries = page.entries;
+    let has_more = entries.len() > requested_limit;
+    entries.truncate(requested_limit);
+    let cursor = has_more.then(|| {
+        entries
+            .last()
+            .expect("validated nonzero list limit must retain a cursor entry")
+            .key
+            .clone()
+    });
+    (entries, cursor)
 }
 
 fn authenticate(headers: &HeaderMap, config: &CloudflareConfig) -> Result<TenantId, KvRestError> {
@@ -692,6 +715,21 @@ mod tests {
 
         let (status, _, body) = request(
             router,
+            axum::http::Method::PUT,
+            &format!("{base}/values/greeting-two"),
+            Some(AUTH),
+            "hello again".to_string(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "second put body: {}",
+            json_body(&body)
+        );
+
+        let (status, _, body) = request(
+            router,
             axum::http::Method::GET,
             &format!("{base}/keys?prefix=g&limit=1"),
             Some(AUTH),
@@ -709,6 +747,22 @@ mod tests {
                 .is_some_and(|cursor| !cursor.is_empty()),
             "a full page must return a cursor: {json}"
         );
+        let cursor = json["result_info"]["cursor"]
+            .as_str()
+            .expect("full first page should return a cursor");
+        let (status, _, body) = request(
+            router,
+            axum::http::Method::GET,
+            &format!("{base}/keys?prefix=g&limit=1&cursor={cursor}"),
+            Some(AUTH),
+            Body::empty(),
+        )
+        .await;
+        let json = json_body(&body);
+        assert_eq!(status, StatusCode::OK, "second list body: {json}");
+        assert_eq!(json["result"][0]["name"], json!("greeting-two"));
+        assert_eq!(json["result_info"]["list_complete"], json!(true));
+        assert_eq!(json["result_info"]["cursor"], json!(""));
 
         let (status, _, body) = request(
             router,
@@ -746,6 +800,23 @@ mod tests {
         let app = test_app();
         let router = test_router(&app);
         let base = "/client/v4/accounts/acct/storage/kv/namespaces/namespace-prod";
+
+        let (status, _, body) = request(
+            router,
+            axum::http::Method::GET,
+            &format!("{base}/keys?limit=0"),
+            Some(AUTH),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            json_body(&body)["errors"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("between 1 and 1000")),
+            "got {}",
+            json_body(&body)
+        );
 
         let (status, _, body) = request(
             router,
