@@ -60,8 +60,10 @@ event or assigned a document commit sequence.
 There are two current compositions:
 
 - Standalone `nimbus kv --data <path>` opens `RedbTenantKvStore` directly.
-- An embedder that calls `Engine::tenant_kv_*` reaches the same redb tables
-  through the loaded tenant runtime. That bridge supports redb tenants only.
+- An embedder that calls `Engine::tenant_kv_*` reaches the loaded tenant
+  runtime's flat-KV tables. Embedded redb and SQLite tenants implement this
+  bridge. Each backend commits a value, metadata, and expiry change in one
+  local transaction.
 
 Neither composition enters the document mutation committer. Tenant-KV writes
 do not acquire a committer lease, receive a document commit sequence, or append
@@ -73,8 +75,8 @@ Consequences:
 
 - document PITR exports and journal replay do not contain tenant-KV writes;
 - current replica and changefeed paths do not reproduce tenant-KV state;
-- SQLite, libSQL, PostgreSQL, MySQL, and memory tenant providers do not
-  implement the Engine tenant-KV bridge;
+- libSQL, PostgreSQL, MySQL, and memory tenant providers do not implement the
+  Engine tenant-KV bridge;
 - NKV0 has no supported backup/restore operator contract. A closed-file copy is
   not a substitute for the future NKV-DR contract;
 - `--no-disk` remains intentionally volatile.

@@ -39,6 +39,7 @@ mod document_versions;
 pub mod encryption;
 mod index_versions;
 mod journal;
+mod kv;
 mod read;
 // The libsql replica cache is the only reason these SQLite operations exist;
 // `test` keeps the reconciliation path compiled for the SQLite-foundation
@@ -205,6 +206,17 @@ CREATE TABLE IF NOT EXISTS metadata (
     key TEXT NOT NULL PRIMARY KEY,
     value_blob BLOB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tenant_kv_values (
+    key BLOB NOT NULL PRIMARY KEY,
+    value BLOB NOT NULL,
+    metadata_blob BLOB NOT NULL,
+    expire_at_ms INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_kv_values_expiry
+    ON tenant_kv_values (expire_at_ms)
+    WHERE expire_at_ms IS NOT NULL;
 "#;
 
 // Floor for the read pool. The engine legitimately holds several read

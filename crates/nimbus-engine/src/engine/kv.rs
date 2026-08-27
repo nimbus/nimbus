@@ -1,4 +1,4 @@
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Result, TenantId};
 use nimbus_storage::{KvBatchOp, KvBatchOutcome, KvEntry, KvPut, KvScanPage, TenantKvStore};
 
 use crate::persistence::TenantPersistence;
@@ -52,9 +52,7 @@ impl Engine {
         with_tenant_runtime_operation(self.get_existing_tenant(tenant_id)?, tenant_id, |runtime| {
             match runtime.store() {
                 TenantPersistence::Redb(store) => task(store.as_ref()),
-                TenantPersistence::Sqlite(_) => Err(Error::Internal(
-                    "TenantKvStore is not available for the configured tenant provider".to_string(),
-                )),
+                TenantPersistence::Sqlite(store) => task(store.as_ref()),
                 #[cfg(feature = "libsql")]
                 TenantPersistence::LibsqlReplica(_) => Err(Error::Internal(
                     "TenantKvStore is not available for the configured tenant provider".to_string(),

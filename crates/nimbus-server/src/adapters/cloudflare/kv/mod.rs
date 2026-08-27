@@ -535,10 +535,14 @@ mod tests {
 
     impl KvTestApp {
         fn new() -> Self {
-            let fixture = EngineFixture::new(|path| {
-                Engine::new_with_embedded_provider(path, EmbeddedProviderKind::Redb)
-            });
+            let fixture = EngineFixture::new(Engine::new);
             Self::from_fixture(fixture)
+        }
+
+        fn with_redb_provider() -> Self {
+            Self::from_fixture(EngineFixture::new(|path| {
+                Engine::new_with_embedded_provider(path, EmbeddedProviderKind::Redb)
+            }))
         }
 
         fn with_memory_provider() -> Self {
@@ -720,6 +724,21 @@ mod tests {
             "missing-key delete should succeed: {}",
             json_body(&body)
         );
+    }
+
+    #[tokio::test]
+    async fn kv_rest_contract_remains_available_with_redb_tenants() {
+        let app = KvTestApp::with_redb_provider();
+        let base = "/client/v4/accounts/acct/storage/kv/namespaces/namespace-prod";
+        let (status, _, body) = request(
+            test_router(&app),
+            axum::http::Method::PUT,
+            &format!("{base}/values/redb"),
+            Some(AUTH),
+            "value".to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "put body: {}", json_body(&body));
     }
 
     #[tokio::test]
