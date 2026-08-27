@@ -27,8 +27,8 @@ use crate::adapters::http_mount::{
 use crate::config::transport::TransportConfig;
 use crate::license::LicenseState;
 use crate::local_server::{
-    LocalServerAccessPolicy, LocalServerSecurityState, origin_allowlist_middleware,
-    route_family_gate_middleware, server_access_extract_middleware,
+    LocalServerAccessPolicy, LocalServerOriginPolicy, LocalServerSecurityState,
+    origin_allowlist_middleware, route_family_gate_middleware, server_access_extract_middleware,
 };
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::state::{AppState, AppStateConfig};
@@ -42,6 +42,7 @@ use nimbus_services::ServiceManager;
 
 mod cors;
 
+pub(crate) use self::cors::CorsOriginPolicy;
 use self::cors::build_cors_layer;
 
 pub use cors::normalize_cors_origin;
@@ -602,6 +603,9 @@ impl RouterBuildConfig {
 
         let local_admin_policy = LocalServerAccessPolicy::standard(state.clone());
         let deploy_admin_policy = LocalServerAccessPolicy::deploy(state.clone());
+        let cors_origin_policy = CorsOriginPolicy::new(&cors_allowed_origins);
+        let origin_allowlist_policy =
+            LocalServerOriginPolicy::new(state.clone(), cors_origin_policy.clone());
 
         let router = build_public_router()
             .merge(build_ui_router().route_layer(middleware::from_fn(http::ui_csp_middleware)))
@@ -638,9 +642,9 @@ impl RouterBuildConfig {
             ],
         );
         router
-            .layer(build_cors_layer(&cors_allowed_origins))
+            .layer(build_cors_layer(cors_origin_policy))
             .layer(middleware::from_fn_with_state(
-                state.clone(),
+                origin_allowlist_policy,
                 origin_allowlist_middleware,
             ))
             .with_state(state)

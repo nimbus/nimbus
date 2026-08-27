@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Response};
 use super::{
     LocalServerAuditEvent, LocalServerRouteFamily, origin_from_headers, tenant_id_from_request,
 };
+use crate::router::CorsOriginPolicy;
 use crate::state::{AppError, AppState};
 use nimbus_operator::{
     ExtractedServerAccess, ExtractedServerAccessStatus, LocalServerCredentialMode,
@@ -18,6 +19,18 @@ use nimbus_operator::{
 pub(crate) struct LocalServerAccessPolicy {
     app_state: Arc<AppState>,
     credential_mode: LocalServerCredentialMode,
+}
+
+#[derive(Clone)]
+pub(crate) struct LocalServerOriginPolicy {
+    app_state: Arc<AppState>,
+    cors: CorsOriginPolicy,
+}
+
+impl LocalServerOriginPolicy {
+    pub(crate) fn new(app_state: Arc<AppState>, cors: CorsOriginPolicy) -> Self {
+        Self { app_state, cors }
+    }
 }
 
 impl LocalServerAccessPolicy {
@@ -41,30 +54,37 @@ impl LocalServerAccessPolicy {
 }
 
 pub(crate) async fn origin_allowlist_middleware(
-    State(state): State<Arc<AppState>>,
+    State(policy): State<LocalServerOriginPolicy>,
     mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     let path = request.uri().path().to_string();
     let route_family = LocalServerRouteFamily::classify_request(&path, request.headers());
     request.extensions_mut().insert(route_family);
+    let transport_origin_allowed = request
+        .headers()
+        .get(axum::http::header::ORIGIN)
+        .is_some_and(|origin| policy.cors.allows(origin));
     if route_family.requires_origin_allowlist()
         && let Err(error) = validate_origin(
             route_family,
-            state.listen_addr().map(|addr| addr.port()),
+            policy.app_state.listen_addr().map(|addr| addr.port()),
             request.method(),
             request.headers(),
+            transport_origin_allowed,
         )
     {
-        state.record_local_server_audit(LocalServerAuditEvent {
-            route_family,
-            tenant_id: tenant_id_from_request(&path, request.headers()),
-            auth_scope: "origin",
-            auth_method: None,
-            success: false,
-            origin: origin_from_headers(request.headers()),
-            reason: error.to_string(),
-        });
+        policy
+            .app_state
+            .record_local_server_audit(LocalServerAuditEvent {
+                route_family,
+                tenant_id: tenant_id_from_request(&path, request.headers()),
+                auth_scope: "origin",
+                auth_method: None,
+                success: false,
+                origin: origin_from_headers(request.headers()),
+                reason: error.to_string(),
+            });
         return AppError::from(error).into_response();
     }
     next.run(request).await

@@ -1526,7 +1526,7 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
 }
 
 #[tokio::test]
-async fn cors_preflight_only_allows_loopback_browser_origins() {
+async fn cors_preflight_enforces_the_complete_browser_origin_policy() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
 
@@ -1561,6 +1561,31 @@ async fn cors_preflight_only_allows_loopback_browser_origins() {
             .get("access-control-allow-origin")
             .is_none(),
         "non-loopback origins must not receive a CORS allow-origin header"
+    );
+
+    let configured_server = ServerFixture::start(build_router(
+        RouterOptions::protocol_only(fixture.engine())
+            .with_cors_allowed_origins(vec!["https://app.example.com".to_string()]),
+    ))
+    .await;
+    let configured = configured_server
+        .client()
+        .request(
+            reqwest::Method::OPTIONS,
+            configured_server.http_url("/api/tenants"),
+        )
+        .header("origin", "https://app.example.com")
+        .header("access-control-request-method", "POST")
+        .send()
+        .await
+        .expect("configured-origin preflight should send");
+    assert_eq!(
+        configured
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("https://app.example.com"),
+        "the security gate and CORS layer must honor the same configured origin"
     );
 }
 
