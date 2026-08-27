@@ -535,7 +535,7 @@ mod tests {
 
     impl KvTestApp {
         fn new() -> Self {
-            let fixture = EngineFixture::new(Engine::new);
+            let fixture = EngineFixture::new(|path| Engine::new(path));
             Self::from_fixture(fixture)
         }
 
