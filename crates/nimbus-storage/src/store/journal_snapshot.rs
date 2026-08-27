@@ -605,6 +605,10 @@ impl TenantStore {
             .publish_read_floors_with_commit(floors, || {
                 write_txn.commit().map_err(map_redb_error)
             })?;
+        let restored_position = self
+            .export_materialized_journal_snapshot()?
+            .materialized_position()?;
+        validate_restored_point_in_time_position(&restored_position, &archive.target_position)?;
         self.fault_injector.check_durable_records(
             crate::FaultPoint::JournalFlushBeforeVisibility,
             &archive.journal_tail,
@@ -804,20 +808,28 @@ pub(crate) fn validate_point_in_time_archive_materialization(
         &archive.journal_tail,
         archive.target_sequence,
     )?;
-    if restored_position != archive.target_position {
-        return Err(Error::storage(
-            nimbus_core::StorageErrorKind::Corruption,
-            format!(
-                "point-in-time restore position mismatch: restored {} expected {}",
-                describe_materialized_position(&restored_position),
-                describe_materialized_position(&archive.target_position)
-            ),
-        ));
-    }
+    validate_restored_point_in_time_position(&restored_position, &archive.target_position)?;
     MaterializedRetentionCheckpoint::new(
         archive.base_snapshot.clone(),
         archive.base_checkpoint_timestamp,
     )
+}
+
+pub(crate) fn validate_restored_point_in_time_position(
+    restored_position: &MaterializedPosition,
+    expected_position: &MaterializedPosition,
+) -> Result<()> {
+    if restored_position != expected_position {
+        return Err(Error::storage(
+            nimbus_core::StorageErrorKind::Corruption,
+            format!(
+                "point-in-time restore position mismatch: restored {} expected {}",
+                describe_materialized_position(restored_position),
+                describe_materialized_position(expected_position)
+            ),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn resolve_point_in_time_target(

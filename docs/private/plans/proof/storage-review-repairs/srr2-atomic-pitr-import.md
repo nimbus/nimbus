@@ -14,6 +14,11 @@ The importer validates the archive and replays it into a disposable store
 before it opens the destination write transaction. A target-position mismatch
 therefore fails before the destination changes.
 
+After the visibility boundary, each embedded provider exports the actual
+destination position and compares it with the archive target. A
+provider-specific materialization error therefore returns a typed corruption
+error instead of reporting a successful import.
+
 Redb and SQLite seed one document version for each live checkpoint document and
 one open index interval for each maintained checkpoint tuple. Tail replay then
 closes or replaces those anchors through the normal version-writing seams.
@@ -45,6 +50,8 @@ Baseline result: two tests failed.
   Both stores return the updated rank at sequence 5.
 - Reopening the imported redb and SQLite files preserves the same historical
   document and index results.
+- Memory, redb, and SQLite each export the expected destination position after
+  a successful nonzero-base import.
 - The failed redb and SQLite imports contain zero document-version and
   index-version rows.
 

@@ -846,6 +846,13 @@ impl MemoryTenantStore {
                 Ok(())
             })?;
         drop(live);
+        let restored_position = self
+            .export_materialized_journal_snapshot()?
+            .materialized_position()?;
+        crate::store::validate_restored_point_in_time_position(
+            &restored_position,
+            &archive.target_position,
+        )?;
         self.check_durable_records_fault(
             FaultPoint::JournalFlushBeforeVisibility,
             &archive.journal_tail,

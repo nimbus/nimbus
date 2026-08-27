@@ -296,6 +296,13 @@ impl SqliteTenantStore {
             load_schema_from_conn(&conn).and_then(|schema| self.replace_cached_schema(schema));
         self.release_writer_connection(conn);
         schema_cache_result?;
+        let restored_position = self
+            .export_materialized_journal_snapshot()?
+            .materialized_position()?;
+        crate::store::validate_restored_point_in_time_position(
+            &restored_position,
+            &archive.target_position,
+        )?;
 
         self.fault_injector.check_durable_records(
             FaultPoint::JournalFlushBeforeVisibility,

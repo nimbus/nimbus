@@ -219,6 +219,14 @@ fn indexed_nonzero_base_archive() -> IndexedNonzeroBaseArchive {
 
 fn assert_redb_imported_history(store: &TenantStore, fixture: &IndexedNonzeroBaseArchive) {
     let snapshot = store.read_snapshot().expect("redb snapshot should open");
+    assert_eq!(
+        snapshot
+            .export_materialized_journal_snapshot()
+            .expect("redb restored state should export")
+            .materialized_position()
+            .expect("redb restored position should compute"),
+        fixture.archive.target_position
+    );
     for sequence in [SequenceNumber(3), SequenceNumber(4)] {
         assert_eq!(
             snapshot
@@ -257,6 +265,14 @@ fn assert_redb_imported_history(store: &TenantStore, fixture: &IndexedNonzeroBas
 
 fn assert_sqlite_imported_history(store: &SqliteTenantStore, fixture: &IndexedNonzeroBaseArchive) {
     let snapshot = store.read_snapshot().expect("SQLite snapshot should open");
+    assert_eq!(
+        snapshot
+            .export_materialized_journal_snapshot()
+            .expect("SQLite restored state should export")
+            .materialized_position()
+            .expect("SQLite restored position should compute"),
+        fixture.archive.target_position
+    );
     for sequence in [SequenceNumber(3), SequenceNumber(4)] {
         assert_eq!(
             snapshot
@@ -848,6 +864,14 @@ fn memory_retention_checkpoint_survives_restart_and_restores_from_retained_check
     restored
         .import_point_in_time_restore_archive(&archive)
         .expect("nonzero memory base should restore");
+    assert_eq!(
+        restored
+            .export_materialized_journal_snapshot()
+            .expect("restored memory state should export")
+            .materialized_position()
+            .expect("restored memory position should compute"),
+        archive.target_position
+    );
     assert_eq!(
         restored
             .export_durable_journal_bootstrap()

@@ -44,7 +44,7 @@ pub use journal_snapshot::{
 pub(crate) use journal_snapshot::{
     build_point_in_time_restore_archive_from_checkpoint, describe_materialized_position,
     materialized_snapshot_after_rebuild, snapshot_document_anchor_writes,
-    validate_point_in_time_archive_materialization,
+    validate_point_in_time_archive_materialization, validate_restored_point_in_time_position,
 };
 pub use journal_stream::{
     DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DurableJournalBootstrap, DurableJournalPage,
