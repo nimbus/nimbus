@@ -189,8 +189,18 @@ impl ArmedLibsqlCommitAcknowledgementLoss {
 }
 
 impl FaultInjector for ArmedLibsqlCommitAcknowledgementLoss {
-    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+    fn check(&self, _point: FaultPoint) -> nimbus_core::Result<()> {
+        Ok(())
+    }
+
+    fn check_for_tenant(
+        &self,
+        point: FaultPoint,
+        _tenant_id: &TenantId,
+        records: &[nimbus_core::TenantEventRecord],
+    ) -> nimbus_core::Result<()> {
         if point == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
+            && !records.is_empty()
             && self.armed.load(Ordering::Acquire)
             && !self.fired.swap(true, Ordering::AcqRel)
         {
