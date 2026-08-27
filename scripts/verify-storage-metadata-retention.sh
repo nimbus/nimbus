@@ -51,22 +51,6 @@ contains_each() {
   done
 }
 
-if [[ "${1:-}" == '--require-each' ]]; then
-  shift
-  pattern="${1:-}"
-  if [[ -z "${pattern}" ]]; then
-    printf 'usage: %s --require-each PATTERN PATH...\n' "$0" >&2
-    exit 2
-  fi
-  shift
-  if (($# == 0)); then
-    printf 'require-each needs at least one path\n' >&2
-    exit 2
-  fi
-  contains_each "${pattern}" "$@"
-  exit $?
-fi
-
 if contains_all crates/nimbus-storage/src/retention.rs \
   'enum RetentionGcResource' \
   'struct RetentionGcWatermarks' \

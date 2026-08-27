@@ -22,9 +22,11 @@ paths can omit the required evidence without changing that result.
 
 ## Mutation Evidence
 
-The new helper creates a green fixture for each per-path group. It then removes
-the required evidence from one path at a time. Each removal must make the
-`--require-each` check fail.
+The helper copies the real storage, engine, and closeout-proof inputs into an
+isolated repository tree. It first requires the full verifier to pass all 18
+conditions. It then removes one real path at a time and reruns the full
+verifier. Each removal must fail the owning condition, not only a shared search
+primitive.
 
 The helper covered five groups and 18 individual omissions:
 
@@ -38,7 +40,7 @@ The helper covered five groups and 18 individual omissions:
 
 | Command or gate | Result |
 | --- | --- |
-| `bash scripts/verify-storage-metadata-retention-helper.sh` | 5 groups passed; all 18 omission mutations failed closed. |
+| `bash scripts/verify-storage-metadata-retention-helper.sh` | 5 real condition groups passed; all 18 path omissions failed their owning condition. |
 | `bash scripts/verify-storage-metadata-retention.sh` | `Summary: 18 passed, 0 failed`. |
 | `bash -n` on both scripts | Passed. |
 | `shellcheck` on both scripts | Passed with zero diagnostics. |
