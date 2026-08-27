@@ -85,11 +85,20 @@ impl SqliteTenantStore {
         let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
-        ensure_materialized_journal_restore_target_is_empty_in_conn(&conn)?;
-        restore_materialized_journal_snapshot_in_conn(self, &conn, snapshot)?;
+        let staged = (|| -> Result<()> {
+            ensure_materialized_journal_restore_target_is_empty_in_conn(&conn)?;
+            restore_materialized_journal_snapshot_in_conn(self, &conn, snapshot)
+        })();
+        if let Err(error) = staged {
+            rollback_and_release_writer_connection(self, conn);
+            return Err(error);
+        }
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
-        conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        if let Err(error) = conn.execute_batch("COMMIT").map_err(map_sqlite_error) {
+            rollback_and_release_writer_connection(self, conn);
+            return Err(error);
+        }
         #[cfg(any(test, feature = "test-hooks"))]
         observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         self.release_writer_connection(conn);
@@ -261,9 +270,7 @@ impl SqliteTenantStore {
         })();
 
         if let Err(error) = staged {
-            if conn.execute_batch("ROLLBACK").is_ok() {
-                self.release_writer_connection(conn);
-            }
+            rollback_and_release_writer_connection(self, conn);
             return Err(error);
         }
 
@@ -274,10 +281,15 @@ impl SqliteTenantStore {
         );
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
-        self.retention_floor
+        if let Err(error) = self
+            .retention_floor
             .publish_read_floors_with_commit(floors, || {
                 conn.execute_batch("COMMIT").map_err(map_sqlite_error)
-            })?;
+            })
+        {
+            rollback_and_release_writer_connection(self, conn);
+            return Err(error);
+        }
         #[cfg(any(test, feature = "test-hooks"))]
         observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         let schema_cache_result =
@@ -450,6 +462,14 @@ impl SqliteTenantStore {
         let pending = self.read_durable_journal_from(from)?;
         self.replay_durable_records_batch(&pending)?;
         self.journal_progress()
+    }
+}
+
+fn rollback_and_release_writer_connection(store: &SqliteTenantStore, conn: Connection) {
+    // Return the resident connection only after a clean rollback. A failed
+    // rollback drops it so the next writer opens a known-clean connection.
+    if conn.execute_batch("ROLLBACK").is_ok() {
+        store.release_writer_connection(conn);
     }
 }
 

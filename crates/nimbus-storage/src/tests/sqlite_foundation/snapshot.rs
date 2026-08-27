@@ -215,6 +215,33 @@ fn sqlite_point_in_time_archive_accepts_sequence_zero_restore_metadata() {
 }
 
 #[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_failed_snapshot_restore_returns_clean_resident_writer() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    store
+        .insert(&sample_document("tasks", "existing"))
+        .expect("existing document should persist");
+    store.reset_write_test_observation();
+
+    store
+        .restore_materialized_journal_from_snapshot(
+            &crate::MaterializedJournalSnapshot::empty_for_point_in_time_base(),
+        )
+        .expect_err("restore into a populated target should fail");
+    store
+        .insert(&sample_document("tasks", "after-failure"))
+        .expect("the next write should reuse the clean resident connection");
+
+    assert_eq!(
+        store.write_test_observation().writer_opens,
+        0,
+        "a failed restore must roll back and return the resident writer"
+    );
+}
+
+#[test]
 fn sqlite_materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
