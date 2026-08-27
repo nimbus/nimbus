@@ -1,9 +1,10 @@
 # Nimbus Release Readiness 2026-08
 
-Status: `active` | Owner: this plan | Created: 2026-08-27
+Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: audit code, claims, security, workflows, and release configuration in RRC1
+Next action: run the macOS candidate product smoke in RRC2 while RRC1 waits for
+an owner-approved, reachable Deno ref
 
 ## Outcome
 
@@ -83,8 +84,8 @@ renamed, duplicated, or unsupported condition.
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | RRC0 | Pin both repositories, hosts, published state, and the red release verifier. | `done` | `proof/release-readiness-2026-08/rrc0-baseline.md` |
-| RRC1 | Audit source, advertised claims, dependency security, workflows, and release configuration. | `in_progress` | |
-| RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `todo` | |
+| RRC1 | Audit source, advertised claims, dependency security, workflows, and release configuration. | `blocked(Deno WebSocket hook needs a reachable ref)` | `proof/release-readiness-2026-08/rrc1-audit.md`, `proof/release-readiness-2026-08/rrc1-capability-trace.md` |
+| RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `in_progress` | |
 | RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `todo` | |
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `todo` | |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `todo` | |
@@ -283,3 +284,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-27 | RRC0 | started | Created the stacked candidate branch from storage-repair head `1403bc780`. No production behavior changed. |
 | 2026-08-27 | RRC0 | done | Pinned both repositories, both hosts, toolchains, release state, hosted failures, and the red verifier in `proof/release-readiness-2026-08/rrc0-baseline.md`. |
 | 2026-08-27 | RRC1 | started | Began the source, claim, security, workflow, and release-configuration audit. |
+| 2026-08-27 | RRC1 | finding | Recorded eleven source, dependency, workflow, canary, and cleanup findings in `proof/release-readiness-2026-08/rrc1-audit.md`. RRC1-010 confirms that `new WebSocket()` does not use the production tenant `EgressGateway`; repair is in progress. |
+| 2026-08-27 | RRC1 | checkpoint | Committed the workflow, JavaScript, UI, canary, desktop dependency, and vendored warning repairs in Nimbus commits `adcfa82ce`, `2f43b116f`, and `0e15e58aa`, desktop commit `4ee5c83`, and Deno commit `4136492f7f`. The capability trace covers all 42 advertised rows and all three client mutation paths. |
+| 2026-08-27 | RRC1 | blocked | The WebSocket egress repair passes focused tests and full Clippy with local Deno paths. A clean Nimbus dependency cannot consume Deno commits `5d07e09121` and `4136492f7f` until they have a reachable ref. This plan does not authorize a push or tag. |
+| 2026-08-27 | RRC2 | started | Began the macOS candidate build and end-to-end product smoke while the independent RRC1 publication blocker remains recorded. |
