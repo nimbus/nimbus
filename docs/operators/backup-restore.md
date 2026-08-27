@@ -59,6 +59,11 @@ nimbus backup restore --in backups/nimbus-backup.json --data-dir ./restored
 
 - `--provider` selects the embedded backend (`sqlite`, the default, or
   `redb`).
+- If the stopped deployment uses a separate control root, pass its
+  `--control-data-dir` to `create`. Pass the new deployment's control root to
+  `restore`. Nimbus needs that control plane to read and create the durable
+  tenant incarnations that belong with each archive. Both commands default the
+  control root to their `--data-dir`.
 - The command intentionally has no PostgreSQL, MySQL, or libSQL provider
   value. It constructs an embedded engine and cannot be pointed at an
   external-provider deployment; use the backend-native procedures below.

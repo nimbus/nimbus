@@ -336,7 +336,9 @@ nimbus backup restore --in <file> --data-dir ./data
 Offline whole-deployment backup and restore for the embedded providers
 (`--provider sqlite|redb`): one point-in-time archive per tenant in a
 single file, fingerprint-verified on restore. Run with the server
-stopped; restore requires a fresh data directory. See
+stopped; restore requires a fresh data directory. Pass
+`--control-data-dir <dir>` on each command when the deployment keeps its
+control plane outside `--data-dir`. See
 [Backup & restore](/operators/backup-restore/) for procedures, encrypted
 deployments, and external backends.
 
