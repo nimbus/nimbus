@@ -52,6 +52,9 @@ Baseline result: two tests failed.
   document and index results.
 - Memory, redb, and SQLite each export the expected destination position after
   a successful nonzero-base import.
+- A `JournalFlushBeforeVisibility` fault follows the atomic durable commit. The
+  Engine probes the advanced durable head, evicts the failed runtime, and
+  crash-replays the complete archive without reusing a sequence.
 - The failed redb and SQLite imports contain zero document-version and
   index-version rows.
 

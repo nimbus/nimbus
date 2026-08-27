@@ -591,7 +591,11 @@ async fn trigger_cursor_unreadable_progress_evicts_and_replays() {
     exercise_trigger_cursor_outcome(OutcomeCase::Unreadable, "trigger-cursor-unreadable").await;
 }
 
-async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str) {
+async fn exercise_point_in_time_restore_outcome(
+    case: OutcomeCase,
+    tenant: &str,
+    advanced_fault_point: FaultPoint,
+) {
     let source_dir = tempdir().expect("restore source tempdir should build");
     let source_engine =
         Arc::new(Engine::new(source_dir.path()).expect("restore source engine should create"));
@@ -618,7 +622,7 @@ async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str)
         .expect("point-in-time restore archive should export");
 
     let point = match case {
-        OutcomeCase::Advanced => FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        OutcomeCase::Advanced => advanced_fault_point,
         OutcomeCase::Unchanged | OutcomeCase::Unreadable => {
             FaultPoint::StorageCommitBeforeVisibility
         }
@@ -792,15 +796,40 @@ async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str)
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn point_in_time_restore_unchanged_head_is_definitive_can_retry_and_stays_live() {
-    exercise_point_in_time_restore_outcome(OutcomeCase::Unchanged, "restore-definitive").await;
+    exercise_point_in_time_restore_outcome(
+        OutcomeCase::Unchanged,
+        "restore-definitive",
+        FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn point_in_time_restore_advanced_head_evicts_replays_and_does_not_reuse_sequence() {
-    exercise_point_in_time_restore_outcome(OutcomeCase::Advanced, "restore-advanced").await;
+    exercise_point_in_time_restore_outcome(
+        OutcomeCase::Advanced,
+        "restore-advanced",
+        FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn point_in_time_restore_journal_flush_fault_is_a_committed_outcome() {
+    exercise_point_in_time_restore_outcome(
+        OutcomeCase::Advanced,
+        "restore-journal-flush-advanced",
+        FaultPoint::JournalFlushBeforeVisibility,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn point_in_time_restore_unreadable_progress_evicts_and_replays() {
-    exercise_point_in_time_restore_outcome(OutcomeCase::Unreadable, "restore-unreadable").await;
+    exercise_point_in_time_restore_outcome(
+        OutcomeCase::Unreadable,
+        "restore-unreadable",
+        FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+    )
+    .await;
 }
