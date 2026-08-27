@@ -590,6 +590,10 @@ fn podman_machine_os_requires_host_guest_nimbus_sync() {
         requires_host_guest_nimbus_sync(&config),
         cfg!(target_os = "macos")
     );
+    assert_eq!(
+        requires_ssh_guest_api_convergence(&config),
+        cfg!(target_os = "macos")
+    );
 }
 
 #[test]
@@ -606,6 +610,7 @@ fn bootc_machine_os_uses_baked_nimbus_binary_without_host_sync() {
 
     assert!(requires_bootc_machine_config(&config));
     assert!(!requires_host_guest_nimbus_sync(&config));
+    assert!(!requires_ssh_guest_api_convergence(&config));
 
     let error = validate_machine_bootstrap_contract(&config)
         .expect_err("bootc-native provisioning should still require machine SSH identity");
