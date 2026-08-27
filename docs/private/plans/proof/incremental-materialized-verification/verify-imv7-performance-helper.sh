@@ -19,8 +19,8 @@ ok() { printf '  PASS  %s\n' "$1"; pass=$((pass + 1)); }
 no() { printf '  FAIL  %s  [%s]\n' "$1" "$2"; fail=$((fail + 1)); }
 
 expect_failure() {
-  local label="$1" candidate="$2" output status
-  output="$(python3 "$VERIFIER" "$FULL" "$candidate" 2>&1)"
+  local label="$1" full="$2" candidate="$3" output status
+  output="$(python3 "$VERIFIER" "$full" "$candidate" 2>&1)"
   status=$?
   if [ "$status" -ne 0 ] \
     && [[ "$output" == IMV7\ performance\ proof\ invalid:* ]] \
@@ -77,11 +77,58 @@ million["resident_bytes_per_leaf"] = 193
 (root / "large.json").write_text(json.dumps(large), encoding="utf-8")
 PY
 
-expect_failure "malformed JSON" "$TEMP_ROOT/malformed.json"
-expect_failure "empty candidate" "$TEMP_ROOT/empty.json"
-expect_failure "censored candidate" "$TEMP_ROOT/censored.json"
-expect_failure "slow candidate" "$TEMP_ROOT/slow.json"
-expect_failure "high-memory candidate" "$TEMP_ROOT/large.json"
+python3 - "$FULL" "$TEMP_ROOT" <<'PY'
+import copy
+import json
+import pathlib
+import sys
+
+source = json.load(open(sys.argv[1]))
+root = pathlib.Path(sys.argv[2])
+
+truncated = copy.deepcopy(source)
+decisive = next(
+    row
+    for row in truncated["matrix"]
+    if (row["documents"], row["payload_bytes"], row["churn_basis_points"])
+    == (100_000, 1_024, 10)
+)
+decisive["full"]["samples"] = decisive["full"]["samples"][:1]
+sample = decisive["full"]["samples"][0]["elapsed_ns"]
+decisive["full"]["summary"] = {
+    "sample_count": 1,
+    "p50_ns": sample,
+    "p95_ns": sample,
+    "p99_ns": sample,
+}
+(root / "truncated-full.json").write_text(json.dumps(truncated), encoding="utf-8")
+
+wrong_host = copy.deepcopy(source)
+wrong_host["target_arch"] = "x86_64"
+(root / "wrong-full-host.json").write_text(json.dumps(wrong_host), encoding="utf-8")
+PY
+
+python3 - "$CANDIDATE" "$TEMP_ROOT" <<'PY'
+import copy
+import json
+import pathlib
+import sys
+
+source = json.load(open(sys.argv[1]))
+root = pathlib.Path(sys.argv[2])
+wrong_host = copy.deepcopy(source)
+wrong_host.pop("target_os")
+(root / "missing-candidate-host.json").write_text(json.dumps(wrong_host), encoding="utf-8")
+PY
+
+expect_failure "malformed JSON" "$FULL" "$TEMP_ROOT/malformed.json"
+expect_failure "empty candidate" "$FULL" "$TEMP_ROOT/empty.json"
+expect_failure "censored candidate" "$FULL" "$TEMP_ROOT/censored.json"
+expect_failure "slow candidate" "$FULL" "$TEMP_ROOT/slow.json"
+expect_failure "high-memory candidate" "$FULL" "$TEMP_ROOT/large.json"
+expect_failure "truncated decisive full samples" "$TEMP_ROOT/truncated-full.json" "$CANDIDATE"
+expect_failure "wrong full-matrix host class" "$TEMP_ROOT/wrong-full-host.json" "$CANDIDATE"
+expect_failure "missing candidate host class" "$FULL" "$TEMP_ROOT/missing-candidate-host.json"
 
 echo "====================================="
 echo "Summary: $pass passed, $fail failed"

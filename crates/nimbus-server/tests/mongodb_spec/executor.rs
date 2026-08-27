@@ -6,9 +6,9 @@ use nimbus_server::{
     MongoDbAuthConfig, MongoDbConfig, PreboundServerListeners, ServeOptions, serve,
 };
 use nimbus_testing::EngineFixture;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tokio::time::{Duration, Instant, sleep};
+use tokio::time::{Duration, Instant, sleep, timeout};
 
 use super::runner::{self, SpecTest, SpecTestFile, TestResult};
 use super::wire_client::WireClient;
@@ -54,7 +54,7 @@ impl SpecTestFixture {
             .with_prebound_wire_listeners(prebound)
             .expect("test server should adopt the pre-bound MongoDB listener");
         let mut server = tokio::spawn(serve(http_listener, options));
-        wait_for_tcp_port(addr, &mut server).await;
+        wait_for_mongodb_ready(addr, &mut server).await;
 
         Self {
             _fixture: fixture,
@@ -70,21 +70,44 @@ impl Drop for SpecTestFixture {
     }
 }
 
-async fn wait_for_tcp_port(addr: SocketAddr, server: &mut JoinHandle<std::io::Result<()>>) {
+async fn wait_for_mongodb_ready(addr: SocketAddr, server: &mut JoinHandle<std::io::Result<()>>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if server.is_finished() {
             let result = server.await;
-            panic!("Nimbus server exited before MongoDB listener accepted connections: {result:?}");
+            panic!("Nimbus server exited before MongoDB became ready: {result:?}");
         }
-        match TcpStream::connect(addr).await {
-            Ok(_) => return,
-            Err(error) if Instant::now() < deadline => {
-                sleep(Duration::from_millis(25)).await;
-                drop(error);
+
+        let attempt_error = match WireClient::try_connect(addr).await {
+            Ok(mut client) => {
+                let hello = timeout(
+                    Duration::from_millis(250),
+                    client.try_command(&bson::doc! {
+                        "hello": 1,
+                        "helloOk": true,
+                        "$db": "admin",
+                    }),
+                )
+                .await;
+                match hello {
+                    Ok(Ok(response))
+                        if response.get_f64("ok").unwrap_or(0.0) == 1.0
+                            && response.get_bool("isWritablePrimary").unwrap_or(false) =>
+                    {
+                        return;
+                    }
+                    Ok(Ok(response)) => format!("MongoDB hello returned {response:?}"),
+                    Ok(Err(error)) => error,
+                    Err(_) => "MongoDB hello timed out".to_string(),
+                }
             }
-            Err(error) => panic!("MongoDB listener at {addr} did not become ready: {error}"),
+            Err(error) => error.to_string(),
+        };
+
+        if Instant::now() >= deadline {
+            panic!("MongoDB listener at {addr} did not become ready: {attempt_error}");
         }
+        sleep(Duration::from_millis(25)).await;
     }
 }
 

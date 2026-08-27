@@ -13,6 +13,9 @@ from typing import Any
 
 DECISIVE_COORDINATE = (100_000, 1_024, 10)
 MILLION_COORDINATE = (1_000_000, 1_024, 10)
+EXPECTED_TARGET_OS = "macos"
+EXPECTED_TARGET_ARCH = "aarch64"
+FULL_SAMPLES = 3
 EXPECTED_COORDINATES = set(
     itertools.product(
         (10_000, 100_000, 1_000_000),
@@ -98,7 +101,20 @@ def find_matrix_row(
 
 def validate_full_matrix(report: dict[str, Any]) -> tuple[int, int, float, float]:
     require(report.get("format_version") == 2, "full matrix format_version must be 2")
+    require(report.get("target_os") == EXPECTED_TARGET_OS, "full matrix target_os must be macos")
+    require(
+        report.get("target_arch") == EXPECTED_TARGET_ARCH,
+        "full matrix target_arch must be aarch64",
+    )
     require(report.get("interval_seconds") == 60, "verification interval must be 60 seconds")
+    require(
+        report.get("full_samples_per_rung") == FULL_SAMPLES,
+        f"full matrix must declare {FULL_SAMPLES} full samples per rung",
+    )
+    require(
+        report.get("candidate_samples_per_rung") == CANDIDATE_SAMPLES,
+        f"full matrix must declare {CANDIDATE_SAMPLES} candidate samples per rung",
+    )
     rows = report.get("matrix")
     require(type(rows) is list and len(rows) == 36, "full matrix must contain 36 rows")
     require(all(type(row) is dict for row in rows), "every matrix row must be an object")
@@ -112,7 +128,10 @@ def validate_full_matrix(report: dict[str, Any]) -> tuple[int, int, float, float
     require(type(full) is dict, "decisive full measurement must be an object")
     require(full.get("status") == "measured", "decisive full status must be measured")
     samples = full.get("samples")
-    require(type(samples) is list and samples, "decisive full samples must not be empty")
+    require(
+        type(samples) is list and len(samples) == FULL_SAMPLES,
+        f"decisive full measurement must contain {FULL_SAMPLES} samples",
+    )
     elapsed_samples: list[int] = []
     extra_rss_samples: list[int] = []
     for index, sample in enumerate(samples):
@@ -163,6 +182,11 @@ def validate_full_matrix(report: dict[str, Any]) -> tuple[int, int, float, float
 
 def validate_candidate(report: dict[str, Any]) -> dict[int, tuple[int, int]]:
     require(report.get("format_version") == 1, "candidate format_version must be 1")
+    require(report.get("target_os") == EXPECTED_TARGET_OS, "candidate target_os must be macos")
+    require(
+        report.get("target_arch") == EXPECTED_TARGET_ARCH,
+        "candidate target_arch must be aarch64",
+    )
     require(
         report.get("measurement") == "production_materialized_verification_index",
         "candidate must measure the production materialized verification index",
