@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: run all nine application and adapter cases in RRC3 with the
-provisional integrated binary and supported Node 24
+Next action: run the RRC4 embedded-provider, encryption, backup/restore,
+consistency, and restart-recovery matrix with the provisional integrated binary
 
 ## Outcome
 
@@ -86,8 +86,8 @@ renamed, duplicated, or unsupported condition.
 | RRC0 | Pin both repositories, hosts, published state, and the red release verifier. | `done` | `proof/release-readiness-2026-08/rrc0-baseline.md` |
 | RRC1 | Audit source, advertised claims, dependency security, workflows, and release configuration. | `blocked(Deno WebSocket hook needs a reachable ref)` | `proof/release-readiness-2026-08/rrc1-audit.md`, `proof/release-readiness-2026-08/rrc1-capability-trace.md` |
 | RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc2-product-smoke.md` |
-| RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `in_progress` | |
-| RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `todo` | |
+| RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc3-app-adapter-smoke.md` |
+| RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `in_progress` | |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `todo` | |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `todo` | |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `todo` | |
@@ -292,3 +292,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-27 | RRC2 | finding | Public-bind refusals returned Rust enum debug text instead of the existing actionable operator messages. Commit `c7a27c74b` fixes top-level CLI error rendering and adds a subprocess regression test. |
 | 2026-08-27 | RRC2 | blocked | Debug and optimized provisional binaries pass the full product smoke, graceful shutdown, same-root restart, and cleanup. Exact-candidate replay waits only for the RRC1 Deno reference. See `proof/release-readiness-2026-08/rrc2-product-smoke.md`. |
 | 2026-08-27 | RRC3 | started | Began all nine repository application cases and adapter lanes with the repaired provisional binary and Node 24.19.0. |
+| 2026-08-27 | RRC3 | finding | Fixed default-SQLite Cloudflare KV support and exact final-page reporting in `4de2b28bb`, `b63addb52`, and `6ca9321ee`; live auth, metadata, pagination, delete, and restart-durability checks pass. |
+| 2026-08-27 | RRC3 | finding | Fixed the split CORS/origin policy in `5caf5c2cf` and portable browser packaging, origin defaults, Convex provisioning, run instructions, and favicon cleanup in `ef589a825`. All three Playwright task apps pass their lifecycle with zero console diagnostics. |
+| 2026-08-27 | RRC3 | blocked | All nine application cases, direct S3, RESP, Cloudflare KV, and three browser flows pass on the provisional integrated binary. Exact-candidate replay waits only for the RRC1 Deno reference. See `proof/release-readiness-2026-08/rrc3-app-adapter-smoke.md`. |
+| 2026-08-27 | RRC4 | started | Began the storage-provider, encryption, backup/restore, object, consistency, and restart-recovery matrix while the independent RRC1 publication blocker remains recorded. |
