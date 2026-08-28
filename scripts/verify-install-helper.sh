@@ -726,6 +726,55 @@ else
   fail "inline verification resolves Homebrew Cask release documents"
 fi
 
+incomplete_prefix="${output_dir}/incomplete-prefix"
+mkdir -p "${incomplete_prefix}/bin" "${incomplete_prefix}/libexec"
+cp "${custom_prefix}/bin/nimbus" "${incomplete_prefix}/bin/nimbus"
+cp "${custom_prefix}/libexec/gvproxy" "${incomplete_prefix}/libexec/gvproxy"
+cp "${custom_prefix}/libexec/vfkit" "${incomplete_prefix}/libexec/vfkit"
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" NIMBUS_PREFIX="${incomplete_prefix}" \
+    bash "${repo_root}/scripts/verify-install.sh" \
+    > "${output_dir}/missing-docs-standalone.txt" 2>&1; then
+  fail "standalone verification rejects a prefix-owned binary without release documents"
+elif grep -Fq "nimbus.LICENSE         missing" "${output_dir}/missing-docs-standalone.txt" &&
+     grep -Fq "nimbus.README.md       missing" "${output_dir}/missing-docs-standalone.txt" &&
+     grep -Fq "result                 unsupported" "${output_dir}/missing-docs-standalone.txt"; then
+  pass "standalone verification rejects a prefix-owned binary without release documents"
+else
+  fail "standalone verification rejects a prefix-owned binary without release documents"
+fi
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" sh -c '
+    . "$1"
+    PLATFORM="darwin"
+    NIMBUS_PREFIX="$2"
+    ! verify_installation_inline
+  ' sh "${testable_install_sh}" "${incomplete_prefix}" \
+    > "${output_dir}/missing-docs-inline.txt" 2>&1 &&
+   grep -Fq "nimbus.LICENSE         missing" "${output_dir}/missing-docs-inline.txt" &&
+   grep -Fq "nimbus.README.md       missing" "${output_dir}/missing-docs-inline.txt" &&
+   grep -Fq "result                 unsupported" "${output_dir}/missing-docs-inline.txt"; then
+  pass "inline verification rejects a prefix-owned binary without release documents"
+else
+  fail "inline verification rejects a prefix-owned binary without release documents"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${incomplete_prefix}" bash -c '
+    . "$1"
+    ! resolve_nimbus_release_document LICENSE
+    ! resolve_nimbus_release_document README.md
+  ' bash "${testable_verify_install_sh}" &&
+   PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    ! resolve_nimbus_release_document LICENSE
+    ! resolve_nimbus_release_document README.md
+  ' sh "${testable_install_sh}" "${incomplete_prefix}"; then
+  pass "prefix-owned verification cannot borrow documents from a PATH channel"
+else
+  fail "prefix-owned verification cannot borrow documents from a PATH channel"
+fi
+
 foreign_path_bin="${output_dir}/foreign-path-bin"
 mkdir -p "${foreign_path_bin}"
 cp "${custom_prefix}/bin/nimbus" "${foreign_path_bin}/nimbus"

@@ -73,6 +73,10 @@ resolve_nimbus_release_document() {
     return 0
   fi
 
+  # A binary in the requested prefix owns its payload. Falling through to a
+  # different PATH channel would turn a partial direct install into a false pass.
+  [[ -x "${install_prefix}/bin/nimbus" ]] && return 1
+
   nimbus_path="$(command -v nimbus 2>/dev/null || true)"
   if [[ -n "${nimbus_path}" ]]; then
     real_path="$(readlink "${nimbus_path}" 2>/dev/null || echo "${nimbus_path}")"

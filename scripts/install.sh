@@ -1677,6 +1677,10 @@ resolve_nimbus_release_document() {
     return 0
   fi
 
+  # A direct-install binary owns its prefix payload. Do not let documents from
+  # a different package-manager or Cask channel mask a partial direct install.
+  [ -x "${NIMBUS_PREFIX}/bin/nimbus" ] && return 1
+
   nimbus_path="$(command -v nimbus 2>/dev/null || true)"
   if [ -n "$nimbus_path" ]; then
     real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
