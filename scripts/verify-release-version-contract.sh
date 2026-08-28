@@ -155,7 +155,18 @@ for (const relativeLockPath of trackedPackageLocks) {
   }
 
   for (const [packagePath, packageEntry] of Object.entries(nestedLock.packages ?? {})) {
-    if (packagePath.startsWith(".nimbus/packages/") && packageEntry?.version !== undefined) {
+    const stagedPrefix = ".nimbus/packages/";
+    if (!packagePath.startsWith(stagedPrefix) || packageEntry?.version === undefined) continue;
+
+    const stagedSegments = packagePath.slice(stagedPrefix.length).split("/");
+    const stagedPackageName = stagedSegments[0].startsWith("@")
+      ? stagedSegments.slice(0, 2).join("/")
+      : stagedSegments[0];
+    const stagedPackageRoot = `${stagedPrefix}${stagedPackageName}`;
+
+    // Only exact roots for known local packages carry the Nimbus release
+    // version. Nested node_modules entries keep their upstream versions.
+    if (packagePath === stagedPackageRoot && localPackageNames.has(stagedPackageName)) {
       checks.push([
         `${relativeLockPath} ${packagePath} version`,
         packageEntry.version,
