@@ -198,6 +198,9 @@ async fn run_start_command_inner(
             "resolved compose workload-control boot plan"
         );
     }
+    let server_workload_boot_plan = workload_boot_plan
+        .map(crate::workload_boot::WorkloadControlBootPlan::into_server_plan)
+        .transpose()?;
     let source_ingress = nimbus_server::nimbus_owned_workload_ingress_registration();
     let prepared_network = match network {
         StartNetworkComposition::Staged(staged) => PreparedLocalNetworkComposition::prepare(
@@ -267,6 +270,9 @@ async fn run_start_command_inner(
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
         .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
+    if let Some(plan) = server_workload_boot_plan {
+        serve_options = serve_options.with_workload_boot_plan(plan);
+    }
     if let Some(listeners) = prebound_wire_listeners.as_ref() {
         serve_options = serve_options.with_prebound_listener_authority(listeners)?;
     }

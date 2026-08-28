@@ -35,7 +35,7 @@ use crate::workload_saga::{
     WorkloadTeardownSubmissionError,
 };
 
-const SERVICE_RETIREMENT_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKLOAD_RETIREMENT_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 /// Exact native service retirement response facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,7 +173,7 @@ impl ComputeResourceRetirer {
             }
             tokio::select! {
                 () = cancellation.cancelled() => return Err(cancelled_retirement()),
-                () = tokio::time::sleep(SERVICE_RETIREMENT_RETRY_DELAY) => {}
+                () = tokio::time::sleep(WORKLOAD_RETIREMENT_RETRY_DELAY) => {}
             }
         }
     }
@@ -254,6 +254,48 @@ impl ComputeResourceRetirer {
         context: &TenantIsolationContext,
         sandbox_id: &str,
     ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
+        self.submit_sandbox_teardown_once(
+            context,
+            sandbox_id,
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Retire one standalone sandbox and retain foreground ownership while
+    /// durable provision, restart, or teardown work reports a safe pending
+    /// state.
+    pub async fn submit_sandbox_teardown_until_terminal(
+        &self,
+        context: &TenantIsolationContext,
+        sandbox_id: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(cancelled_retirement());
+            }
+            match self
+                .submit_sandbox_teardown_once(context, sandbox_id, cancellation)
+                .await
+            {
+                Ok(snapshot) => return Ok(snapshot),
+                Err(error) if foreground_retirement_can_retry(&error) => {}
+                Err(error) => return Err(error),
+            }
+            tokio::select! {
+                () = cancellation.cancelled() => return Err(cancelled_retirement()),
+                () = tokio::time::sleep(WORKLOAD_RETIREMENT_RETRY_DELAY) => {}
+            }
+        }
+    }
+
+    async fn submit_sandbox_teardown_once(
+        &self,
+        context: &TenantIsolationContext,
+        sandbox_id: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
         let snapshot = self
             .services
             .sandbox_resource_snapshot_for_tenant(context.tenant_id(), sandbox_id)?
@@ -309,9 +351,8 @@ impl ComputeResourceRetirer {
             self.release_unadvanced_retirement_claim(&key, &claim)?;
             return Err(error);
         }
-        let cancellation = WorkloadTeardownCancellationToken::new();
         let (claim, run) = self
-            .drive_recorded_teardown(&key, loaded, claim, joined_provision, &cancellation)
+            .drive_recorded_teardown(&key, loaded, claim, joined_provision, cancellation)
             .await?;
         authenticate_recorded_stop(&run)?;
         let snapshot = self

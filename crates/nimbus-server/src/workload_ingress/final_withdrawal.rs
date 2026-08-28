@@ -171,7 +171,6 @@ impl ServerIngressPublicationAdapter {
             || reference.execution().generation() != command.generation()
             || reference.execution().desired_digest() != command.desired_digest()
             || reference.execution().node_identity() != command.required_node()
-            || reference.endpoints().is_empty()
         {
             return Err(invalid_command_failure(
                 "server final ingress publication fences are crossed",
@@ -201,6 +200,10 @@ impl ServerIngressPublicationAdapter {
             .iter()
             .map(|listener| listener.endpoint_id().clone())
             .collect::<BTreeSet<_>>();
+        // A withheld or never-published workload has no public endpoints. The
+        // exact empty membership remains authenticated by the compiled plan;
+        // its attachment and internal PEP resources are released by later
+        // teardown steps.
         let mut exact_listener_leases = BTreeMap::new();
         for listener in content.listeners() {
             if exact_listener_leases

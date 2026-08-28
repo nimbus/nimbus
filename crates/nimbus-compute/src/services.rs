@@ -29,7 +29,7 @@ use crate::workload_provisioner::WorkloadProvisionCancellation;
 use crate::workload_saga::{
     ExplicitWorkloadRestartDisposition, ExplicitWorkloadRestartError,
     ExplicitWorkloadRestartRequest, WorkloadRestartAdmissionError,
-    WorkloadRestartCancellationToken,
+    WorkloadRestartCancellationToken, WorkloadTeardownCancellationToken,
 };
 
 #[derive(Debug, Serialize)]
@@ -424,10 +424,14 @@ pub async fn service_lifecycle(
         }
         ServiceLifecycleVerb::Stop => {
             let retirer = compute.resource_retirer()?;
-            let retirement =
-                Box::pin(retirer.submit_service_teardown(tenant_context, service_name))
-                    .await
-                    .map_err(|error| error.into_compute_error())?;
+            let cancellation = WorkloadTeardownCancellationToken::new();
+            let retirement = Box::pin(retirer.submit_service_teardown_until_terminal(
+                tenant_context,
+                service_name,
+                &cancellation,
+            ))
+            .await
+            .map_err(|error| error.into_compute_error())?;
             (retirement.definition, retirement.retired_handle)
         }
     };

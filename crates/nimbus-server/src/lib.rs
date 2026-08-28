@@ -23,6 +23,7 @@ mod tenant;
 #[cfg(test)]
 mod tenant_isolation_drift;
 mod tls;
+mod workload_boot;
 mod workload_composition;
 mod workload_ingress;
 mod workload_saga_store;
@@ -81,6 +82,7 @@ pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
 pub use nimbus_s3::AccessKeyRegistry as S3AccessKeyRegistry;
 pub use router::{RouterOptions, build_router, normalize_cors_origin};
 pub use tls::TlsConfig;
+pub use workload_boot::ServerWorkloadBootPlan;
 pub use workload_composition::{
     ServerForegroundWorkloadRuntime, ServerWorkloadComposition, ServerWorkloadCompositionError,
     ServerWorkloadProviders,

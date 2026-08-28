@@ -31,6 +31,7 @@ use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
 use crate::tenant::TenantIsolationMode;
 use crate::tls::TlsConfig;
+use crate::workload_boot::ServerWorkloadBootPlan;
 use crate::workload_composition::ServerWorkloadComposition;
 use nimbus_services::ServiceInstanceCatalog;
 
@@ -174,6 +175,12 @@ impl ServeOptions {
     fn with_router_options(mut self, update: impl FnOnce(RouterOptions) -> RouterOptions) -> Self {
         self.router_options = update(self.router_options);
         self
+    }
+
+    /// Submit exact declared services after managed recovery and before the
+    /// main listener begins serving requests.
+    pub fn with_workload_boot_plan(self, plan: ServerWorkloadBootPlan) -> Self {
+        self.with_router_options(|options| options.with_workload_boot_plan(plan))
     }
 
     #[cfg(test)]

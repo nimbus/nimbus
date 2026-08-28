@@ -662,6 +662,59 @@ fn krun_execution_drain_persists_barrier_and_keeps_exact_runtime_running() {
 }
 
 #[test]
+fn krun_pre_activation_stop_closes_admission_without_a_drain_command() {
+    let fixture = TeardownFixture::new("pre-activation-stop");
+    let mut manifest = fixture.manifest();
+    let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
+        .expect("pre-activation reservation claim should validate");
+    manifest.launch_authority = KrunLaunchAuthority::Adopted { reservation_claim };
+    manifest.creator_handoff = KrunCreatorHandoffState::NotSpawned;
+    manifest.status = SandboxStatus::Starting;
+    manifest.handle.status = SandboxStatus::Starting;
+    fixture.write_manifest(&manifest);
+    let before = fixture.network_authority();
+    let stop = fixture.command(SandboxExecutionTeardownOperation::Stop, "stop", 1);
+
+    assert!(matches!(
+        fixture.backend.inspect_execution_teardown(&stop),
+        SandboxExecutionTeardownObservation::Absent { .. }
+    ));
+    assert!(matches!(
+        fixture.backend.execute_execution_teardown(&stop),
+        SandboxExecutionTeardownObservation::Succeeded { .. }
+    ));
+
+    let durable = fixture.manifest();
+    assert!(matches!(
+        durable.execution_teardown.drain(),
+        KrunDrainProgress::ExecutionNeverAdmitted { fence, .. }
+            if fence == stop.provider_claim()
+    ));
+    assert!(matches!(
+        durable.execution_teardown.stop(),
+        KrunStopProgress::ExecutionStopped { fence, .. }
+            if fence == stop.provider_claim()
+    ));
+    assert!(
+        durable
+            .require_execution_admission_open("late Krun activation")
+            .is_err(),
+        "the no-execution stop fence must close later activation admission"
+    );
+    assert!(fixture.runtime.signals().is_empty());
+    assert_eq!(
+        fixture.runtime.terminal_checks.load(Ordering::Acquire),
+        0,
+        "creator absence must not consult unauthenticated runtime state"
+    );
+    assert_eq!(fixture.network_authority(), before);
+    assert!(matches!(
+        fixture.backend.inspect_execution_teardown(&stop),
+        SandboxExecutionTeardownObservation::Succeeded { .. }
+    ));
+}
+
+#[test]
 fn krun_execution_drain_fences_creator_activation_restart_and_launch_admission() {
     let fixture = TeardownFixture::new("drain-admission");
     fixture.drain("drain", 1);

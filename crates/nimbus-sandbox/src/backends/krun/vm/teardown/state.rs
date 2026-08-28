@@ -67,6 +67,14 @@ pub(in crate::backends::krun::vm) enum KrunDrainProgress {
         fence: ProviderCommandClaim,
         evidence: Vec<u8>,
     },
+    /// A pre-activation stop proved under the lifecycle lock that no creator
+    /// was admitted. The stop claim closes later execution admission without
+    /// fabricating a `DrainExecution` command that the compensation plan did
+    /// not issue.
+    ExecutionNeverAdmitted {
+        fence: ProviderCommandClaim,
+        evidence: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

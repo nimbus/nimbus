@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use nimbus_network::{
     NetworkCapabilityRegistry, NetworkCapabilitySelection, NetworkSovereigntyRequirements,
@@ -40,6 +41,8 @@ use crate::workload_saga::{
 };
 
 const EMBEDDED_LOCAL_NODE_ID: &str = "embedded-local-node";
+const PROVISION_SUPERVISOR_INITIAL_DELAY: Duration = Duration::from_millis(25);
+const PROVISION_SUPERVISOR_MAX_DELAY: Duration = Duration::from_secs(1);
 
 /// The canonical identity for Nimbus' in-process local node.
 pub fn embedded_local_node_identity() -> NodeIdentity {
@@ -263,7 +266,10 @@ pub type WorkloadProvisionResult = Result<WorkloadProvisionOutcome, Arc<Workload
 
 struct InFlightProvision {
     intent: Option<WorkloadSagaIntent>,
+    /// First bounded receipt, and later progress, returned to start/resume callers.
     completion: watch::Receiver<Option<WorkloadProvisionResult>>,
+    /// Result published only when the retained task stops driving this key.
+    settlement: watch::Receiver<Option<WorkloadProvisionResult>>,
     _task: Option<JoinHandle<()>>,
 }
 
@@ -474,6 +480,7 @@ impl WorkloadProvisioner {
         &self,
         key: &WorkloadSagaKey,
         sender: &watch::Sender<Option<WorkloadProvisionResult>>,
+        settlement_sender: &watch::Sender<Option<WorkloadProvisionResult>>,
         result: WorkloadProvisionResult,
     ) {
         let retain = Self::retain_after_result(&result);
@@ -481,13 +488,76 @@ impl WorkloadProvisioner {
             .supervisor
             .lock()
             .expect("workload provision supervisor lock should not be poisoned");
-        sender.send_replace(Some(result));
+        sender.send_replace(Some(result.clone()));
+        settlement_sender.send_replace(Some(result));
         if retain {
             if let Some(entry) = supervisor.in_flight.get_mut(key) {
                 entry._task = None;
             }
         } else {
             supervisor.in_flight.remove(key);
+        }
+    }
+
+    fn requires_retained_supervision(result: &WorkloadProvisionResult) -> bool {
+        let Ok(outcome) = result else {
+            return false;
+        };
+        if outcome.compensation() != WorkloadProvisionCompensationState::NotRequired {
+            return false;
+        }
+        match outcome.disposition() {
+            WorkloadProvisionRunDisposition::Waiting => {
+                !(outcome.record().phase() == nimbus_workloads::WorkloadSagaPhase::NetworkAttached
+                    && outcome.record().active_intent().activation()
+                        == WorkloadActivationIntent::PrepareOnly)
+            }
+            WorkloadProvisionRunDisposition::Observed => {
+                matches!(outcome.projection(), WorkloadProjectionState::Pending(_))
+            }
+            WorkloadProvisionRunDisposition::SuccessorSettlementReady
+            | WorkloadProvisionRunDisposition::SuccessorSettlementCommitted
+            | WorkloadProvisionRunDisposition::DefiniteFailure => false,
+        }
+    }
+
+    fn retirement_requested(&self, key: &WorkloadSagaKey) -> bool {
+        self.supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned")
+            .retiring
+            .contains(key)
+    }
+
+    async fn supervise_result(
+        &self,
+        key: &WorkloadSagaKey,
+        sender: &watch::Sender<Option<WorkloadProvisionResult>>,
+        settlement_sender: &watch::Sender<Option<WorkloadProvisionResult>>,
+        mut result: WorkloadProvisionResult,
+    ) {
+        let mut delay = PROVISION_SUPERVISOR_INITIAL_DELAY;
+        loop {
+            if !Self::requires_retained_supervision(&result) || self.retirement_requested(key) {
+                self.publish_tracked_result(key, sender, settlement_sender, result);
+                return;
+            }
+
+            // The first bounded receipt returns truthful pending state to the
+            // caller. The retained task continues exact read-only inspection;
+            // GET remains side-effect-free and a second POST is unnecessary.
+            sender.send_replace(Some(result.clone()));
+            tokio::time::sleep(delay).await;
+            delay = delay.saturating_mul(2).min(PROVISION_SUPERVISOR_MAX_DELAY);
+            if self.retirement_requested(key) {
+                self.publish_tracked_result(key, sender, settlement_sender, result);
+                return;
+            }
+
+            result = match self.driver.resume(key).await {
+                Ok(run) => self.finalize_run(run).await,
+                Err(error) => Err(Arc::new(WorkloadProvisionError::Run(error))),
+            };
         }
     }
 
@@ -658,7 +728,7 @@ impl WorkloadProvisioner {
             let completion = supervisor
                 .in_flight
                 .get(key)
-                .map(|entry| entry.completion.clone());
+                .map(|entry| entry.settlement.clone());
             (claimed, completion)
         };
         let Some(completion) = completion else {
@@ -685,7 +755,7 @@ impl WorkloadProvisioner {
             supervisor
                 .in_flight
                 .get(key)
-                .map(|entry| entry.completion.clone())
+                .map(|entry| entry.settlement.clone())
         };
         let Some(completion) = completion else {
             return Ok(None);
@@ -713,7 +783,7 @@ impl WorkloadProvisioner {
             for key in keys {
                 supervisor.retiring.insert(key.clone());
                 if let Some(entry) = supervisor.in_flight.get(key) {
-                    completions.push(entry.completion.clone());
+                    completions.push(entry.settlement.clone());
                 }
             }
             #[cfg(test)]
@@ -806,11 +876,13 @@ impl WorkloadProvisioner {
                     .and_then(Self::retained_compensation_work);
                 if let Some(retry) = retry {
                     let (sender, receiver) = watch::channel(None);
+                    let (settlement_sender, settlement) = watch::channel(None);
                     existing.completion = receiver.clone();
+                    existing.settlement = settlement;
                     existing._task = None;
                     drop(supervisor);
                     drop(cancellation_guard);
-                    self.spawn_retained_compensation_task(key, retry, sender);
+                    self.spawn_retained_compensation_task(key, retry, sender, settlement_sender);
                     return Ok(receiver);
                 }
                 return Ok(existing.completion.clone());
@@ -818,18 +890,20 @@ impl WorkloadProvisioner {
             return Err(Arc::new(WorkloadProvisionError::CrossedTrackedRequest));
         }
         let (sender, receiver) = watch::channel(None);
+        let (settlement_sender, settlement) = watch::channel(None);
         supervisor.in_flight.insert(
             key.clone(),
             InFlightProvision {
                 intent: Some(intent.clone()),
                 completion: receiver.clone(),
+                settlement,
                 _task: None,
             },
         );
         drop(supervisor);
         drop(cancellation_guard);
 
-        self.spawn_submission_task(key, intent, sender);
+        self.spawn_submission_task(key, intent, sender, settlement_sender);
         Ok(receiver)
     }
 
@@ -859,28 +933,38 @@ impl WorkloadProvisioner {
                 .and_then(Self::retained_compensation_work);
             if let Some(retry) = retry {
                 let (sender, receiver) = watch::channel(None);
+                let (settlement_sender, settlement) = watch::channel(None);
                 existing.completion = receiver.clone();
+                existing.settlement = settlement;
                 existing._task = None;
                 drop(supervisor);
                 drop(cancellation_guard);
-                self.spawn_retained_compensation_task(key, retry, sender);
+                self.spawn_retained_compensation_task(key, retry, sender, settlement_sender);
                 return Ok(receiver);
             }
             return Ok(existing.completion.clone());
         }
         let (sender, receiver) = watch::channel(None);
+        let (settlement_sender, settlement) = watch::channel(None);
         supervisor.in_flight.insert(
             key.clone(),
             InFlightProvision {
                 intent: None,
                 completion: receiver.clone(),
+                settlement,
                 _task: None,
             },
         );
         drop(supervisor);
         drop(cancellation_guard);
 
-        self.spawn_resume_task(key, sender, owner_reopened_publication);
+        self.spawn_resume_task(
+            key,
+            sender,
+            settlement_sender,
+            owner_reopened_publication,
+            !allow_retirement,
+        );
         Ok(receiver)
     }
 
@@ -889,6 +973,7 @@ impl WorkloadProvisioner {
         key: WorkloadSagaKey,
         intent: WorkloadSagaIntent,
         sender: watch::Sender<Option<WorkloadProvisionResult>>,
+        settlement_sender: watch::Sender<Option<WorkloadProvisionResult>>,
     ) {
         let provisioner = Arc::clone(self);
         let task_key = key.clone();
@@ -901,7 +986,9 @@ impl WorkloadProvisioner {
                 Ok(run) => provisioner.finalize_run(run).await,
                 Err(error) => Err(Arc::new(WorkloadProvisionError::Run(error))),
             };
-            provisioner.publish_tracked_result(&task_key, &sender, result);
+            provisioner
+                .supervise_result(&task_key, &sender, &settlement_sender, result)
+                .await;
         });
         self.install_tracked_task(&key, task);
     }
@@ -910,7 +997,9 @@ impl WorkloadProvisioner {
         self: &Arc<Self>,
         key: WorkloadSagaKey,
         sender: watch::Sender<Option<WorkloadProvisionResult>>,
+        settlement_sender: watch::Sender<Option<WorkloadProvisionResult>>,
         owner_reopened_publication: bool,
+        supervise_waiting: bool,
     ) {
         let provisioner = Arc::clone(self);
         let task_key = key.clone();
@@ -927,7 +1016,13 @@ impl WorkloadProvisioner {
                 Ok(run) => provisioner.finalize_run(run).await,
                 Err(error) => Err(Arc::new(WorkloadProvisionError::Run(error))),
             };
-            provisioner.publish_tracked_result(&task_key, &sender, result);
+            if supervise_waiting {
+                provisioner
+                    .supervise_result(&task_key, &sender, &settlement_sender, result)
+                    .await;
+            } else {
+                provisioner.publish_tracked_result(&task_key, &sender, &settlement_sender, result);
+            }
         });
         self.install_tracked_task(&key, task);
     }
@@ -937,6 +1032,7 @@ impl WorkloadProvisioner {
         key: WorkloadSagaKey,
         work: RetainedCompensationWork,
         sender: watch::Sender<Option<WorkloadProvisionResult>>,
+        settlement_sender: watch::Sender<Option<WorkloadProvisionResult>>,
     ) {
         let provisioner = Arc::clone(self);
         let task_key = key.clone();
@@ -949,7 +1045,7 @@ impl WorkloadProvisioner {
                     provisioner.finalize_run(*run).await
                 }
             };
-            provisioner.publish_tracked_result(&task_key, &sender, result);
+            provisioner.publish_tracked_result(&task_key, &sender, &settlement_sender, result);
         });
         self.install_tracked_task(&key, task);
     }

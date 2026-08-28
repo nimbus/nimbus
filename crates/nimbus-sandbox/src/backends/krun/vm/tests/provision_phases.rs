@@ -972,3 +972,102 @@ fn krun_owner_reopened_attach_recovers_dead_compiler_planned_pep_owner() {
         "recovery must register one ready compiler-planned PEP"
     );
 }
+
+#[test]
+fn krun_post_adoption_attach_inspection_authorizes_exact_replay() {
+    let root = TempDir::new().expect("temporary root should exist");
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
+    let mut config = KrunSandboxBackendConfig::under_root(root.path());
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
+    config.published_port_range = pep_port..=pep_port;
+    config.netavark_path = PathBuf::from("/usr/bin/true");
+    let backend = KrunSandboxBackend::new(config)
+        .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+    let id = SandboxId::new("krun-post-adoption-attach-replay");
+    let spec = sample_spec_for_tenant("krun-post-adoption-attach-replay", "api");
+    let execution_attempt = sample_execution_attempt_id(&id);
+    let network_plan = sample_provision_network_plan(&spec, &id, "post-adoption-attach-replay");
+    backend
+        .reserve_provision_network(spec, id.clone(), execution_attempt.clone(), network_plan)
+        .expect("post-adoption fixture should reserve");
+    backend
+        .prepare_provision_workload(&id, &execution_attempt)
+        .expect("post-adoption fixture should prepare");
+    let mut manifest = backend
+        .read_manifest(&id)
+        .expect("post-adoption manifest should read")
+        .expect("post-adoption manifest should exist");
+    let reservation_claim = manifest
+        .require_reserved_claim()
+        .expect("post-adoption manifest should retain its claim")
+        .clone();
+    backend
+        .mark_attachment_adopting(&mut manifest)
+        .expect("post-adoption fixture should persist adoption intent");
+    backend
+        .persist_effect_barrier(&manifest, "test post-adoption intent")
+        .expect("post-adoption intent should persist");
+    let attachment_id = manifest
+        .require_network_config()
+        .expect("post-adoption fixture should retain network config")
+        .attachment_id
+        .clone();
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(&manifest.spec.tenant_id, &attachment_id, &reservation_claim)
+        .expect("post-adoption fixture should adopt allocator authority");
+    manifest
+        .mark_adopted()
+        .expect("post-adoption fixture should retain adopted authority");
+    backend
+        .persist_effect_barrier(&manifest, "test post-adoption result")
+        .expect("post-adoption result should persist");
+
+    let incomplete = backend
+        .inspect_provision_network_attachment(&id, &execution_attempt)
+        .expect("incomplete adopted attachment should inspect");
+    assert!(
+        matches!(
+            incomplete,
+            crate::SandboxProvisionPhaseObservation::Absent { .. }
+        ),
+        "incomplete adopted attachment should authorize exact replay: {incomplete:?}"
+    );
+    backend
+        .resume_provision_attachment_adoption(&mut manifest, &reservation_claim)
+        .expect("exact replay should retain adopted attachment authority");
+    let network_config = manifest
+        .require_network_config()
+        .expect("replayed fixture should retain network config")
+        .clone();
+    {
+        let ports = backend.port_lease_coordinator();
+        let hostname = super::super::start::hostname_for(&manifest.spec);
+        backend
+            .non_routable_attachment_adapter(&manifest, &network_config, &hostname)
+            .attach_with_test_host(
+                &backend.attachment_lifecycle(&ports),
+                AttachmentAttachAuthority::FreshLaunch(&reservation_claim),
+                |_| {
+                    backend.egress_pin_provider.apply(
+                        &manifest.network_layout,
+                        manifest
+                            .egress_proxy
+                            .as_ref()
+                            .expect("replayed fixture should retain its planned PEP"),
+                    )
+                },
+            )
+            .expect("exact replay should realize the retained attachment");
+    }
+    backend
+        .start_planned_provision_pep(&manifest, &reservation_claim)
+        .expect("exact replay should start the planned PEP");
+    assert!(matches!(
+        backend
+            .inspect_provision_network_attachment(&id, &execution_attempt)
+            .expect("replayed attachment should inspect ready"),
+        crate::SandboxProvisionPhaseObservation::Succeeded { .. }
+    ));
+}

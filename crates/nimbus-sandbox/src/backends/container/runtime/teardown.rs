@@ -832,6 +832,7 @@ impl ContainerSandboxBackend {
         runtime: &dyn ContainerExecutionTeardownRuntime,
         journal_authorization: Option<&ProviderCommandObservation>,
     ) -> crate::Result<SandboxExecutionTeardownObservation> {
+        self.persist_pre_activation_stop_fence(claim, manifest)?;
         require_matching_drain(manifest, claim)?;
         let current = manifest.execution_teardown.stop().clone();
         match current {
@@ -1030,6 +1031,13 @@ impl ContainerSandboxBackend {
         runtime: &dyn ContainerExecutionTeardownRuntime,
         journal_authorization: Option<&ProviderCommandObservation>,
     ) -> crate::Result<SandboxExecutionTeardownObservation> {
+        if matches!(
+            manifest.execution_teardown.drain(),
+            ContainerDrainProgress::Open
+        ) && pre_activation_stop_is_exact(manifest)
+        {
+            return Ok(absent("pre-activation execution stop fence is not durable"));
+        }
         require_matching_drain(manifest, claim)?;
         match manifest.execution_teardown.stop() {
             ContainerStopProgress::NotRequested => Ok(absent("stop intent is not durable")),
@@ -1153,16 +1161,46 @@ impl ContainerSandboxBackend {
         self.write_existing_workload_manifest(manifest)?;
         Ok(succeeded(evidence))
     }
+
+    fn persist_pre_activation_stop_fence(
+        &self,
+        claim: &ProviderCommandClaim,
+        manifest: &mut ContainerSandboxManifest,
+    ) -> crate::Result<()> {
+        if !matches!(
+            manifest.execution_teardown.drain(),
+            ContainerDrainProgress::Open
+        ) || !pre_activation_stop_is_exact(manifest)
+        {
+            return Ok(());
+        }
+        let evidence = teardown_evidence("container_execution_never_admitted", manifest, claim)?;
+        manifest
+            .execution_teardown
+            .set_drain(ContainerDrainProgress::ExecutionNeverAdmitted {
+                fence: claim.clone(),
+                evidence,
+            });
+        self.write_existing_workload_manifest(manifest)
+    }
 }
 
 fn require_matching_drain(
     manifest: &ContainerSandboxManifest,
     stop_claim: &ProviderCommandClaim,
 ) -> crate::Result<()> {
-    let ContainerDrainProgress::Drained { fence, .. } = manifest.execution_teardown.drain() else {
-        return Err(SandboxError::InvalidSpec {
-            message: "Container execution stop requires exact durable drain completion".to_owned(),
-        });
+    let fence = match manifest.execution_teardown.drain() {
+        ContainerDrainProgress::Drained { fence, .. } => fence,
+        ContainerDrainProgress::ExecutionNeverAdmitted { fence, .. }
+            if fence.operation() == ProviderCommandOperation::StopExecution =>
+        {
+            fence
+        }
+        _ => {
+            return Err(SandboxError::InvalidSpec {
+                message: "Container execution stop requires exact durable drain completion or a no-execution admission fence".to_owned(),
+            });
+        }
     };
     if same_workload_fence(fence, stop_claim) {
         Ok(())
@@ -1171,6 +1209,12 @@ fn require_matching_drain(
             message: "Container execution stop is crossed with the durable drain fence".to_owned(),
         })
     }
+}
+
+fn pre_activation_stop_is_exact(manifest: &ContainerSandboxManifest) -> bool {
+    manifest.start_mode == ContainerStartMode::Execute
+        && manifest.provision_prepared
+        && manifest.creator_handoff == ContainerCreatorHandoffState::NotSpawned
 }
 
 fn same_workload_fence(left: &ProviderCommandClaim, right: &ProviderCommandClaim) -> bool {

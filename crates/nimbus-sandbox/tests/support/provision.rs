@@ -922,6 +922,10 @@ impl TestIngressSet {
         self.listeners.is_empty()
     }
 
+    #[allow(
+        dead_code,
+        reason = "used by KVM smoke cases; shared support also compiles for container-only targets"
+    )]
     pub(crate) fn addresses(&self) -> Vec<SocketAddr> {
         self.listeners
             .iter()
