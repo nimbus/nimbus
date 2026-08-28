@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: execute RRC6 desktop static, packaged-shell, and real Mac UI lanes
-against the provisional integrated candidate
+Next action: execute RRC7 archive, install, Linux-package, OCI-image, upgrade,
+and published-release comparison lanes without publishing any artifact
 
 ## Outcome
 
@@ -89,7 +89,7 @@ renamed, duplicated, or unsupported condition.
 | RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc3-app-adapter-smoke.md` |
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
-| RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `in_progress` | |
+| RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `blocked(exact-candidate replay and notarization remain; provisional pass)` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `todo` | |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `todo` | |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
@@ -315,3 +315,9 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-28 | RRC5 | finding | `nimbus start --compose-file` resolved and logged an exact workload boot plan but never submitted it. The server now applies the validated ordered service plan after durable workload recovery and before it begins serving. A fresh Linux root automatically launched the declared KVM service without a lifecycle POST. |
 | 2026-08-28 | RRC5 | evidence | The final provisional binary (`283295f9d80558ec55e5c0523b40e3d04b0b5d29a803c2a504ed932ccac6285d`) passed public sandbox and session lifecycle, GET-only convergence, automatic Compose boot, exact port release, focused compensation tests, 1,218 sandbox library tests, and 2/2 live node/systemd D-Bus tests. Controlled provider faults remained quarantined with no creator admitted. |
 | 2026-08-28 | RRC5 | blocked | Every supported workload-host lane has a provisional pass. Exact-candidate replay waits only for RRC1's reachable immutable Deno references. See `proof/release-readiness-2026-08/rrc5-workload-hosts.md`. |
+| 2026-08-28 | RRC6 | started | Began desktop static, unit, packaged-shell, installer, and real Mac UI validation against the provisional integrated Nimbus candidate. |
+| 2026-08-28 | RRC6 | finding | Fixed fixed-port startup, early child-exit reporting, packaged GUI data-root failure, stale-session recovery, stale DS1 and shortcut expectations, missing fuse invocation, native branding, and incomplete DS3 child cleanup. Nimbus commits `9fb527763` and `92fbd821f` and desktop commits `618707d`, `21800be`, `de63d23`, and `bbc103f` contain the repairs and regressions. |
+| 2026-08-28 | RRC6 | evidence | Nimbus UI passed lint, typecheck, 845 tests, and 14 local-UI server tests. Desktop passed lint, typecheck, 186 unit tests, 5 E2E tests, DS1 through DS6, six fuse checks, strict signing verification, universal-architecture inspection, DMG verification, real sign-in/navigation/loss/recovery/quit, and exact owned-child cleanup. See `proof/release-readiness-2026-08/rrc6-desktop.md`. |
+| 2026-08-28 | RRC6 | review | Opus 5 found two Nimbus P3 test gaps and three accepted desktop P3 hardening gaps. All were repaired. Follow-up reviews of Nimbus `92fbd821f` and desktop `bbc103f` accepted no P0 through P3 finding. |
+| 2026-08-28 | RRC6 | blocked | The repaired desktop matrix has a provisional pass. Exact-candidate replay waits for RRC1's reachable immutable Deno references. Apple notarization and stapling also remain unverified because authorized API credentials are unavailable locally. |
+| 2026-08-28 | RRC6 | cleanup | Preserved the verified provisional server binary by SHA-256 and removed its rebuildable 51.2 GiB temporary Cargo target. Free macOS data-volume space increased from 56 GiB to 105 GiB. Source, proofs, and desktop installers were unchanged. |
