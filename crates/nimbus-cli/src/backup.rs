@@ -123,7 +123,9 @@ pub(crate) async fn run_backup_command(
     command: BackupCommand,
     persistence_config: &EnginePersistenceConfig,
 ) -> Result<(), Box<dyn Error>> {
-    if persistence_config.local_encryption.is_enabled() {
+    if persistence_config.local_encryption.is_enabled()
+        || backup_command_has_encryption_marker(&command)?
+    {
         return Err(
             "`nimbus backup` does not support encrypted data directories; stop Nimbus and cold-copy the complete data and control directories with every `.nimbus-enc` sidecar, then protect the key material separately"
                 .into(),
@@ -133,6 +135,50 @@ pub(crate) async fn run_backup_command(
         BackupCommand::Create(command) => run_backup_create(command).await,
         BackupCommand::Restore(command) => run_backup_restore(command).await,
     }
+}
+
+fn backup_command_has_encryption_marker(command: &BackupCommand) -> Result<bool, Box<dyn Error>> {
+    let (data_dir, control_data_dir) = match command {
+        BackupCommand::Create(command) => (&command.data_dir, command.control_data_dir.as_deref()),
+        BackupCommand::Restore(command) => (&command.data_dir, command.control_data_dir.as_deref()),
+    };
+    let control_data_dir = control_data_dir.unwrap_or(data_dir);
+    root_has_encryption_marker(data_dir)
+        .and_then(|found| Ok(found || root_has_encryption_marker(control_data_dir)?))
+}
+
+fn root_has_encryption_marker(root: &Path) -> Result<bool, Box<dyn Error>> {
+    // Embedded tenant databases and the retained control database are direct
+    // children of their selected roots. Their manifests are adjacent files,
+    // so this bounded scan covers the persistence contract without walking
+    // an unrelated object byte plane.
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "failed to inspect backup root {} for encryption sidecars: {error}",
+                root.display()
+            )
+            .into());
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to inspect backup root {} for encryption sidecars: {error}",
+                root.display()
+            )
+        })?;
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == std::ffi::OsStr::new("nimbus-enc"))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 async fn run_backup_create(command: BackupCreateCommand) -> Result<(), Box<dyn Error>> {
@@ -603,6 +649,44 @@ mod tests {
         assert!(
             !output.exists(),
             "rejected backup must not create an output"
+        );
+    }
+
+    #[tokio::test]
+    async fn backup_detects_encryption_from_the_selected_roots_without_ambient_config() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let data_dir = temp.path().join("data");
+        let control_data_dir = temp.path().join("control");
+        std::fs::create_dir_all(&data_dir).expect("data dir should build");
+        std::fs::create_dir_all(&control_data_dir).expect("control dir should build");
+        std::fs::write(
+            control_data_dir.join("nimbus-control.db.nimbus-enc"),
+            b"manifest",
+        )
+        .expect("encryption marker should write");
+        let output = temp.path().join("deployment.json");
+
+        let error = run_backup_command(
+            BackupCommand::Create(BackupCreateCommand {
+                data_dir,
+                control_data_dir: Some(control_data_dir),
+                provider: BackupProvider::Sqlite,
+                out: output.clone(),
+            }),
+            &EnginePersistenceConfig::embedded_default(temp.path().join("unrelated-default")),
+        )
+        .await
+        .expect_err("selected encrypted roots must fail without ambient encryption config");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not support encrypted data directories"),
+            "selected-root detection must preserve the cold-copy diagnostic: {error}"
+        );
+        assert!(
+            !output.exists(),
+            "selected-root rejection must happen before output creation"
         );
     }
 }

@@ -1529,11 +1529,13 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
 async fn cors_preflight_enforces_the_complete_browser_origin_policy() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
+    let same_origin = server.http_url("/");
+    let same_origin = same_origin.trim_end_matches('/');
 
     let allowed = server
         .client()
         .request(reqwest::Method::OPTIONS, server.http_url("/api/tenants"))
-        .header("origin", "http://localhost:5173")
+        .header("origin", same_origin)
         .header("access-control-request-method", "POST")
         .send()
         .await
@@ -1543,7 +1545,21 @@ async fn cors_preflight_enforces_the_complete_browser_origin_policy() {
             .headers()
             .get("access-control-allow-origin")
             .and_then(|value| value.to_str().ok()),
-        Some("http://localhost:5173")
+        Some(same_origin)
+    );
+
+    let wrong_loopback_port = server
+        .client()
+        .request(reqwest::Method::OPTIONS, server.http_url("/api/tenants"))
+        .header("origin", "http://localhost:5173")
+        .header("access-control-request-method", "POST")
+        .send()
+        .await
+        .expect("different-port loopback preflight should send");
+    assert_eq!(
+        wrong_loopback_port.status(),
+        StatusCode::FORBIDDEN,
+        "an unconfigured loopback origin on another port must not reach native administration routes"
     );
 
     let denied = server

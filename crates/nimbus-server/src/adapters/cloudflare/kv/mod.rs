@@ -666,7 +666,10 @@ mod tests {
 
     #[tokio::test]
     async fn kv_rest_contract_round_trips_value_metadata_delete_and_list() {
-        let app = test_app();
+        assert_kv_rest_contract(test_app()).await;
+    }
+
+    async fn assert_kv_rest_contract(app: KvTestApp) {
         let router = test_router(&app);
         let base = "/client/v4/accounts/acct/storage/kv/namespaces/namespace-prod";
         let put_uri = format!("{base}/values/greeting?metadata=%7B%22lang%22%3A%22en%22%7D");
@@ -782,17 +785,7 @@ mod tests {
 
     #[tokio::test]
     async fn kv_rest_contract_remains_available_with_redb_tenants() {
-        let app = KvTestApp::with_redb_provider();
-        let base = "/client/v4/accounts/acct/storage/kv/namespaces/namespace-prod";
-        let (status, _, body) = request(
-            test_router(&app),
-            axum::http::Method::PUT,
-            &format!("{base}/values/redb"),
-            Some(AUTH),
-            "value".to_string(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "put body: {}", json_body(&body));
+        assert_kv_rest_contract(KvTestApp::with_redb_provider()).await;
     }
 
     #[tokio::test]

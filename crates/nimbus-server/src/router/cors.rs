@@ -30,8 +30,11 @@ impl CorsOriginPolicy {
     }
 
     pub(crate) fn allows(&self, origin: &HeaderValue) -> bool {
-        is_allowed_local_cors_origin(origin)
-            || is_configured_cors_origin(origin, &self.configured_origins)
+        is_allowed_local_cors_origin(origin) || self.configured_allows(origin)
+    }
+
+    pub(crate) fn configured_allows(&self, origin: &HeaderValue) -> bool {
+        is_configured_cors_origin(origin, &self.configured_origins)
     }
 }
 

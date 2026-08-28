@@ -53,7 +53,20 @@ impl Engine {
             match runtime.store() {
                 TenantPersistence::Redb(store) => task(store.as_ref()),
                 TenantPersistence::Sqlite(store) => task(store.as_ref()),
-                _ => Err(nimbus_core::Error::Internal(
+                #[cfg(feature = "libsql")]
+                TenantPersistence::LibsqlReplica(_) => Err(nimbus_core::Error::Internal(
+                    "TenantKvStore is not available for the configured tenant provider".to_string(),
+                )),
+                #[cfg(feature = "postgres")]
+                TenantPersistence::Postgres(_) => Err(nimbus_core::Error::Internal(
+                    "TenantKvStore is not available for the configured tenant provider".to_string(),
+                )),
+                #[cfg(feature = "mysql")]
+                TenantPersistence::MySql(_) => Err(nimbus_core::Error::Internal(
+                    "TenantKvStore is not available for the configured tenant provider".to_string(),
+                )),
+                #[cfg(any(test, feature = "test-hooks"))]
+                TenantPersistence::Memory(_) => Err(nimbus_core::Error::Internal(
                     "TenantKvStore is not available for the configured tenant provider".to_string(),
                 )),
             }

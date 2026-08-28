@@ -252,6 +252,10 @@ impl KvStorageEngine for SqliteTenantStore {
 impl SqliteTenantStore {
     fn execute_kv_write<T>(&self, task: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let conn = self.acquire_writer_connection()?;
+        // A connection returns to the resident slot only after a confirmed
+        // transaction end. BEGIN, COMMIT, or ROLLBACK failure drops the
+        // suspect handle; acquire_writer_connection opens a fully initialized
+        // replacement when the slot is empty.
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         let value = match task(&conn) {

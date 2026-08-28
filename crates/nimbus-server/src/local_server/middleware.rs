@@ -61,17 +61,17 @@ pub(crate) async fn origin_allowlist_middleware(
     let path = request.uri().path().to_string();
     let route_family = LocalServerRouteFamily::classify_request(&path, request.headers());
     request.extensions_mut().insert(route_family);
-    let transport_origin_allowed = request
+    let configured_origin_allowed = request
         .headers()
         .get(axum::http::header::ORIGIN)
-        .is_some_and(|origin| policy.cors.allows(origin));
+        .is_some_and(|origin| policy.cors.configured_allows(origin));
     if route_family.requires_origin_allowlist()
         && let Err(error) = validate_origin(
             route_family,
             policy.app_state.listen_addr().map(|addr| addr.port()),
             request.method(),
             request.headers(),
-            transport_origin_allowed,
+            configured_origin_allowed,
         )
     {
         policy

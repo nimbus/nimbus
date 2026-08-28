@@ -532,6 +532,11 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         return Err("tenant rm requires --yes".into());
     }
     let tenant = TenantId::new(command.tenant)?;
+    let control_data_dir = command
+        .control_data_dir
+        .as_deref()
+        .unwrap_or(&command.data_dir);
+    require_existing_control_plane(control_data_dir)?;
     // Resolve configuration and PROVE exclusive ownership of every byte-
     // plane root BEFORE any destructive step: config errors must not strike
     // after partial deletion, and unlinking a tree a running server still
@@ -659,6 +664,32 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         "tenant rm tenant={} object_blobs_removed=true erasure_trees_removed={}",
         tenant, erasure_trees_removed
     ));
+    Ok(())
+}
+
+fn require_existing_control_plane(control_data_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let control_database =
+        control_data_dir.join(EmbeddedProviderKind::Redb.control_database_filename());
+    let metadata = std::fs::symlink_metadata(&control_database).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "tenant rm requires an existing control-plane database at {}; pass the deployment's exact --control-data-dir for split-root storage",
+                control_database.display()
+            )
+        } else {
+            format!(
+                "tenant rm could not inspect control-plane database {}: {error}",
+                control_database.display()
+            )
+        }
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(format!(
+            "tenant rm requires a regular control-plane database at {}; refusing a directory or symlink",
+            control_database.display()
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -1015,6 +1046,44 @@ mod tests {
             Some(PlacementPolicy::LocalOnly)
         ));
         reopened.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn tenant_rm_refuses_to_bootstrap_a_missing_control_plane() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let data_dir = temp.path().join("data");
+        let tenant = TenantId::new("split-control").expect("tenant should build");
+        let blob_root = object_blob_root(&data_dir, &tenant);
+        std::fs::create_dir_all(&blob_root).expect("blob root should build");
+        let sentinel = blob_root.join("must-survive");
+        std::fs::write(&sentinel, b"payload").expect("sentinel should write");
+
+        let error = run_tenant_rm(TenantRemoveCommand {
+            data_dir: data_dir.clone(),
+            control_data_dir: None,
+            provider: ObjectStorageProvider::Sqlite,
+            tenant: tenant.as_str().to_string(),
+            yes: true,
+        })
+        .await
+        .expect_err("missing control authority must fail before byte-plane deletion");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("requires an existing control-plane database")
+                && message.contains("--control-data-dir"),
+            "diagnostic must identify the missing split-root authority: {message}"
+        );
+        assert!(
+            sentinel.exists(),
+            "rejected removal must preserve byte data"
+        );
+        assert!(
+            !data_dir
+                .join(EmbeddedProviderKind::Redb.control_database_filename())
+                .exists(),
+            "rejected removal must not bootstrap an empty control plane"
+        );
     }
 
     #[test]
