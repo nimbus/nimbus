@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: execute RRC8 final integrated gates, update the 46-condition
-matrix, obtain final independent reviews, and issue the release verdict
+Next action: finish RRC8 integrated macOS and Linux gates, reconcile the
+46-condition matrix, obtain final independent reviews, and issue the verdict
 
 ## Outcome
 
@@ -91,7 +91,7 @@ renamed, duplicated, or unsupported condition.
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `blocked(exact-candidate replay and notarization remain; provisional pass)` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `blocked(exact-candidate replay and public apt/COPR proofs remain; provisional pass)` | `proof/release-readiness-2026-08/rrc7-distribution.md` |
-| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `todo` | |
+| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `in_progress` | |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
 ## Tasks
@@ -326,3 +326,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-28 | RRC7 | evidence | All deterministic archive, installer, package, OCI, version, syntax, ShellCheck, and Homebrew gates pass. Public v0.1.45 passed checksum, archive, license, attestation, SBOM, vulnerability, pull, and OCI runtime verification. Fresh Debian 13 and Fedora 42 containers installed real v0.1.44 package tuples and upgraded to v0.1.45. A fresh Debian container passed direct install, verification, upgrade, and uninstall. See `proof/release-readiness-2026-08/rrc7-distribution.md`. |
 | 2026-08-28 | RRC7 | review | Opus 5 found and drove repairs for changelog preservation, prefix cleanup ownership, version-lock scan scope, document ownership, negative fixtures, malformed tracked locks, and nested dependency false positives. The final review of `0c8bdd363` accepted no actionable finding, and secret scans were clean. |
 | 2026-08-28 | RRC7 | blocked | Every locally testable distribution artifact has a provisional pass. Exact v0.1.46 replay waits for reachable immutable Deno references. Public apt and COPR install proofs remain with the distribution plan and require separate publication authority. No public state changed. |
+| 2026-08-28 | RRC8 | started | Began the final integrated repository, host, evidence-matrix, and independent-review closeout. The fail-before matrix has 0 passed, 43 unverified, and 3 blocked conditions with zero structural errors. |
