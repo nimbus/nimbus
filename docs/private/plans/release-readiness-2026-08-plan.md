@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: execute RRC7 archive, install, Linux-package, OCI-image, upgrade,
-and published-release comparison lanes without publishing any artifact
+Next action: execute RRC8 final integrated gates, update the 46-condition
+matrix, obtain final independent reviews, and issue the release verdict
 
 ## Outcome
 
@@ -90,7 +90,7 @@ renamed, duplicated, or unsupported condition.
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `blocked(exact-candidate replay and notarization remain; provisional pass)` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
-| RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `todo` | |
+| RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `blocked(exact-candidate replay and public apt/COPR proofs remain; provisional pass)` | `proof/release-readiness-2026-08/rrc7-distribution.md` |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `todo` | |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
@@ -321,3 +321,8 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-28 | RRC6 | review | Opus 5 found two Nimbus P3 test gaps and three accepted desktop P3 hardening gaps. All were repaired. Follow-up reviews of Nimbus `92fbd821f` and desktop `bbc103f` accepted no P0 through P3 finding. |
 | 2026-08-28 | RRC6 | blocked | The repaired desktop matrix has a provisional pass. Exact-candidate replay waits for RRC1's reachable immutable Deno references. Apple notarization and stapling also remain unverified because authorized API credentials are unavailable locally. |
 | 2026-08-28 | RRC6 | cleanup | Preserved the verified provisional server binary by SHA-256 and removed its rebuildable 51.2 GiB temporary Cargo target. Free macOS data-volume space increased from 56 GiB to 105 GiB. Source, proofs, and desktop installers were unchanged. |
+| 2026-08-28 | RRC7 | started | Began archive, direct-install, package, OCI-image, upgrade, and current-published-release validation without publication. |
+| 2026-08-28 | RRC7 | finding | The live verifier required an unsupported Windows asset; direct installs discarded release documents and could use a different PATH channel for same-version and document checks; the repository release version collided with public v0.1.45; and the scaffold-lock version gate had unsafe scan boundaries. Commits `dfea25523`, `52b8fc93b`, `e771e5fac`, `7e9a48ad6`, and `0c8bdd363` contain the repairs and regressions. |
+| 2026-08-28 | RRC7 | evidence | All deterministic archive, installer, package, OCI, version, syntax, ShellCheck, and Homebrew gates pass. Public v0.1.45 passed checksum, archive, license, attestation, SBOM, vulnerability, pull, and OCI runtime verification. Fresh Debian 13 and Fedora 42 containers installed real v0.1.44 package tuples and upgraded to v0.1.45. A fresh Debian container passed direct install, verification, upgrade, and uninstall. See `proof/release-readiness-2026-08/rrc7-distribution.md`. |
+| 2026-08-28 | RRC7 | review | Opus 5 found and drove repairs for changelog preservation, prefix cleanup ownership, version-lock scan scope, document ownership, negative fixtures, malformed tracked locks, and nested dependency false positives. The final review of `0c8bdd363` accepted no actionable finding, and secret scans were clean. |
+| 2026-08-28 | RRC7 | blocked | Every locally testable distribution artifact has a provisional pass. Exact v0.1.46 replay waits for reachable immutable Deno references. Public apt and COPR install proofs remain with the distribution plan and require separate publication authority. No public state changed. |
