@@ -46,6 +46,7 @@ pub(super) fn synchronize_handle_status(manifest: &mut KrunSandboxManifest, stat
 pub(super) fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> {
     spec.port_bindings
         .iter()
+        .filter(|port_binding| port_binding.host_port != 0)
         .map(|port_binding| {
             PublishedEndpoint::new(
                 port_binding.name.clone(),

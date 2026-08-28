@@ -21,8 +21,92 @@ pub(super) fn smoke_backend_config(
     if let Some(buildah_path) = env::var_os("NIMBUS_KRUN_SMOKE_BUILDAH") {
         config.buildah_path = buildah_path.into();
     }
+    if let Some(helper_root) = env::var_os("NIMBUS_KRUN_GUEST_USER_HELPER_ROOT") {
+        config.guest_user_helper_root = helper_root.into();
+    }
+    if let Some(supernet) = env::var_os("NIMBUS_KRUN_SMOKE_NODE_NETWORK_SUPERNET") {
+        let supernet = supernet
+            .into_string()
+            .expect("NIMBUS_KRUN_SMOKE_NODE_NETWORK_SUPERNET must be valid UTF-8");
+        assert!(
+            !supernet.trim().is_empty(),
+            "NIMBUS_KRUN_SMOKE_NODE_NETWORK_SUPERNET cannot be empty"
+        );
+        config.node_network_supernet = supernet;
+    }
+    config.netavark_path = env::var_os("NIMBUS_NETAVARK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_existing_path("/usr/lib/podman/netavark", "netavark"));
+    config.aardvark_dns_path = env::var_os("NIMBUS_AARDVARK_DNS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_existing_path("/usr/lib/podman/aardvark-dns", "aardvark-dns"));
+
+    require_smoke_executable("krun runtime", &config.runtime_path);
+    require_smoke_executable("conmon", &config.conmon_path);
+    require_smoke_executable("netavark", &config.netavark_path);
+    require_smoke_executable("aardvark-dns", &config.aardvark_dns_path);
 
     config
+}
+
+fn require_smoke_executable(label: &str, configured: &std::path::Path) {
+    let resolved = if configured.components().count() > 1 {
+        configured.to_path_buf()
+    } else {
+        std::env::var_os("PATH")
+            .and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|directory| directory.join(configured))
+                    .find(|candidate| candidate.is_file())
+            })
+            .unwrap_or_else(|| configured.to_path_buf())
+    };
+    let metadata = std::fs::metadata(&resolved).unwrap_or_else(|error| {
+        panic!(
+            "Linux smoke {label} {} is not a readable executable file: {error}",
+            resolved.display()
+        )
+    });
+    assert!(
+        metadata.is_file(),
+        "Linux smoke {label} {} is not a regular file",
+        resolved.display()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert!(
+            metadata.permissions().mode() & 0o111 != 0,
+            "Linux smoke {label} {} is not executable",
+            resolved.display()
+        );
+    }
+}
+
+fn default_existing_path(preferred: &str, fallback: &str) -> PathBuf {
+    let preferred = PathBuf::from(preferred);
+    if preferred.exists() {
+        preferred
+    } else {
+        PathBuf::from(fallback)
+    }
+}
+
+#[test]
+fn smoke_helper_uses_an_existing_preferred_tool_path() {
+    let temp = tempfile::tempdir().expect("tool-path fixture should build");
+    let preferred = temp.path().join("netavark");
+    std::fs::write(&preferred, b"fixture").expect("tool-path fixture should write");
+    let preferred_text = preferred.to_string_lossy();
+
+    assert_eq!(
+        default_existing_path(&preferred_text, "netavark"),
+        preferred
+    );
+    assert_eq!(
+        default_existing_path("/definitely/missing/nimbus-netavark", "netavark"),
+        PathBuf::from("netavark")
+    );
 }
 
 pub(super) fn sandbox_tenant() -> TenantId {
@@ -31,6 +115,15 @@ pub(super) fn sandbox_tenant() -> TenantId {
 
 pub(super) fn http_binding(host_port: u16, guest_port: u16) -> SandboxPortBinding {
     SandboxPortBinding::new("http", EndpointProtocol::Http, host_port, guest_port)
+}
+
+pub(super) fn smoke_host_port(default: u16) -> u16 {
+    let Some(offset) = env_u16("NIMBUS_KRUN_SMOKE_HOST_PORT_OFFSET") else {
+        return default;
+    };
+    default.checked_add(offset).unwrap_or_else(|| {
+        panic!("NIMBUS_KRUN_SMOKE_HOST_PORT_OFFSET={offset} overflows default host port {default}")
+    })
 }
 
 pub(super) fn rootfs_spec(name: &str, rootfs: impl Into<PathBuf>) -> SandboxSpec {
@@ -53,6 +146,82 @@ pub(super) fn image_spec(name: &str, image_reference: impl Into<String>) -> Sand
     )
 }
 
+pub(super) fn built_busybox_image_spec(
+    name: &str,
+    image_name: &str,
+    dockerfile_metadata: &str,
+) -> SandboxSpec {
+    let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
+    let context_dir = base_dir.join("build-contexts").join(name);
+    std::fs::create_dir_all(&context_dir)
+        .expect("the Linux smoke build context directory should be created");
+
+    let fixture_rootfs = env_path("NIMBUS_KRUN_SMOKE_ROOTFS");
+    std::fs::copy(
+        fixture_rootfs.join("bin/busybox"),
+        context_dir.join("busybox"),
+    )
+    .expect("the Linux smoke build context should copy BusyBox");
+    std::fs::copy(
+        fixture_rootfs.join("etc/passwd"),
+        context_dir.join("passwd"),
+    )
+    .expect("the Linux smoke build context should copy passwd");
+    let runtime_libraries = context_dir.join("runtime-libraries");
+    let mut runtime_copy_instructions = String::new();
+    for library_root in ["lib", "lib64"] {
+        let source = fixture_rootfs.join(library_root);
+        if source.is_dir() {
+            copy_smoke_tree(&source, &runtime_libraries.join(library_root));
+            runtime_copy_instructions.push_str(&format!(
+                "COPY runtime-libraries/{library_root}/ /{library_root}/\n"
+            ));
+        }
+    }
+
+    let dockerfile_path = context_dir.join("Dockerfile");
+    std::fs::write(
+        &dockerfile_path,
+        format!(
+            "FROM scratch\nCOPY busybox /bin/busybox\nCOPY passwd /etc/passwd\n{runtime_copy_instructions}{dockerfile_metadata}\n"
+        ),
+    )
+    .expect("the Linux smoke Dockerfile should be written");
+
+    SandboxSpec::new(
+        sandbox_tenant(),
+        SandboxOwnerSpec::standalone_named(name),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::oci_image_build(image_name, dockerfile_path, context_dir),
+        SandboxProcessSpec::new(Vec::<String>::new()),
+    )
+}
+
+fn copy_smoke_tree(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination)
+        .expect("the Linux smoke runtime-library directory should be created");
+    for entry in std::fs::read_dir(source)
+        .expect("the Linux smoke runtime-library source should be readable")
+    {
+        let entry = entry.expect("the Linux smoke runtime-library entry should be readable");
+        let source_entry = entry.path();
+        let destination_entry = destination.join(entry.file_name());
+        let metadata = std::fs::metadata(&source_entry)
+            .expect("the Linux smoke runtime-library entry should resolve");
+        if metadata.is_dir() {
+            copy_smoke_tree(&source_entry, &destination_entry);
+        } else if metadata.is_file() {
+            std::fs::copy(&source_entry, &destination_entry)
+                .expect("the Linux smoke runtime-library entry should copy");
+        } else {
+            panic!(
+                "unsupported Linux smoke runtime-library entry {}",
+                source_entry.display()
+            );
+        }
+    }
+}
+
 pub(super) fn busybox_http_process(guest_port: u16) -> SandboxProcessSpec {
     SandboxProcessSpec::new(Vec::<String>::new()).with_command([
         "/bin/busybox".into(),
@@ -61,10 +230,6 @@ pub(super) fn busybox_http_process(guest_port: u16) -> SandboxProcessSpec {
         "-p".into(),
         guest_port.to_string(),
     ])
-}
-
-pub(super) fn buildah_program() -> String {
-    env::var("NIMBUS_KRUN_SMOKE_BUILDAH").unwrap_or_else(|_| "buildah".into())
 }
 
 pub(super) fn assert_httpish_response(response: &str, context: &str) {
@@ -120,52 +285,6 @@ fn non_loopback_host_address() -> Option<std::net::IpAddr> {
         .find(|address| !address.is_loopback() && !address.is_unspecified())
 }
 
-pub(super) fn run_host_command(program: &str, args: &[&str], allow_failure: bool) {
-    let status = std::process::Command::new(program)
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap_or_else(|e| panic!("failed to run {program} {}: {e}", args.join(" ")));
-    if !allow_failure && !status.success() {
-        panic!("{program} {} failed with {status}", args.join(" "));
-    }
-}
-
-pub(super) fn run_host_command_capture_stdout(program: &str, args: &[&str]) -> String {
-    let output = std::process::Command::new(program)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run {program} {}: {e}", args.join(" ")));
-    if !output.status.success() {
-        panic!("{program} {} failed with {}", args.join(" "), output.status);
-    }
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|e| panic!("stdout from {program} was not utf-8: {e}"))
-}
-
-pub(super) fn read_manifest_mount_session_name(
-    state_root: &std::path::Path,
-    sandbox_id: &nimbus_sandbox::SandboxId,
-) -> String {
-    let tenant_id = sandbox_tenant();
-    let manifest_path = manifest_path(state_root, &tenant_id, sandbox_id);
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap_or_else(|_| {
-            panic!("manifest should be readable at {}", manifest_path.display())
-        }))
-        .expect("manifest should be valid JSON");
-    manifest["launch_artifact"]["MountedRootfs"]["session_name"]
-        .as_str()
-        .unwrap_or_else(|| {
-            panic!(
-                "manifest {} should record a mounted rootfs session name",
-                manifest_path.display()
-            )
-        })
-        .to_owned()
-}
-
 pub(super) fn bundle_config_path(
     bundle_root: &std::path::Path,
     tenant_id: &TenantId,
@@ -203,30 +322,6 @@ pub(super) fn manifest_path(
     container_state_dir(state_root, tenant_id, sandbox_id).join("manifest.json")
 }
 
-pub(super) fn read_buildah_rootfs_file(
-    buildah_program: &str,
-    container_name: &str,
-    relative_path: &str,
-) -> String {
-    let script = r#"rootfs="$("$1" mount "$2")"
-test -n "$rootfs"
-cat "$rootfs/$3""#;
-    run_host_command_capture_stdout(
-        buildah_program,
-        &[
-            "unshare",
-            "--",
-            "sh",
-            "-c",
-            script,
-            "nimbus-buildah-unshare",
-            buildah_program,
-            container_name,
-            relative_path,
-        ],
-    )
-}
-
 pub(super) fn wait_for_ready(
     backend: &KrunSandboxBackend,
     id: &nimbus_sandbox::SandboxId,
@@ -253,6 +348,27 @@ pub(super) fn wait_for_status(
     }
 
     panic!("sandbox did not reach {expected:?} within {:?}", timeout);
+}
+
+pub(super) fn wait_for_unavailable(
+    backend: &KrunSandboxBackend,
+    id: &nimbus_sandbox::SandboxId,
+    timeout: Duration,
+) -> nimbus_sandbox::SandboxHandle {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(inspection) = block_on(backend.inspect(id)).expect("inspect should succeed")
+            && matches!(
+                inspection.handle.status,
+                SandboxStatus::Starting | SandboxStatus::NotReady
+            )
+        {
+            return inspection.handle;
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+
+    panic!("sandbox did not become unavailable within {timeout:?}");
 }
 
 pub(super) fn wait_for_http_response(port: u16, timeout: Duration) -> String {
@@ -350,8 +466,8 @@ impl CleanupGuard {
         }
     }
 
-    pub(super) fn disarm(self) {
-        std::mem::forget(self);
+    pub(super) fn disarm(mut self) {
+        self.teardown = None;
     }
 }
 

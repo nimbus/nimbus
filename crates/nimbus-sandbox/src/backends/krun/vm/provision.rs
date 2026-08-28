@@ -224,7 +224,10 @@ impl KrunSandboxBackend {
             Some(manifest.network_layout.netns_path.as_path()),
             &options,
         )?;
-        self.materialize_krun_vm_config(&manifest)?;
+        // crun gives OCI annotations precedence for CPU and RAM. Remove any
+        // image-supplied sidecar so it cannot select a guest kernel or other
+        // VMM settings outside the authenticated Nimbus specification.
+        self.remove_untrusted_krun_vm_config(&manifest)?;
         manifest.provision_prepared = true;
         self.write_manifest(&manifest)?;
         Ok(manifest.handle)

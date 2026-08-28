@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use ulid::Ulid;
 
 use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
@@ -106,7 +105,7 @@ use self::lifecycle::KrunLifecycleLockTestProbe;
 #[cfg(test)]
 use self::readiness::{published_endpoints, running_status, visible_published_endpoints};
 #[cfg(test)]
-use self::start::{desired_krun_vm_config, krun_vm_config_path, parse_guest_user};
+use self::start::{krun_vm_config_path, parse_guest_user};
 
 const DEFAULT_RUNTIME_PATH: &str = "/usr/libexec/nimbus/crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -122,7 +121,6 @@ const GUEST_USER_HELPER_GUEST_ROOT: &str = "/.nimbus";
 const GUEST_USER_HELPER_GUEST_PATH: &str = "/.nimbus/nimbus-guest-user-switch";
 const GUEST_USER_UID_ENV: &str = "NIMBUS_GUEST_UID";
 const GUEST_USER_GID_ENV: &str = "NIMBUS_GUEST_GID";
-const BYTES_PER_MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1054,12 +1052,6 @@ struct KrunImageMetadata {
     healthcheck: Option<ImageHealthcheck>,
     labels: BTreeMap<String, String>,
     exposed_ports: Vec<OciExposedPort>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct KrunVmConfig {
-    cpus: u8,
-    ram_mib: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

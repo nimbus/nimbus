@@ -551,10 +551,13 @@ fn remove_tenant_artifacts_deletes_only_matching_krun_tenant_roots() {
 }
 
 #[test]
-fn plan_only_start_writes_krun_vm_config_for_explicit_resource_limits() {
+fn plan_only_start_uses_resource_annotations_and_removes_untrusted_vm_config() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let rootfs = temp_dir.path().join("rootfs");
     fs::create_dir_all(&rootfs).expect("rootfs directory should exist");
+    let untrusted_vm_config = krun_vm_config_path(&rootfs);
+    fs::write(&untrusted_vm_config, "{\"kernel_path\":\"/tenant-kernel\"}")
+        .expect("untrusted krun vm config should be seeded");
     let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
         temp_dir.path().join("bundles"),
         temp_dir.path().join("state"),
@@ -567,19 +570,20 @@ fn plan_only_start_writes_krun_vm_config_for_explicit_resource_limits() {
 
     let handle = materialize_plan_only_fixture(&backend, spec.clone())
         .expect("plan-only lowering should materialize");
-    let vm_config_path = krun_vm_config_path(&rootfs);
-    let vm_config =
-        fs::read_to_string(&vm_config_path).expect("krun vm config should be materialized");
-    let bundle = fs::read_to_string(bundle_config_path(temp_dir.path(), &spec, &handle.id))
-        .expect("bundle config should be readable");
+    let bundle: serde_json::Value = serde_json::from_slice(
+        &fs::read(bundle_config_path(temp_dir.path(), &spec, &handle.id))
+            .expect("bundle config should be readable"),
+    )
+    .expect("bundle config should be valid JSON");
 
-    assert!(vm_config.contains("\"cpus\": 2"));
-    assert!(vm_config.contains("\"ram_mib\": 256"));
-    assert!(bundle.contains("\"limit\": 268435456"));
+    assert!(!untrusted_vm_config.exists());
+    assert_eq!(bundle["annotations"]["krun.cpus"], "2");
+    assert_eq!(bundle["annotations"]["krun.ram_mib"], "256");
+    assert_eq!(bundle["linux"]["resources"]["memory"]["limit"], 268_435_456);
 }
 
 #[test]
-fn plan_only_start_removes_stale_krun_vm_config_when_cpu_limit_is_unset() {
+fn plan_only_start_removes_untrusted_krun_vm_config_when_cpu_limit_is_unset() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let rootfs = temp_dir.path().join("rootfs");
     fs::create_dir_all(&rootfs).expect("rootfs directory should exist");
@@ -596,7 +600,7 @@ fn plan_only_start_removes_stale_krun_vm_config_when_cpu_limit_is_unset() {
 
     assert!(
         !stale_vm_config.exists(),
-        "memory-only starts should remove stale krun vm config so crun uses the OCI memory limit path"
+        "memory-only starts should remove image-controlled krun VM configuration"
     );
 }
 
@@ -1373,16 +1377,23 @@ fn visible_published_endpoints_hide_execute_mode_endpoints_until_ready() {
 }
 
 #[test]
-fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
-    let error = desired_krun_vm_config(
-        &sample_spec().with_resource_limits(SandboxResourceLimits::default().with_cpu_count(2)),
-    )
-    .expect_err("cpu-only krun resource requests should be rejected");
+fn visible_published_endpoints_do_not_invent_provider_assigned_ports() {
+    let spec =
+        sample_spec().with_port_binding(SandboxPortBinding::tcp("provider-assigned", 0, 8_082));
+
+    let endpoints =
+        visible_published_endpoints(KrunStartMode::Execute, &spec, SandboxStatus::Ready);
 
     assert!(
-        error
-            .to_string()
-            .contains("cpu_count requires memory_limit_bytes"),
-        "expected actionable validation error, got: {error}"
+        endpoints
+            .iter()
+            .all(|endpoint| endpoint.address.port() != 0),
+        "the backend must not publish a placeholder before the ingress owner binds it"
+    );
+    assert!(
+        endpoints
+            .iter()
+            .all(|endpoint| endpoint.name != "provider-assigned"),
+        "the provider-assigned endpoint must remain private until ingress observation"
     );
 }

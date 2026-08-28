@@ -376,7 +376,7 @@ impl KrunSandboxBackend {
             spec.display_name(),
             &bundle_layout.bundle_dir,
             None,
-            &krun_vm_config_prelude(&resolved_launch.spec, false)?,
+            &[],
         );
         let handle = SandboxHandle::new(
             resolved_launch.spec.tenant_id.clone(),
@@ -651,38 +651,20 @@ impl KrunSandboxBackend {
         )
     }
 
-    pub(super) fn materialize_krun_vm_config(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+    pub(super) fn remove_untrusted_krun_vm_config(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<()> {
         let vm_config_path = krun_vm_config_path(&required_rootfs(&manifest.spec)?.rootfs);
-        match desired_krun_vm_config(&manifest.spec)? {
-            Some(vm_config) => {
-                let rendered = serde_json::to_vec_pretty(&vm_config).map_err(|error| {
-                    SandboxError::OperationFailed {
-                        message: format!("failed to serialize krun vm config: {error}"),
-                    }
-                })?;
-                std::fs::write(&vm_config_path, rendered).map_err(|error| {
-                    SandboxError::OperationFailed {
-                        message: format!(
-                            "failed to write krun vm config {}: {error}",
-                            vm_config_path.display()
-                        ),
-                    }
-                })
-            }
-            None => {
-                if !vm_config_path.exists() {
-                    return Ok(());
-                }
-                std::fs::remove_file(&vm_config_path).map_err(|error| {
-                    SandboxError::OperationFailed {
-                        message: format!(
-                            "failed to remove stale krun vm config {}: {error}",
-                            vm_config_path.display()
-                        ),
-                    }
-                })
-            }
+        if !vm_config_path.exists() {
+            return Ok(());
         }
+        std::fs::remove_file(&vm_config_path).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to remove untrusted krun vm config {}: {error}",
+                vm_config_path.display()
+            ),
+        })
     }
 
     pub(super) fn port_lease_coordinator(&self) -> OciPortLeaseCoordinator {
@@ -711,61 +693,8 @@ pub(super) fn hostname_for(spec: &SandboxSpec) -> String {
     }
 }
 
-pub(super) fn desired_krun_vm_config(spec: &SandboxSpec) -> Result<Option<KrunVmConfig>> {
-    let cpu_count = spec.resources.cpu_count;
-    let memory_limit_bytes = spec.resources.memory_limit_bytes;
-
-    match (cpu_count, memory_limit_bytes) {
-        (None, _) => Ok(None),
-        (Some(_), None) => Err(SandboxError::InvalidSpec {
-            message:
-                "krun sandbox cpu_count requires memory_limit_bytes so crun can configure /.krun_vm.json"
-                    .to_owned(),
-        }),
-        (Some(0), _) => Err(SandboxError::InvalidSpec {
-            message: "krun sandbox cpu_count must be greater than zero".to_owned(),
-        }),
-        (Some(_), Some(0)) => Err(SandboxError::InvalidSpec {
-            message: "krun sandbox memory_limit_bytes must be greater than zero".to_owned(),
-        }),
-        (Some(cpus), Some(memory_limit_bytes)) => {
-            let ram_mib = memory_limit_bytes.div_ceil(BYTES_PER_MIB);
-            let ram_mib = u32::try_from(ram_mib).map_err(|_| SandboxError::InvalidSpec {
-                message: format!(
-                    "krun sandbox memory_limit_bytes {memory_limit_bytes} exceeds the maximum supported MiB range"
-                ),
-            })?;
-            Ok(Some(KrunVmConfig { cpus, ram_mib }))
-        }
-    }
-}
-
 pub(super) fn krun_vm_config_path(rootfs: &Path) -> PathBuf {
     rootfs.join(KRUN_VM_CONFIG_FILENAME)
-}
-
-fn krun_vm_config_prelude(spec: &SandboxSpec, needs_unshare_mount: bool) -> Result<Vec<String>> {
-    if !needs_unshare_mount {
-        return Ok(Vec::new());
-    }
-
-    let vm_config_path = krun_vm_config_path(&required_rootfs(spec)?.rootfs);
-    let escaped_path = shell_escape(vm_config_path.to_string_lossy().as_ref());
-    match desired_krun_vm_config(spec)? {
-        Some(vm_config) => {
-            let rendered = json!({
-                "cpus": vm_config.cpus,
-                "ram_mib": vm_config.ram_mib,
-            })
-            .to_string();
-            Ok(vec![format!(
-                "printf '%s' {} > {}",
-                shell_escape(&rendered),
-                escaped_path,
-            )])
-        }
-        None => Ok(vec![format!("rm -f {escaped_path}")]),
-    }
 }
 
 pub(super) fn resolve_start_spec(
@@ -1010,16 +939,4 @@ pub(super) fn ensure_guest_user_helper_available(
             helper_path.display()
         ),
     })
-}
-
-fn shell_escape(s: &str) -> String {
-    if s.is_empty() {
-        return "''".to_owned();
-    }
-    if s.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'/' || b == b'.')
-    {
-        return s.to_owned();
-    }
-    format!("'{}'", s.replace('\'', "'\\''"))
 }

@@ -7,18 +7,18 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::NonZeroU16;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use nimbus_network::{
-    ListenerId, NetworkAttachmentId, NetworkCapabilitySourceDigest, NetworkLeaseEpoch, NetworkPlan,
-    NetworkPlanContentDigest, NetworkPlanId, NetworkResourceGeneration, PortBindRealm,
-    PortBindTarget, PortBindingSpec, PortExposure, PortIpv6Overlap, PortLeaseAccounting,
-    PortLeaseFence, PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent,
-    PortRequestMode,
+    ListenerId, LocalPortLeaseAuthority, NetworkAttachmentId, NetworkCapabilitySourceDigest,
+    NetworkLeaseEpoch, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId,
+    NetworkReservationClaim, NetworkResourceGeneration, PortBindRealm, PortBindTarget,
+    PortBindingSpec, PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseFence,
+    PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 use nimbus_sandbox::backends::container::{
     CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerSandboxBackend,
@@ -49,6 +49,11 @@ struct ExactTeardownProviderKeys<'a> {
     attachment: &'a str,
 }
 
+enum ExactTeardownAttempt {
+    Observation(nimbus_sandbox::ProviderCommandObservation),
+    RetryAtEpoch(u64),
+}
+
 pub(crate) struct ProvisionedSandbox {
     pub(crate) handle: SandboxHandle,
     pub(crate) ingress: TestIngressSet,
@@ -61,6 +66,9 @@ pub(crate) struct ExactTeardownFixture {
     sandbox_id: SandboxId,
     execution_attempt_id: SandboxExecutionAttemptId,
     network_plan: SandboxProvisionNetworkPlan,
+    network_state_root: PathBuf,
+    reservation_claim: NetworkReservationClaim,
+    egress_lease: Option<PortLeaseRequest>,
 }
 
 #[allow(dead_code)] // Included separately by Container-only and krun-only integration targets.
@@ -73,36 +81,30 @@ pub(crate) fn provision_container(
     let id = fixture_id("container", spec.display_name());
     let plan = compiled_network_plan(&spec, &id);
     let attempt = fixture_attempt_id(&id);
-    let teardown = ExactTeardownFixture {
-        tenant_id: spec.tenant_id.clone(),
-        sandbox_id: id.clone(),
-        execution_attempt_id: attempt.clone(),
-        network_plan: plan.clone(),
-    };
     backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
-    backend.prepare_provision_workload(&id, &attempt)?;
-    require_succeeded(
-        "container attachment",
-        backend.attach_provision_network(&id, &attempt)?,
-    )?;
-    require_succeeded(
-        "container activation prerequisite",
-        backend.inspect_provision_activation_prerequisites(&id, &attempt)?,
-    )?;
-    require_succeeded(
-        "container activation",
-        backend.activate_provision_workload(&id, &attempt)?,
-    )?;
-    require_readiness_observation(
-        "container readiness",
-        backend.inspect_provision_workload_readiness(&id, &attempt)?,
-    )?;
-    let manifest = read_manifest(workload_state_root, &id)?;
-    let (handle, ingress) = finish_fixture(manifest, install_ingress)?;
-    Ok(ProvisionedSandbox {
-        handle,
-        ingress,
-        teardown,
+    let teardown = exact_teardown_fixture(read_manifest(workload_state_root, &id)?, &id);
+    let provision = (|| {
+        backend.prepare_provision_workload(&id, &attempt)?;
+        require_succeeded(
+            "container attachment",
+            backend.attach_provision_network(&id, &attempt)?,
+        )?;
+        require_succeeded(
+            "container activation prerequisite",
+            backend.inspect_provision_activation_prerequisites(&id, &attempt)?,
+        )?;
+        require_succeeded(
+            "container activation",
+            backend.activate_provision_workload(&id, &attempt)?,
+        )?;
+        require_readiness_observation(
+            "container readiness",
+            backend.inspect_provision_workload_readiness(&id, &attempt)?,
+        )?;
+        finish_fixture(read_manifest(workload_state_root, &id)?, install_ingress)
+    })();
+    finish_or_compensate(provision, teardown, |fixture| {
+        retire_container(backend, fixture)
     })
 }
 
@@ -116,37 +118,51 @@ pub(crate) fn provision_krun(
     let id = fixture_id("krun", spec.display_name());
     let plan = compiled_network_plan(&spec, &id);
     let attempt = fixture_attempt_id(&id);
-    let teardown = ExactTeardownFixture {
-        tenant_id: spec.tenant_id.clone(),
-        sandbox_id: id.clone(),
-        execution_attempt_id: attempt.clone(),
-        network_plan: plan.clone(),
-    };
     backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
-    backend.prepare_provision_workload(&id, &attempt)?;
-    require_succeeded(
-        "krun attachment",
-        backend.attach_provision_network(&id, &attempt)?,
-    )?;
-    require_succeeded(
-        "krun activation prerequisite",
-        backend.inspect_provision_activation_prerequisites(&id, &attempt)?,
-    )?;
-    require_succeeded(
-        "krun activation",
-        backend.activate_provision_workload(&id, &attempt)?,
-    )?;
-    require_readiness_observation(
-        "krun readiness",
-        backend.inspect_provision_workload_readiness(&id, &attempt)?,
-    )?;
-    let manifest = read_manifest(workload_state_root, &id)?;
-    let (handle, ingress) = finish_fixture(manifest, install_ingress)?;
-    Ok(ProvisionedSandbox {
-        handle,
-        ingress,
-        teardown,
-    })
+    let teardown = exact_teardown_fixture(read_manifest(workload_state_root, &id)?, &id);
+    let provision = (|| {
+        backend.prepare_provision_workload(&id, &attempt)?;
+        require_succeeded(
+            "krun attachment",
+            backend.attach_provision_network(&id, &attempt)?,
+        )?;
+        require_succeeded(
+            "krun activation prerequisite",
+            backend.inspect_provision_activation_prerequisites(&id, &attempt)?,
+        )?;
+        require_succeeded(
+            "krun activation",
+            backend.activate_provision_workload(&id, &attempt)?,
+        )?;
+        require_readiness_observation(
+            "krun readiness",
+            backend.inspect_provision_workload_readiness(&id, &attempt)?,
+        )?;
+        finish_fixture(read_manifest(workload_state_root, &id)?, install_ingress)
+    })();
+    finish_or_compensate(provision, teardown, |fixture| retire_krun(backend, fixture))
+}
+
+fn finish_or_compensate(
+    provision: nimbus_sandbox::Result<(SandboxHandle, TestIngressSet)>,
+    teardown: ExactTeardownFixture,
+    retire: impl FnOnce(&ExactTeardownFixture) -> nimbus_sandbox::Result<()>,
+) -> nimbus_sandbox::Result<ProvisionedSandbox> {
+    match provision {
+        Ok((handle, ingress)) => Ok(ProvisionedSandbox {
+            handle,
+            ingress,
+            teardown,
+        }),
+        Err(primary) => match retire(&teardown) {
+            Ok(()) => Err(primary),
+            Err(cleanup) => Err(nimbus_sandbox::SandboxError::OperationFailed {
+                message: format!(
+                    "Linux live-provider fixture failed after reservation: {primary}; exact teardown also failed: {cleanup}"
+                ),
+            }),
+        },
+    }
 }
 
 /// Drive the same four exact provider streams as compute for a live Container
@@ -224,6 +240,21 @@ pub(crate) fn retire_krun(
     )
 }
 
+fn exact_teardown_fixture(
+    manifest: ProviderManifestProjection,
+    sandbox_id: &SandboxId,
+) -> ExactTeardownFixture {
+    ExactTeardownFixture {
+        tenant_id: manifest.handle.tenant_id,
+        sandbox_id: sandbox_id.clone(),
+        execution_attempt_id: manifest.execution_attempt_id,
+        network_plan: manifest.provision_network_plan,
+        network_state_root: manifest.network_layout.network_state_root,
+        reservation_claim: manifest.network_config.reservation_claim,
+        egress_lease: manifest.egress_proxy.map(|proxy| proxy.port_lease),
+    }
+}
+
 fn retire_exact(
     fixture: &ExactTeardownFixture,
     provider_keys: ExactTeardownProviderKeys<'_>,
@@ -249,6 +280,8 @@ fn retire_exact(
     ) -> SandboxNetworkTeardownObservation,
     mut journal: impl FnMut() -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandAttemptJournal>,
 ) -> nimbus_sandbox::Result<()> {
+    settle_test_ingress_without_effect(fixture)?;
+
     for operation in [
         SandboxExecutionTeardownOperation::Drain,
         SandboxExecutionTeardownOperation::Stop,
@@ -259,7 +292,8 @@ fn retire_exact(
         );
         let effect_subject = format!("{{\"sandbox\":\"{}\"}}", fixture.sandbox_id);
         let mut completed = false;
-        for dispatch_epoch in 1..=EXACT_TEARDOWN_RETRY_EPOCHS {
+        let mut dispatch_epoch = 1;
+        for _ in 0..EXACT_TEARDOWN_RETRY_EPOCHS {
             let claim = fixture.claim(
                 operation.provider_operation(),
                 &effect_subject,
@@ -275,19 +309,27 @@ fn retire_exact(
                 claim,
             )
             .map_err(exact_teardown_error)?;
-            let current = execute_claimed(
+            let current = match execute_claimed(
                 &journal()?,
                 command.provider_claim(),
                 |execution| execute_execution(&command, execution),
                 |observation| exact_execution_inspection(inspect_execution(&command, observation)),
-            )?;
+            )? {
+                ExactTeardownAttempt::Observation(current) => current,
+                ExactTeardownAttempt::RetryAtEpoch(current) => {
+                    dispatch_epoch = current;
+                    continue;
+                }
+            };
             match current.kind() {
                 ProviderCommandObservationKind::Succeeded
                 | ProviderCommandObservationKind::Absent => {
                     completed = true;
                     break;
                 }
-                ProviderCommandObservationKind::RetryAuthorized => {}
+                ProviderCommandObservationKind::RetryAuthorized => {
+                    dispatch_epoch = next_dispatch_epoch(&current)?;
+                }
                 _ => return Err(nonterminal_teardown_error(operation, &current)),
             }
         }
@@ -313,7 +355,8 @@ fn retire_exact(
         let effect_subject = identity.provider_effect_subject();
         let provider_target_digest = identity.provider_target_digest();
         let mut completed = false;
-        for dispatch_epoch in 1..=EXACT_TEARDOWN_RETRY_EPOCHS {
+        let mut dispatch_epoch = 1;
+        for _ in 0..EXACT_TEARDOWN_RETRY_EPOCHS {
             let claim = fixture.claim(
                 operation.provider_operation(),
                 &effect_subject,
@@ -326,19 +369,27 @@ fn retire_exact(
                 provider_claim: claim,
             })
             .map_err(exact_teardown_error)?;
-            let current = execute_claimed(
+            let current = match execute_claimed(
                 &journal()?,
                 command.provider_claim(),
                 |execution| execute_network(&command, execution),
                 |observation| exact_network_inspection(inspect_network(&command, observation)),
-            )?;
+            )? {
+                ExactTeardownAttempt::Observation(current) => current,
+                ExactTeardownAttempt::RetryAtEpoch(current) => {
+                    dispatch_epoch = current;
+                    continue;
+                }
+            };
             match current.kind() {
                 ProviderCommandObservationKind::Succeeded
                 | ProviderCommandObservationKind::Absent => {
                     completed = true;
                     break;
                 }
-                ProviderCommandObservationKind::RetryAuthorized => {}
+                ProviderCommandObservationKind::RetryAuthorized => {
+                    dispatch_epoch = next_dispatch_epoch(&current)?;
+                }
                 _ => return Err(nonterminal_teardown_error(operation, &current)),
             }
         }
@@ -349,6 +400,41 @@ fn retire_exact(
     Ok(())
 }
 
+fn settle_test_ingress_without_effect(
+    fixture: &ExactTeardownFixture,
+) -> nimbus_sandbox::Result<()> {
+    let published = fixture.network_plan.port_leases();
+    if published.is_empty() {
+        return Ok(());
+    }
+    let mut plan_members = published.clone();
+    if let Some(egress_lease) = &fixture.egress_lease {
+        plan_members.push(egress_lease.clone());
+    }
+    LocalPortLeaseAuthority::open(&fixture.network_state_root)
+        .map_err(exact_teardown_error)?
+        .release_reserved_plan_members_without_effect(
+            &plan_members,
+            &published,
+            &fixture.reservation_claim,
+        )
+        .map(|_| ())
+        .map_err(exact_teardown_error)
+}
+
+fn next_dispatch_epoch(
+    observation: &nimbus_sandbox::ProviderCommandObservation,
+) -> nimbus_sandbox::Result<u64> {
+    observation
+        .claim()
+        .dispatch_epoch()
+        .checked_add(1)
+        .ok_or_else(|| nimbus_sandbox::SandboxError::OperationFailed {
+            message: "Linux smoke exact teardown exhausted the provider dispatch epoch space"
+                .to_owned(),
+        })
+}
+
 fn execute_claimed(
     journal: &nimbus_sandbox::ProviderCommandAttemptJournal,
     claim: &ProviderCommandClaim,
@@ -356,11 +442,17 @@ fn execute_claimed(
         nimbus_sandbox::ProviderCommandExecutionClaim,
     ) -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandObservation>,
     mut inspect: impl FnMut(&nimbus_sandbox::ProviderCommandObservation) -> ExactTeardownInspection,
-) -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandObservation> {
-    let mut current = match journal
-        .claim_dispatch_epoch(claim)
-        .map_err(provider_journal_error)?
-    {
+) -> nimbus_sandbox::Result<ExactTeardownAttempt> {
+    let decision = match journal.claim_dispatch_epoch(claim) {
+        Ok(decision) => decision,
+        Err(nimbus_sandbox::ProviderCommandJournalError::StaleDispatchEpoch {
+            current, ..
+        }) => {
+            return Ok(ExactTeardownAttempt::RetryAtEpoch(current));
+        }
+        Err(error) => return Err(provider_journal_error(error)),
+    };
+    let mut current = match decision {
         ProviderCommandClaimDecision::ExecuteClaimed(execution) => execute(execution)?,
         ProviderCommandClaimDecision::AdoptExactAttempt(observation)
             if observation.kind() == ProviderCommandObservationKind::Claimed =>
@@ -378,7 +470,9 @@ fn execute_claimed(
             ProviderCommandObservationKind::Succeeded
             | ProviderCommandObservationKind::DefiniteFailure
             | ProviderCommandObservationKind::Absent
-            | ProviderCommandObservationKind::RetryAuthorized => return Ok(current),
+            | ProviderCommandObservationKind::RetryAuthorized => {
+                return Ok(ExactTeardownAttempt::Observation(current));
+            }
             ProviderCommandObservationKind::Claimed => {
                 return Err(nimbus_sandbox::SandboxError::OperationFailed {
                     message:
@@ -558,7 +652,10 @@ fn fixture_id(provider: &str, display_name: &str) -> SandboxId {
             }
         })
         .collect::<String>();
-    SandboxId::new(format!("phase-{provider}-{label}-{sequence}"))
+    SandboxId::new(format!(
+        "phase-{provider}-{label}-{}-{sequence}",
+        std::process::id()
+    ))
 }
 
 fn fixture_attempt_id(sandbox_id: &SandboxId) -> SandboxExecutionAttemptId {
@@ -687,11 +784,26 @@ struct ProviderManifestProjection {
     handle: SandboxHandle,
     spec: SandboxSpec,
     network_layout: ProviderNetworkLayoutProjection,
+    network_config: ProviderNetworkConfigProjection,
+    execution_attempt_id: SandboxExecutionAttemptId,
+    provision_network_plan: SandboxProvisionNetworkPlan,
+    egress_proxy: Option<ProviderEgressProjection>,
 }
 
 #[derive(serde::Deserialize)]
 struct ProviderNetworkLayoutProjection {
+    network_state_root: PathBuf,
     status_path: std::path::PathBuf,
+}
+
+#[derive(serde::Deserialize)]
+struct ProviderNetworkConfigProjection {
+    reservation_claim: NetworkReservationClaim,
+}
+
+#[derive(serde::Deserialize)]
+struct ProviderEgressProjection {
+    port_lease: PortLeaseRequest,
 }
 
 #[derive(serde::Deserialize)]
@@ -791,9 +903,16 @@ impl TestIngressSet {
     fn bind(spec: &SandboxSpec, assigned_ip: Ipv4Addr) -> nimbus_sandbox::Result<Self> {
         let mut listeners = Vec::with_capacity(spec.port_bindings.len());
         for binding in &spec.port_bindings {
+            let private_tsi_port = if binding.host_port == 0 {
+                binding.guest_port
+            } else {
+                binding.host_port
+            };
             listeners.push(TestIngress::bind(
                 SocketAddr::new(binding.host_address, binding.host_port),
-                SocketAddr::new(assigned_ip.into(), binding.guest_port),
+                // libkrun realizes the TSI map on the reserved bridge port.
+                // The VMM translates that private port to the guest port.
+                SocketAddr::new(assigned_ip.into(), private_tsi_port),
             )?);
         }
         Ok(Self { listeners })
@@ -801,6 +920,13 @@ impl TestIngressSet {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.listeners.is_empty()
+    }
+
+    pub(crate) fn addresses(&self) -> Vec<SocketAddr> {
+        self.listeners
+            .iter()
+            .map(|listener| listener.wake_address)
+            .collect()
     }
 }
 

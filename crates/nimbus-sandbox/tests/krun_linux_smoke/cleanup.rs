@@ -12,17 +12,18 @@ use super::*;
 ///   - the manifest records the resolved numeric user (33:33) from the image
 ///   - the manifest records stop_signal=SIGQUIT from the image
 ///   - the VM boots (with root user because krun VMM needs /dev/kvm)
+///   - the guest helper applies the resolved user before it starts the service
 ///   - the guest service is reachable over TSI
 ///   - stop sends SIGQUIT first (configured signal), then falls back to SIGKILL
 ///
 /// Note: krun containers cannot run the VMM process as a non-root user because
-/// `/dev/kvm` requires root or kvm-group access. The image USER is resolved
-/// and recorded for future guest-side application, but the OCI bundle
-/// process.user stays 0:0 for the VMM. This is correct krun behavior.
+/// `/dev/kvm` requires root or kvm-group access. The OCI bundle process.user
+/// therefore stays 0:0 for the VMM, and the mounted guest helper applies the
+/// resolved image user inside the guest before it starts the service.
 #[test]
-#[ignore = "requires a Linux host with KVM, buildah, conmon, and network access"]
+#[ignore = "requires a Linux host with KVM, conmon, and a mounted BusyBox rootfs"]
 fn krun_backend_m2_user_and_stop_signal_lowering() {
-    let host_port: u16 = 18082;
+    let host_port = smoke_host_port(18082);
     let guest_port: u16 = 8082;
 
     let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
@@ -31,33 +32,13 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
 
     let config = smoke_backend_config(bundle_root.clone(), state_root.clone());
 
-    let buildah = buildah_program();
-    run_host_command(&buildah, &["rm", "m2-fixture"], true);
-    run_host_command(
-        &buildah,
-        &["from", "--name", "m2-fixture", "docker://busybox:latest"],
-        false,
-    );
-    run_host_command(
-        &buildah,
-        &["config", "--user", "www-data", "m2-fixture"],
-        false,
-    );
-    run_host_command(
-        &buildah,
-        &["config", "--stop-signal", "SIGQUIT", "m2-fixture"],
-        false,
-    );
-    run_host_command(
-        &buildah,
-        &["commit", "m2-fixture", "localhost/nimbus-m2-fixture:latest"],
-        false,
-    );
-    run_host_command(&buildah, &["rm", "m2-fixture"], true);
-
     let backend = KrunSandboxBackend::new(config);
-    let mut spec = image_spec("m2-user-signal", "localhost/nimbus-m2-fixture:latest")
-        .with_port_binding(http_binding(host_port, guest_port));
+    let mut spec = built_busybox_image_spec(
+        "m2-user-signal",
+        "nimbus-m2-fixture",
+        "USER www-data\nSTOPSIGNAL SIGQUIT",
+    )
+    .with_port_binding(http_binding(host_port, guest_port));
     spec.process = busybox_http_process(guest_port);
 
     let provisioned = provision_krun(&backend, &state_root, spec, true)
@@ -65,8 +46,8 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
     let teardown = provisioned.teardown;
-    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
+    let ingress = provisioned.ingress;
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -130,9 +111,14 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     );
 
     let stop_start = Instant::now();
+    drop(ingress);
     retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     let stop_elapsed = stop_start.elapsed();
     eprintln!("stop elapsed: {stop_elapsed:?}");
+    assert!(
+        stop_elapsed >= Duration::from_secs(5),
+        "the image-configured SIGQUIT must receive the complete graceful-stop window before forced stop"
+    );
 
     let stopped_handle = block_on(backend.inspect(&handle.id))
         .expect("inspect after stop should succeed")
@@ -150,9 +136,8 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         manifest_after["shutdown_requested"]
     );
     assert_eq!(
-        exit_code,
-        Some(137),
-        "exit code 137 = SIGKILL after SIGQUIT timeout"
+        exit_code, None,
+        "the legacy conmon exit receipt is not creator-qualified and must not be attributed to this execution"
     );
 
     cleanup_guard.disarm();
