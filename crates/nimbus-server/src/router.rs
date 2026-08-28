@@ -217,6 +217,12 @@ impl RouterOptions {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_listen_addr(mut self, listen_addr: std::net::SocketAddr) -> Self {
+        self.transport = self.transport.with_listen_addr(listen_addr);
+        self
+    }
+
     pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
         self.runtime = self.runtime.with_runtime_host_resource_budget(budget);
         self
