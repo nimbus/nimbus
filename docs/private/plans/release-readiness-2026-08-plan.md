@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: run the RRC5 macOS and Linux workload matrix with the provisional
-integrated binary and `nimbus@minicloud`
+Next action: execute RRC6 desktop static, packaged-shell, and real Mac UI lanes
+against the provisional integrated candidate
 
 ## Outcome
 
@@ -88,8 +88,8 @@ renamed, duplicated, or unsupported condition.
 | RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc2-product-smoke.md` |
 | RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc3-app-adapter-smoke.md` |
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
-| RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `in_progress` | |
-| RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `todo` | |
+| RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
+| RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `in_progress` | |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `todo` | |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `todo` | |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
@@ -301,3 +301,17 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-27 | RRC4 | finding | Object placement, backup, restore, and removal ignored a separate control root. Commit `652fb93b6` repairs all four administration paths and adds split-root live and automated recovery evidence. |
 | 2026-08-27 | RRC4 | blocked | All provider, encryption, backup/restore, object, consistency, durability, restart, and process-fence lanes pass provisionally. Exact-candidate replay waits only for RRC1. See `proof/release-readiness-2026-08/rrc4-storage-recovery.md`. |
 | 2026-08-27 | RRC5 | started | Began the macOS and `nimbus@minicloud` workload-host matrix while the independent RRC1 publication blocker remains recorded. |
+| 2026-08-27 | RRC5 | finding | The macOS host pinned machine-os 0.1.30 while Nimbus 0.1.45 and machine-os 0.1.45 were published. Commit `e03a010a4` pins the exact matching image and digest. |
+| 2026-08-27 | RRC5 | finding | Direct `machine stop` always withheld canonical Engine authority, so failed starts could not release their SSH lease. Commit `e03a010a4` supplies the selected persistence contract only for fenced effects and isolates all proof roots. |
+| 2026-08-27 | RRC5 | finding | Bootc guests already consume the mounted authority and start the baked machine API, but the host re-entered legacy SSH stop/install/restart convergence. Commit `e0a68be28` waits for the bootc-owned API and keeps SSH convergence only for legacy images. The published 0.1.45 image then passed the complete Mac lifecycle proof. |
+| 2026-08-27 | RRC5 | hardening | machine-os created a passwordless `nimbus` account in `wheel` without a noninteractive sudo rule. Local machine-os commit `d5752a4` adds the explicit sudo package, 0440 rule, package inventory, and recipe checks. No artifact was published. |
+| 2026-08-27 | RRC5 | finding | Live KVM tests found that resource limits used an obsolete rootfs sidecar, image users were not applied inside the guest, reserved-before-spawn teardown could exhaust retry, and provider-assigned ingress treated port zero as a private bridge and terminal-publication value. Commit `6ca8eb981` fixes all four production contracts and adds exact unit and live regressions. |
+| 2026-08-27 | RRC5 | hardening | Commit `6ca8eb981` gives the KVM smoke lane isolated supernet and host-port inputs, complete scratch-image runtime libraries, guest-driven liveness transitions, failure compensation, process-qualified identities, and exact teardown retry recovery. |
+| 2026-08-27 | RRC5 | evidence | The serial Linux KVM matrix passed 8/8 in 185.05 seconds with the staged current crun/libkrun tuple. It proves image and direct-rootfs launches, USER/STOPSIGNAL, CPU/RAM, three concurrent provider-assigned ports, readiness, liveness withdrawal/recovery without restart, and exact cleanup. Local `nimbus-sandbox` evidence passed 1,215 tests with zero failures. |
+| 2026-08-27 | RRC5 | finding | The container-only live egress target failed under warning denial because shared support exposed a KVM-only address accessor. A method-local allowance records the cross-target ownership; the target now compiles on macOS and Linux. |
+| 2026-08-27 | RRC5 | evidence | The root-only Linux container matrix passed 2/2 in 49.61 seconds. It proved direct-egress denial, exact L7 admission, denied bypasses, live policy reload, and exact process/mount/namespace cleanup. |
+| 2026-08-27 | RRC5 | finding | The archived SDK resource verifier had six stale ownership/layout anchors, and the compiler-authority refresh mixed a small tmpfs with a shared feature-variant Cargo target. The SDK verifier now passes 23/23; compiler scan isolation, free-space preflight, and 18/18 mutation self-tests pass. Portable baseline refresh remains routed to the existing RRC1 reachable-Deno blocker. |
+| 2026-08-28 | RRC5 | finding | The public resource API returned a truthful pending receipt but discarded its driver task, stop returned before terminal teardown, stopped-successor recovery rejected an already-retired source, empty endpoint withdrawal was rejected, KVM attachment adoption could not resume, and pre-activation compensation crossed a missing Drain command. The current RRC5 repair set adds retained supervision, settlement waits, exact recovery and empty-publication rules, resumable adoption, and durable no-execution stop fences for both backends. |
+| 2026-08-28 | RRC5 | finding | `nimbus start --compose-file` resolved and logged an exact workload boot plan but never submitted it. The server now applies the validated ordered service plan after durable workload recovery and before it begins serving. A fresh Linux root automatically launched the declared KVM service without a lifecycle POST. |
+| 2026-08-28 | RRC5 | evidence | The final provisional binary (`283295f9d80558ec55e5c0523b40e3d04b0b5d29a803c2a504ed932ccac6285d`) passed public sandbox and session lifecycle, GET-only convergence, automatic Compose boot, exact port release, focused compensation tests, 1,218 sandbox library tests, and 2/2 live node/systemd D-Bus tests. Controlled provider faults remained quarantined with no creator admitted. |
+| 2026-08-28 | RRC5 | blocked | Every supported workload-host lane has a provisional pass. Exact-candidate replay waits only for RRC1's reachable immutable Deno references. See `proof/release-readiness-2026-08/rrc5-workload-hosts.md`. |
