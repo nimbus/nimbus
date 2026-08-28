@@ -51,6 +51,76 @@ describe("DisconnectedOverlay", () => {
     expect(onSessionExpired).toHaveBeenCalledOnce();
   });
 
+  it("keeps probing through a restart until the stale session is rejected", async () => {
+    const probeSession = vi
+      .fn()
+      .mockResolvedValueOnce("unreachable")
+      .mockResolvedValueOnce("reauthenticate");
+    const onSessionExpired = vi.fn();
+    render(
+      <DisconnectedOverlay
+        probeSession={probeSession}
+        onSessionExpired={onSessionExpired}
+        probeIntervalMs={25}
+      />,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(25);
+    });
+    expect(probeSession).toHaveBeenCalledOnce();
+    expect(onSessionExpired).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(25);
+    });
+    expect(probeSession).toHaveBeenCalledTimes(2);
+    expect(onSessionExpired).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an in-flight probe when the websocket reconnects", async () => {
+    let resolveProbe: ((result: "reauthenticate") => void) | undefined;
+    const probeSession = vi.fn(
+      () =>
+        new Promise<"reauthenticate">((resolve) => {
+          resolveProbe = resolve;
+        }),
+    );
+    const onSessionExpired = vi.fn();
+    const { rerender } = render(
+      <DisconnectedOverlay
+        probeSession={probeSession}
+        onSessionExpired={onSessionExpired}
+        probeIntervalMs={25}
+      />,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(25);
+    });
+    expect(probeSession).toHaveBeenCalledOnce();
+
+    connectionState.current = {
+      isWebSocketConnected: true,
+      hasEverConnected: true,
+    };
+    rerender(
+      <DisconnectedOverlay
+        probeSession={probeSession}
+        onSessionExpired={onSessionExpired}
+        probeIntervalMs={25}
+      />,
+    );
+    await act(async () => {
+      resolveProbe?.("reauthenticate");
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(probeSession).toHaveBeenCalledOnce();
+  });
+
   it("does not probe before the first successful connection", async () => {
     connectionState.current = {
       isWebSocketConnected: false,

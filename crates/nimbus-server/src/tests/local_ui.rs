@@ -6,7 +6,7 @@ use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 use super::*;
 use crate::local_server::{
-    LOCAL_SESSION_COOKIE_NAME, LocalServerPaths, LocalServerSecurityState,
+    LOCAL_SESSION_COOKIE_NAME, LocalServerPaths, LocalServerSecurityState, SessionValidationResult,
     load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
@@ -437,6 +437,10 @@ async fn stale_session_cookie_redirects_to_auth_after_server_restart() {
     let issued = previous_security
         .create_session_for_local_admin_token(&token.token)
         .expect("session should issue before restart");
+    assert!(matches!(
+        previous_security.authorize_session_cookie(Some(&issued.value)),
+        SessionValidationResult::Authorized(_)
+    ));
 
     let (restarted_security, restarted_token) = local_server_security(temp.path());
     assert_eq!(restarted_token.generation, token.generation);
