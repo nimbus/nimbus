@@ -1528,14 +1528,17 @@ fn async_runtime_integration_removes_hot_path_blocking_adapters() {
 #[tokio::test]
 async fn cors_preflight_enforces_the_complete_browser_origin_policy() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
-    let same_origin = server.http_url("/");
-    let same_origin = same_origin.trim_end_matches('/');
+    let listen_addr = "127.0.0.1:45678".parse().expect("listen addr should parse");
+    let server = ServerFixture::start(build_router(
+        RouterOptions::protocol_only(fixture.engine()).with_listen_addr(listen_addr),
+    ))
+    .await;
+    let same_origin = format!("http://{listen_addr}");
 
     let allowed = server
         .client()
         .request(reqwest::Method::OPTIONS, server.http_url("/api/tenants"))
-        .header("origin", same_origin)
+        .header("origin", &same_origin)
         .header("access-control-request-method", "POST")
         .send()
         .await
@@ -1545,7 +1548,7 @@ async fn cors_preflight_enforces_the_complete_browser_origin_policy() {
             .headers()
             .get("access-control-allow-origin")
             .and_then(|value| value.to_str().ok()),
-        Some(same_origin)
+        Some(same_origin.as_str())
     );
 
     let wrong_loopback_port = server

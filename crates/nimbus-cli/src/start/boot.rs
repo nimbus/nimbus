@@ -65,6 +65,12 @@ impl ResolvedStartAppDir {
 pub(crate) async fn run_start_command(
     command: StartCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Reject an unsafe explicit bind before claiming the process-wide local
+    // network authority. A different Nimbus process can hold that authority;
+    // waiting on it must never hide a deterministic CLI policy error.
+    if !command.systemd_socket_activation {
+        ensure_host_opt_in(&command.host, command.allow_network)?;
+    }
     let network_root = network_root_from_start_command(&command)?;
     let staged_network = StagedLocalNetworkComposition::claim(&network_root)?;
     run_start_command_with_network(command, StartNetworkComposition::Staged(staged_network)).await
