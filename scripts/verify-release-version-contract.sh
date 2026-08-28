@@ -83,6 +83,7 @@ else
   if ! node - "${repo_root}" "${expected_version}" <<'EOF'
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("child_process");
 
 const repoRoot = process.argv[2];
 const expectedVersion = process.argv[3];
@@ -104,20 +105,7 @@ const localPackageNames = new Set(
   packageWorkspaces.map(([, workspacePackage]) => workspacePackage.name)
 );
 const checks = [];
-
-const collectPackageLocks = (directory) => {
-  const packageLocks = [];
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if ([".git", "node_modules", "target"].includes(entry.name)) continue;
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      packageLocks.push(...collectPackageLocks(entryPath));
-    } else if (entry.name === "package-lock.json") {
-      packageLocks.push(entryPath);
-    }
-  }
-  return packageLocks;
-};
+const parseFailures = [];
 
 for (const [workspacePath, workspacePackage] of packageWorkspaces) {
   checks.push([`${workspacePath}/package.json version`, workspacePackage.version]);
@@ -143,12 +131,29 @@ for (const workspacePath of workspacePaths) {
 }
 
 // Nimbus-native scaffolds check in package locks whose staged SDK entries live
-// under .nimbus/packages/. They are not root npm workspaces, but their embedded
-// package versions still ship with the candidate and must move with the release
-// version surface.
-for (const packageLockPath of collectPackageLocks(repoRoot)) {
-  const nestedLock = JSON.parse(fs.readFileSync(packageLockPath, "utf8"));
-  const relativeLockPath = path.relative(repoRoot, packageLockPath);
+// under .nimbus/packages/. Inventory only Git-tracked locks so ignored build
+// output and a developer's untracked scaffolds cannot change the release gate.
+const trackedPackageLocks = execFileSync(
+  "git",
+  ["ls-files", "-z", "--", "*package-lock.json"],
+  { cwd: repoRoot, encoding: "utf8" }
+).split("\0").filter(Boolean);
+
+for (const relativeLockPath of trackedPackageLocks) {
+  const packageLockPath = path.join(repoRoot, relativeLockPath);
+  const packageLockSource = fs.readFileSync(packageLockPath, "utf8");
+  if (!packageLockSource.includes('".nimbus/packages/')) continue;
+
+  let nestedLock;
+  try {
+    nestedLock = JSON.parse(packageLockSource);
+  } catch (error) {
+    parseFailures.push(
+      `mismatch: ${relativeLockPath} staged package lock must be valid JSON (${error.message})`
+    );
+    continue;
+  }
+
   for (const [packagePath, packageEntry] of Object.entries(nestedLock.packages ?? {})) {
     if (packagePath.startsWith(".nimbus/packages/") && packageEntry?.version !== undefined) {
       checks.push([
@@ -159,9 +164,9 @@ for (const packageLockPath of collectPackageLocks(repoRoot)) {
   }
 }
 
-const failures = checks
+const failures = parseFailures.concat(checks
   .filter(([, actual]) => actual !== expectedVersion)
-  .map(([label, actual]) => `mismatch: ${label} expected=${expectedVersion} actual=${actual ?? "<missing>"}`);
+  .map(([label, actual]) => `mismatch: ${label} expected=${expectedVersion} actual=${actual ?? "<missing>"}`));
 
 if (failures.length > 0) {
   console.error(failures.join("\n"));
