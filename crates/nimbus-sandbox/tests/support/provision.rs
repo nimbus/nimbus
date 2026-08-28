@@ -50,7 +50,7 @@ struct ExactTeardownProviderKeys<'a> {
 }
 
 enum ExactTeardownAttempt {
-    Observation(nimbus_sandbox::ProviderCommandObservation),
+    Observation(Box<nimbus_sandbox::ProviderCommandObservation>),
     RetryAtEpoch(u64),
 }
 
@@ -471,7 +471,7 @@ fn execute_claimed(
             | ProviderCommandObservationKind::DefiniteFailure
             | ProviderCommandObservationKind::Absent
             | ProviderCommandObservationKind::RetryAuthorized => {
-                return Ok(ExactTeardownAttempt::Observation(current));
+                return Ok(ExactTeardownAttempt::Observation(Box::new(current)));
             }
             ProviderCommandObservationKind::Claimed => {
                 return Err(nimbus_sandbox::SandboxError::OperationFailed {

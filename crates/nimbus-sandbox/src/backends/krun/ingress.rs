@@ -98,7 +98,7 @@ mod tests {
 
         assert_eq!(private_tsi_upstream_port(&binding), 8_080);
         assert_eq!(
-            format_private_tsi_port_map(&[binding.clone()], Ipv4Addr::UNSPECIFIED),
+            format_private_tsi_port_map(std::slice::from_ref(&binding), Ipv4Addr::UNSPECIFIED),
             "0.0.0.0:8080:8080"
         );
         assert_eq!(

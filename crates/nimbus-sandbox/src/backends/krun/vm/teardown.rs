@@ -893,9 +893,9 @@ fn require_matching_drain(
     if same_workload_fence(fence, stop_claim) {
         Ok(())
     } else {
-        return Err(SandboxError::InvalidSpec {
+        Err(SandboxError::InvalidSpec {
             message: "Krun execution stop is crossed with the durable drain fence".to_owned(),
-        });
+        })
     }
 }
 
