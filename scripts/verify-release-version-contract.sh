@@ -108,7 +108,7 @@ const checks = [];
 const collectPackageLocks = (directory) => {
   const packageLocks = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if (entry.name === "node_modules") continue;
+    if ([".git", "node_modules", "target"].includes(entry.name)) continue;
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       packageLocks.push(...collectPackageLocks(entryPath));
@@ -146,7 +146,7 @@ for (const workspacePath of workspacePaths) {
 // under .nimbus/packages/. They are not root npm workspaces, but their embedded
 // package versions still ship with the candidate and must move with the release
 // version surface.
-for (const packageLockPath of collectPackageLocks(path.join(repoRoot, "examples"))) {
+for (const packageLockPath of collectPackageLocks(repoRoot)) {
   const nestedLock = JSON.parse(fs.readFileSync(packageLockPath, "utf8"));
   const relativeLockPath = path.relative(repoRoot, packageLockPath);
   for (const [packagePath, packageEntry] of Object.entries(nestedLock.packages ?? {})) {

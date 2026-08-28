@@ -1606,8 +1606,6 @@ uninstall_nimbus_release_documents() {
   done
   if [ -d "$document_path" ]; then
     maybe_sudo rmdir "$document_path" 2>/dev/null || true
-    maybe_sudo rmdir "${NIMBUS_PREFIX}/share/doc" 2>/dev/null || true
-    maybe_sudo rmdir "${NIMBUS_PREFIX}/share" 2>/dev/null || true
   fi
 }
 
@@ -1707,40 +1705,6 @@ inline_check_nimbus_release_documents() {
       inline_mark_failure
     fi
   done
-}
-
-inline_check_linux_shared_lib() {
-  label="$1"
-  soname="$2"
-  required="${3:-required}"
-  found_path=""
-
-  if check_cmd ldconfig; then
-    found_path="$(ldconfig -p 2>/dev/null | awk -v name="$soname" '$0 ~ name { print $NF; exit }' || true)"
-  fi
-
-  if [ -z "$found_path" ]; then
-    for library_dir in /usr/local/lib64 /usr/local/lib /usr/lib64 /usr/lib; do
-      for candidate in "${library_dir}/${soname}"*; do
-        if [ -f "$candidate" ]; then
-          found_path="$candidate"
-          break 2
-        fi
-      done
-    done
-  fi
-
-  if [ -n "$found_path" ]; then
-    inline_print_line "$label" "present path=$found_path"
-    return 0
-  fi
-
-  inline_print_line "$label" "missing"
-  if [ "$required" = "required" ]; then
-    inline_mark_failure
-  else
-    inline_mark_warning
-  fi
 }
 
 inline_check_private_libkrun_stack() {

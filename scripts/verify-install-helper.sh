@@ -12,6 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-install-helper.XXXXXX")"
 trap 'rm -rf "${output_dir}"' EXIT
 testable_install_sh="${output_dir}/install-lib.sh"
+testable_verify_install_sh="${output_dir}/verify-install-lib.sh"
 
 test_count=0
 fail_count=0
@@ -53,6 +54,7 @@ else
 fi
 
 sed '$d' "${repo_root}/scripts/install.sh" > "${testable_install_sh}"
+sed '$d' "${repo_root}/scripts/verify-install.sh" > "${testable_verify_install_sh}"
 
 # Check POSIX sh compatibility for install.sh
 if command -v dash >/dev/null 2>&1; then
@@ -675,9 +677,57 @@ else
   fail "macOS inline verification accepts a direct custom-prefix payload"
 fi
 
-foreign_path_bin="${output_dir}/foreign-path-bin"
+linux_package_prefix="${output_dir}/linux-package-prefix"
+mkdir -p "${linux_package_prefix}/bin" "${linux_package_prefix}/share/doc/nimbus"
+cp "${custom_prefix}/bin/nimbus" "${linux_package_prefix}/bin/nimbus"
+cp "${custom_prefix}/share/doc/nimbus/LICENSE" "${linux_package_prefix}/share/doc/nimbus/LICENSE"
+cp "${custom_prefix}/share/doc/nimbus/README.md" "${linux_package_prefix}/share/doc/nimbus/README.md"
+if NIMBUS_PREFIX="${linux_package_prefix}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/share/doc/nimbus/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/share/doc/nimbus/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${linux_package_prefix}" \
+    > "${output_dir}/linux-package-doc-layout.txt" 2>&1; then
+  pass "standalone verification resolves the DEB/RPM release-document layout"
+else
+  fail "standalone verification resolves the DEB/RPM release-document layout"
+fi
+
+brew_root="${output_dir}/homebrew"
+cask_root="${brew_root}/Caskroom/nimbus/0.1.46"
 empty_prefix="${output_dir}/empty-prefix"
-mkdir -p "${foreign_path_bin}" "${empty_prefix}"
+mkdir -p "${brew_root}/bin" "${cask_root}" "${empty_prefix}"
+cask_root="$(cd "${cask_root}" && pwd)"
+cp "${custom_prefix}/bin/nimbus" "${cask_root}/nimbus"
+cp "${custom_prefix}/share/doc/nimbus/LICENSE" "${cask_root}/LICENSE"
+cp "${custom_prefix}/share/doc/nimbus/README.md" "${cask_root}/README.md"
+ln -s "../Caskroom/nimbus/0.1.46/nimbus" "${brew_root}/bin/nimbus"
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${empty_prefix}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${cask_root}" \
+    > "${output_dir}/homebrew-cask-doc-layout.txt" 2>&1; then
+  pass "standalone verification resolves Homebrew Cask release documents"
+else
+  fail "standalone verification resolves Homebrew Cask release documents"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${empty_prefix}" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$3"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' sh "${testable_install_sh}" "${cask_root}" "${empty_prefix}" \
+    > "${output_dir}/homebrew-cask-inline-doc-layout.txt" 2>&1; then
+  pass "inline verification resolves Homebrew Cask release documents"
+else
+  fail "inline verification resolves Homebrew Cask release documents"
+fi
+
+foreign_path_bin="${output_dir}/foreign-path-bin"
+mkdir -p "${foreign_path_bin}"
 cp "${custom_prefix}/bin/nimbus" "${foreign_path_bin}/nimbus"
 if PATH="${foreign_path_bin}:/usr/bin:/bin" sh -c '
     . "$1"
