@@ -656,8 +656,25 @@ impl KrunSandboxBackend {
         manifest: &KrunSandboxManifest,
     ) -> Result<()> {
         let vm_config_path = krun_vm_config_path(&required_rootfs(&manifest.spec)?.rootfs);
-        if !vm_config_path.exists() {
-            return Ok(());
+        let metadata = match std::fs::symlink_metadata(&vm_config_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to inspect untrusted krun vm config {}: {error}",
+                        vm_config_path.display()
+                    ),
+                });
+            }
+        };
+        if !metadata.is_file() && !metadata.file_type().is_symlink() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to remove untrusted krun vm config {}: unsupported entry type",
+                    vm_config_path.display()
+                ),
+            });
         }
         std::fs::remove_file(&vm_config_path).map_err(|error| SandboxError::OperationFailed {
             message: format!(

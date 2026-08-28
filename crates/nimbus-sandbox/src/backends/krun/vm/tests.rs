@@ -604,6 +604,33 @@ fn plan_only_start_removes_untrusted_krun_vm_config_when_cpu_limit_is_unset() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn plan_only_start_removes_dangling_untrusted_krun_vm_config_symlink() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let rootfs = temp_dir.path().join("rootfs");
+    fs::create_dir_all(&rootfs).expect("rootfs directory should exist");
+    let stale_vm_config = krun_vm_config_path(&rootfs);
+    std::os::unix::fs::symlink("/guest-only/kernel-config", &stale_vm_config)
+        .expect("dangling guest-absolute vm config symlink should be seeded");
+    assert!(
+        !stale_vm_config.exists(),
+        "Path::exists must demonstrate why the trust-boundary check uses symlink metadata"
+    );
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    ));
+    let spec = sample_spec_with_rootfs(&rootfs).with_memory_limit_bytes(256 * 1024 * 1024);
+
+    materialize_plan_only_fixture(&backend, spec).expect("plan-only lowering should materialize");
+
+    assert!(
+        fs::symlink_metadata(&stale_vm_config).is_err(),
+        "image-controlled dangling VM configuration symlinks must be unlinked before launch"
+    );
+}
+
 #[test]
 fn rootfs_plan_resolves_entrypoint_command_and_user_without_image_defaults() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");

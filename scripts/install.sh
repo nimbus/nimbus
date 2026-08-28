@@ -817,7 +817,9 @@ confirm() {
 # --- Idempotent checks ------------------------------------------------------
 
 get_installed_nimbus_version() {
-  if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+  # A package manager can expose Nimbus through a symlink inside this prefix.
+  # Only a regular prefix-owned executable is a direct-install candidate.
+  if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ] && [ ! -L "${NIMBUS_PREFIX}/bin/nimbus" ]; then
     "${NIMBUS_PREFIX}/bin/nimbus" --version 2>/dev/null | head -1 | sed 's/nimbus /v/'
   fi
 }
@@ -1679,7 +1681,8 @@ resolve_nimbus_release_document() {
 
   # A direct-install binary owns its prefix payload. Do not let documents from
   # a different package-manager or Cask channel mask a partial direct install.
-  [ -x "${NIMBUS_PREFIX}/bin/nimbus" ] && return 1
+  [ -x "${NIMBUS_PREFIX}/bin/nimbus" ] &&
+    [ ! -L "${NIMBUS_PREFIX}/bin/nimbus" ] && return 1
 
   nimbus_path="$(command -v nimbus 2>/dev/null || true)"
   if [ -n "$nimbus_path" ]; then

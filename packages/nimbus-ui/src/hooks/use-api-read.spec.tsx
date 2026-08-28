@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import {
@@ -13,10 +13,29 @@ import {
 
 import { useApiRead } from "./use-api-read";
 
+const apiFetchControl = vi.hoisted(() => ({
+  onSettled: undefined as ((path: string) => Promise<void>) | undefined,
+}));
+
+vi.mock("../lib/api-mutations", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api-mutations")>();
+  return {
+    ...actual,
+    async apiFetch<T>(path: string, init: RequestInit = {}) {
+      const result = await actual.apiFetch<T>(path, init);
+      await apiFetchControl.onSettled?.(path);
+      return result;
+    },
+  };
+});
+
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  apiFetchControl.onSettled = undefined;
+  server.resetHandlers();
+});
 afterAll(() => server.close());
 
 function deferred<T>() {
@@ -84,7 +103,14 @@ describe("useApiRead", () => {
 
   it("aborts the old read and fetches again when the path changes", async () => {
     const oldGate = deferred<void>();
+    const oldApiFetchSettled = deferred<void>();
+    const releaseOldApiFetch = deferred<void>();
     let oldSignal: AbortSignal | null = null;
+    apiFetchControl.onSettled = async (path) => {
+      if (path !== "/api/old") return;
+      oldApiFetchSettled.resolve();
+      await releaseOldApiFetch.promise;
+    };
     server.use(
       http.get("*/api/old", async ({ request }) => {
         oldSignal = request.signal;
@@ -107,7 +133,11 @@ describe("useApiRead", () => {
     expect((oldSignal as unknown as AbortSignal).aborted).toBe(true);
 
     oldGate.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await oldApiFetchSettled.promise;
+    await act(async () => {
+      releaseOldApiFetch.resolve();
+      await releaseOldApiFetch.promise;
+    });
     expect(result.current).toEqual({ kind: "ok", value: { n: 2 } });
   });
 });

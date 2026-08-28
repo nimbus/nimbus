@@ -726,6 +726,24 @@ else
   fail "inline verification resolves Homebrew Cask release documents"
 fi
 
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${brew_root}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${cask_root}" \
+    > "${output_dir}/homebrew-prefix-symlink-doc-layout.txt" 2>&1 &&
+   PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    [ -z "$(get_installed_nimbus_version)" ]
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$3/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$3/README.md" ]
+  ' sh "${testable_install_sh}" "${brew_root}" "${cask_root}"; then
+  pass "Homebrew prefix symlink remains package-manager-owned"
+else
+  fail "Homebrew prefix symlink remains package-manager-owned"
+fi
+
 incomplete_prefix="${output_dir}/incomplete-prefix"
 mkdir -p "${incomplete_prefix}/bin" "${incomplete_prefix}/libexec"
 cp "${custom_prefix}/bin/nimbus" "${incomplete_prefix}/bin/nimbus"
