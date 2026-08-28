@@ -42,6 +42,7 @@ mod context;
 pub mod transform;
 mod test;
 mod decode;
+pub use decode::BrotliDecoderIsUsed;
 pub mod io_wrappers;
 pub mod reader;
 pub mod writer;

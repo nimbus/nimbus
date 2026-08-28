@@ -884,13 +884,18 @@ async fn pending_readiness_retains_supervisor_and_converges_without_resubmission
     assert!(provisioner.has_tracked_submission(&key()));
     assert!(provisioner.has_running_tracked_task(&key()));
 
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while provisioner.has_tracked_submission(&key()) {
-            tokio::task::yield_now().await;
-        }
-    })
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        provisioner.wait_for_tracked_settlement(&key()),
+    )
     .await
-    .expect("the retained supervisor should converge without another submission");
+    .expect("the retained supervisor should converge without another submission")
+    .expect("the retained supervisor should publish settlement")
+    .expect("the retained supervisor should settle successfully");
+    assert_eq!(
+        settled.disposition(),
+        WorkloadProvisionRunDisposition::Observed
+    );
 
     let durable = store
         .record()
@@ -945,13 +950,18 @@ async fn intermediate_cas_ambiguity_retains_supervisor_and_converges_without_res
     );
     assert!(provisioner.has_running_tracked_task(&key()));
 
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while provisioner.has_tracked_submission(&key()) {
-            tokio::task::yield_now().await;
-        }
-    })
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        provisioner.wait_for_tracked_settlement(&key()),
+    )
     .await
-    .expect("retained supervision should retry the exact durable phase");
+    .expect("retained supervision should retry the exact durable phase")
+    .expect("retained supervision should publish settlement")
+    .expect("retained supervision should settle successfully");
+    assert_eq!(
+        settled.disposition(),
+        WorkloadProvisionRunDisposition::Observed
+    );
 
     assert_eq!(
         store
@@ -1042,7 +1052,6 @@ async fn retirement_joins_pending_supervisor_and_stops_later_inspection() {
     );
     assert!(!provisioner.has_tracked_submission(&key()));
 
-    tokio::time::sleep(std::time::Duration::from_millis(75)).await;
     assert_eq!(
         provider.calls().len(),
         calls_before_retirement,

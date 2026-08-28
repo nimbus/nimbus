@@ -101,7 +101,11 @@ pub(crate) fn provision_container(
             "container readiness",
             backend.inspect_provision_workload_readiness(&id, &attempt)?,
         )?;
-        finish_fixture(read_manifest(workload_state_root, &id)?, install_ingress)
+        finish_fixture(
+            read_manifest(workload_state_root, &id)?,
+            install_ingress,
+            TestIngressTarget::Container,
+        )
     })();
     finish_or_compensate(provision, teardown, |fixture| {
         retire_container(backend, fixture)
@@ -138,7 +142,11 @@ pub(crate) fn provision_krun(
             "krun readiness",
             backend.inspect_provision_workload_readiness(&id, &attempt)?,
         )?;
-        finish_fixture(read_manifest(workload_state_root, &id)?, install_ingress)
+        finish_fixture(
+            read_manifest(workload_state_root, &id)?,
+            install_ingress,
+            TestIngressTarget::KrunTsi,
+        )
     })();
     finish_or_compensate(provision, teardown, |fixture| retire_krun(backend, fixture))
 }
@@ -867,6 +875,7 @@ fn read_manifest(
 fn finish_fixture(
     manifest: ProviderManifestProjection,
     install_ingress: bool,
+    ingress_target: TestIngressTarget,
 ) -> nimbus_sandbox::Result<(SandboxHandle, TestIngressSet)> {
     let ingress = if install_ingress {
         let status: ProviderStatusProjection = serde_json::from_slice(
@@ -887,7 +896,7 @@ fn finish_fixture(
                 message: "Linux smoke provider status has no assigned private address".to_owned(),
             }
         })?;
-        TestIngressSet::bind(&manifest.spec, assigned_ip)?
+        TestIngressSet::bind(&manifest.spec, assigned_ip, ingress_target)?
     } else {
         TestIngressSet::default()
     };
@@ -899,20 +908,33 @@ pub(crate) struct TestIngressSet {
     listeners: Vec<TestIngress>,
 }
 
+#[derive(Clone, Copy)]
+enum TestIngressTarget {
+    Container,
+    KrunTsi,
+}
+
 impl TestIngressSet {
-    fn bind(spec: &SandboxSpec, assigned_ip: Ipv4Addr) -> nimbus_sandbox::Result<Self> {
+    fn bind(
+        spec: &SandboxSpec,
+        assigned_ip: Ipv4Addr,
+        target: TestIngressTarget,
+    ) -> nimbus_sandbox::Result<Self> {
         let mut listeners = Vec::with_capacity(spec.port_bindings.len());
         for binding in &spec.port_bindings {
-            let private_tsi_port = if binding.host_port == 0 {
-                binding.guest_port
-            } else {
-                binding.host_port
+            let private_port = match target {
+                TestIngressTarget::Container => binding.guest_port,
+                TestIngressTarget::KrunTsi => {
+                    if binding.host_port == 0 {
+                        binding.guest_port
+                    } else {
+                        binding.host_port
+                    }
+                }
             };
             listeners.push(TestIngress::bind(
                 SocketAddr::new(binding.host_address, binding.host_port),
-                // libkrun realizes the TSI map on the reserved bridge port.
-                // The VMM translates that private port to the guest port.
-                SocketAddr::new(assigned_ip.into(), private_tsi_port),
+                SocketAddr::new(assigned_ip.into(), private_port),
             )?);
         }
         Ok(Self { listeners })

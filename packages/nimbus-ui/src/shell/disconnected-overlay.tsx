@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { StateDot } from "../components/state-dot";
 
 const DEFAULT_SESSION_PROBE_INTERVAL_MS = 1_000;
+const DEFAULT_SESSION_PROBE_TIMEOUT_MS = 3_000;
 
 export type SessionProbeResult =
   | "authorized"
@@ -18,13 +19,17 @@ export interface DisconnectedOverlayProps {
 
 export async function probeUiSession(
   fetchImpl: typeof fetch = globalThis.fetch,
+  timeoutMs = DEFAULT_SESSION_PROBE_TIMEOUT_MS,
 ): Promise<SessionProbeResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl("/ui/", {
       method: "GET",
       credentials: "same-origin",
       redirect: "manual",
       cache: "no-store",
+      signal: controller.signal,
     });
     if (
       response.status === 401 ||
@@ -37,6 +42,8 @@ export async function probeUiSession(
     return "authorized";
   } catch {
     return "unreachable";
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

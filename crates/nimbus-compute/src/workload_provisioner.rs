@@ -1150,6 +1150,29 @@ impl WorkloadProvisioner {
             .and_then(|entry| entry._task.as_ref())
             .is_some_and(|task| !task.is_finished())
     }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_for_tracked_settlement(
+        &self,
+        key: &WorkloadSagaKey,
+    ) -> Option<WorkloadProvisionResult> {
+        let mut settlement = self
+            .supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned")
+            .in_flight
+            .get(key)?
+            .settlement
+            .clone();
+        loop {
+            if let Some(result) = settlement.borrow().clone() {
+                return Some(result);
+            }
+            if settlement.changed().await.is_err() {
+                return None;
+            }
+        }
+    }
 }
 
 fn map_saga_load_error(error: WorkloadSagaStoreError) -> nimbus_core::Error {

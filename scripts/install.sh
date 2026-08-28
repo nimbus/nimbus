@@ -824,6 +824,12 @@ get_installed_nimbus_version() {
   fi
 }
 
+require_direct_install_target() {
+  if [ -L "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    err "refusing to replace package-manager-owned symlink ${NIMBUS_PREFIX}/bin/nimbus; choose a different --prefix or upgrade Nimbus with that package manager"
+  fi
+}
+
 get_installed_crun_version() {
   crun_path="/usr/libexec/nimbus/crun"
   if [ -x "$crun_path" ]; then
@@ -1063,6 +1069,7 @@ install_nimbus_release_documents() {
 }
 
 download_and_install_nimbus() {
+  require_direct_install_target
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would download and install nimbus $NIMBUS_VERSION to ${NIMBUS_PREFIX}/bin/nimbus"
     return 0
@@ -1493,12 +1500,18 @@ uninstall_linux() {
     return 0
   fi
 
-  if [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+  foreign_nimbus_symlink=""
+  if [ -L "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    foreign_nimbus_symlink=1
+    say_info "Leaving package-manager-owned symlink ${NIMBUS_PREFIX}/bin/nimbus unchanged"
+  elif [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
     maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
     say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
   fi
 
-  uninstall_nimbus_release_documents
+  if [ -z "$foreign_nimbus_symlink" ]; then
+    uninstall_nimbus_release_documents
+  fi
 
   if [ -f "/usr/libexec/nimbus/crun" ]; then
     maybe_sudo rm -f "/usr/libexec/nimbus/crun"
@@ -1568,7 +1581,11 @@ uninstall_macos() {
     say_info "Remove that copy with: brew uninstall --cask nimbus"
   fi
 
-  if [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+  foreign_nimbus_symlink=""
+  if [ -L "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    foreign_nimbus_symlink=1
+    say_info "Leaving package-manager-owned symlink ${NIMBUS_PREFIX}/bin/nimbus unchanged"
+  elif [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
     maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
     say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
   elif [ -n "$cask_installed" ]; then
@@ -1577,19 +1594,23 @@ uninstall_macos() {
     say_info "nimbus binary not found at ${NIMBUS_PREFIX}/bin/nimbus"
   fi
 
-  uninstall_nimbus_release_documents
+  if [ -z "$foreign_nimbus_symlink" ]; then
+    uninstall_nimbus_release_documents
+  fi
 
   # Remove only the direct-install helpers this script owns. The Homebrew
   # krunkit/libkrun chain remains Homebrew-owned and is reported below.
   # shellcheck disable=SC2046
-  for helper_name in $(macos_bundled_helper_names); do
-    helper_path="${NIMBUS_PREFIX}/libexec/${helper_name}"
-    if [ -f "$helper_path" ] || [ -L "$helper_path" ]; then
-      maybe_sudo rm -f "$helper_path"
-      say_info "Removed ${helper_path}"
-    fi
-  done
-  if [ -d "${NIMBUS_PREFIX}/libexec" ]; then
+  if [ -z "$foreign_nimbus_symlink" ]; then
+    for helper_name in $(macos_bundled_helper_names); do
+      helper_path="${NIMBUS_PREFIX}/libexec/${helper_name}"
+      if [ -f "$helper_path" ] || [ -L "$helper_path" ]; then
+        maybe_sudo rm -f "$helper_path"
+        say_info "Removed ${helper_path}"
+      fi
+    done
+  fi
+  if [ -z "$foreign_nimbus_symlink" ] && [ -d "${NIMBUS_PREFIX}/libexec" ]; then
     maybe_sudo rmdir "${NIMBUS_PREFIX}/libexec" 2>/dev/null || true
   fi
 

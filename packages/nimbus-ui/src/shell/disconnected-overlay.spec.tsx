@@ -166,4 +166,23 @@ describe("probeUiSession", () => {
       probeUiSession(authorized as unknown as typeof fetch),
     ).resolves.toBe("authorized");
   });
+
+  it("classifies a blackholed session probe as unreachable after its deadline", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const blackholed = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          observedSignal = init?.signal ?? undefined;
+          observedSignal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+
+    const result = probeUiSession(blackholed as typeof fetch, 25);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(result).resolves.toBe("unreachable");
+    expect(observedSignal?.aborted).toBe(true);
+  });
 });

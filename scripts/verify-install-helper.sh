@@ -744,6 +744,33 @@ else
   fail "Homebrew prefix symlink remains package-manager-owned"
 fi
 
+if PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+      . "$1"
+      NIMBUS_PREFIX="$2"
+      NIMBUS_VERSION="v0.1.46"
+      DRY_RUN=1
+      ! (download_and_install_nimbus)
+    ' sh "${testable_install_sh}" "${brew_root}" \
+    > "${output_dir}/homebrew-symlink-install-refusal.txt" 2>&1 &&
+   grep -Fq "refusing to replace package-manager-owned symlink" \
+     "${output_dir}/homebrew-symlink-install-refusal.txt"; then
+  pass "direct installer refuses a package-manager-owned symlink"
+else
+  fail "direct installer refuses a package-manager-owned symlink"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    uninstall_macos
+    [ -L "$NIMBUS_PREFIX/bin/nimbus" ]
+  ' sh "${testable_install_sh}" "${brew_root}" \
+    > "${output_dir}/homebrew-symlink-uninstall-preservation.txt" 2>&1; then
+  pass "direct uninstaller preserves a package-manager-owned symlink"
+else
+  fail "direct uninstaller preserves a package-manager-owned symlink"
+fi
+
 incomplete_prefix="${output_dir}/incomplete-prefix"
 mkdir -p "${incomplete_prefix}/bin" "${incomplete_prefix}/libexec"
 cp "${custom_prefix}/bin/nimbus" "${incomplete_prefix}/bin/nimbus"

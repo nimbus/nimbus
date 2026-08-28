@@ -15,7 +15,7 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
     let bundle_root = base_dir.join("image-bundles");
     let state_root = base_dir.join("image-state");
 
-    let config = smoke_backend_config(bundle_root, state_root.clone());
+    let config = smoke_backend_config(bundle_root.clone(), state_root.clone());
     let backend = KrunSandboxBackend::new(config);
     let mut spec = image_spec("image-smoke", "docker://busybox:latest")
         .with_port_binding(http_binding(host_port, guest_port));
@@ -48,12 +48,15 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
     );
     assert_host_port_not_bound_to_non_loopback(host_port);
 
-    let inspected_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
-    assert_eq!(inspected_handle.status, SandboxStatus::Ready);
+    let restarted_backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root));
+    let restarted_handle = block_on(restarted_backend.inspect(&handle.id))
+        .expect("inspect should succeed")
+        .expect("image-backed sandbox should survive backend restart");
+    assert_eq!(restarted_handle.handle.status, SandboxStatus::Ready);
 
     drop(ingress);
-    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
-    let stopped_handle = block_on(backend.inspect(&handle.id))
+    retire_krun(&restarted_backend, &teardown).expect("exact teardown should succeed");
+    let stopped_handle = block_on(restarted_backend.inspect(&handle.id))
         .expect("inspect after stop should succeed")
         .expect("stopped sandbox should still have a manifest");
     assert_eq!(stopped_handle.handle.status, SandboxStatus::Stopped);
