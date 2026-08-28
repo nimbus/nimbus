@@ -6444,7 +6444,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nimbus"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "bytes",
  "nimbus-blob",
@@ -6464,7 +6464,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-adapters"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-cloud-functions",
  "nimbus-convex",
@@ -6477,7 +6477,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-artifacts"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-core",
  "oci-client",
@@ -6487,7 +6487,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-assets"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "rust-embed",
  "serde",
@@ -6499,7 +6499,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-auth"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "futures",
  "nimbus-core",
@@ -6510,7 +6510,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-bin"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-cli",
  "tokio",
@@ -6520,7 +6520,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-blob"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "async-trait",
  "blake3",
@@ -6538,7 +6538,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-bridge"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "base64 0.22.1",
  "nimbus-core",
@@ -6556,7 +6556,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-cli"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "aes-gcm-siv",
  "axum",
@@ -6614,7 +6614,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-cloud-functions"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "http 1.4.2",
  "nimbus-artifacts",
@@ -6637,7 +6637,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-code-index"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "oxc",
  "serde",
@@ -6647,7 +6647,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-compute"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-artifacts",
  "nimbus-auth",
@@ -6685,7 +6685,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-convex"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -6710,7 +6710,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-core"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -6726,7 +6726,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-crypto"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "aes-gcm-siv",
  "aws-config",
@@ -6752,7 +6752,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-dynamodb"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "base64 0.22.1",
  "bigdecimal",
@@ -6775,7 +6775,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-egress"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-core",
  "serde",
@@ -6785,7 +6785,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-engine"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -6820,7 +6820,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-firebase"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "base64 0.22.1",
  "futures",
@@ -6846,7 +6846,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-fs"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "async-trait",
  "bytes",
@@ -6870,7 +6870,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-kv"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "hex",
  "nimbus-core",
@@ -6892,7 +6892,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-license"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-core",
  "serde",
@@ -6904,7 +6904,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-machine"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-core",
  "nimbus-network",
@@ -6917,7 +6917,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-mongodb"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "bson",
  "crc32c",
@@ -6937,7 +6937,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-network"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "fs2",
  "libc",
@@ -6953,7 +6953,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-node"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "fs2",
  "futures",
@@ -6975,7 +6975,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-object-storage"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "bytes",
  "nimbus-blob",
@@ -6994,7 +6994,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-operator"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "base64 0.22.1",
  "fs2",
@@ -7009,14 +7009,14 @@ dependencies = [
 
 [[package]]
 name = "nimbus-process-harness"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "nimbus-provenance"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-artifacts",
  "workspace-hack",
@@ -7024,7 +7024,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-proxy"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "async-trait",
  "blake3",
@@ -7050,7 +7050,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-runtime"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7101,7 +7101,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-s3"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7127,7 +7127,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-sandbox"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "async-trait",
  "bytes",
@@ -7162,7 +7162,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-server"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "async-trait",
  "aws-credential-types",
@@ -7246,7 +7246,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-services"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "futures",
  "nimbus-core",
@@ -7268,7 +7268,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-storage"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.22.1",
@@ -7305,7 +7305,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-system"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "libsql",
  "mysql_async",
@@ -7331,7 +7331,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-tenant"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "nimbus-artifacts",
  "nimbus-core",
@@ -7349,7 +7349,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-testing"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "axum",
  "futures",
@@ -7373,7 +7373,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-workload-identity"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "base64 0.22.1",
  "nimbus-core",
@@ -7389,7 +7389,7 @@ dependencies = [
 
 [[package]]
 name = "nimbus-workloads"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "futures",
  "nimbus-core",
@@ -13547,7 +13547,7 @@ dependencies = [
 
 [[package]]
 name = "workspace-hack"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "allocator-api2",
  "arrayvec",

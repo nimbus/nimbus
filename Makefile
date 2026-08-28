@@ -468,6 +468,7 @@ verify-release-oci-image-live:
 		$(if $(IMAGE),--image "$(IMAGE)",) \
 		$(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) \
 		$(if $(RUNTIME),--runtime "$(RUNTIME)",) \
+		$(if $(SKIP_WINDOWS),--skip-windows,) \
 		$(if $(SKIP_SMOKE),--skip-smoke,)
 
 verify-release-oci-image-live-helper:

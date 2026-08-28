@@ -105,6 +105,20 @@ const localPackageNames = new Set(
 );
 const checks = [];
 
+const collectPackageLocks = (directory) => {
+  const packageLocks = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name === "node_modules") continue;
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      packageLocks.push(...collectPackageLocks(entryPath));
+    } else if (entry.name === "package-lock.json") {
+      packageLocks.push(entryPath);
+    }
+  }
+  return packageLocks;
+};
+
 for (const [workspacePath, workspacePackage] of packageWorkspaces) {
   checks.push([`${workspacePath}/package.json version`, workspacePackage.version]);
   checks.push([`${workspacePath} package-lock version`, lock.packages?.[workspacePath]?.version]);
@@ -124,6 +138,23 @@ for (const workspacePath of workspacePaths) {
       if (localPackageNames.has(name) && actual !== "*") {
         checks.push([`${workspacePath} package-lock ${dependencyKind} ${name}`, actual]);
       }
+    }
+  }
+}
+
+// Nimbus-native scaffolds check in package locks whose staged SDK entries live
+// under .nimbus/packages/. They are not root npm workspaces, but their embedded
+// package versions still ship with the candidate and must move with the release
+// version surface.
+for (const packageLockPath of collectPackageLocks(path.join(repoRoot, "examples"))) {
+  const nestedLock = JSON.parse(fs.readFileSync(packageLockPath, "utf8"));
+  const relativeLockPath = path.relative(repoRoot, packageLockPath);
+  for (const [packagePath, packageEntry] of Object.entries(nestedLock.packages ?? {})) {
+    if (packagePath.startsWith(".nimbus/packages/") && packageEntry?.version !== undefined) {
+      checks.push([
+        `${relativeLockPath} ${packagePath} version`,
+        packageEntry.version,
+      ]);
     }
   }
 }

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091 # Resolve the repository-owned contract dynamically.
 source "${repo_root}/scripts/bun-jsc-adapter-contract.sh"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-oci-live-helper.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT
@@ -126,7 +127,8 @@ EOF
 
 create_release_fixture() {
   local dir="$1"
-  local layout="${tmp_dir}/layout-$(basename "${dir}")"
+  local layout=""
+  layout="${tmp_dir}/layout-$(basename "${dir}")"
   local multi_digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   local amd64_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   local arm64_digest="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -328,6 +330,7 @@ require_command unzip
 fixture_dir="${tmp_dir}/release-assets"
 missing_license_dir="${tmp_dir}/release-assets-missing-license"
 unchecksummed_asset_dir="${tmp_dir}/release-assets-unchecksummed-extra"
+skip_windows_dir="${tmp_dir}/release-assets-skip-windows"
 stub_bin="${tmp_dir}/bin"
 mkdir -p "${stub_bin}"
 create_release_fixture "${fixture_dir}"
@@ -335,6 +338,14 @@ cp -R "${fixture_dir}" "${missing_license_dir}"
 rm -f "${missing_license_dir}/LICENSE"
 cp -R "${fixture_dir}" "${unchecksummed_asset_dir}"
 printf 'unchecksummed release asset\n' >"${unchecksummed_asset_dir}/unexpected.txt"
+cp -R "${fixture_dir}" "${skip_windows_dir}"
+rm -f "${skip_windows_dir}/nimbus_windows_x86_64.zip"
+awk '$2 != "nimbus_windows_x86_64.zip"' \
+  "${skip_windows_dir}/checksums-sha256.txt" \
+  >"${skip_windows_dir}/checksums-sha256.txt.next"
+mv \
+  "${skip_windows_dir}/checksums-sha256.txt.next" \
+  "${skip_windows_dir}/checksums-sha256.txt"
 
 write_stub_gh "${stub_bin}/gh"
 write_fake_nm "${stub_bin}/nm"
@@ -358,6 +369,46 @@ test -s "${good_output}/nimbus_oci_attestation.live.json"
 test -s "${good_output}/nimbus_release_asset_attestations.live.jsonl"
 asset_attestation_count="$(wc -l <"${good_output}/nimbus_release_asset_attestations.live.jsonl" | tr -d ' ')"
 [[ "${asset_attestation_count}" == "13" ]] || die "expected 13 release asset attestations, got ${asset_attestation_count}"
+
+skip_windows_output="${tmp_dir}/download-skip-windows"
+mkdir -p "${skip_windows_output}"
+skip_windows_output="$(cd "${skip_windows_output}" && pwd)"
+NIMBUS_LIVE_FIXTURE_ARTIFACTS="${skip_windows_dir}" \
+NIMBUS_LIVE_GH_LOG="${tmp_dir}/gh-skip-windows.log" \
+NIMBUS_LIVE_DOWNLOAD_DIR="${skip_windows_output}" \
+NM_BIN="${stub_bin}/nm" \
+PATH="${stub_bin}:${PATH}" \
+  bash "${repo_root}/scripts/verify-release-oci-image-live.sh" \
+    --tag v9.9.9 \
+    --output-dir "${skip_windows_output}" \
+    --skip-windows \
+    --skip-smoke \
+    >"${tmp_dir}/live-skip-windows.out"
+grep -F "verified: nimbus/nimbus release" \
+  "${tmp_dir}/live-skip-windows.out" >/dev/null
+test ! -e "${skip_windows_output}/nimbus_windows_x86_64.zip"
+skip_windows_attestation_count="$(wc -l <"${skip_windows_output}/nimbus_release_asset_attestations.live.jsonl" | tr -d ' ')"
+[[ "${skip_windows_attestation_count}" == "12" ]] ||
+  die "expected 12 release asset attestations without Windows, got ${skip_windows_attestation_count}"
+
+stale_windows_output="${tmp_dir}/download-stale-windows"
+mkdir -p "${stale_windows_output}"
+stale_windows_output="$(cd "${stale_windows_output}" && pwd)"
+if NIMBUS_LIVE_FIXTURE_ARTIFACTS="${fixture_dir}" \
+  NIMBUS_LIVE_GH_LOG="${tmp_dir}/gh-stale-windows.log" \
+  NIMBUS_LIVE_DOWNLOAD_DIR="${stale_windows_output}" \
+  NM_BIN="${stub_bin}/nm" \
+  PATH="${stub_bin}:${PATH}" \
+    bash "${repo_root}/scripts/verify-release-oci-image-live.sh" \
+      --tag v9.9.9 \
+      --output-dir "${stale_windows_output}" \
+      --skip-windows \
+      --skip-smoke \
+      >"${tmp_dir}/live-stale-windows.out" 2>&1; then
+  die "expected --skip-windows to reject a stale Windows release asset"
+fi
+grep -F "expected no nimbus_windows_x86_64.zip release asset under --skip-windows, found 1" \
+  "${tmp_dir}/live-stale-windows.out" >/dev/null
 
 bad_output="${tmp_dir}/download-missing-license"
 mkdir -p "${bad_output}"
@@ -394,4 +445,4 @@ fi
 grep -F "release asset is not covered by checksums-sha256.txt: unexpected.txt" \
   "${tmp_dir}/live-unchecksummed.out" >/dev/null
 
-printf 'verified: live OCI image verifier accepts complete release fixtures with optional adapter assets and rejects missing LICENSE or unchecksummed release assets with stubbed GitHub evidence\n'
+printf 'verified: live OCI image verifier accepts complete release fixtures with optional adapter assets, enforces the explicit no-Windows matrix, and rejects missing LICENSE or unchecksummed release assets with stubbed GitHub evidence\n'

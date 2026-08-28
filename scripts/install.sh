@@ -76,8 +76,6 @@ EOF
 
 # GitHub API endpoints
 NIMBUS_RELEASES_API="https://api.github.com/repos/nimbus/nimbus/releases"
-NIMBUS_CRUN_RELEASES_API="https://api.github.com/repos/nimbus/nimbus-crun/releases"
-NIMBUS_LIBKRUN_RELEASES_API="https://api.github.com/repos/nimbus/nimbus-libkrun/releases"
 
 # Release asset base URLs
 NIMBUS_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus/releases/download"
@@ -819,8 +817,8 @@ confirm() {
 # --- Idempotent checks ------------------------------------------------------
 
 get_installed_nimbus_version() {
-  if check_cmd nimbus; then
-    nimbus --version 2>/dev/null | head -1 | sed 's/nimbus /v/'
+  if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    "${NIMBUS_PREFIX}/bin/nimbus" --version 2>/dev/null | head -1 | sed 's/nimbus /v/'
   fi
 }
 
@@ -861,6 +859,7 @@ print_install_plan() {
   say "Install paths:"
   if [ "$PLATFORM" = "linux" ]; then
     say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
+    say "  docs:        ${NIMBUS_PREFIX}/share/doc/nimbus"
     say "  nimbus-libkrun: /usr/libexec/nimbus/lib"
     say "  nimbus-crun: /usr/libexec/nimbus/crun"
     if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
@@ -868,6 +867,7 @@ print_install_plan() {
     fi
   elif [ "$PLATFORM" = "darwin" ]; then
     say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
+    say "  docs:        ${NIMBUS_PREFIX}/share/doc/nimbus"
     say "  gvproxy:     ${NIMBUS_PREFIX}/libexec/gvproxy (bundled, pinned)"
     say "  vfkit:       ${NIMBUS_PREFIX}/libexec/vfkit (bundled, pinned; opt-in NIMBUS_MACHINE_PROVIDER=vfkit)"
     say "  krunkit:     \$(brew --prefix)/bin/krunkit (default backend, via Homebrew libkrun/krun tap)"
@@ -1021,6 +1021,18 @@ bundled_helpers_present() {
   return 0
 }
 
+# The release archive carries the source-available license and README beside the
+# executable. A direct install must preserve both documents in the prefix, just
+# as the DEB, RPM, OCI, and Homebrew channels preserve the release payload.
+nimbus_release_documents_present() {
+  [ -s "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE" ] &&
+    [ -s "${NIMBUS_PREFIX}/share/doc/nimbus/README.md" ]
+}
+
+nimbus_release_payload_present() {
+  bundled_helpers_present && nimbus_release_documents_present
+}
+
 # Install every bundled helper carried in <extracted_dir>/libexec into the
 # install prefix. macOS ships a self-contained libexec (gvproxy, vfkit); Linux
 # archives carry none, so this is a no-op there. Idempotent: re-installing an
@@ -1037,6 +1049,17 @@ install_bundled_helpers() {
   done
 }
 
+install_nimbus_release_documents() {
+  extracted_dir="$1"
+  [ -s "${extracted_dir}/LICENSE" ] || err "downloaded nimbus archive is missing LICENSE"
+  [ -s "${extracted_dir}/README.md" ] || err "downloaded nimbus archive is missing README.md"
+
+  maybe_sudo install -d "${NIMBUS_PREFIX}/share/doc/nimbus"
+  maybe_sudo install -m 0644 "${extracted_dir}/LICENSE" "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
+  maybe_sudo install -m 0644 "${extracted_dir}/README.md" "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
+  say_info "Installed release documents to ${NIMBUS_PREFIX}/share/doc/nimbus"
+}
+
 download_and_install_nimbus() {
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would download and install nimbus $NIMBUS_VERSION to ${NIMBUS_PREFIX}/bin/nimbus"
@@ -1048,20 +1071,20 @@ download_and_install_nimbus() {
   checksums_url="${NIMBUS_RELEASES_DOWNLOAD}/${NIMBUS_VERSION}/checksums-sha256.txt"
 
   # The binary version gates whether we rewrite ${NIMBUS_PREFIX}/bin/nimbus, but
-  # the bundled machine helpers are reconciled independently. When nimbus is
-  # already current AND every promised helper is present, this is a network-free
-  # no-op. When the binary is current but a helper is missing (an install that
-  # predates the helper, or one later removed), reconcile just the helpers from
-  # the pinned, integrity-verified archive rather than forcing a full reinstall.
+  # the rest of the release payload is reconciled independently. When nimbus is
+  # already current AND every promised helper and document is present, this is a
+  # network-free no-op. When the binary is current but payload material is
+  # missing, heal it from the pinned, integrity-verified archive rather than
+  # forcing a binary rewrite.
   installed_version="$(get_installed_nimbus_version)"
-  reconcile_helpers_only=
+  reconcile_payload_only=
   if [ "$installed_version" = "$NIMBUS_VERSION" ]; then
-    if bundled_helpers_present; then
+    if nimbus_release_payload_present; then
       say_info "nimbus $NIMBUS_VERSION is already installed — skipping"
       return 0
     fi
-    say_info "nimbus $NIMBUS_VERSION is current; reconciling missing bundled helpers"
-    reconcile_helpers_only=1
+    say_info "nimbus $NIMBUS_VERSION is current; reconciling missing release payload"
+    reconcile_payload_only=1
   elif [ -n "$installed_version" ]; then
     say_info "Upgrading nimbus from $installed_version to $NIMBUS_VERSION"
   fi
@@ -1089,7 +1112,7 @@ download_and_install_nimbus() {
 
   # Skip rewriting the binary when only the helper set needs healing; the
   # on-disk nimbus is already the requested version.
-  if [ -z "$reconcile_helpers_only" ]; then
+  if [ -z "$reconcile_payload_only" ]; then
     maybe_sudo install -d "${NIMBUS_PREFIX}/bin"
     maybe_sudo install -m 0755 "$tmpdir/nimbus" "${NIMBUS_PREFIX}/bin/nimbus"
     say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
@@ -1099,6 +1122,7 @@ download_and_install_nimbus() {
   # none, so this is a no-op there. The runtime resolves these bundled-first via
   # ${NIMBUS_PREFIX}/libexec/<helper>.
   install_bundled_helpers "$tmpdir"
+  install_nimbus_release_documents "$tmpdir"
 
   # Hard post-condition (macOS): every helper the install promises to bundle must
   # now be present and executable. install_bundled_helpers only copies what the
@@ -1110,6 +1134,9 @@ download_and_install_nimbus() {
   # and past the dry-run guard so it only fires on a real install.
   if ! bundled_helpers_present; then
     err "bundled machine helpers are missing from ${NIMBUS_PREFIX}/libexec after install; the downloaded archive appears incomplete — re-run the installer, and if it persists report it at https://github.com/nimbus/nimbus/issues"
+  fi
+  if ! nimbus_release_documents_present; then
+    err "release documents are missing from ${NIMBUS_PREFIX}/share/doc/nimbus after install; re-run the installer, and if it persists report it at https://github.com/nimbus/nimbus/issues"
   fi
 }
 
@@ -1456,6 +1483,7 @@ uninstall_linux() {
 
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE and README.md"
     say_info "[dry-run] Would remove /usr/libexec/nimbus/crun"
     say_info "[dry-run] Would remove /usr/libexec/nimbus/lib"
     say_info "[dry-run] Would remove /usr/libexec/nimbus/include"
@@ -1467,6 +1495,8 @@ uninstall_linux() {
     maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
     say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
   fi
+
+  uninstall_nimbus_release_documents
 
   if [ -f "/usr/libexec/nimbus/crun" ]; then
     maybe_sudo rm -f "/usr/libexec/nimbus/crun"
@@ -1520,6 +1550,7 @@ uninstall_macos() {
 
   if [ -n "$DRY_RUN" ]; then
     say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
+    say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE and README.md"
     # shellcheck disable=SC2046
     for helper_name in $(macos_bundled_helper_names); do
       say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/libexec/${helper_name}"
@@ -1544,6 +1575,8 @@ uninstall_macos() {
     say_info "nimbus binary not found at ${NIMBUS_PREFIX}/bin/nimbus"
   fi
 
+  uninstall_nimbus_release_documents
+
   # Remove only the direct-install helpers this script owns. The Homebrew
   # krunkit/libkrun chain remains Homebrew-owned and is reported below.
   # shellcheck disable=SC2046
@@ -1561,6 +1594,21 @@ uninstall_macos() {
   say ""
   say "The macOS microVM chain (krunkit, gvproxy, libkrun) was not removed."
   say "Run 'brew uninstall libkrun/krun/krunkit' (and 'brew autoremove') if no longer needed."
+}
+
+uninstall_nimbus_release_documents() {
+  document_path="${NIMBUS_PREFIX}/share/doc/nimbus"
+  for document_name in LICENSE README.md; do
+    if [ -f "${document_path}/${document_name}" ] || [ -L "${document_path}/${document_name}" ]; then
+      maybe_sudo rm -f "${document_path}/${document_name}"
+      say_info "Removed ${document_path}/${document_name}"
+    fi
+  done
+  if [ -d "$document_path" ]; then
+    maybe_sudo rmdir "$document_path" 2>/dev/null || true
+    maybe_sudo rmdir "${NIMBUS_PREFIX}/share/doc" 2>/dev/null || true
+    maybe_sudo rmdir "${NIMBUS_PREFIX}/share" 2>/dev/null || true
+  fi
 }
 
 # --- Verification -----------------------------------------------------------
@@ -1623,6 +1671,44 @@ inline_check_command() {
   fi
 }
 
+resolve_nimbus_release_document() {
+  document_name="$1"
+
+  if [ -s "${NIMBUS_PREFIX}/share/doc/nimbus/${document_name}" ]; then
+    printf '%s\n' "${NIMBUS_PREFIX}/share/doc/nimbus/${document_name}"
+    return 0
+  fi
+
+  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
+  if [ -n "$nimbus_path" ]; then
+    real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
+    if [ "${real_path#/}" = "$real_path" ]; then
+      real_path="$(cd "$(dirname "$nimbus_path")" && cd "$(dirname "$real_path")" && pwd)/$(basename "$real_path")"
+    fi
+    real_dir="$(dirname "$real_path")"
+    derived_prefix="$(dirname "$real_dir")"
+    for candidate in "${real_dir}/${document_name}" "${derived_prefix}/share/doc/nimbus/${document_name}"; do
+      if [ -s "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+inline_check_nimbus_release_documents() {
+  for document_name in LICENSE README.md; do
+    if document_path="$(resolve_nimbus_release_document "$document_name")"; then
+      inline_print_line "nimbus.${document_name}" "present path=$document_path"
+    else
+      inline_print_line "nimbus.${document_name}" "missing"
+      inline_mark_failure
+    fi
+  done
+}
+
 inline_check_linux_shared_lib() {
   label="$1"
   soname="$2"
@@ -1634,11 +1720,13 @@ inline_check_linux_shared_lib() {
   fi
 
   if [ -z "$found_path" ]; then
-    for candidate in /usr/local/lib64/${soname}* /usr/local/lib/${soname}* /usr/lib64/${soname}* /usr/lib/${soname}*; do
-      if [ -f "$candidate" ]; then
-        found_path="$candidate"
-        break
-      fi
+    for library_dir in /usr/local/lib64 /usr/local/lib /usr/lib64 /usr/lib; do
+      for candidate in "${library_dir}/${soname}"*; do
+        if [ -f "$candidate" ]; then
+          found_path="$candidate"
+          break 2
+        fi
+      done
     done
   fi
 
@@ -1697,6 +1785,7 @@ inline_check_private_libkrun_stack() {
   crun_path="/usr/libexec/nimbus/crun"
   if check_cmd readelf && [ -x "$crun_path" ]; then
     dynamic_entries="$(readelf -d "$crun_path" 2>/dev/null || true)"
+    # shellcheck disable=SC2016 # $ORIGIN is a literal ELF loader token.
     case "$dynamic_entries" in
       *'$ORIGIN/lib'*)
         inline_print_line "nimbus-crun.runpath" 'present $ORIGIN/lib'
@@ -1758,6 +1847,8 @@ verify_linux_inline() {
     inline_print_line "nimbus" "missing"
     inline_mark_failure
   fi
+
+  inline_check_nimbus_release_documents
 
   crun_path="/usr/libexec/nimbus/crun"
   if [ -x "$crun_path" ]; then
@@ -1837,7 +1928,15 @@ resolve_macos_vfkit_path() {
 }
 
 verify_macos_inline() {
-  inline_check_command "nimbus" "nimbus" required
+  if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    inline_print_line "nimbus" "present path=${NIMBUS_PREFIX}/bin/nimbus"
+  elif command -v nimbus >/dev/null 2>&1; then
+    inline_print_line "nimbus" "present path=$(command -v nimbus)"
+  else
+    inline_print_line "nimbus" "missing"
+    inline_mark_failure
+  fi
+  inline_check_nimbus_release_documents
   inline_check_command "krunkit" "krunkit" recommended
   inline_check_macos_bun_jsc_adapter
 

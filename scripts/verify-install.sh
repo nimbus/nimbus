@@ -59,54 +59,50 @@ check_command() {
   fi
 }
 
-check_file() {
-  local label="$1"
-  local file_path="$2"
-  local required="${3:-required}"
+resolve_nimbus_release_document() {
+  local document_name="$1"
+  local install_prefix="${NIMBUS_PREFIX:-/usr/local}"
+  local nimbus_path=""
+  local real_path=""
+  local real_dir=""
+  local derived_prefix=""
+  local candidate=""
 
-  if [[ -f "${file_path}" ]]; then
-    if [[ -x "${file_path}" ]]; then
-      print_line "${label}" "present path=${file_path} executable=yes"
-    else
-      print_line "${label}" "present path=${file_path} executable=no"
-    fi
+  if [[ -s "${install_prefix}/share/doc/nimbus/${document_name}" ]]; then
+    printf '%s\n' "${install_prefix}/share/doc/nimbus/${document_name}"
     return 0
   fi
 
-  print_line "${label}" "missing path=${file_path}"
-  if [[ "${required}" == "required" ]]; then
-    mark_failure
-  else
-    mark_warning
+  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
+  if [[ -n "${nimbus_path}" ]]; then
+    real_path="$(readlink "${nimbus_path}" 2>/dev/null || echo "${nimbus_path}")"
+    if [[ "${real_path#/}" == "${real_path}" ]]; then
+      real_path="$(cd "$(dirname "${nimbus_path}")" && cd "$(dirname "${real_path}")" && pwd)/$(basename "${real_path}")"
+    fi
+    real_dir="$(dirname "${real_path}")"
+    derived_prefix="$(dirname "${real_dir}")"
+    for candidate in "${real_dir}/${document_name}" "${derived_prefix}/share/doc/nimbus/${document_name}"; do
+      if [[ -s "${candidate}" ]]; then
+        printf '%s\n' "${candidate}"
+        return 0
+      fi
+    done
   fi
+
+  return 1
 }
 
-check_shared_lib() {
-  local label="$1"
-  local soname="$2"
-  local required="${3:-required}"
-  local path=""
-
-  path="$(ldconfig -p 2>/dev/null | grep -m1 "${soname}" | sed 's/.*=> //' || true)"
-  if [[ -n "${path}" ]]; then
-    print_line "${label}" "present path=${path}"
-    return 0
-  fi
-
-  # Check common non-standard paths directly
-  for candidate in /usr/local/lib64/${soname}* /usr/local/lib/${soname}* /usr/lib64/${soname}* /usr/lib/${soname}*; do
-    if [[ -f "${candidate}" ]]; then
-      print_line "${label}" "present path=${candidate} (not in ldconfig cache)"
-      return 0
+check_nimbus_release_documents() {
+  local document_name=""
+  local document_path=""
+  for document_name in LICENSE README.md; do
+    if document_path="$(resolve_nimbus_release_document "${document_name}")"; then
+      print_line "nimbus.${document_name}" "present path=${document_path}"
+    else
+      print_line "nimbus.${document_name}" "missing"
+      mark_failure
     fi
   done
-
-  print_line "${label}" "missing"
-  if [[ "${required}" == "required" ]]; then
-    mark_failure
-  else
-    mark_warning
-  fi
 }
 
 check_private_libkrun_stack() {
@@ -154,9 +150,12 @@ check_private_libkrun_stack() {
   if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
     local dynamic_entries=""
     dynamic_entries="$(readelf -d "${crun_path}" 2>/dev/null || true)"
+    # shellcheck disable=SC2016 # $ORIGIN is a literal ELF loader token.
     if [[ "${dynamic_entries}" == *'$ORIGIN/lib'* ]]; then
+      # shellcheck disable=SC2016 # Keep the literal loader token in output.
       print_line "nimbus-crun.runpath" 'present $ORIGIN/lib'
     else
+      # shellcheck disable=SC2016 # Keep the literal loader token in output.
       print_line "nimbus-crun.runpath" 'missing $ORIGIN/lib'
       mark_failure
     fi
@@ -224,6 +223,7 @@ print_line "host.arch" "${arch_name}"
 
 verify_linux() {
   if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091 # The guarded system file supplies distro data.
     distro_name="$(. /etc/os-release && printf '%s %s' "${NAME:-unknown}" "${VERSION_ID:-unknown}")"
     print_line "host.distro" "${distro_name}"
   else
@@ -244,6 +244,8 @@ verify_linux() {
   else
     check_command "nimbus" "nimbus" required
   fi
+
+  check_nimbus_release_documents
 
   # nimbus-crun at /usr/libexec/nimbus/crun
   local crun_path="/usr/libexec/nimbus/crun"
@@ -327,7 +329,20 @@ verify_macos() {
   fi
 
   # nimbus binary
-  check_command "nimbus" "nimbus" required
+  local install_prefix="${NIMBUS_PREFIX:-/usr/local}"
+  local nimbus_path="${install_prefix}/bin/nimbus"
+  if [[ -x "${nimbus_path}" ]]; then
+    local nimbus_version=""
+    nimbus_version="$("${nimbus_path}" --version 2>/dev/null | head -n1 || true)"
+    if [[ -n "${nimbus_version}" ]]; then
+      print_line "nimbus" "present path=${nimbus_path} version=${nimbus_version}"
+    else
+      print_line "nimbus" "present path=${nimbus_path}"
+    fi
+  else
+    check_command "nimbus" "nimbus" required
+  fi
+  check_nimbus_release_documents
 
   # krunkit — optional macOS-dev dependency for the `nimbus machine` flow,
   # installed via the libkrun/krun Homebrew tap. The server runs without it.

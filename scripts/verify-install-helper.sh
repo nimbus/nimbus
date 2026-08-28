@@ -209,6 +209,59 @@ else
   pass "verify_file_checksum rejects checksum subject spoofing"
 fi
 
+# --- Release document preservation -----------------------------------------
+
+echo ""
+echo "Checking release document preservation..."
+
+release_documents_archive="${output_dir}/release-documents-archive"
+release_documents_prefix="${output_dir}/release-documents-prefix"
+mkdir -p "${release_documents_archive}"
+printf 'license\n' > "${release_documents_archive}/LICENSE"
+printf 'readme\n' > "${release_documents_archive}/README.md"
+
+if sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    maybe_sudo() { "$@"; }
+    install_nimbus_release_documents "$3"
+    nimbus_release_documents_present
+    cmp "$3/LICENSE" "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
+    cmp "$3/README.md" "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
+  ' sh "${testable_install_sh}" "${release_documents_prefix}" "${release_documents_archive}" \
+    > "${output_dir}/release-documents-install.txt" 2>&1; then
+  pass "direct installer preserves release license and README"
+else
+  fail "direct installer preserves release license and README"
+fi
+
+rm -f "${release_documents_prefix}/share/doc/nimbus/README.md"
+if sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    PLATFORM="linux"
+    ! nimbus_release_payload_present
+  ' sh "${testable_install_sh}" "${release_documents_prefix}"; then
+  pass "same-version payload predicate rejects a partial document install"
+else
+  fail "same-version payload predicate rejects a partial document install"
+fi
+
+release_documents_incomplete="${output_dir}/release-documents-incomplete"
+mkdir -p "${release_documents_incomplete}"
+printf 'license\n' > "${release_documents_incomplete}/LICENSE"
+if sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    maybe_sudo() { "$@"; }
+    install_nimbus_release_documents "$3"
+  ' sh "${testable_install_sh}" "${output_dir}/release-documents-reject-prefix" "${release_documents_incomplete}" \
+    > "${output_dir}/release-documents-reject.txt" 2>&1; then
+  fail "direct installer rejects archives without required release documents"
+else
+  pass "direct installer rejects archives without required release documents"
+fi
+
 # --- Bun/JSC adapter installer hardening ------------------------------------
 
 echo ""
@@ -336,6 +389,7 @@ mkdir -p "${mock_bun_jsc_tools}"
 {
   printf '#!/bin/sh\n'
   printf 'while IFS= read -r symbol; do\n'
+  # shellcheck disable=SC2016 # Emit a child script that expands $symbol.
   printf '  printf '\''0000000000000000 T %%s\\n'\'' "$symbol"\n'
   printf 'done <<'\''SYMS'\''\n'
   cat "${required_exports_file}"
@@ -544,9 +598,9 @@ else
 fi
 
 # The current-version fast path must not touch the network when every bundled
-# helper is already present. This keeps repeated installs useful in offline or
-# flaky-network environments and proves the helper-presence predicate is checked
-# before any checksum/archive download.
+# helper and release document is already present. This keeps repeated installs
+# useful in offline or flaky-network environments and proves the payload
+# predicate is checked before any checksum/archive download.
 macos_fast_path_prefix="${output_dir}/macos-fast-path-prefix"
 macos_fast_path_download_log="${output_dir}/macos-fast-path-downloads.log"
 if sh -c '
@@ -557,10 +611,12 @@ if sh -c '
     ARCH="arm64"
     DRY_RUN=""
     DOWNLOAD_LOG="$3"
-    mkdir -p "${NIMBUS_PREFIX}/libexec"
+    mkdir -p "${NIMBUS_PREFIX}/libexec" "${NIMBUS_PREFIX}/share/doc/nimbus"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
     chmod +x "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    printf "license\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
+    printf "readme\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
     get_installed_nimbus_version() { printf "%s\n" "${NIMBUS_VERSION}"; }
     download_to_file() {
       printf "%s\n" "$1" >> "${DOWNLOAD_LOG}"
@@ -571,12 +627,66 @@ if sh -c '
     > "${output_dir}/macos-fast-path.txt" 2>&1; then
   if [ ! -s "${macos_fast_path_download_log}" ] && \
       grep -q "already installed" "${output_dir}/macos-fast-path.txt"; then
-    pass "macOS current install with bundled helpers skips without network"
+    pass "macOS current install with complete release payload skips without network"
   else
-    fail "macOS current install with bundled helpers skips without network"
+    fail "macOS current install with complete release payload skips without network"
   fi
 else
-  fail "macOS current install with bundled helpers exits successfully"
+  fail "macOS current install with complete release payload exits successfully"
+fi
+
+# A direct install owns its requested prefix. A current binary from another
+# channel on PATH must not suppress that install, while both standalone and
+# inline verification must accept a valid custom-prefix payload without
+# requiring that prefix to be on PATH.
+custom_prefix="${output_dir}/macos-custom-prefix"
+mkdir -p "${custom_prefix}/bin" "${custom_prefix}/libexec" "${custom_prefix}/share/doc/nimbus"
+cat > "${custom_prefix}/bin/nimbus" <<'EOF'
+#!/bin/sh
+printf 'nimbus 0.1.14\n'
+EOF
+printf '#!/bin/sh\n' > "${custom_prefix}/libexec/gvproxy"
+printf '#!/bin/sh\n' > "${custom_prefix}/libexec/vfkit"
+printf 'license\n' > "${custom_prefix}/share/doc/nimbus/LICENSE"
+printf 'readme\n' > "${custom_prefix}/share/doc/nimbus/README.md"
+chmod +x "${custom_prefix}/bin/nimbus" "${custom_prefix}/libexec/gvproxy" "${custom_prefix}/libexec/vfkit"
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" NIMBUS_PREFIX="${custom_prefix}" \
+    bash "${repo_root}/scripts/verify-install.sh" \
+    > "${output_dir}/macos-custom-prefix-standalone.txt" 2>&1 &&
+   grep -Fq "present path=${custom_prefix}/bin/nimbus version=nimbus 0.1.14" \
+     "${output_dir}/macos-custom-prefix-standalone.txt"; then
+  pass "macOS standalone verification accepts a direct custom-prefix payload"
+else
+  fail "macOS standalone verification accepts a direct custom-prefix payload"
+fi
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" sh -c '
+    . "$1"
+    PLATFORM="darwin"
+    NIMBUS_PREFIX="$2"
+    verify_installation_inline
+  ' sh "${testable_install_sh}" "${custom_prefix}" \
+    > "${output_dir}/macos-custom-prefix-inline.txt" 2>&1 &&
+   grep -Fq "present path=${custom_prefix}/bin/nimbus" \
+     "${output_dir}/macos-custom-prefix-inline.txt"; then
+  pass "macOS inline verification accepts a direct custom-prefix payload"
+else
+  fail "macOS inline verification accepts a direct custom-prefix payload"
+fi
+
+foreign_path_bin="${output_dir}/foreign-path-bin"
+empty_prefix="${output_dir}/empty-prefix"
+mkdir -p "${foreign_path_bin}" "${empty_prefix}"
+cp "${custom_prefix}/bin/nimbus" "${foreign_path_bin}/nimbus"
+if PATH="${foreign_path_bin}:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    [ -z "$(get_installed_nimbus_version)" ]
+  ' sh "${testable_install_sh}" "${empty_prefix}"; then
+  pass "direct installer ignores a foreign-channel nimbus on PATH"
+else
+  fail "direct installer ignores a foreign-channel nimbus on PATH"
 fi
 
 macos_uninstall_prefix="${output_dir}/macos-uninstall-prefix"
@@ -584,22 +694,26 @@ if sh -c '
     . "$1"
     NIMBUS_PREFIX="$2"
     DRY_RUN=""
-    mkdir -p "${NIMBUS_PREFIX}/bin" "${NIMBUS_PREFIX}/libexec"
+    mkdir -p "${NIMBUS_PREFIX}/bin" "${NIMBUS_PREFIX}/libexec" "${NIMBUS_PREFIX}/share/doc/nimbus"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/bin/nimbus"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
     chmod +x "${NIMBUS_PREFIX}/bin/nimbus" "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    printf "license\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
+    printf "readme\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
     check_cmd() { return 1; }
     maybe_sudo() { "$@"; }
     uninstall_macos
     [ ! -e "${NIMBUS_PREFIX}/bin/nimbus" ] &&
       [ ! -e "${NIMBUS_PREFIX}/libexec/gvproxy" ] &&
-      [ ! -e "${NIMBUS_PREFIX}/libexec/vfkit" ]
+      [ ! -e "${NIMBUS_PREFIX}/libexec/vfkit" ] &&
+      [ ! -e "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE" ] &&
+      [ ! -e "${NIMBUS_PREFIX}/share/doc/nimbus/README.md" ]
   ' sh "${testable_install_sh}" "${macos_uninstall_prefix}" \
     > "${output_dir}/macos-uninstall.txt" 2>&1; then
-  pass "macOS uninstall removes direct-install bundled helpers"
+  pass "macOS uninstall removes direct-install bundled helpers and documents"
 else
-  fail "macOS uninstall removes direct-install bundled helpers"
+  fail "macOS uninstall removes direct-install bundled helpers and documents"
 fi
 
 # --- Dry run output ---------------------------------------------------------
@@ -733,6 +847,13 @@ if grep -q "nimbus-bun-jsc" "${output_dir}/verify.txt"; then
   pass "verify-install.sh reports optional Bun/JSC adapter state"
 else
   fail "verify-install.sh reports optional Bun/JSC adapter state"
+fi
+
+if grep -q "nimbus.LICENSE" "${output_dir}/verify.txt" &&
+   grep -q "nimbus.README.md" "${output_dir}/verify.txt"; then
+  pass "verify-install.sh reports required release documents"
+else
+  fail "verify-install.sh reports required release documents"
 fi
 
 # --- Uninstall dry-run ------------------------------------------------------
