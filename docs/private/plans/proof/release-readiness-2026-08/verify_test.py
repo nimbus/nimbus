@@ -201,10 +201,7 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         )
         status, output = self.run_verifier(proof_text=proof_text)
         self.assertNotEqual(status, 0)
-        self.assertIn(
-            "evidence anchor must identify exactly one Markdown section",
-            output,
-        )
+        self.assertIn("evidence proof has an unterminated Markdown fence", output)
 
     def test_backtick_in_fence_info_string_does_not_hide_peer_heading(self) -> None:
         proof_text = "\n".join(

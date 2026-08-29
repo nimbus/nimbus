@@ -32,6 +32,10 @@ MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+\S.*$")
 MARKDOWN_FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
 
 
+class UnterminatedMarkdownFence(ValueError):
+    pass
+
+
 def markdown_indentation(line: str) -> tuple[int, int]:
     columns = 0
     offset = 0
@@ -46,7 +50,7 @@ def markdown_indentation(line: str) -> tuple[int, int]:
     return columns, offset
 
 
-def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]] | None:
+def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
     headings: list[tuple[int, int, str]] = []
     fence_character: str | None = None
     fence_length = 0
@@ -78,7 +82,9 @@ def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]] | None:
         heading = MARKDOWN_HEADING.fullmatch(stripped)
         if heading is not None:
             headings.append((index, len(heading.group(1)), stripped))
-    return headings if fence_character is None else None
+    if fence_character is not None:
+        raise UnterminatedMarkdownFence
+    return headings
 
 
 def anchored_evidence_section(proof: str, anchor: str) -> str | None:
@@ -88,8 +94,6 @@ def anchored_evidence_section(proof: str, anchor: str) -> str | None:
         return None
     lines = proof.splitlines()
     headings = markdown_headings(lines)
-    if headings is None:
-        return None
     matches = [index for index, _level, text in headings if text == anchor]
     if len(matches) != 1:
         return None
@@ -168,7 +172,11 @@ def main() -> int:
         except OSError as error:
             errors.append(f"{condition_id}: cannot read evidence: {error}")
             continue
-        evidence_section = anchored_evidence_section(proof, anchor)
+        try:
+            evidence_section = anchored_evidence_section(proof, anchor)
+        except UnterminatedMarkdownFence:
+            errors.append(f"{condition_id}: evidence proof has an unterminated Markdown fence")
+            continue
         if evidence_section is None:
             errors.append(
                 f"{condition_id}: evidence anchor must identify exactly one Markdown section"
