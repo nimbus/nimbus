@@ -217,13 +217,12 @@ pub async fn stop_sandbox(
 ) -> Result<SandboxResourceResponse, ComputeError> {
     let retirer = compute.resource_retirer()?;
     let cancellation = WorkloadTeardownCancellationToken::new();
-    let snapshot = Box::pin(retirer.submit_sandbox_teardown_until_terminal(
-        tenant_context,
-        sandbox_id,
+    let snapshot = crate::resource_retirement::await_public_retirement(
+        "sandbox stop",
         &cancellation,
-    ))
-    .await
-    .map_err(|error| error.into_compute_error())?;
+        retirer.submit_sandbox_teardown_until_terminal(tenant_context, sandbox_id, &cancellation),
+    )
+    .await?;
     Ok(SandboxResourceResponse::from_snapshot(snapshot))
 }
 

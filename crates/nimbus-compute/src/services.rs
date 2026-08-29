@@ -425,13 +425,16 @@ pub async fn service_lifecycle(
         ServiceLifecycleVerb::Stop => {
             let retirer = compute.resource_retirer()?;
             let cancellation = WorkloadTeardownCancellationToken::new();
-            let retirement = Box::pin(retirer.submit_service_teardown_until_terminal(
-                tenant_context,
-                service_name,
+            let retirement = crate::resource_retirement::await_public_retirement(
+                "service stop",
                 &cancellation,
-            ))
-            .await
-            .map_err(|error| error.into_compute_error())?;
+                retirer.submit_service_teardown_until_terminal(
+                    tenant_context,
+                    service_name,
+                    &cancellation,
+                ),
+            )
+            .await?;
             (retirement.definition, retirement.retired_handle)
         }
     };

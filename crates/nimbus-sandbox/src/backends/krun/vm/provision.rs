@@ -530,7 +530,17 @@ impl KrunSandboxBackend {
                 OciAttachmentReadinessFailure::PepNotReady(
                     EgressReadinessFailure::MissingRegistration,
                 ),
-            ) => Ok(SandboxProvisionPhaseObservation::Absent { evidence }),
+            ) if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned
+                && matches!(
+                    manifest.launch_authority,
+                    KrunLaunchAuthority::Reserved { .. }
+                        | KrunLaunchAuthority::Adopting { .. }
+                        | KrunLaunchAuthority::Adopted { .. }
+                        | KrunLaunchAuthority::ProviderOwned
+                ) =>
+            {
+                Ok(SandboxProvisionPhaseObservation::Absent { evidence })
+            }
             OciAttachmentBaseReadinessState::NotReady(
                 OciAttachmentReadinessFailure::MissingDurableAuthority,
             ) if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned

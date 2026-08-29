@@ -4,6 +4,7 @@
 //! cross-domain order: source/provision fence, stopped-successor persistence,
 //! restart settlement, exact five-capability teardown, and finalization.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,7 +36,9 @@ use crate::workload_saga::{
     WorkloadTeardownSubmissionError,
 };
 
-const WORKLOAD_RETIREMENT_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKLOAD_RETIREMENT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKLOAD_RETIREMENT_MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
+const PUBLIC_WORKLOAD_RETIREMENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Exact native service retirement response facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +162,7 @@ impl ComputeResourceRetirer {
         service_name: &str,
         cancellation: &WorkloadTeardownCancellationToken,
     ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceRetirementError> {
+        let mut retry_delay = WORKLOAD_RETIREMENT_INITIAL_RETRY_DELAY;
         loop {
             if cancellation.is_cancelled() {
                 return Err(cancelled_retirement());
@@ -173,8 +177,9 @@ impl ComputeResourceRetirer {
             }
             tokio::select! {
                 () = cancellation.cancelled() => return Err(cancelled_retirement()),
-                () = tokio::time::sleep(WORKLOAD_RETIREMENT_RETRY_DELAY) => {}
+                () = tokio::time::sleep(retry_delay) => {}
             }
+            retry_delay = next_retirement_retry_delay(retry_delay);
         }
     }
 
@@ -271,6 +276,7 @@ impl ComputeResourceRetirer {
         sandbox_id: &str,
         cancellation: &WorkloadTeardownCancellationToken,
     ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
+        let mut retry_delay = WORKLOAD_RETIREMENT_INITIAL_RETRY_DELAY;
         loop {
             if cancellation.is_cancelled() {
                 return Err(cancelled_retirement());
@@ -285,8 +291,9 @@ impl ComputeResourceRetirer {
             }
             tokio::select! {
                 () = cancellation.cancelled() => return Err(cancelled_retirement()),
-                () = tokio::time::sleep(WORKLOAD_RETIREMENT_RETRY_DELAY) => {}
+                () = tokio::time::sleep(retry_delay) => {}
             }
+            retry_delay = next_retirement_retry_delay(retry_delay);
         }
     }
 
@@ -770,6 +777,43 @@ fn foreground_retirement_can_retry(error: &ComputeResourceRetirementError) -> bo
                 WorkloadTeardownRunDisposition::Waiting
             )
     )
+}
+
+fn next_retirement_retry_delay(current: Duration) -> Duration {
+    current
+        .saturating_mul(2)
+        .min(WORKLOAD_RETIREMENT_MAX_RETRY_DELAY)
+}
+
+pub(crate) async fn await_public_retirement<T>(
+    operation: &'static str,
+    cancellation: &WorkloadTeardownCancellationToken,
+    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>>,
+) -> Result<T, ComputeError> {
+    await_retirement_with_timeout(
+        operation,
+        cancellation,
+        retirement,
+        PUBLIC_WORKLOAD_RETIREMENT_TIMEOUT,
+    )
+    .await
+}
+
+async fn await_retirement_with_timeout<T>(
+    operation: &'static str,
+    cancellation: &WorkloadTeardownCancellationToken,
+    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>>,
+    timeout: Duration,
+) -> Result<T, ComputeError> {
+    match tokio::time::timeout(timeout, retirement).await {
+        Ok(result) => result.map_err(ComputeResourceRetirementError::into_compute_error),
+        Err(_) => {
+            cancellation.cancel();
+            Err(ComputeError::from(Error::Transport(format!(
+                "{operation} remains pending after {timeout:?}; retry the request while Nimbus continues durable teardown recovery"
+            ))))
+        }
+    }
 }
 
 fn cancelled_retirement() -> ComputeResourceRetirementError {

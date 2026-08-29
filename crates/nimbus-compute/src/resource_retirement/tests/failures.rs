@@ -177,6 +177,31 @@ fn pre_cancelled_foreground_stop_makes_zero_source_store_or_provider_mutation() 
 }
 
 #[test]
+fn public_stop_deadline_detaches_the_waiter_and_reports_retryable_pending_state() {
+    run_async_test(async {
+        const TEST_DEADLINE: std::time::Duration = std::time::Duration::from_millis(10);
+        let cancellation = WorkloadTeardownCancellationToken::new();
+
+        let error = super::super::await_retirement_with_timeout(
+            "test stop",
+            &cancellation,
+            std::future::pending::<Result<(), ComputeResourceRetirementError>>(),
+            TEST_DEADLINE,
+        )
+        .await
+        .expect_err("a public stop waiter must not remain attached past its deadline");
+
+        assert!(cancellation.is_cancelled());
+        assert!(matches!(
+            error,
+            crate::state::ComputeError::Core(nimbus_core::Error::Transport(message))
+                if message.contains("test stop remains pending")
+                    && message.contains("retry the request")
+        ));
+    });
+}
+
+#[test]
 fn foreground_stop_does_not_retry_cleanup_pending() {
     run_async_test(async {
         let harness = RetirementHarness::new();
