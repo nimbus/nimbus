@@ -1,11 +1,10 @@
 # Nimbus Release Readiness 2026-08
 
-Status: `blocked (release NO-GO)`. Owner: this plan. Created: 2026-08-27.
+Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: publish the authorized immutable Deno revision, update the Nimbus
-dependency, build a clean exact candidate, repeat the candidate gates, then
-complete notarization and the public apt and COPR evidence
+Next action: pin the reachable Deno revision, commit the Nimbus integration,
+then run the exact candidate and release gates
 
 ## Outcome
 
@@ -92,7 +91,7 @@ renamed, duplicated, or unsupported condition.
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `blocked(exact-candidate replay and notarization remain; provisional pass)` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `blocked(exact-candidate replay and public apt/COPR proofs remain; provisional pass)` | `proof/release-readiness-2026-08/rrc7-distribution.md` |
-| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `blocked(NO-GO: no reachable Deno ref; exact candidate and CI impossible)` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
+| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `in_progress` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
 ## Tasks
@@ -333,3 +332,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | review | Opus 5 high and Sol xhigh independently reviewed the final uncommitted Nimbus integration after the last correction. Both reported no accepted or actionable P0 through P3 finding, and secret scans were clean. |
 | 2026-08-29 | RRC8 | blocked | Issued a NO-GO verdict in `proof/release-readiness-2026-08/rrc8-release-verdict.md`. The fixed matrix is 3 pass, 43 blocked, 0 unverified, 0 failed, and 0 structurally invalid. A reachable immutable Deno ref, exact clean candidate and CI replay, notarization, and public apt/COPR proof remain required. No public state changed. |
 | 2026-08-29 | RRC8 | cleanup | Removed the disposable exact-test worktree and 13 GiB rebuildable Cargo target after the reviews. Free filesystem space increased from 86 GiB to 100 GiB; candidate and desktop release artifacts remain preserved. |
+| 2026-08-29 | RRC8 | resumed | The owner authorized updates to all repositories under `~/src/github.com/nimbus/`. Pushed Deno branch `codex/release-readiness-websocket-egress`; remote revision `1c17e86b296af380f67c48f3b9a89876db154604` removes the exact-candidate dependency blocker. |
