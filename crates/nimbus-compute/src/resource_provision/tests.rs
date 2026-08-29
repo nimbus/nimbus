@@ -47,11 +47,11 @@ use crate::workload_saga::{
     WorkloadActivationPrerequisiteCapability, WorkloadExecutionDrainCapability,
     WorkloadExecutionProvisionCapabilities, WorkloadExecutionStopCapability,
     WorkloadPreparationCapability, WorkloadProvisionCapabilityFuture,
-    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority,
-    WorkloadReadinessCapability, WorkloadSagaCoordinator, WorkloadTeardownCapabilityFuture,
-    WorkloadTeardownCapabilityRegistry, WorkloadTeardownExecuteOutcome,
-    WorkloadTeardownInspectOutcome, WorkloadTeardownProviderObservation,
-    WorkloadTeardownProviderOutcome, WorkloadTeardownRuntime,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionRunDisposition,
+    WorkloadProvisionSourceAuthority, WorkloadReadinessCapability, WorkloadSagaCoordinator,
+    WorkloadTeardownCapabilityFuture, WorkloadTeardownCapabilityRegistry,
+    WorkloadTeardownExecuteOutcome, WorkloadTeardownInspectOutcome,
+    WorkloadTeardownProviderObservation, WorkloadTeardownProviderOutcome, WorkloadTeardownRuntime,
 };
 
 fn tenant() -> TenantId {
@@ -259,6 +259,7 @@ impl WorkloadSagaStore for NativeSagaStore {
 struct NativeProvisionProvider {
     calls: Mutex<Vec<(WorkloadSagaKey, nimbus_workloads::WorkloadProvisionStep)>>,
     provision_behavior: NativeProvisionBehavior,
+    provision_release: AtomicBool,
     provision_in_progress_calls: AtomicUsize,
     provision_in_progress: Semaphore,
     teardown_calls: Mutex<Vec<WorkloadTeardownStep>>,
@@ -274,7 +275,7 @@ enum NativeProvisionBehavior {
     #[default]
     Succeed,
     InProgressThenSucceededAt(nimbus_workloads::WorkloadProvisionStep),
-    AlwaysInProgressAt(nimbus_workloads::WorkloadProvisionStep),
+    InProgressUntilReleasedAt(nimbus_workloads::WorkloadProvisionStep),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -290,6 +291,7 @@ impl Default for NativeProvisionProvider {
         Self {
             calls: Mutex::new(Vec::new()),
             provision_behavior: NativeProvisionBehavior::Succeed,
+            provision_release: AtomicBool::new(false),
             provision_in_progress_calls: AtomicUsize::new(0),
             provision_in_progress: Semaphore::new(0),
             teardown_calls: Mutex::new(Vec::new()),
@@ -317,10 +319,10 @@ impl NativeProvisionProvider {
                     .fetch_add(1, Ordering::AcqRel)
                     < 2
             }
-            NativeProvisionBehavior::AlwaysInProgressAt(step) if step == command.step() => {
+            NativeProvisionBehavior::InProgressUntilReleasedAt(step) if step == command.step() => {
                 self.provision_in_progress_calls
                     .fetch_add(1, Ordering::AcqRel);
-                true
+                !self.provision_release.load(Ordering::Acquire)
             }
             _ => false,
         };
@@ -376,11 +378,15 @@ impl NativeProvisionProvider {
         })
     }
 
-    fn always_in_progress_at(step: nimbus_workloads::WorkloadProvisionStep) -> Arc<Self> {
+    fn in_progress_until_released_at(step: nimbus_workloads::WorkloadProvisionStep) -> Arc<Self> {
         Arc::new(Self {
-            provision_behavior: NativeProvisionBehavior::AlwaysInProgressAt(step),
+            provision_behavior: NativeProvisionBehavior::InProgressUntilReleasedAt(step),
             ..Self::default()
         })
+    }
+
+    fn release_provision(&self) {
+        self.provision_release.store(true, Ordering::Release);
     }
 
     fn failing_at_with_teardown(
@@ -942,10 +948,10 @@ async fn foreground_service_provision_resumes_durable_waiting_until_exact_projec
 #[tokio::test]
 async fn foreground_service_provision_cancels_waiter_without_a_second_retry_owner() {
     let service_name = "foreground-cancellation";
-    let provider = NativeProvisionProvider::always_in_progress_at(
+    let provider = NativeProvisionProvider::in_progress_until_released_at(
         nimbus_workloads::WorkloadProvisionStep::AttachNetwork,
     );
-    let (_store, provisioner, facade) = native_service_facade(service_name, Arc::clone(&provider));
+    let (store, provisioner, facade) = native_service_facade(service_name, Arc::clone(&provider));
     let key = WorkloadSagaKey::new(
         tenant(),
         WorkloadId::new(service_name).expect("fixture service ID should validate"),
@@ -981,9 +987,38 @@ async fn foreground_service_provision_cancels_waiter_without_a_second_retry_owne
             if matches!(error.as_ref(), WorkloadProvisionError::WaiterCancelled)
     ));
 
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        provider.provision_in_progress.acquire(),
+    )
+    .await
+    .expect("the retained supervisor should retry after its foreground waiter cancels")
+    .expect("provider progress signal should remain open")
+    .forget();
     assert!(
         provisioner.has_running_tracked_task(&key),
-        "the joined foreground waiter must leave only the tracked durable supervisor"
+        "the cancelled waiter must leave the single tracked durable supervisor"
+    );
+
+    provider.release_provision();
+    if let Some(settled) = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        provisioner.wait_for_tracked_settlement(&key),
+    )
+    .await
+    .expect("the retained supervisor should settle after provider release")
+    {
+        let outcome = settled.expect("the released provider should settle successfully");
+        assert_eq!(
+            outcome.disposition(),
+            WorkloadProvisionRunDisposition::Observed
+        );
+        assert_eq!(outcome.projection(), WorkloadProjectionState::Projected);
+    }
+    assert_eq!(store.record(&key).phase(), WorkloadSagaPhase::Observed);
+    assert!(
+        !provisioner.has_running_tracked_task(&key),
+        "terminal durable convergence must retire the tracked supervisor"
     );
 }
 
