@@ -788,8 +788,11 @@ fn next_retirement_retry_delay(current: Duration) -> Duration {
 pub(crate) async fn await_public_retirement<T>(
     operation: &'static str,
     cancellation: &WorkloadTeardownCancellationToken,
-    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>>,
-) -> Result<T, ComputeError> {
+    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>> + Send + 'static,
+) -> Result<T, ComputeError>
+where
+    T: Send + 'static,
+{
     await_retirement_with_timeout(
         operation,
         cancellation,
@@ -802,16 +805,57 @@ pub(crate) async fn await_public_retirement<T>(
 async fn await_retirement_with_timeout<T>(
     operation: &'static str,
     cancellation: &WorkloadTeardownCancellationToken,
-    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>>,
+    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>> + Send + 'static,
     timeout: Duration,
-) -> Result<T, ComputeError> {
-    match tokio::time::timeout(timeout, retirement).await {
-        Ok(result) => result.map_err(ComputeResourceRetirementError::into_compute_error),
+) -> Result<T, ComputeError>
+where
+    T: Send + 'static,
+{
+    let mut waiter = PublicRetirementWaiter::new(cancellation.clone(), tokio::spawn(retirement));
+    match tokio::time::timeout(timeout, &mut waiter.task).await {
+        Ok(Ok(result)) => {
+            waiter.armed = false;
+            result.map_err(ComputeResourceRetirementError::into_compute_error)
+        }
+        Ok(Err(error)) => {
+            waiter.armed = false;
+            Err(ComputeError::from(Error::Internal(format!(
+                "{operation} waiter task failed: {error}"
+            ))))
+        }
         Err(_) => {
             cancellation.cancel();
             Err(ComputeError::from(Error::Transport(format!(
                 "{operation} remains pending after {timeout:?}; retry the request while Nimbus continues durable teardown recovery"
             ))))
+        }
+    }
+}
+
+struct PublicRetirementWaiter<T> {
+    cancellation: WorkloadTeardownCancellationToken,
+    task: tokio::task::JoinHandle<Result<T, ComputeResourceRetirementError>>,
+    armed: bool,
+}
+
+impl<T> PublicRetirementWaiter<T> {
+    fn new(
+        cancellation: WorkloadTeardownCancellationToken,
+        task: tokio::task::JoinHandle<Result<T, ComputeResourceRetirementError>>,
+    ) -> Self {
+        Self {
+            cancellation,
+            task,
+            armed: true,
+        }
+    }
+}
+
+impl<T> Drop for PublicRetirementWaiter<T> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cancellation.cancel();
+            self.task.abort();
         }
     }
 }

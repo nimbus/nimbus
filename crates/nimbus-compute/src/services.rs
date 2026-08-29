@@ -392,50 +392,25 @@ pub async fn service_lifecycle(
     service_name: &str,
     verb: ServiceLifecycleVerb,
 ) -> Result<ServiceResourceResponse, ComputeError> {
-    let manager = service_manager(compute)?;
     let (definition, handle) = match verb {
         ServiceLifecycleVerb::Get => {
-            let definition = manager
-                .service_definition_for_tenant(tenant_context.tenant_id(), service_name)
-                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?;
-            let observation = manager.service_definition_observation_for_tenant(
-                tenant_context.tenant_id(),
-                service_name,
-            );
-            (
-                definition,
-                observation.map(|observation| observation.handle),
-            )
+            service_lifecycle_observation(compute, tenant_context.tenant_id(), service_name)?
         }
         ServiceLifecycleVerb::Start => {
-            let provisioner = compute.resource_provisioner()?;
-            let cancellation = WorkloadProvisionCancellation::default();
-            let snapshot = Box::pin(provisioner.provision_sandbox_service(
+            Box::pin(start_service_lifecycle(
+                compute,
                 tenant_context,
                 service_name,
-                &cancellation,
             ))
-            .await
-            .map_err(|error| error.into_compute_error())?;
-            (
-                snapshot.definition,
-                snapshot.observation.map(|observation| observation.handle),
-            )
+            .await?
         }
         ServiceLifecycleVerb::Stop => {
-            let retirer = compute.resource_retirer()?;
-            let cancellation = WorkloadTeardownCancellationToken::new();
-            let retirement = crate::resource_retirement::await_public_retirement(
-                "service stop",
-                &cancellation,
-                retirer.submit_service_teardown_until_terminal(
-                    tenant_context,
-                    service_name,
-                    &cancellation,
-                ),
-            )
-            .await?;
-            (retirement.definition, retirement.retired_handle)
+            Box::pin(stop_service_lifecycle(
+                compute,
+                tenant_context,
+                service_name,
+            ))
+            .await?
         }
     };
     if let (Some(action), Some(handle)) = (verb.event_action(), handle.as_ref()) {
@@ -446,6 +421,69 @@ pub async fn service_lifecycle(
         Some(handle) => ServiceResourceResponse::from_handle(tenant_context.tenant_id(), &handle),
         None => ServiceResourceResponse::from_definition_without_observation(definition),
     })
+}
+
+fn service_lifecycle_observation(
+    compute: &ComputeState,
+    tenant_id: &TenantId,
+    service_name: &str,
+) -> Result<(ServiceDefinition, Option<SandboxHandle>), ComputeError> {
+    let manager = service_manager(compute)?;
+    let definition = manager
+        .service_definition_for_tenant(tenant_id, service_name)
+        .ok_or_else(|| service_not_found(tenant_id, service_name))?;
+    let observation = manager.service_definition_observation_for_tenant(tenant_id, service_name);
+    Ok((
+        definition,
+        observation.map(|observation| observation.handle),
+    ))
+}
+
+async fn start_service_lifecycle(
+    compute: &ComputeState,
+    tenant_context: &TenantIsolationContext,
+    service_name: &str,
+) -> Result<(ServiceDefinition, Option<SandboxHandle>), ComputeError> {
+    let provisioner = compute.resource_provisioner()?;
+    let cancellation = WorkloadProvisionCancellation::default();
+    let snapshot = Box::pin(provisioner.provision_sandbox_service(
+        tenant_context,
+        service_name,
+        &cancellation,
+    ))
+    .await
+    .map_err(|error| error.into_compute_error())?;
+    Ok((
+        snapshot.definition,
+        snapshot.observation.map(|observation| observation.handle),
+    ))
+}
+
+async fn stop_service_lifecycle(
+    compute: &ComputeState,
+    tenant_context: &TenantIsolationContext,
+    service_name: &str,
+) -> Result<(ServiceDefinition, Option<SandboxHandle>), ComputeError> {
+    let retirer = compute.resource_retirer()?;
+    let cancellation = WorkloadTeardownCancellationToken::new();
+    let retirement_cancellation = cancellation.clone();
+    let retirement_context = tenant_context.clone();
+    let retirement_service_name = service_name.to_owned();
+    let retirement = crate::resource_retirement::await_public_retirement(
+        "service stop",
+        &cancellation,
+        async move {
+            retirer
+                .submit_service_teardown_until_terminal(
+                    &retirement_context,
+                    &retirement_service_name,
+                    &retirement_cancellation,
+                )
+                .await
+        },
+    )
+    .await?;
+    Ok((retirement.definition, retirement.retired_handle))
 }
 
 /// Admit one explicit sandbox-backed service restart through the same durable

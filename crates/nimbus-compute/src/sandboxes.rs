@@ -217,10 +217,21 @@ pub async fn stop_sandbox(
 ) -> Result<SandboxResourceResponse, ComputeError> {
     let retirer = compute.resource_retirer()?;
     let cancellation = WorkloadTeardownCancellationToken::new();
+    let retirement_cancellation = cancellation.clone();
+    let retirement_context = tenant_context.clone();
+    let retirement_sandbox_id = sandbox_id.to_owned();
     let snapshot = crate::resource_retirement::await_public_retirement(
         "sandbox stop",
         &cancellation,
-        retirer.submit_sandbox_teardown_until_terminal(tenant_context, sandbox_id, &cancellation),
+        async move {
+            retirer
+                .submit_sandbox_teardown_until_terminal(
+                    &retirement_context,
+                    &retirement_sandbox_id,
+                    &retirement_cancellation,
+                )
+                .await
+        },
     )
     .await?;
     Ok(SandboxResourceResponse::from_snapshot(snapshot))

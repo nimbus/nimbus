@@ -1,10 +1,14 @@
 # Nimbus Release Readiness 2026-08
 
-Status: `active`. Owner: this plan. Created: 2026-08-27.
-Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
+Status: `active`.
+Owner: this plan.
+Created: 2026-08-27.
+Baseline branch: `codex/storage-review-repairs`.
+Baseline commit: `1403bc780`.
+Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
-Next action: run `make ci` from Nimbus commit `f0725ac57`, then rebuild and
-repeat the critical release-candidate smoke tests
+Next action: commit the exact CI repairs, rerun `make ci` from the resulting
+candidate, then rebuild and repeat the critical release-candidate smoke tests
 
 ## Outcome
 
@@ -43,8 +47,9 @@ After:
   apt, COPR, cloud-image, tag, and release publication work.
 - Does not own: multi-node clustering, continuous PITR, MongoDB change streams,
   or automatic server updates. The capability page marks these as not built.
-- Non-goal: publish a tag, push a branch, or open a pull request. Do not change
-  release credentials or public package channels without owner approval.
+- Non-goal: publish a tag or release. The owner authorized repository branch
+  and pull-request updates. Do not change release credentials or public
+  package channels without owner approval.
 
 ## Invariants
 
@@ -335,3 +340,6 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | resumed | The owner authorized updates to all repositories under `~/src/github.com/nimbus/`. Pushed Deno branch `codex/release-readiness-websocket-egress`; remote revision `1c17e86b296af380f67c48f3b9a89876db154604` removes the exact-candidate dependency blocker. |
 | 2026-08-29 | RRC1 | done | Opened Deno PR #1 and pinned every Nimbus Deno patch to remote commit `1c17e86b296af380f67c48f3b9a89876db154604`. Nimbus commit `f0725ac57` contains the reviewed connection-broker repair. The remote exact graph passes locked runtime and bridge checks, 2/2 denial-before-connect tests, 3/3 gateway allow-path tests, 2/2 bridge internal-address denials, 1/1 embedded-anchor install, both anchor provenance checks, and the 14/14 connection-broker verifier. |
 | 2026-08-29 | RRC8 | finding | The first exact `make ci` run stopped in Clippy because direct Cloud Functions and Convex server test builders did not initialize the new resolved-address field. Commit `e39e4f020` adds the explicit `None` value to both fixtures. Focused Clippy passes, and both seven-test egress suites pass. |
+| 2026-08-29 | RRC8 | fail-before | The next exact `make ci` reached the workspace Rust lane: 7,664 of 7,719 tests passed, 55 failed, and 111 skipped. Fifty-four CLI and server tests aborted on the standard 2 MiB test-thread stack; one compute cancellation test exposed a second foreground provision polling owner. The run also reported one sandbox leak marker. |
+| 2026-08-29 | RRC8 | finding | LLDB showed large inline router preparation and service-retirement futures exhausting the standard stack. Router startup now heap-bounds its three preparation phases. Service lifecycle verbs have separate futures, and public retirement waits run as abort-on-drop tasks with caller cancellation while durable teardown remains retained. The server package passes 763 of 763 tests with no leak marker; the CLI package passes 1,070 of 1,070, and its one prior auth leak marker does not reproduce in the exact focused test. |
+| 2026-08-29 | RRC8 | finding | The foreground service facade duplicated the provisioner's retained retry supervisor. It now joins the exact settlement channel instead of polling every 25 ms. The full compute package passes 514 of 514 tests with one intentional skip, and focused Clippy passes for compute, server, and CLI with warnings denied. |

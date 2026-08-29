@@ -507,15 +507,13 @@ impl RouterBuildConfig {
     /// managed-workload recovery attempt are complete. No listener is served
     /// before this method returns.
     pub(crate) async fn prepare_for_serving(self) -> nimbus_core::Result<PreparedRouterState> {
-        self.prepare_system_tenant().await?;
+        Box::pin(self.prepare_system_tenant()).await?;
         let mut prepared = self.into_state();
-        prepared
-            .state
-            .prepare_workload_lifecycle()
+        Box::pin(prepared.state.prepare_workload_lifecycle())
             .await
             .map_err(|error| nimbus_core::Error::Internal(error.to_string()))?;
         if let Some(plan) = prepared.workload_boot_plan.take() {
-            plan.apply(&prepared.state).await?;
+            Box::pin(plan.apply(&prepared.state)).await?;
         }
         Ok(prepared)
     }

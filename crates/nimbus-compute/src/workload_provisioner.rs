@@ -173,18 +173,6 @@ impl WorkloadProvisionCancellation {
     fn subscribe(&self) -> watch::Receiver<bool> {
         self.signal.subscribe()
     }
-
-    pub(crate) async fn cancelled(&self) {
-        let mut signal = self.subscribe();
-        if *signal.borrow() {
-            return;
-        }
-        while signal.changed().await.is_ok() {
-            if *signal.borrow() {
-                return;
-            }
-        }
-    }
 }
 
 /// Invalid immutable provider-realm configuration.
@@ -684,6 +672,33 @@ impl WorkloadProvisioner {
         #[cfg(test)]
         self.notify_test_wait_boundary();
         wait_for_completion(receiver, cancellation).await
+    }
+
+    /// Join the terminal settlement of one retained resume without polling
+    /// the first truthful pending receipt. Caller cancellation stops only this
+    /// wait; the single tracked supervisor keeps converging durable truth.
+    pub(crate) async fn resume_until_settled(
+        self: &Arc<Self>,
+        key: WorkloadSagaKey,
+        cancellation: &WorkloadProvisionCancellation,
+    ) -> WorkloadProvisionResult {
+        if cancellation.is_cancelled() {
+            return Err(Arc::new(WorkloadProvisionError::CancelledBeforeSubmission));
+        }
+        let completion = self.track_resume(key.clone(), cancellation, false, false)?;
+        let settlement = self
+            .supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned")
+            .in_flight
+            .get(&key)
+            .map(|entry| entry.settlement.clone());
+        #[cfg(test)]
+        self.notify_test_wait_boundary();
+        match settlement {
+            Some(settlement) => wait_for_completion(settlement, cancellation).await,
+            None => wait_for_completion(completion, cancellation).await,
+        }
     }
 
     /// Resume one exact process-bound publication after this composition

@@ -940,7 +940,7 @@ async fn foreground_service_provision_resumes_durable_waiting_until_exact_projec
 }
 
 #[tokio::test]
-async fn foreground_service_provision_cancels_without_a_busy_retry_owner() {
+async fn foreground_service_provision_cancels_waiter_without_a_second_retry_owner() {
     let service_name = "foreground-cancellation";
     let provider = NativeProvisionProvider::always_in_progress_at(
         nimbus_workloads::WorkloadProvisionStep::AttachNetwork,
@@ -981,16 +981,9 @@ async fn foreground_service_provision_cancels_without_a_busy_retry_owner() {
             if matches!(error.as_ref(), WorkloadProvisionError::WaiterCancelled)
     ));
 
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        while provisioner.has_running_tracked_task(&key) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the exact tracked resume task should settle after its waiter cancels");
     assert!(
-        !provisioner.has_running_tracked_task(&key),
-        "cancellation must leave no running owner that can retry provider inspection"
+        provisioner.has_running_tracked_task(&key),
+        "the joined foreground waiter must leave only the tracked durable supervisor"
     );
 }
 
