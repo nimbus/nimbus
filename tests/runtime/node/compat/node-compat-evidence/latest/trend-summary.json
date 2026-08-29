@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-27T17:13:10.379676+00:00",
+  "generated_at": "2026-08-29T01:38:37.265628+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -68,8 +68,8 @@
   "evidence_trends": {
     "canary_report_count": {
       "current": 2,
-      "baseline": 5,
-      "delta": -3
+      "baseline": 2,
+      "delta": 0
     },
     "expectation_catalog_entry_count": {
       "current": 150,
@@ -77,9 +77,9 @@
       "delta": 0
     },
     "oracle_report_count": {
-      "current": 0,
-      "baseline": 4,
-      "delta": -4
+      "current": 4,
+      "baseline": 0,
+      "delta": 4
     },
     "required_canary_gap_count": {
       "current": 0,

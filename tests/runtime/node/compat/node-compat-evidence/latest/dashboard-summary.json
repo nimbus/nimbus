@@ -5,7 +5,7 @@
   "canary_report_count": 2,
   "canary_claim_count": 79,
   "canary_check_count": 101,
-  "oracle_report_count": 0,
+  "oracle_report_count": 4,
   "inventory_report_count": 0,
   "suite_status_report": {
     "path": "target/node-compat/status/status-summary.json",
@@ -96307,7 +96307,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -96330,7 +96330,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -96399,7 +96399,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -96468,7 +96468,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -96491,7 +96491,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -96535,7 +96535,7 @@
         {
           "id": "host-heavy-esbuild-binary",
           "package": "esbuild",
-          "pinned_version": "0.28.0",
+          "pinned_version": "0.28.2",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -96703,7 +96703,7 @@
         {
           "id": "host-heavy-sharp-native",
           "package": "sharp",
-          "pinned_version": "0.34.5",
+          "pinned_version": "0.35.4",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -96768,7 +96768,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -96908,7 +96908,7 @@
         {
           "id": "socket-io",
           "package": "socket.io",
-          "pinned_version": "4.7.5",
+          "pinned_version": "4.8.3",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -96953,7 +96953,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -97113,7 +97113,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -97182,7 +97182,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -97205,7 +97205,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -97249,7 +97249,7 @@
         {
           "id": "host-heavy-esbuild-binary",
           "package": "esbuild",
-          "pinned_version": "0.28.0",
+          "pinned_version": "0.28.2",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -97417,7 +97417,7 @@
         {
           "id": "host-heavy-sharp-native",
           "package": "sharp",
-          "pinned_version": "0.34.5",
+          "pinned_version": "0.35.4",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -97482,7 +97482,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -97622,7 +97622,7 @@
         {
           "id": "socket-io",
           "package": "socket.io",
-          "pinned_version": "4.7.5",
+          "pinned_version": "4.8.3",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -97667,7 +97667,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -97872,7 +97872,7 @@
         {
           "id": "host-heavy-esbuild-binary",
           "package": "esbuild",
-          "pinned_version": "0.28.0",
+          "pinned_version": "0.28.2",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -98040,7 +98040,7 @@
         {
           "id": "host-heavy-sharp-native",
           "package": "sharp",
-          "pinned_version": "0.34.5",
+          "pinned_version": "0.35.4",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -98105,7 +98105,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -98395,7 +98395,7 @@
         {
           "id": "next",
           "package": "next",
-          "pinned_version": "16.2.6",
+          "pinned_version": "16.3.3",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -98416,7 +98416,7 @@
         {
           "id": "prisma",
           "package": "prisma",
-          "pinned_version": "7.8.0",
+          "pinned_version": "7.10.0",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -98500,7 +98500,7 @@
         {
           "id": "next",
           "package": "next",
-          "pinned_version": "16.2.6",
+          "pinned_version": "16.3.3",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -98521,7 +98521,7 @@
         {
           "id": "prisma",
           "package": "prisma",
-          "pinned_version": "7.8.0",
+          "pinned_version": "7.10.0",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -98584,7 +98584,72 @@
       ]
     }
   ],
-  "oracle_reports": [],
+  "oracle_reports": [
+    {
+      "path": "target/node-compat/oracle/node20/test-parallel-test-buffer-alloc-js/oracle-node20-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node20",
+      "upstream_fixture_line": "Node20",
+      "lane_role": "legacy",
+      "public_contract_role": "legacy_contract",
+      "runtime_execution_target": "Node20",
+      "runtime_limits_preset": "application_node20",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v20.20.2"
+    },
+    {
+      "path": "target/node-compat/oracle/node22/test-parallel-test-buffer-alloc-js/oracle-node22-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node22",
+      "upstream_fixture_line": "Node22",
+      "lane_role": "supported",
+      "public_contract_role": "supported_contract",
+      "runtime_execution_target": "Node22",
+      "runtime_limits_preset": "application_node22",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v22.23.1"
+    },
+    {
+      "path": "target/node-compat/oracle/node24/test-parallel-test-buffer-alloc-js/oracle-node24-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node24",
+      "upstream_fixture_line": "Node24",
+      "lane_role": "default",
+      "public_contract_role": "default_contract",
+      "runtime_execution_target": "Node24",
+      "runtime_limits_preset": "application_node24",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v24.16.0"
+    },
+    {
+      "path": "target/node-compat/oracle/node26/test-parallel-test-buffer-alloc-js/oracle-node26-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node26",
+      "upstream_fixture_line": "Node26",
+      "lane_role": "current",
+      "public_contract_role": "current_contract",
+      "runtime_execution_target": "Node26",
+      "runtime_limits_preset": "application_node26",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v26.7.0"
+    }
+  ],
   "claim_summaries": [
     {
       "id": "application-platform-builtins",
@@ -99115,7 +99180,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99138,7 +99203,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99161,7 +99226,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99220,7 +99285,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99243,7 +99308,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99266,7 +99331,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99325,7 +99390,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99348,7 +99413,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99371,7 +99436,7 @@
         {
           "id": "express",
           "package": "express",
-          "pinned_version": "4.19.2",
+          "pinned_version": "4.22.2",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99430,7 +99495,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99453,7 +99518,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99476,7 +99541,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99535,7 +99600,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99558,7 +99623,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99581,7 +99646,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99640,7 +99705,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99663,7 +99728,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99686,7 +99751,7 @@
         {
           "id": "fastify",
           "package": "fastify",
-          "pinned_version": "4.28.1",
+          "pinned_version": "5.12.1",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99739,7 +99804,7 @@
         {
           "id": "socket-io",
           "package": "socket.io",
-          "pinned_version": "4.7.5",
+          "pinned_version": "4.8.3",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99761,7 +99826,7 @@
         {
           "id": "socket-io",
           "package": "socket.io",
-          "pinned_version": "4.7.5",
+          "pinned_version": "4.8.3",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99813,7 +99878,7 @@
         {
           "id": "socket-io",
           "package": "socket.io",
-          "pinned_version": "4.7.5",
+          "pinned_version": "4.8.3",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99835,7 +99900,7 @@
         {
           "id": "socket-io",
           "package": "socket.io",
-          "pinned_version": "4.7.5",
+          "pinned_version": "4.8.3",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99887,7 +99952,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99910,7 +99975,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99963,7 +100028,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -99986,7 +100051,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100039,7 +100104,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100062,7 +100127,7 @@
         {
           "id": "undici",
           "package": "undici",
-          "pinned_version": "6.19.8",
+          "pinned_version": "6.28.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100115,7 +100180,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100138,7 +100203,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100191,7 +100256,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100214,7 +100279,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100267,7 +100332,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -100290,7 +100355,7 @@
         {
           "id": "axios",
           "package": "axios",
-          "pinned_version": "1.7.7",
+          "pinned_version": "1.20.0",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -104283,7 +104348,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -104305,7 +104370,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -104327,7 +104392,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -104385,7 +104450,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -104407,7 +104472,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -104429,7 +104494,7 @@
         {
           "id": "nanoid",
           "package": "nanoid",
-          "pinned_version": "5.1.11",
+          "pinned_version": "5.1.16",
           "runtime_preset": "Application",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -105693,7 +105758,7 @@
         {
           "id": "host-heavy-sharp-native",
           "package": "sharp",
-          "pinned_version": "0.34.5",
+          "pinned_version": "0.35.4",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -105714,7 +105779,7 @@
         {
           "id": "host-heavy-sharp-native",
           "package": "sharp",
-          "pinned_version": "0.34.5",
+          "pinned_version": "0.35.4",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -105735,7 +105800,7 @@
         {
           "id": "host-heavy-sharp-native",
           "package": "sharp",
-          "pinned_version": "0.34.5",
+          "pinned_version": "0.35.4",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -105792,7 +105857,7 @@
         {
           "id": "host-heavy-esbuild-binary",
           "package": "esbuild",
-          "pinned_version": "0.28.0",
+          "pinned_version": "0.28.2",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -105813,7 +105878,7 @@
         {
           "id": "host-heavy-esbuild-binary",
           "package": "esbuild",
-          "pinned_version": "0.28.0",
+          "pinned_version": "0.28.2",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -105834,7 +105899,7 @@
         {
           "id": "host-heavy-esbuild-binary",
           "package": "esbuild",
-          "pinned_version": "0.28.0",
+          "pinned_version": "0.28.2",
           "runtime_preset": "Application",
           "evidence_kind": "diagnostic",
           "support_status": "service_microvm_required",
@@ -106101,7 +106166,7 @@
         {
           "id": "prisma",
           "package": "prisma",
-          "pinned_version": "7.8.0",
+          "pinned_version": "7.10.0",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -106122,7 +106187,7 @@
         {
           "id": "prisma",
           "package": "prisma",
-          "pinned_version": "7.8.0",
+          "pinned_version": "7.10.0",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -106173,7 +106238,7 @@
         {
           "id": "next",
           "package": "next",
-          "pinned_version": "16.2.6",
+          "pinned_version": "16.3.3",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",
@@ -106194,7 +106259,7 @@
         {
           "id": "next",
           "package": "next",
-          "pinned_version": "16.2.6",
+          "pinned_version": "16.3.3",
           "runtime_preset": "Tooling",
           "evidence_kind": "positive_support",
           "support_status": "supported",

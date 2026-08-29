@@ -4,7 +4,7 @@
 - Package/framework canary claims: 79
 - Package/framework canary checks: 101
 - Canary artifact bundles: 2
-- Oracle reports: 0
+- Oracle reports: 4
 - Inventory reports: 0
 
 ## Suite Status
@@ -131,4 +131,10 @@
 - none
 
 ## Oracle Reports
-- none
+
+| Lane | Fixture | Runtime | Oracle | Drift | Node | Role |
+| --- | --- | --- | --- | --- | --- | --- |
+| `node20` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v20.20.2` | `legacy/legacy_contract` |
+| `node22` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v22.23.1` | `supported/supported_contract` |
+| `node24` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v24.16.0` | `default/default_contract` |
+| `node26` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v26.7.0` | `current/current_contract` |
