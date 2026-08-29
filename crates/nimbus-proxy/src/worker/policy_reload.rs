@@ -35,6 +35,9 @@ impl WorkloadPep {
         policy: CompiledEgressPolicy,
         attempt: PolicyReloadAttempt,
     ) -> Result<PolicyReloadReceipt> {
+        policy
+            .validate_for_supervisor_proxy()
+            .map_err(|message| EgressProxyError::OperationFailed { message })?;
         self.health.with_ready_control_effect(|| {
             let mut guard =
                 self.policy_state
@@ -69,6 +72,8 @@ mod tests {
     use std::num::NonZeroU64;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 
     use super::*;
     use crate::worker::WorkloadPepConfig;
@@ -130,6 +135,57 @@ mod tests {
                 .expect("retained policy should remain inspectable"),
             PolicyReloadObservation::Untagged,
             "rejected reload must not mutate the retained active policy"
+        );
+    }
+
+    #[test]
+    fn reload_rejects_runtime_only_websocket_policy_without_policy_mutation() {
+        let active_policy = EgressPolicy::new([EgressRule::new(
+            "active-https",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )])
+        .compile_for_supervisor_proxy()
+        .expect("active supervisor policy should compile");
+        let pep = WorkloadPep::start(WorkloadPepConfig::new(active_policy.clone()))
+            .expect("test PEP should start");
+        let runtime_only_policy = EgressPolicy::new([EgressRule::new(
+            "runtime-websocket",
+            EgressProtocol::Wss,
+            "events.example.com",
+            443,
+        )])
+        .compile()
+        .expect("the shared PDP should compile an observable runtime policy");
+
+        let error = pep
+            .reload_policy_for_attempt(runtime_only_policy, next_attempt())
+            .expect_err("the supervisor proxy must reject a protocol it cannot observe");
+
+        assert!(
+            error.to_string().contains("observable runtime gateway"),
+            "reload rejection should explain the owning enforcement seam: {error}"
+        );
+        let evidence = pep
+            .inspect_policy_evidence(&active_policy)
+            .expect("active policy evidence should remain inspectable");
+        assert!(
+            evidence.policy_matches(),
+            "rejected reload must retain the previous active policy"
+        );
+        assert_eq!(
+            evidence
+                .readiness()
+                .policy_generation()
+                .map(|value| value.get()),
+            Some(1),
+            "rejected reload must not advance the active policy generation"
+        );
+        assert_eq!(
+            evidence.reload_attempt(),
+            None,
+            "rejected reload must not tag the active policy with an attempt"
         );
     }
 }

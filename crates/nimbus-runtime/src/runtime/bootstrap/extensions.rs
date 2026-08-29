@@ -351,22 +351,20 @@ fn loader_hook_registry_extension(registry: Option<LoaderHookRegistry>) -> Exten
 
 fn egress_fetch_options() -> deno_fetch::Options {
     deno_fetch::Options {
-        egress_gateway_hook: Some(
-            nimbus_fetch_egress_gateway_hook as deno_fetch::FetchEgressGatewayHook,
-        ),
+        egress_gateway_hook: Some(nimbus_egress_gateway_hook as deno_fetch::EgressGatewayHook),
         ..Default::default()
     }
 }
 
-fn nimbus_fetch_egress_gateway_hook(
+fn nimbus_egress_gateway_hook(
     state: &mut deno_core::OpState,
-    request: deno_fetch::FetchEgressGatewayRequest<'_>,
-) -> Result<deno_fetch::FetchEgressGatewayAuthorization, JsErrorBox> {
-    // Convex default-runtime contract: `fetch` is available in actions only.
-    // This is a semantics gate IN FRONT of the egress gateway — actions that
-    // pass it still go through the full tenant egress policy below (which
-    // stays deny-by-default); queries and mutations fail closed here even
-    // when the tenant policy would allow the host.
+    request: deno_fetch::EgressGatewayRequest<'_>,
+) -> Result<deno_fetch::EgressGatewayAuthorization, JsErrorBox> {
+    // Convex default-runtime contract: network I/O is available in actions
+    // only. This is a semantics gate IN FRONT of the egress gateway — actions
+    // that pass it still go through the full tenant egress policy below (which
+    // stays deny-by-default); queries and mutations fail closed here even when
+    // the tenant policy would allow the host.
     if let Some(contract) = state.try_borrow::<InstalledRuntimeContract>()
         && matches!(
             contract.limits.guest_semantics,
@@ -377,40 +375,71 @@ fn nimbus_fetch_egress_gateway_hook(
             .and_then(RuntimeInvocationHostCallBinding::invocation_kind)
         && matches!(kind, "query" | "paginated_query" | "mutation")
     {
-        return Err(JsErrorBox::generic(
-            "Can't use fetch() in queries and mutations. Please consider using an action.",
-        ));
+        let message = match request.transport {
+            deno_fetch::EgressGatewayTransport::Fetch => {
+                "Can't use fetch() in queries and mutations. Please consider using an action."
+            }
+            deno_fetch::EgressGatewayTransport::WebSocket => {
+                "Can't use new WebSocket() in queries and mutations. Please consider using an action."
+            }
+        };
+        return Err(JsErrorBox::generic(message));
     }
     let Some(installed) = state.try_borrow::<InstalledRuntimeEgressGateway>() else {
-        return Err(JsErrorBox::generic("fetch egress gateway is not installed"));
+        return Err(JsErrorBox::generic(format!(
+            "{} egress gateway is not installed",
+            egress_transport_label(request.transport)
+        )));
     };
     let binding = installed.binding.clone();
     match binding {
         RuntimeEgressGatewayBinding::CoarsePermissions => state
             .borrow_mut::<PermissionsContainer>()
-            .check_net_url(request.url, "fetch()")
-            .map(|_| deno_fetch::FetchEgressGatewayAuthorization::use_deno_permissions())
+            .check_net_url(
+                request.url,
+                match request.transport {
+                    deno_fetch::EgressGatewayTransport::Fetch => "fetch()",
+                    deno_fetch::EgressGatewayTransport::WebSocket => "new WebSocket()",
+                },
+            )
+            .map(|_| deno_fetch::EgressGatewayAuthorization::use_deno_permissions())
             .map_err(|error| JsErrorBox::generic(error.to_string())),
         RuntimeEgressGatewayBinding::Gateway(gateway) => {
             let invocation = state
                 .try_borrow::<RuntimeInvocationHostCallBinding>()
                 .cloned();
-            let egress_request = EgressRequest::from_fetch_url_with_context(
-                request.method.as_str(),
-                request.url.as_str(),
-                request.client_rid.is_some(),
-                invocation
-                    .as_ref()
-                    .and_then(RuntimeInvocationHostCallBinding::tenant_label)
-                    .map(str::to_owned),
-                invocation
-                    .as_ref()
-                    .and_then(RuntimeInvocationHostCallBinding::session_id)
-                    .map(str::to_owned),
-                invocation
-                    .as_ref()
-                    .and_then(RuntimeInvocationHostCallBinding::invocation_id),
-            )
+            let tenant_label = invocation
+                .as_ref()
+                .and_then(RuntimeInvocationHostCallBinding::tenant_label)
+                .map(str::to_owned);
+            let session_id = invocation
+                .as_ref()
+                .and_then(RuntimeInvocationHostCallBinding::session_id)
+                .map(str::to_owned);
+            let invocation_id = invocation
+                .as_ref()
+                .and_then(RuntimeInvocationHostCallBinding::invocation_id);
+            let egress_request = match request.transport {
+                deno_fetch::EgressGatewayTransport::Fetch => {
+                    EgressRequest::from_fetch_url_with_context(
+                        request.method.as_str(),
+                        request.url.as_str(),
+                        request.client_rid.is_some(),
+                        tenant_label,
+                        session_id,
+                        invocation_id,
+                    )
+                }
+                deno_fetch::EgressGatewayTransport::WebSocket => {
+                    EgressRequest::from_websocket_url_with_context(
+                        request.url.as_str(),
+                        request.client_rid.is_some(),
+                        tenant_label,
+                        session_id,
+                        invocation_id,
+                    )
+                }
+            }
             .map_err(|error| JsErrorBox::generic(error.to_string()))?;
             let authorization = gateway.authorize(&egress_request);
             // The isolate `fetch` path has no route to the nimbus-proxy PEP, so the
@@ -419,13 +448,57 @@ fn nimbus_fetch_egress_gateway_hook(
             // consumption seam keeps every host bridge / adapter from re-encoding
             // the rule — the per-adapter duplication that is itself the fail-open
             // risk. (audit H4.)
-            match crate::egress::isolate_fetch_decision(&authorization) {
+            let decision = match request.transport {
+                deno_fetch::EgressGatewayTransport::Fetch => {
+                    crate::egress::isolate_fetch_decision(&authorization)
+                }
+                deno_fetch::EgressGatewayTransport::WebSocket => {
+                    crate::egress::isolate_websocket_decision(&authorization)
+                }
+            };
+            match decision {
                 Ok(()) => {
-                    Ok(deno_fetch::FetchEgressGatewayAuthorization::bypass_deno_permissions())
+                    let resolved_request = egress_request;
+                    let resolved_gateway = gateway;
+                    let transport = request.transport;
+                    let checker = deno_fetch::dns::ResolvedAddressChecker::new(
+                        move |resolved_ip, resolved_port| {
+                            if resolved_port != resolved_request.port {
+                                return Err(JsErrorBox::generic(format!(
+                                    "{} egress resolved port {resolved_port} does not match authorized port {}",
+                                    egress_transport_label(transport),
+                                    resolved_request.port
+                                )));
+                            }
+                            let mut request = resolved_request.clone();
+                            request.resolved_ip = Some(*resolved_ip);
+                            let authorization = resolved_gateway.authorize(&request);
+                            let decision = match transport {
+                                deno_fetch::EgressGatewayTransport::Fetch => {
+                                    crate::egress::isolate_fetch_decision(&authorization)
+                                }
+                                deno_fetch::EgressGatewayTransport::WebSocket => {
+                                    crate::egress::isolate_websocket_decision(&authorization)
+                                }
+                            };
+                            decision.map_err(JsErrorBox::generic)
+                        },
+                    );
+                    Ok(
+                        deno_fetch::EgressGatewayAuthorization::bypass_deno_permissions()
+                            .with_resolved_address_checker(checker),
+                    )
                 }
                 Err(reason) => Err(JsErrorBox::generic(reason)),
             }
         }
+    }
+}
+
+const fn egress_transport_label(transport: deno_fetch::EgressGatewayTransport) -> &'static str {
+    match transport {
+        deno_fetch::EgressGatewayTransport::Fetch => "fetch",
+        deno_fetch::EgressGatewayTransport::WebSocket => "WebSocket",
     }
 }
 
@@ -551,6 +624,18 @@ mod tests {
         assert!(
             options.egress_gateway_hook.is_some(),
             "fetch must consult the runtime EgressGateway hook before falling back to net permissions"
+        );
+    }
+
+    #[test]
+    fn egress_transport_labels_distinguish_fetch_and_websocket() {
+        assert_eq!(
+            egress_transport_label(deno_fetch::EgressGatewayTransport::Fetch),
+            "fetch"
+        );
+        assert_eq!(
+            egress_transport_label(deno_fetch::EgressGatewayTransport::WebSocket),
+            "WebSocket"
         );
     }
 }

@@ -375,6 +375,8 @@ fn protocol_label(protocol: EgressProtocol) -> &'static str {
     match protocol {
         EgressProtocol::Http => "http",
         EgressProtocol::Https => "https",
+        EgressProtocol::Ws => "ws",
+        EgressProtocol::Wss => "wss",
         EgressProtocol::Tcp => "tcp",
     }
 }

@@ -302,7 +302,7 @@ impl EgressProxyRegistry {
             .transpose()?
             .flatten();
         let compiled = policy
-            .compile()
+            .compile_for_supervisor_proxy()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
         let snapshot =
             match self.authenticated_lifecycle_snapshot(tenant_id, id, assignment, &compiled)? {

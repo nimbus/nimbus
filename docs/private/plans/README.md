@@ -225,6 +225,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `native-transport-evolution-plan.md` - `proposed`. Owns benchmark-driven
   Nimbus-native transport evolution without replacing the established WebSocket
   protocol by default.
+- `archive/connection-broker-plan.md` - `complete with 2026-08 corrective
+  erratum`. Owns host-held WebSocket residency, hibernation, metering, and the
+  runtime egress-policy parity contract. The erratum records that in-process
+  proxy-mediated transport was never product-wired; proxy-required rules fail
+  closed, and release-readiness RRC1 repaired the live WebSocket gateway path.
+  `ws`/`wss` policy is limited to observable in-process runtime gateways;
+  supervisor proxies enforce HTTP(S) authority policy and reject those rules.
 - `enterprise-crate-adoption-plan.md` - `proposed`. Owns the cross-workspace
   screen for mature Rust crates at commodity substrate seams: Sigstore artifact
   verification, DNS, OIDC/JWKS, OCI spec types, local-socket HTTP parsing,

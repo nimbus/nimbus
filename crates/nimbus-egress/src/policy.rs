@@ -10,6 +10,14 @@ pub enum EgressProtocol {
     Tcp,
     Http,
     Https,
+    /// Observable cleartext WebSocket request. Runtime gateways can identify
+    /// this protocol before transport. A supervisor proxy cannot distinguish
+    /// it from HTTP without parsing an upgrade and rejects rules of this kind.
+    Ws,
+    /// Observable TLS WebSocket request. Runtime gateways can identify this
+    /// protocol before transport. A supervisor proxy sees only an opaque HTTPS
+    /// CONNECT authority and rejects rules of this kind.
+    Wss,
 }
 
 /// Default-deny egress allowlist: the PDP authorizes a request only when some
@@ -74,6 +82,20 @@ impl EgressPolicy {
         })
     }
 
+    /// Compile a policy for the host-side supervisor proxy.
+    ///
+    /// The proxy can enforce TCP, cleartext HTTP, and HTTPS authority grants.
+    /// It cannot authenticate `ws` inside HTTP or `wss` inside an opaque TLS
+    /// CONNECT tunnel. Those protocol values are reserved for runtime gateways
+    /// that observe `new WebSocket()` before transport.
+    pub fn compile_for_supervisor_proxy(
+        &self,
+    ) -> std::result::Result<CompiledEgressPolicy, String> {
+        let compiled = self.compile()?;
+        compiled.validate_for_supervisor_proxy()?;
+        Ok(compiled)
+    }
+
     pub fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
         match self.compile() {
             Ok(compiled) => compiled.authorize(request),
@@ -103,6 +125,23 @@ impl CompiledEgressPolicy {
 
     pub fn into_policy(self) -> EgressPolicy {
         self.policy
+    }
+
+    /// Validate that every rule can be enforced by the supervisor proxy.
+    pub fn validate_for_supervisor_proxy(&self) -> std::result::Result<(), String> {
+        if let Some(rule) = self
+            .policy
+            .allow
+            .iter()
+            .find(|rule| matches!(rule.protocol, EgressProtocol::Ws | EgressProtocol::Wss))
+        {
+            return Err(format!(
+                "sandbox egress rule `{}` uses protocol `{}`, which is supported only by an observable runtime gateway; the supervisor proxy cannot distinguish WebSocket traffic inside HTTP or opaque TLS",
+                rule.name,
+                egress_protocol_label(rule.protocol)
+            ));
+        }
+        Ok(())
     }
 
     pub fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
@@ -213,7 +252,7 @@ impl CompiledEgressPolicy {
 }
 
 /// A single allow rule. A request matches only when protocol, canonical host,
-/// and port all match (L4) and — for HTTP(S) — the method and path-prefix
+/// and port all match (L4) and — for HTTP(S) or WebSocket — the method and path-prefix
 /// constraints are satisfied (L7). Unless `allow_internal_ips` is set, a rule
 /// will not authorize a request whose host or resolved IP is internal/
 /// non-global, which is the SSRF / metadata-endpoint guard. An optional
@@ -225,7 +264,7 @@ impl CompiledEgressPolicy {
 pub struct EgressRule {
     /// Unique, concrete rule name (no whitespace, not `*`); used in diagnostics.
     pub name: String,
-    /// L4 protocol the rule authorizes (`tcp`, `http`, or `https`).
+    /// Protocol the rule authorizes (`tcp`, `http`, `https`, `ws`, or `wss`).
     pub protocol: EgressProtocol,
     /// Concrete destination host: a bare DNS name or IP literal, no wildcards.
     pub host: String,
@@ -245,11 +284,15 @@ pub struct EgressRule {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_internal_ips: bool,
     /// Optional managed credential the PEP injects on matching requests; its
-    /// presence makes the rule proxy-enforced.
+    /// presence makes the rule proxy-enforced. Runtime-only `ws` and `wss`
+    /// rules cannot use this field because their observable gateway is not a
+    /// credential-injecting proxy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<EgressCredentialInjection>,
     /// Optional DLP inspection rules the PEP applies to the request body; any
-    /// rule makes the rule proxy-enforced.
+    /// rule makes the rule proxy-enforced. Runtime-only `ws` and `wss` rules
+    /// cannot use this field because their observable gateway does not inspect
+    /// WebSocket frames.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dlp: Vec<EgressDlpRule>,
 }
@@ -317,6 +360,15 @@ impl EgressRule {
             return Err(format!(
                 "sandbox egress rule `{}` uses tcp and must not set HTTP methods or path_prefixes",
                 self.name
+            ));
+        }
+        if matches!(self.protocol, EgressProtocol::Ws | EgressProtocol::Wss)
+            && self.requires_proxy_enforcement()
+        {
+            return Err(format!(
+                "sandbox egress rule `{}` uses protocol `{}` with credential injection or DLP, but the observable runtime gateway cannot apply proxy-mediated enforcement",
+                self.name,
+                egress_protocol_label(self.protocol)
             ));
         }
         for method in &self.methods {
@@ -549,7 +601,10 @@ fn default_dlp_max_inspection_bytes() -> usize {
 /// from untrusted policy input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressRequest {
-    /// L4 protocol of the attempt.
+    /// Protocol of the attempt. An observable runtime gateway keeps WebSocket
+    /// requests distinct from ordinary HTTP. Supervisor-proxy requests use
+    /// `http` or `https` authority semantics because an opaque CONNECT tunnel
+    /// does not reveal its application protocol.
     pub protocol: EgressProtocol,
     /// Destination host as requested by the caller (DNS name or IP literal).
     pub host: String,
@@ -602,12 +657,18 @@ impl EgressRequest {
     }
 
     fn target_summary(&self) -> String {
-        let protocol = match self.protocol {
-            EgressProtocol::Tcp => "tcp",
-            EgressProtocol::Http => "http",
-            EgressProtocol::Https => "https",
-        };
+        let protocol = egress_protocol_label(self.protocol);
         format!("{protocol}://{}:{}", self.host, self.port)
+    }
+}
+
+const fn egress_protocol_label(protocol: EgressProtocol) -> &'static str {
+    match protocol {
+        EgressProtocol::Tcp => "tcp",
+        EgressProtocol::Http => "http",
+        EgressProtocol::Https => "https",
+        EgressProtocol::Ws => "ws",
+        EgressProtocol::Wss => "wss",
     }
 }
 
@@ -1061,6 +1122,85 @@ mod tests {
             denied.reason().contains("method/path"),
             "L7 denial should be named: {denied:?}"
         );
+    }
+
+    #[test]
+    fn websocket_egress_requires_an_explicit_websocket_rule() {
+        let http_policy = EgressPolicy::new([EgressRule::new(
+            "api-http",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )]);
+        let websocket_request = EgressRequest::new(EgressProtocol::Wss, "api.example.com", 443)
+            .with_http("GET", "/events");
+
+        let denied = http_policy.authorize(&websocket_request);
+        assert!(!denied.is_allowed());
+        assert!(
+            denied.reason().contains("wss://api.example.com:443"),
+            "audit reason must identify the WebSocket protocol: {denied:?}"
+        );
+
+        let websocket_policy = EgressPolicy::new([EgressRule::new(
+            "api-websocket",
+            EgressProtocol::Wss,
+            "api.example.com",
+            443,
+        )
+        .with_methods(["GET"])
+        .with_path_prefixes(["/events"])]);
+        let allowed = websocket_policy.authorize(&websocket_request);
+        assert!(allowed.is_allowed(), "{allowed:?}");
+        assert_eq!(allowed.matched_rule(), Some("api-websocket"));
+
+        for denied_request in [
+            EgressRequest::new(EgressProtocol::Wss, "api.example.com", 443)
+                .with_http("POST", "/events"),
+            EgressRequest::new(EgressProtocol::Wss, "api.example.com", 443)
+                .with_http("GET", "/admin"),
+        ] {
+            let denied = websocket_policy.authorize(&denied_request);
+            assert!(
+                !denied.is_allowed(),
+                "WebSocket method and path constraints must both bind: {denied_request:?}"
+            );
+            assert!(denied.reason().contains("method/path"), "{denied:?}");
+        }
+
+        let ordinary_http = EgressRequest::new(EgressProtocol::Https, "api.example.com", 443)
+            .with_http("GET", "/events");
+        assert!(
+            !websocket_policy.authorize(&ordinary_http).is_allowed(),
+            "a WebSocket-only rule must not authorize ordinary HTTP"
+        );
+    }
+
+    #[test]
+    fn supervisor_proxy_rejects_runtime_only_websocket_protocol_rules() {
+        for protocol in [EgressProtocol::Ws, EgressProtocol::Wss] {
+            let protocol_label = if matches!(protocol, EgressProtocol::Ws) {
+                "ws"
+            } else {
+                "wss"
+            };
+            let policy = EgressPolicy::new([EgressRule::new(
+                "runtime-websocket",
+                protocol,
+                "events.example.com",
+                if matches!(protocol, EgressProtocol::Ws) {
+                    80
+                } else {
+                    443
+                },
+            )]);
+
+            let error = policy
+                .compile_for_supervisor_proxy()
+                .expect_err("the proxy must reject an application protocol it cannot observe");
+            assert!(error.contains("observable runtime gateway"), "{error}");
+            assert!(error.contains(protocol_label), "{error}");
+        }
     }
 
     #[test]
@@ -1547,6 +1687,40 @@ mod tests {
             assert!(
                 error.contains("value_prefix must not contain CR/LF"),
                 "header-injection guard should be named for {bad_prefix:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn websocket_rules_reject_proxy_only_credential_and_dlp_enforcement() {
+        let policies = [
+            EgressPolicy::new([EgressRule::new(
+                "websocket-credential",
+                EgressProtocol::Wss,
+                "events.example.com",
+                443,
+            )
+            .with_credential_injection(EgressCredentialInjection::new(
+                "vault://token",
+                "Authorization",
+            ))]),
+            EgressPolicy::new([EgressRule::new(
+                "websocket-dlp",
+                EgressProtocol::Ws,
+                "events.example.com",
+                80,
+            )
+            .with_dlp_rules([EgressDlpRule::new("secret", "sensitive")])]),
+        ];
+
+        for policy in policies {
+            let error = policy
+                .validate()
+                .expect_err("runtime-only WebSocket rules cannot require proxy enforcement");
+            assert!(
+                error
+                    .contains("observable runtime gateway cannot apply proxy-mediated enforcement"),
+                "validation should identify the unavailable enforcement seam: {error}"
             );
         }
     }

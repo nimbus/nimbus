@@ -987,6 +987,34 @@ services:
 }
 
 #[test]
+fn compose_project_rejects_runtime_only_websocket_egress_protocol() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+services:
+  api:
+    image: registry.example.com/nimbus/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    x-nimbus:
+      egress:
+        allow:
+          - name: events-websocket
+            protocol: wss
+            host: events.example.com
+            port: 443
+"#,
+    );
+
+    let error = ComposeProjectPlan::load(&compose)
+        .expect_err("Compose must reject a protocol the supervisor proxy cannot observe");
+    assert!(
+        error.to_string().contains("observable runtime gateway"),
+        "error should explain where ws/wss policy is enforceable: {error}"
+    );
+}
+
+#[test]
 fn compose_project_rejects_unknown_x_nimbus_egress_fields() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = write_compose_fixture(

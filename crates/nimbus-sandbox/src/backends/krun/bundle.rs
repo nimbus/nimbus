@@ -274,7 +274,7 @@ pub(crate) fn build_bundle_config(
     // itself is enforced at the host by the per-sandbox egress PEP (see
     // `EgressProxyRegistry`); the guest is never handed a cooperative copy of it.
     spec.egress
-        .compile()
+        .compile_for_supervisor_proxy()
         .map_err(|message| SandboxError::InvalidSpec { message })?;
     let process_env = process_env(
         spec,
@@ -965,6 +965,21 @@ mod tests {
             error.to_string().contains("wildcards"),
             "bundle generation should expose the invalid egress policy error: {error}"
         );
+    }
+
+    #[test]
+    fn bundle_config_rejects_runtime_only_websocket_egress_policy() {
+        let spec = sample_spec().with_egress_policy(EgressPolicy::new([EgressRule::new(
+            "runtime-websocket",
+            EgressProtocol::Wss,
+            "events.example.com",
+            443,
+        )]));
+
+        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
+            .expect_err("krun bundles must reject ws/wss policy the proxy cannot observe");
+
+        assert!(error.to_string().contains("observable runtime gateway"));
     }
 
     #[test]

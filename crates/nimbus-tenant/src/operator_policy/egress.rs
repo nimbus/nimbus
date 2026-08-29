@@ -42,8 +42,18 @@ impl OperatorSandboxEgressPolicy {
         rules
     }
 
-    pub(super) fn validate(&self, workload_key: &str) -> Result<()> {
-        self.to_sandbox_policy().validate().map_err(|message| {
+    pub(super) fn validate(
+        &self,
+        workload_key: &str,
+        observes_websocket_protocol: bool,
+    ) -> Result<()> {
+        let policy = self.to_sandbox_policy();
+        let validation = if observes_websocket_protocol {
+            policy.validate()
+        } else {
+            policy.compile_for_supervisor_proxy().map(|_| ())
+        };
+        validation.map_err(|message| {
             Error::InvalidInput(format!(
                 "operator policy invalid: workload `{workload_key}` network.egress {message}"
             ))

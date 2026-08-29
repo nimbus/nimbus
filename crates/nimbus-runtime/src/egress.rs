@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,8 @@ use url::Url;
 pub enum EgressProtocol {
     Http,
     Https,
+    Ws,
+    Wss,
     Tcp,
     Udp,
 }
@@ -35,6 +38,18 @@ pub struct EgressRequest {
     pub host: String,
     pub port: u16,
     pub path_and_query: Option<String>,
+    /// Destination address selected by the transport resolver. `None` is the
+    /// pre-resolution policy probe; an allow at that stage is provisional.
+    /// `Some` validates one concrete candidate address before the transport can
+    /// use it. The connector pins the checked set before it opens a socket, so
+    /// DNS rebinding cannot bypass internal-IP policy.
+    ///
+    /// A gateway can receive one pre-resolution request plus one request for
+    /// each resolved candidate. Gateway implementations must keep
+    /// [`EgressGateway::authorize`] free of terminal audit, quota, and metering
+    /// side effects. Those effects belong at the completed-attempt seam, where
+    /// one logical egress attempt can produce exactly one terminal record.
+    pub resolved_ip: Option<IpAddr>,
     pub tenant_label: Option<String>,
     pub session_id: Option<String>,
     pub invocation_id: Option<u64>,
@@ -92,33 +107,73 @@ impl EgressRequest {
         session_id: Option<String>,
         invocation_id: Option<u64>,
     ) -> std::result::Result<Self, EgressRequestError> {
+        Self::from_url_with_context(
+            EgressUrlKind::Fetch,
+            method,
+            url,
+            uses_custom_client,
+            tenant_label,
+            session_id,
+            invocation_id,
+        )
+    }
+
+    pub(crate) fn from_websocket_url_with_context(
+        url: &str,
+        uses_custom_client: bool,
+        tenant_label: Option<String>,
+        session_id: Option<String>,
+        invocation_id: Option<u64>,
+    ) -> std::result::Result<Self, EgressRequestError> {
+        Self::from_url_with_context(
+            EgressUrlKind::WebSocket,
+            "GET",
+            url,
+            uses_custom_client,
+            tenant_label,
+            session_id,
+            invocation_id,
+        )
+    }
+
+    fn from_url_with_context(
+        kind: EgressUrlKind,
+        method: impl Into<String>,
+        url: &str,
+        uses_custom_client: bool,
+        tenant_label: Option<String>,
+        session_id: Option<String>,
+        invocation_id: Option<u64>,
+    ) -> std::result::Result<Self, EgressRequestError> {
         let parsed = Url::parse(url).map_err(|source| EgressRequestError {
-            message: format!("invalid fetch URL: {source}"),
+            message: format!("invalid {} URL: {source}", kind.label()),
         })?;
-        let protocol = match parsed.scheme() {
-            "http" => EgressProtocol::Http,
-            "https" => EgressProtocol::Https,
+        let protocol = match (kind, parsed.scheme()) {
+            (EgressUrlKind::Fetch, "http") => EgressProtocol::Http,
+            (EgressUrlKind::Fetch, "https") => EgressProtocol::Https,
+            (EgressUrlKind::WebSocket, "ws") => EgressProtocol::Ws,
+            (EgressUrlKind::WebSocket, "wss") => EgressProtocol::Wss,
             scheme => {
                 return Err(EgressRequestError {
-                    message: format!("unsupported fetch egress scheme `{scheme}`"),
+                    message: format!("unsupported {} egress scheme `{}`", kind.label(), scheme.1),
                 });
             }
         };
         if !parsed.username().is_empty() || parsed.password().is_some() {
             return Err(EgressRequestError {
-                message: "fetch egress URL must not contain userinfo".to_string(),
+                message: format!("{} egress URL must not contain userinfo", kind.label()),
             });
         }
         let host = parsed
             .host_str()
             .ok_or_else(|| EgressRequestError {
-                message: "fetch egress URL must contain a host".to_string(),
+                message: format!("{} egress URL must contain a host", kind.label()),
             })?
             .to_string();
         let port = parsed
             .port_or_known_default()
             .ok_or_else(|| EgressRequestError {
-                message: "fetch egress URL must contain a known port".to_string(),
+                message: format!("{} egress URL must contain a known port", kind.label()),
             })?;
         let path_and_query = match parsed.query() {
             Some(query) => format!("{}?{query}", parsed.path()),
@@ -132,11 +187,27 @@ impl EgressRequest {
             host,
             port,
             path_and_query: Some(path_and_query),
+            resolved_ip: None,
             tenant_label,
             session_id,
             invocation_id,
             uses_custom_client,
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum EgressUrlKind {
+    Fetch,
+    WebSocket,
+}
+
+impl EgressUrlKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Fetch => "fetch",
+            Self::WebSocket => "WebSocket",
+        }
     }
 }
 
@@ -221,12 +292,28 @@ impl EgressAuthorization {
 pub(crate) fn isolate_fetch_decision(
     authorization: &EgressAuthorization,
 ) -> std::result::Result<(), String> {
+    isolate_egress_decision("fetch", authorization)
+}
+
+pub(crate) fn isolate_websocket_decision(
+    authorization: &EgressAuthorization,
+) -> std::result::Result<(), String> {
+    isolate_egress_decision("WebSocket", authorization)
+}
+
+fn isolate_egress_decision(
+    surface: &str,
+    authorization: &EgressAuthorization,
+) -> std::result::Result<(), String> {
     if !authorization.is_allowed() {
-        return Err(format!("fetch egress denied: {}", authorization.reason()));
+        return Err(format!(
+            "{surface} egress denied: {}",
+            authorization.reason()
+        ));
     }
     if authorization.requires_proxy_enforcement() {
         return Err(format!(
-            "fetch egress denied: rule `{}` requires proxy-mediated enforcement \
+            "{surface} egress denied: rule `{}` requires proxy-mediated enforcement \
              (credential injection or DLP) that the isolate substrate cannot apply",
             authorization.matched_rule().unwrap_or("<unknown>")
         ));
@@ -235,6 +322,13 @@ pub(crate) fn isolate_fetch_decision(
 }
 
 pub trait EgressGateway: Send + Sync + 'static {
+    /// Resolve a policy verdict without attempt-level side effects.
+    ///
+    /// The isolate transport calls this before resolution and again for each
+    /// concrete address it might use. A pre-resolution allow is provisional;
+    /// it can still be denied by a later resolved-address call. Implementations
+    /// must therefore not emit terminal decision logs, consume rate-limit or
+    /// quota tokens, or update attempt counters here.
     fn authorize(&self, request: &EgressRequest) -> EgressAuthorization;
 }
 
@@ -367,12 +461,35 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use futures::{SinkExt, StreamExt};
     use serde_json::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_tungstenite::tungstenite::Message;
 
     #[derive(Default)]
     struct RecordingRuleGateway {
         seen: Mutex<Vec<EgressRequest>>,
+    }
+
+    struct DenyResolvedAddressGateway {
+        port: u16,
+        seen: Mutex<Vec<EgressRequest>>,
+    }
+
+    impl EgressGateway for DenyResolvedAddressGateway {
+        fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
+            self.seen
+                .lock()
+                .expect("resolved-address gateway lock should not be poisoned")
+                .push(request.clone());
+            if request.host != "localhost" || request.port != self.port {
+                return EgressAuthorization::deny("unexpected resolved-address test destination");
+            }
+            if request.resolved_ip.is_some() {
+                return EgressAuthorization::deny("resolved address blocked by test gateway");
+            }
+            EgressAuthorization::allow("hostname allowed pending address resolution")
+        }
     }
 
     impl EgressGateway for RecordingRuleGateway {
@@ -419,6 +536,28 @@ mod tests {
         let error = EgressRequest::from_fetch_url("GET", "https://token@example.com").unwrap_err();
 
         assert!(error.to_string().contains("must not contain userinfo"));
+    }
+
+    #[test]
+    fn websocket_egress_request_preserves_upgrade_protocol_for_policy() {
+        let request = EgressRequest::from_websocket_url_with_context(
+            "wss://Example.COM/events?cursor=42",
+            false,
+            Some("tenant-a".to_string()),
+            Some("session-a".to_string()),
+            Some(7),
+        )
+        .expect("WebSocket egress URL should parse");
+
+        assert_eq!(request.substrate, EgressSubstrate::Isolate);
+        assert_eq!(request.protocol, EgressProtocol::Wss);
+        assert_eq!(request.method.as_deref(), Some("GET"));
+        assert_eq!(request.host, "example.com");
+        assert_eq!(request.port, 443);
+        assert_eq!(request.path_and_query.as_deref(), Some("/events?cursor=42"));
+        assert_eq!(request.tenant_label.as_deref(), Some("tenant-a"));
+        assert_eq!(request.session_id.as_deref(), Some("session-a"));
+        assert_eq!(request.invocation_id, Some(7));
     }
 
     #[test]
@@ -699,7 +838,11 @@ export {{}};
             .seen
             .lock()
             .expect("gateway spy lock should not be poisoned");
-        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen.len(),
+            2,
+            "gateway should authorize before and after resolution"
+        );
         let fetch_request = &seen[0];
         assert_eq!(fetch_request.substrate, EgressSubstrate::Isolate);
         assert_eq!(fetch_request.protocol, EgressProtocol::Http);
@@ -711,6 +854,449 @@ export {{}};
             Some("/allowed?secret=value")
         );
         assert!(!fetch_request.uses_custom_client);
+        assert_eq!(fetch_request.resolved_ip, None);
+        assert_eq!(
+            seen[1].resolved_ip,
+            Some("127.0.0.1".parse().expect("loopback address should parse")),
+            "the transport must authorize the selected address before connect"
+        );
+    }
+
+    #[tokio::test]
+    async fn isolate_websocket_consults_egress_gateway_before_transport() {
+        #[derive(Default)]
+        struct NoopHost;
+
+        impl crate::HostBridge for NoopHost {
+            fn call(&self, _request: crate::HostCallRequest) -> crate::Result<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        struct LocalWebSocketGateway {
+            port: u16,
+            seen: Mutex<Vec<EgressRequest>>,
+        }
+
+        impl EgressGateway for LocalWebSocketGateway {
+            fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
+                self.seen
+                    .lock()
+                    .expect("gateway spy lock should not be poisoned")
+                    .push(request.clone());
+                if request.host == "127.0.0.1"
+                    && request.port == self.port
+                    && request.protocol == EgressProtocol::Ws
+                {
+                    EgressAuthorization::allow("local WebSocket test gateway allow")
+                } else {
+                    EgressAuthorization::deny("local WebSocket test gateway deny")
+                }
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener
+                .accept()
+                .await
+                .expect("WebSocket should connect to the local listener");
+            let mut websocket = tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("WebSocket handshake should succeed");
+            let message = websocket
+                .next()
+                .await
+                .expect("WebSocket client should send one message")
+                .expect("WebSocket message should be valid");
+            assert_eq!(message, Message::Text("ping".into()));
+            websocket
+                .send(Message::Text("pong".into()))
+                .await
+                .expect("WebSocket reply should send");
+            websocket.close(None).await.expect("WebSocket should close");
+        });
+
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            format!(
+                r#"
+globalThis.__nimbusInvoke = async function () {{
+  return await new Promise((resolve, reject) => {{
+    const socket = new WebSocket("ws://127.0.0.1:{port}/events?cursor=42");
+    const timeout = setTimeout(() => reject(new Error("WebSocket timed out")), 5000);
+    socket.onopen = () => socket.send("ping");
+    socket.onmessage = (event) => {{
+      clearTimeout(timeout);
+      const message = String(event.data);
+      socket.close();
+      resolve({{ message }});
+    }};
+    socket.onerror = () => {{
+      clearTimeout(timeout);
+      reject(new Error("WebSocket failed"));
+    }};
+  }});
+}};
+
+export {{}};
+"#
+            ),
+        )
+        .expect("bundle should write");
+
+        let gateway = Arc::new(LocalWebSocketGateway {
+            port,
+            seen: Mutex::default(),
+        });
+        let runtime = crate::NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            Arc::new(crate::RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+            RuntimeEgressPosture::Gateway(gateway.clone()),
+        );
+        let request = crate::InvocationRequest {
+            kind: crate::InvocationKind::Query,
+            function_name: "messages:egressWebSocket".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+
+        let result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &crate::RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            )
+            .await
+            .expect("bundle WebSocket should execute through the egress gateway");
+
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("server should finish after WebSocket exchange")
+            .expect("server task should not panic");
+        assert_eq!(result["message"], "pong");
+        let seen = gateway
+            .seen
+            .lock()
+            .expect("gateway spy lock should not be poisoned");
+        assert_eq!(
+            seen.len(),
+            2,
+            "gateway should authorize before and after resolution"
+        );
+        let websocket_request = &seen[0];
+        assert_eq!(websocket_request.substrate, EgressSubstrate::Isolate);
+        assert_eq!(websocket_request.protocol, EgressProtocol::Ws);
+        assert_eq!(websocket_request.method.as_deref(), Some("GET"));
+        assert_eq!(websocket_request.host, "127.0.0.1");
+        assert_eq!(websocket_request.port, port);
+        assert_eq!(
+            websocket_request.path_and_query.as_deref(),
+            Some("/events?cursor=42")
+        );
+        assert_eq!(websocket_request.tenant_label.as_deref(), Some("tenant-a"));
+        assert_eq!(
+            websocket_request.session_id.as_deref(),
+            Some("query:messages:egressWebSocket")
+        );
+        assert!(
+            websocket_request.invocation_id.is_some(),
+            "WebSocket policy request should carry its invocation id"
+        );
+        assert!(!websocket_request.uses_custom_client);
+        assert_eq!(websocket_request.resolved_ip, None);
+        assert_eq!(
+            seen[1].resolved_ip,
+            Some("127.0.0.1".parse().expect("loopback address should parse")),
+            "the WebSocket transport must authorize the selected address before connect"
+        );
+    }
+
+    #[tokio::test]
+    async fn isolate_fetch_resolved_address_denial_aborts_before_connect() {
+        #[derive(Default)]
+        struct NoopHost;
+
+        impl crate::HostBridge for NoopHost {
+            fn call(&self, _request: crate::HostCallRequest) -> crate::Result<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            format!(
+                r#"
+globalThis.__nimbusInvoke = async function () {{
+  try {{
+    await fetch("http://localhost:{port}/blocked-after-resolution");
+    return {{ fetch: "connected" }};
+  }} catch (error) {{
+    return {{
+      fetch: "denied",
+      message: String((error && error.message) || error),
+      cause: String((error && error.cause && error.cause.message) || ""),
+    }};
+  }}
+}};
+
+export {{}};
+"#
+            ),
+        )
+        .expect("bundle should write");
+
+        let gateway = Arc::new(DenyResolvedAddressGateway {
+            port,
+            seen: Mutex::default(),
+        });
+        let runtime = crate::NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            Arc::new(crate::RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+            RuntimeEgressPosture::Gateway(gateway.clone()),
+        );
+        let request = crate::InvocationRequest {
+            kind: crate::InvocationKind::Query,
+            function_name: "messages:resolvedFetchDeny".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            runtime.invoke_bundle_for_tenant_for_test(
+                &crate::RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            ),
+        )
+        .await
+        .expect("resolved-address denial must not leave fetch waiting on transport")
+        .expect("bundle should catch the resolved-address denial");
+
+        assert_eq!(result["fetch"], "denied", "unexpected result: {result}");
+        assert!(
+            result["cause"]
+                .as_str()
+                .is_some_and(|cause| cause.contains("resolved address blocked by test gateway")),
+            "fetch denial should retain the resolved-address reason: {result}"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), listener.accept())
+                .await
+                .is_err(),
+            "resolved-address denial must occur before the fetch transport connects"
+        );
+        let seen = gateway
+            .seen
+            .lock()
+            .expect("resolved-address gateway lock should not be poisoned");
+        assert!(
+            seen.len() >= 2,
+            "gateway must receive a preflight plus at least one resolved address: {seen:?}"
+        );
+        assert_eq!(seen[0].resolved_ip, None);
+        assert!(
+            seen.iter().skip(1).all(|request| request
+                .resolved_ip
+                .is_some_and(|address| address.is_loopback())),
+            "every post-resolution deny must inspect a concrete loopback address: {seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn isolate_websocket_resolved_address_denial_aborts_before_connect() {
+        #[derive(Default)]
+        struct NoopHost;
+
+        impl crate::HostBridge for NoopHost {
+            fn call(&self, _request: crate::HostCallRequest) -> crate::Result<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            format!(
+                r#"
+globalThis.__nimbusInvoke = async function () {{
+  return await new Promise((resolve) => {{
+    const socket = new WebSocket("ws://localhost:{port}/blocked-after-resolution");
+    const timeout = setTimeout(() => resolve({{ websocket: "timeout" }}), 5000);
+    socket.onopen = () => {{
+      clearTimeout(timeout);
+      socket.close();
+      resolve({{ websocket: "connected" }});
+    }};
+    socket.onerror = () => {{
+      clearTimeout(timeout);
+      resolve({{ websocket: "denied" }});
+    }};
+  }});
+}};
+
+export {{}};
+"#
+            ),
+        )
+        .expect("bundle should write");
+
+        let gateway = Arc::new(DenyResolvedAddressGateway {
+            port,
+            seen: Mutex::default(),
+        });
+        let runtime = crate::NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            Arc::new(crate::RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+            RuntimeEgressPosture::Gateway(gateway.clone()),
+        );
+        let request = crate::InvocationRequest {
+            kind: crate::InvocationKind::Query,
+            function_name: "messages:resolvedWebSocketDeny".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+
+        let result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &crate::RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            )
+            .await
+            .expect("bundle should observe the resolved-address denial");
+
+        assert_eq!(result["websocket"], "denied", "unexpected result: {result}");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), listener.accept())
+                .await
+                .is_err(),
+            "resolved-address denial must occur before the WebSocket transport connects"
+        );
+        let seen = gateway
+            .seen
+            .lock()
+            .expect("resolved-address gateway lock should not be poisoned");
+        assert!(
+            seen.len() >= 2,
+            "gateway must receive a preflight plus at least one resolved address: {seen:?}"
+        );
+        assert_eq!(seen[0].resolved_ip, None);
+        assert!(
+            seen.iter().skip(1).all(|request| request
+                .resolved_ip
+                .is_some_and(|address| address.is_loopback())),
+            "every post-resolution deny must inspect a concrete loopback address: {seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn isolate_websocket_gateway_denial_precedes_transport() {
+        #[derive(Default)]
+        struct NoopHost;
+
+        impl crate::HostBridge for NoopHost {
+            fn call(&self, _request: crate::HostCallRequest) -> crate::Result<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("bundle.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__nimbusInvoke = async function () {
+  try {
+    new WebSocket("wss://denied.example/events");
+    return { websocket: "allowed" };
+  } catch (error) {
+    return {
+      websocket: "denied",
+      message: String((error && error.message) || error),
+    };
+  }
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+
+        let runtime = crate::NimbusRuntime::with_policy(
+            Arc::new(NoopHost),
+            Arc::new(crate::RuntimePolicy::new(
+                crate::RuntimeLimits::application_node22(),
+            )),
+            RuntimeEgressPosture::Gateway(Arc::new(DenyAllEgressGateway)),
+        );
+        let request = crate::InvocationRequest {
+            kind: crate::InvocationKind::Query,
+            function_name: "messages:deniedWebSocket".to_string(),
+            args: Value::Null,
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+
+        let result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &crate::RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            )
+            .await
+            .expect("bundle should catch the WebSocket gateway denial");
+
+        assert_eq!(result["websocket"], "denied");
+        assert!(
+            result["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("WebSocket egress denied")),
+            "gateway denial should be visible before transport: {result}"
+        );
     }
 
     #[tokio::test]

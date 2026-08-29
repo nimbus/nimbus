@@ -122,5 +122,7 @@ pub(super) fn egress_protocol_label(protocol: EgressProtocol) -> &'static str {
         EgressProtocol::Tcp => "tcp",
         EgressProtocol::Http => "http",
         EgressProtocol::Https => "https",
+        EgressProtocol::Ws => "ws",
+        EgressProtocol::Wss => "wss",
     }
 }
