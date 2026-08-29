@@ -1,10 +1,11 @@
 # Nimbus Release Readiness 2026-08
 
-Status: `active`. Owner: this plan. Created: 2026-08-27.
+Status: `blocked (release NO-GO)`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: finish RRC8 integrated macOS and Linux gates, reconcile the
-46-condition matrix, obtain final independent reviews, and issue the verdict
+Next action: publish the authorized immutable Deno revision, update the Nimbus
+dependency, build a clean exact candidate, repeat the candidate gates, then
+complete notarization and the public apt and COPR evidence
 
 ## Outcome
 
@@ -91,7 +92,7 @@ renamed, duplicated, or unsupported condition.
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `blocked(exact-candidate replay and notarization remain; provisional pass)` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `blocked(exact-candidate replay and public apt/COPR proofs remain; provisional pass)` | `proof/release-readiness-2026-08/rrc7-distribution.md` |
-| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `in_progress` | |
+| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `blocked(NO-GO: no reachable Deno ref; exact candidate and CI impossible)` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
 ## Tasks
@@ -327,3 +328,8 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-28 | RRC7 | review | Opus 5 found and drove repairs for changelog preservation, prefix cleanup ownership, version-lock scan scope, document ownership, negative fixtures, malformed tracked locks, and nested dependency false positives. The final review of `0c8bdd363` accepted no actionable finding, and secret scans were clean. |
 | 2026-08-28 | RRC7 | blocked | Every locally testable distribution artifact has a provisional pass. Exact v0.1.46 replay waits for reachable immutable Deno references. Public apt and COPR install proofs remain with the distribution plan and require separate publication authority. No public state changed. |
 | 2026-08-28 | RRC8 | started | Began the final integrated repository, host, evidence-matrix, and independent-review closeout. The fail-before matrix has 0 passed, 43 unverified, and 3 blocked conditions with zero structural errors. |
+| 2026-08-29 | RRC8 | finding | The final egress audit found a DNS-rebinding gap after hostname preflight. The Deno and Nimbus integration now reauthorizes every concrete fetch and WebSocket address before connect, rejects unverifiable proxy and custom-client paths, and proves denied loopback connections never reach the listener. |
+| 2026-08-29 | RRC8 | evidence | Exact local-Deno focused tests, runtime and bridge checks, the 14-condition connection-broker verifier, formatting, attribution, and provenance gates pass. The final Deno integration revision is `1c17e86b296af380f67c48f3b9a89876db154604`. |
+| 2026-08-29 | RRC8 | review | Opus 5 high and Sol xhigh independently reviewed the final uncommitted Nimbus integration after the last correction. Both reported no accepted or actionable P0 through P3 finding, and secret scans were clean. |
+| 2026-08-29 | RRC8 | blocked | Issued a NO-GO verdict in `proof/release-readiness-2026-08/rrc8-release-verdict.md`. The fixed matrix is 3 pass, 43 blocked, 0 unverified, 0 failed, and 0 structurally invalid. A reachable immutable Deno ref, exact clean candidate and CI replay, notarization, and public apt/COPR proof remain required. No public state changed. |
+| 2026-08-29 | RRC8 | cleanup | Removed the disposable exact-test worktree and 13 GiB rebuildable Cargo target after the reviews. Free filesystem space increased from 86 GiB to 100 GiB; candidate and desktop release artifacts remain preserved. |
