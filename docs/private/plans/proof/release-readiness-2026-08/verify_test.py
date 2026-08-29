@@ -33,28 +33,37 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
             CANDIDATE["main"],
         ),
         header_revisions: tuple[str, ...] = (),
+        blocked_conditions: tuple[str, ...] = (),
+        proof_text: str | None = None,
         candidate: dict[str, str] | None = None,
     ) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             proof = root / "proof.md"
-            proof.write_text(
-                "# Proof\n\n"
-                + "\n".join(header_revisions)
-                + "\n\n## Bound evidence\n\n"
-                + "\n".join(proof_revisions)
-                + "\n\n## Unrelated evidence\n",
-                encoding="utf-8",
-            )
+            if proof_text is None:
+                proof_text = (
+                    "# Proof\n\n"
+                    + "\n".join(header_revisions)
+                    + "\n\n## Bound evidence\n\n"
+                    + "\n".join(proof_revisions)
+                    + "\n\n## Unrelated evidence\n"
+                )
+            proof.write_text(proof_text, encoding="utf-8")
             conditions = []
             for condition_id in VERIFY.EXPECTED_IDS:
-                conditions.append(
-                    {
-                        "id": condition_id,
-                        "state": "pass",
-                        "evidence": {"path": "proof.md", "anchor": "## Bound evidence"},
-                    }
-                )
+                if condition_id in blocked_conditions:
+                    conditions.append({"id": condition_id, "state": "blocked"})
+                else:
+                    conditions.append(
+                        {
+                            "id": condition_id,
+                            "state": "pass",
+                            "evidence": {
+                                "path": "proof.md",
+                                "anchor": "## Bound evidence",
+                            },
+                        }
+                    )
             matrix = root / "matrix.json"
             matrix.write_text(
                 json.dumps(
@@ -100,6 +109,62 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         )
         self.assertNotEqual(status, 0)
         self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_fenced_headings_do_not_create_or_truncate_evidence_sections(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "```text",
+                "## Bound evidence",
+                "fake",
+                "```",
+                "",
+                "## Bound evidence",
+                "",
+                "```sh",
+                "# make ci",
+                "```",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertEqual(status, 0)
+        self.assertIn("0 structural errors", output)
+
+    def test_indented_code_heading_does_not_bind_evidence(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "    ## Bound evidence",
+                f"    {CANDIDATE['nimbus']}",
+                "",
+                "## Bound evidence",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_blocked_row_requires_no_candidate_binding(self) -> None:
+        status, output = self.run_verifier(blocked_conditions=("tenant_lifecycle",))
+        self.assertNotEqual(status, 0)
+        self.assertIn("tenant_lifecycle: blocked", output)
+        self.assertIn("0 structural errors", output)
+        self.assertNotIn("tenant_lifecycle: evidence is not bound", output)
 
     def test_desktop_pass_requires_exact_desktop_revision(self) -> None:
         status, output = self.run_verifier(
