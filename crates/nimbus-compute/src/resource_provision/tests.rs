@@ -1000,22 +1000,32 @@ async fn foreground_service_provision_cancels_waiter_without_a_second_retry_owne
         "the cancelled waiter must leave the single tracked durable supervisor"
     );
 
+    let mut settlement = provisioner
+        .tracked_settlement_receiver(&key)
+        .expect("the retained supervisor must expose its settlement channel");
     provider.release_provision();
-    if let Some(settled) = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        provisioner.wait_for_tracked_settlement(&key),
-    )
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if let Some(result) = settlement.borrow().clone() {
+                return result;
+            }
+            settlement
+                .changed()
+                .await
+                .expect("the retained supervisor must publish its terminal result");
+        }
+    })
     .await
-    .expect("the retained supervisor should settle after provider release")
-    {
-        let outcome = settled.expect("the released provider should settle successfully");
-        assert_eq!(
-            outcome.disposition(),
-            WorkloadProvisionRunDisposition::Observed
-        );
-        assert_eq!(outcome.projection(), WorkloadProjectionState::Projected);
-    }
+    .expect("the retained supervisor should settle after provider release");
+    let outcome = settled.expect("the released provider should settle successfully");
+    assert_eq!(
+        outcome.disposition(),
+        WorkloadProvisionRunDisposition::Observed
+    );
+    assert_eq!(outcome.projection(), WorkloadProjectionState::Projected);
     assert_eq!(store.record(&key).phase(), WorkloadSagaPhase::Observed);
+    // Terminal settlement publication and registry removal use one supervisor
+    // mutex, so observing the result orders this task-liveness assertion.
     assert!(
         !provisioner.has_running_tracked_task(&key),
         "terminal durable convergence must retire the tracked supervisor"

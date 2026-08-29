@@ -1167,18 +1167,24 @@ impl WorkloadProvisioner {
     }
 
     #[cfg(test)]
+    pub(crate) fn tracked_settlement_receiver(
+        &self,
+        key: &WorkloadSagaKey,
+    ) -> Option<watch::Receiver<Option<WorkloadProvisionResult>>> {
+        self.supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned")
+            .in_flight
+            .get(key)
+            .map(|entry| entry.settlement.clone())
+    }
+
+    #[cfg(test)]
     pub(crate) async fn wait_for_tracked_settlement(
         &self,
         key: &WorkloadSagaKey,
     ) -> Option<WorkloadProvisionResult> {
-        let mut settlement = self
-            .supervisor
-            .lock()
-            .expect("workload provision supervisor lock should not be poisoned")
-            .in_flight
-            .get(key)?
-            .settlement
-            .clone();
+        let mut settlement = self.tracked_settlement_receiver(key)?;
         loop {
             if let Some(result) = settlement.borrow().clone() {
                 return Some(result);
