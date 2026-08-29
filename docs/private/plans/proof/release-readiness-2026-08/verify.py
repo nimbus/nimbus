@@ -29,20 +29,34 @@ PASS_CANDIDATE_EXTRAS = {
 }
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+\S.*$")
-MARKDOWN_FENCE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})(.*)$")
+MARKDOWN_FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
 
 
-def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
+def markdown_indentation(line: str) -> tuple[int, int]:
+    columns = 0
+    offset = 0
+    for character in line:
+        if character == " ":
+            columns += 1
+        elif character == "\t":
+            columns += 4 - (columns % 4)
+        else:
+            break
+        offset += 1
+    return columns, offset
+
+
+def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]] | None:
     headings: list[tuple[int, int, str]] = []
     fence_character: str | None = None
     fence_length = 0
     for index, line in enumerate(lines):
+        indentation, content_offset = markdown_indentation(line)
+        content = line[content_offset:]
         if fence_character is not None:
-            stripped = line.lstrip(" ")
-            indent = len(line) - len(stripped)
-            marker = stripped.rstrip()
+            marker = content.rstrip(" \t")
             if (
-                indent <= 3
+                indentation <= 3
                 and marker
                 and set(marker) == {fence_character}
                 and len(marker) >= fence_length
@@ -50,19 +64,21 @@ def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
                 fence_character = None
                 fence_length = 0
             continue
-        fence = MARKDOWN_FENCE.fullmatch(line)
-        if fence is not None:
+        fence = MARKDOWN_FENCE.fullmatch(content) if indentation <= 3 else None
+        if fence is not None and not (
+            fence.group(1).startswith("`") and "`" in fence.group(2)
+        ):
             marker = fence.group(1)
             fence_character = marker[0]
             fence_length = len(marker)
             continue
-        if line.startswith("\t") or line.startswith("    "):
+        if indentation >= 4:
             continue
-        stripped = line.strip()
+        stripped = content.strip()
         heading = MARKDOWN_HEADING.fullmatch(stripped)
         if heading is not None:
             headings.append((index, len(heading.group(1)), stripped))
-    return headings
+    return headings if fence_character is None else None
 
 
 def anchored_evidence_section(proof: str, anchor: str) -> str | None:
@@ -72,6 +88,8 @@ def anchored_evidence_section(proof: str, anchor: str) -> str | None:
         return None
     lines = proof.splitlines()
     headings = markdown_headings(lines)
+    if headings is None:
+        return None
     matches = [index for index, _level, text in headings if text == anchor]
     if len(matches) != 1:
         return None

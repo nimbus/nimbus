@@ -159,6 +159,73 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         self.assertNotEqual(status, 0)
         self.assertIn("evidence is not bound to the nimbus candidate", output)
 
+    def test_mixed_tab_indentation_does_not_create_an_evidence_heading(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                " \t## Bound evidence",
+                f" \t{CANDIDATE['nimbus']}",
+                "",
+                "## Bound evidence",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_unclosed_fence_fails_closed_before_unrelated_candidate_shas(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "",
+                "````text",
+                "proof output",
+                "```",
+                "",
+                "## Unrelated evidence",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn(
+            "evidence anchor must identify exactly one Markdown section",
+            output,
+        )
+
+    def test_backtick_in_fence_info_string_does_not_hide_peer_heading(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "```text`not-a-fence",
+                "",
+                "## Unrelated evidence",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
     def test_blocked_row_requires_no_candidate_binding(self) -> None:
         status, output = self.run_verifier(blocked_conditions=("tenant_lifecycle",))
         self.assertNotEqual(status, 0)
