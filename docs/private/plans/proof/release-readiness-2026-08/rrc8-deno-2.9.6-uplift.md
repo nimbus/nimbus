@@ -85,6 +85,51 @@ repairs.
 U2 external writes remain intentionally unstarted. The active goal forbids a
 push, tag, or release without explicit authorization.
 
+## U3 Carry Audit
+
+The pre-edit audit uses the clean Deno 2.9.6 worktree at `e518fbd66`. Current
+source contains none of the Nimbus Locker, egress, or near-heap policy symbols.
+It already contains the independent residual lazy-source design. The audit
+will keep that design without the rejected extension replay tables.
+
+Current Nimbus source directly consumes the Locker API, warm-runtime safety and
+reset methods, the shared read-only heap lock, public `JsRealm`, and the bounded
+foreground-task drain. The last helper supports the Node compatibility GC test
+operation and is not a fresh-realm-only consumer.
+
+| Old commit | Contract | U3 disposition |
+| --- | --- | --- |
+| `8d92e814b9` | Mixed core seam | Split. Rework Locker ownership, warm reset, shared-heap serialization, public `JsRealm`, and foreground-task access. Drop fresh-realm creation, realm module APIs, and replay-source state. |
+| `a4ae13cbd0` | Lazy ESM termination | Retain at `modules/map/ext_script.rs`. Deno 2.9.6 still unwraps four lazy-module evaluation results. |
+| `b126c80e82` | Target-realm module pump | Drop with fresh-realm execution. |
+| `c0f65c495b` | Fetch URL gateway hook | Retain and rework at the 2.9.6 fetch seam. |
+| `6eb1f60880` | Runtime option defaults | No independent carry. Add only defaults that retained fields require in current constructors. |
+| `24ee10a3e0` | Nimbus fork CI | Retain as one 2.9.6 workflow. |
+| `c506b7038b` | Mixed realm hardening | Retain the `ManagedIsolate` correction. Drop replay policy and realm-only tests. |
+| `b1eecac7eb` | Node near-heap policy | Retain. Deno 2.9.6 has no equivalent embedder policy. |
+| `a5c8262747` | Fetch pre-transport proof | Retain with the gateway contract. |
+| `56d3232925` | Patched-crate CI coverage | Fold into the one 2.9.6 fork workflow. |
+| `0cc2cd33d0` | Extension replay policy | Drop with replay-source state. |
+| `4f59b4246c` | Security-fix CI coverage | Fold current patched and security-sensitive crates into fork CI. |
+| `5d07e09121` | WebSocket gateway hook | Retain and rework at both WebSocket client seams. |
+| `4136492f7f` | TCP linger maintenance | Retain. Deno 2.9.6 still calls the deprecated Tokio method. |
+| `63551c0aaf` | WebSocket target binding | Retain. |
+| `c13c73ce75` | WebSocket decision cache | Retain as part of the final bounded client design. |
+| `585370ebeb` | Resolved-address checks | Retain for fetch, proxy, KV, and WebSocket connect paths. |
+| `a0d2eb8329` | Checked custom clients | Retain the fail-closed contract. |
+| `1c17e86b29` | Proxy and custom-client guards | Retain the non-vacuous regressions. |
+| `0492e1acc8` | Gateway client contracts | Retain the complete checker propagation rules. |
+| `d0a6b9094e` | Equivalent checked-client cache | Retain the bounded 16-entry reuse design and opaque policy key. |
+
+The audit found no supported CLI, package, server, or compute selector for
+`WarmContextRecycle`. Nimbus still exposes the serialize-only Rust value and
+product branches. The paired Nimbus cleanup must remove them before U4. Any
+supported external consumer found during compilation reopens this disposition.
+
+The replay-scaffolding construction cost remains unknown. U3 must preserve both
+states for the controlled A/B before U5. It cannot use an old Web benchmark
+label as proof of startup-snapshot restoration.
+
 ## U3 Architecture Disposition
 
 Decision: omit the proven realm-only carries during the first 2.9.6 replay.
