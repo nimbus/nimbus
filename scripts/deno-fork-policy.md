@@ -20,7 +20,7 @@ worktrees.
 
 | State | Repository | Tag | Peeled commit | Meaning |
 | --- | --- | --- | --- | --- |
-| consumed | `nimbus/deno` | `v2.9.3-nimbus.1` | `4f59b4246cb13003d8445449b73790ee8c12baab` | Nimbus Deno-family Cargo patch closure |
+| consumed | `nimbus/deno` | `v2.9.3-nimbus.2` | `d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63` | Nimbus Deno-family Cargo patch closure with socket-connect egress enforcement |
 | consumed | `nimbus/rusty_v8` | `v149.4.0-nimbus.10` | `f9457373150679d9db9eb577dcd3a687a3ec25ef` | V8 line declared by Deno 2.9.3 |
 | published, not consumed | `nimbus/rusty_v8` | `v150.2.0-nimbus.1` | `4786595e29679ee5ad9ba4925cdcd1cc83ab6448` | Forward-maintenance V8 150 line; awaits a compatible Deno V8 roll |
 

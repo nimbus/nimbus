@@ -458,11 +458,16 @@ fn nimbus_egress_gateway_hook(
             };
             match decision {
                 Ok(()) => {
+                    let checker_cache_key =
+                        serde_json::to_vec(&egress_request).map_err(|error| {
+                            JsErrorBox::generic(format!(
+                                "failed to encode the egress checker cache key: {error}"
+                            ))
+                        })?;
                     let resolved_request = egress_request;
                     let resolved_gateway = gateway;
                     let transport = request.transport;
-                    let checker = deno_fetch::dns::ResolvedAddressChecker::new(
-                        move |resolved_ip, resolved_port| {
+                    let checker = deno_fetch::dns::ResolvedAddressChecker::new(move |resolved_ip, resolved_port| {
                             if resolved_port != resolved_request.port {
                                 return Err(JsErrorBox::generic(format!(
                                     "{} egress resolved port {resolved_port} does not match authorized port {}",
@@ -482,8 +487,8 @@ fn nimbus_egress_gateway_hook(
                                 }
                             };
                             decision.map_err(JsErrorBox::generic)
-                        },
-                    );
+                        })
+                    .with_client_cache_key(checker_cache_key);
                     Ok(
                         deno_fetch::EgressGatewayAuthorization::bypass_deno_permissions()
                             .with_resolved_address_checker(checker),

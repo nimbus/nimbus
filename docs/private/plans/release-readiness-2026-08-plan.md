@@ -8,10 +8,11 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: commit and rereview the accepted foreground-cancellation test
-repair. Complete the bounded Sol xhigh and Opus review panels for the remaining
-candidate ranges. Repair every accepted finding before rebuilding the exact
-candidate for the host and application replays.
+Next action: uplift the Nimbus Deno fork from upstream `v2.9.3` to current
+upstream `v2.9.6`, including the new `deno_v8` and V8 150.4 boundary. Replay
+only the required Nimbus carries, complete the Deno and V8 candidate gates and
+dual review, publish a new immutable fork release, then repin Nimbus and rebuild
+the exact candidate for the host and application replays.
 
 ## Outcome
 
@@ -50,9 +51,10 @@ After:
   apt, COPR, cloud-image, tag, and release publication work.
 - Does not own: multi-node clustering, continuous PITR, MongoDB change streams,
   or automatic server updates. The capability page marks these as not built.
-- Non-goal: publish a tag or release. The owner authorized repository branch
-  and pull-request updates. Do not change release credentials or public
-  package channels without owner approval.
+- Non-goal: publish a Nimbus product tag, release, or package. The owner
+  authorized repository updates and the fork releases needed to produce a
+  reproducible dependency graph. Do not change Nimbus release credentials or
+  public product package channels without owner approval.
 
 ## Invariants
 
@@ -68,7 +70,7 @@ After:
 6. Keep the three client mutation paths and all repository architecture
    invariants. A confirmed defect can require an explicit design task.
 7. Proof files contain no credential, token, private key, or user data.
-8. Public release actions require separate owner approval.
+8. Public Nimbus product release actions require separate owner approval.
 
 ## Release Matrix
 
@@ -369,3 +371,6 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | finding | Unclosed fences now make proof structure invalid. Backtick fences reject forbidden backticks in their info strings, and heading indentation uses Markdown tab-stop columns. Eleven verifier tests pass, and the live matrix retains zero structural errors. |
 | 2026-08-29 | RRC8 | review | The malformed-Markdown follow-up accepted one P3 diagnostic issue: an unterminated fence failed closed but reported an anchor-count error. |
 | 2026-08-29 | RRC8 | finding | Unterminated fences now produce a specific proof-structure diagnostic. All 11 verifier tests pass, and the live matrix retains zero structural errors. |
+| 2026-08-29 | RRC8 | review | Two additional Deno review rounds found and closed checker-less client churn, a tautological proxy regression, custom-client contract drift, checker-bearing client churn, and checker-equivalence reuse risks. `ResolvedAddressChecker` now supports an opaque equivalence key, Deno retains a bounded 16-entry client cache, Nimbus derives the key from the complete unresolved egress request, and unverifiable checker-bearing custom clients fail closed. The final disputed `WebSocketStream` custom-client finding was refuted from its JavaScript and TypeScript surface, which has no client option. |
+| 2026-08-29 | RRC8 | evidence | Deno PR #1 merged at `d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63`. Candidate, branch, and annotated-tag CI runs `33248587436`, `33249117117`, and `33249117869` passed. Public non-draft release `v2.9.3-nimbus.2` is immutable at that commit. Nimbus's tag-based checkpoint passes runtime compilation, 16 fetch egress tests, 5 runtime bootstrap tests, warning-denied runtime Clippy, both fork provenance policies, and the 14-condition connection-broker verifier. |
+| 2026-08-29 | RRC8 | blocked | The previously unreachable Deno-ref blocker is closed, but the tracks-latest standardization gate detects upstream `v2.9.6` while Nimbus consumes `v2.9.3-nimbus.2`. Upstream also changed the runtime boundary to `deno_v8` 0.3.0 over V8 150.4. RRC8 remains NO-GO while the fork is uplifted, reviewed, released, repinned, and replayed as the exact candidate. |

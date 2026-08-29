@@ -2,6 +2,23 @@
 
 Date: 2026-08-29
 
+## Superseding Status Update
+
+The owner later authorized updates to all Nimbus repositories. Deno PR #1
+merged at `d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63`, and annotated public fork
+release `v2.9.3-nimbus.2` now provides the required immutable reference. Its
+candidate, branch, and tag CI runs passed. Nimbus compiles and passes the
+focused connection-broker gates against that tag.
+
+The result remains **NO-GO**. The tracks-latest fork gate now reports upstream
+Deno `v2.9.6`, while the checkpoint consumes `v2.9.3-nimbus.2`. Upstream
+`v2.9.6` also introduces `deno_v8` 0.3.0 and moves the Rust V8 boundary from
+149.4 to 150.4. The release candidate must use a reviewed and immutable
+`v2.9.6` Nimbus fork release, then repeat the exact-candidate CI, host,
+application, desktop, archive, and OCI proofs. Apple notarization and the
+public apt and COPR proofs also remain pending. The sections below preserve the
+initial NO-GO snapshot and its evidence.
+
 Result: **NO-GO** for v0.1.46. The repaired source and provisional candidate
 passed every locally available product, adapter, storage, workload, desktop,
 and distribution lane. However, the release candidate is not reproducible
