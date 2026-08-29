@@ -69,6 +69,7 @@ fn launcher_renders_cli_errors_for_operators() {
 }
 
 fn output_with_timeout(mut command: Command, timeout: Duration) -> Output {
+    let program = command.get_program().to_owned();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().expect("nimbus launcher should execute");
     let deadline = Instant::now() + timeout;
@@ -88,7 +89,8 @@ fn output_with_timeout(mut command: Command, timeout: Duration) -> Output {
                     .wait_with_output()
                     .expect("timed-out nimbus launcher output should be readable");
                 panic!(
-                    "nimbus launcher did not exit within {timeout:?}; the public-bind guard may have regressed: stderr={}",
+                    "nimbus launcher {} did not exit within {timeout:?}; the public-bind guard may have regressed: stderr={}",
+                    program.to_string_lossy(),
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
