@@ -186,6 +186,10 @@ impl ArmedLibsqlCommitAcknowledgementLoss {
     fn arm(&self) {
         self.armed.store(true, Ordering::Release);
     }
+
+    fn fired(&self) -> bool {
+        self.fired.load(Ordering::Acquire)
+    }
 }
 
 impl FaultInjector for ArmedLibsqlCommitAcknowledgementLoss {
@@ -255,6 +259,10 @@ async fn libsql_replica_post_visibility_ack_loss_forces_crash_and_replay() {
             )
             .await
             .expect_err("lost libSQL acknowledgement must be terminally ambiguous");
+        assert!(
+            faults.fired(),
+            "the tenant-scoped post-visibility acknowledgement-loss fault must fire"
+        );
         assert_eq!(error.retryability(), nimbus_core::Retryability::Terminal);
         assert!(
             error.to_string().contains("crash-and-replay"),
