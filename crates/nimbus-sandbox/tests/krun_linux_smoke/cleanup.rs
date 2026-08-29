@@ -25,6 +25,7 @@ use super::*;
 fn krun_backend_m2_user_and_stop_signal_lowering() {
     let host_port = smoke_host_port(18082);
     let guest_port: u16 = 8082;
+    let graceful_stop_timeout = Duration::from_secs(5);
 
     let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
     let bundle_root = base_dir.join("m2-bundles");
@@ -38,6 +39,7 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         "nimbus-m2-fixture",
         "USER www-data\nSTOPSIGNAL SIGQUIT",
     )
+    .with_stop_timeout(graceful_stop_timeout)
     .with_port_binding(http_binding(host_port, guest_port));
     spec.process = busybox_http_process(guest_port);
 
@@ -116,7 +118,7 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     let stop_elapsed = stop_start.elapsed();
     eprintln!("stop elapsed: {stop_elapsed:?}");
     assert!(
-        stop_elapsed >= Duration::from_secs(5),
+        stop_elapsed >= graceful_stop_timeout,
         "the image-configured SIGQUIT must receive the complete graceful-stop window before forced stop"
     );
 
@@ -138,6 +140,32 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     assert_eq!(
         exit_code, None,
         "the legacy conmon exit receipt is not creator-qualified and must not be attributed to this execution"
+    );
+    assert_eq!(
+        manifest_after["execution_teardown"]["stop"]["phase"], "execution_stopped",
+        "the exact execution stop must be durable"
+    );
+    let stop_evidence = manifest_after["execution_teardown"]["stop"]["evidence"]
+        .as_array()
+        .expect("the durable execution-stop evidence should be a byte array")
+        .iter()
+        .map(|value| {
+            u8::try_from(
+                value
+                    .as_u64()
+                    .expect("each durable execution-stop evidence byte should be an integer"),
+            )
+            .expect("each durable execution-stop evidence integer should fit in one byte")
+        })
+        .collect::<Vec<_>>();
+    let stop_evidence: serde_json::Value = serde_json::from_slice(&stop_evidence)
+        .expect("the durable execution-stop evidence should be valid JSON");
+    let stop_evidence_kind = stop_evidence["kind"]
+        .as_str()
+        .expect("the durable execution-stop evidence should identify its kind");
+    assert!(
+        stop_evidence_kind.starts_with("kill_"),
+        "the unhandled SIGQUIT must advance through the authenticated KILL path, got {stop_evidence_kind:?}"
     );
 
     cleanup_guard.disarm();
