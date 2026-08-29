@@ -7,8 +7,10 @@ Baseline branch: `codex/storage-review-repairs`.
 Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
-Next action: commit the exact CI repairs, rerun `make ci` from the resulting
-candidate, then rebuild and repeat the critical release-candidate smoke tests
+
+Next action: commit the Node tool cleanup and this checkpoint. Rerun `make ci`
+from the resulting candidate and require zero leak markers. Then run the final
+reviews and rebuild the exact candidate for the host and application replays.
 
 ## Outcome
 
@@ -345,3 +347,6 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | finding | The foreground service facade duplicated the provisioner's retained retry supervisor. It now joins the exact settlement channel instead of polling every 25 ms. The full compute package passes 514 of 514 tests with one intentional skip, and focused Clippy passes for compute, server, and CLI with warnings denied. |
 | 2026-08-29 | RRC8 | fail-before | Full `make ci` from `a61fe308c` passed formatting, workspace Clippy, and dependency policy, then stopped in the isolated runtime lane. One subprocess host-start wait exceeded the 15-second local budget under parallel load; 524 tests passed, one failed, and 134 were intentionally ignored. The exact subprocess passed in 0.72 seconds. |
 | 2026-08-29 | RRC8 | finding | The host-start helper already allowed 60 seconds in CI but only 15 seconds in local integrated gates. Local gates now allow 30 seconds and keep the 60-second CI budget plus the explicit environment override. The exact subprocess passes, the full runtime lane passes 525 tests with 134 intentional ignores, and runtime Clippy passes with warnings denied. |
+| 2026-08-29 | RRC8 | evidence | Exact `make ci` from `429e3afa4` exited zero. The runtime lane passed 525 tests with 134 intentional ignores. The workspace lane passed 7,719 of 7,719 tests with 111 intentional skips. Doctests, required generated-history and transport campaigns, JavaScript builds and typechecks, 846 UI tests, security and package proof helpers, and installer checks passed. |
+| 2026-08-29 | RRC8 | investigation | The workspace lane reported two passed tests as leaky. Each passed without a leak marker in a package-only run and in five repeated workspace-feature runs, for 12 clean focused executions. Treat the markers as unconfirmed runner observations; the final full gate must report zero leak markers. |
+| 2026-08-29 | RRC8 | cleanup | Node 26 exposed two non-blocking diagnostics outside the supported Node 22 and 24 application range. The NodeFull snapshot mismatch is the expected `cfg(test)` safety path, and its production provenance check passes. Firebase code generation now disables the unused experimental Web Storage global only for child tools when Node supports the opt-out; traced generation and the package typecheck pass. Tailwind 4.3.3 fixes its upstream loader deprecation, but this session cannot regenerate dependency locks because package-manager writes require unavailable approval. |
