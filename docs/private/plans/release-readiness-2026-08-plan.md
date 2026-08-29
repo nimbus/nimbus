@@ -8,10 +8,9 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish U1 and publish the reviewed V8 150.4 fork in U2. Then start
-U3 from exact upstream Deno `v2.9.6`. Replay only required product contracts.
-Complete the controlled A/B, publish the immutable fork, and rebuild Nimbus for
-the exact host and application replays.
+Next action: keep U2 publication deferred because external writes need explicit
+authorization. Start U3 from exact upstream Deno `v2.9.6`. Audit every carry,
+then replay only the required product contracts and prepare the controlled A/B.
 
 ## Outcome
 
@@ -374,3 +373,5 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | evidence | Deno PR #1 merged at `d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63`. Candidate, branch, and annotated-tag CI runs `33248587436`, `33249117117`, and `33249117869` passed. Public non-draft release `v2.9.3-nimbus.2` is immutable at that commit. Nimbus's tag-based checkpoint passes runtime compilation, 16 fetch egress tests, 5 runtime bootstrap tests, warning-denied runtime Clippy, both fork provenance policies, and the 14-condition connection-broker verifier. |
 | 2026-08-29 | RRC8 | blocked | The previously unreachable Deno-ref blocker is closed, but the tracks-latest standardization gate detects upstream `v2.9.6` while Nimbus consumes `v2.9.3-nimbus.2`. Upstream also changed the runtime boundary to `deno_v8` 0.3.0 over V8 150.4. RRC8 remains NO-GO while the fork is uplifted, reviewed, released, repinned, and replayed as the exact candidate. |
 | 2026-08-29 | RRC8 | decision | Independent source review accepted the proposed runtime-strategy lifecycle and kept RRC8 as the current owner. U3 will omit proven realm-only carries, pair the omission with Nimbus consumer cleanup before U4, and complete the exact replay-scaffolding A/B before U5. The lifecycle plan can activate only after terminal U6 evidence and owner approval. No RSL implementation started. |
+| 2026-08-29 | RRC8 | evidence | U1 completed at rusty_v8 `dbb70a973d28cfe8cd6a2ea66d4f3d14fee488f0`. Source-built nextest passes 308 tests across 25 binaries; 13 documentation tests, warning-denied Clippy, formatting, 15 release-tool tests, action syntax, the 44-asset manifest, and the final Sol xhigh review pass. Two review P2 findings closed stale offline binding reuse and mutable release action references. |
+| 2026-08-29 | RRC8 | constraint | The owner prohibited Opus 5 and Fable for review because credits are low. The active Opus process stopped with exit 130. Final V8 acceptance uses the exact-commit Sol review and local gates. U2 push, tag, and publication remain unstarted pending explicit authorization; U3 can continue from its clean worktree. |

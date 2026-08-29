@@ -36,11 +36,11 @@ in the final dependency closure.
 
 | ID | Work | Status | Evidence |
 | --- | --- | --- | --- |
-| U1 | Port and verify the Nimbus rusty_v8 carries on upstream 150.4. | `in_progress` | Worktree `rusty_v8-worktrees/v150.4.0-nimbus`. |
-| U2 | Review, publish, and re-query an immutable rusty_v8 150.4 release. | `todo` | Requires U1. |
-| U3 | Audit the 21 Deno carries and replay only product-required concepts on upstream 2.9.6. | `todo` | The clean worktree remains at `e518fbd66`. Omit realm-only carries and pair that omission with Nimbus consumer cleanup before U4. |
+| U1 | Port and verify the Nimbus rusty_v8 carries on upstream 150.4. | `complete` | Exact candidate `dbb70a973d28cfe8cd6a2ea66d4f3d14fee488f0`; local source-build gates and final Sol xhigh review pass. |
+| U2 | Review, publish, and re-query an immutable rusty_v8 150.4 release. | `todo` | The local candidate is ready. Push, tag, and release require explicit owner authorization. |
+| U3 | Audit the 21 Deno carries and replay only product-required concepts on upstream 2.9.6. | `in_progress` | The clean worktree remains at `e518fbd66`. Omit realm-only carries and pair that omission with Nimbus consumer cleanup before U4. |
 | U4 | Test Deno itself and Nimbus against the exact unpublished candidate. | `todo` | Requires U2 and U3. |
-| U5 | Dual-review and publish an immutable Deno 2.9.6 release. | `todo` | Requires U4. |
+| U5 | Review and publish an immutable Deno 2.9.6 release. | `todo` | Requires U4 and explicit owner authorization for external writes. |
 | U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `todo` | Requires U5. |
 
 ## Carry Rules
@@ -53,11 +53,37 @@ in the final dependency closure.
 4. Bind Deno candidate tests to the same Nimbus rusty_v8 150.4 revision that
    Nimbus will consume.
 5. Publish only annotated, never-moved fork tags after local checks and hosted
-   CI pass. Run independent Sol xhigh and Opus 5 review before publication.
+   CI pass. Run independent Sol xhigh review before publication. Do not invoke
+   Opus 5 or Fable until the owner explicitly permits those reviewers again.
 6. Preserve all unrelated dirty files and old branches, tags, releases, and
    proof artifacts.
 7. Do not publish or repin the Deno candidate before the runtime-strategy
    disposition and controlled replay-scaffolding A/B are complete.
+
+## U1 Evidence
+
+The exact local rusty_v8 candidate is
+`dbb70a973d28cfe8cd6a2ea66d4f3d14fee488f0`. It contains the V8 150.4 carry
+port plus the final persistent-handle, offline-binding, and release-workflow
+repairs.
+
+- `V8_FROM_SOURCE=1 cargo nextest run --all-targets --locked` passes 308 tests
+  across 25 binaries.
+- Warning-denied all-target Clippy and Rust formatting pass.
+- Documentation tests pass 13 tests and ignore 13 examples by declaration.
+- C++ formatting and the Nimbus release workflow pass their local syntax
+  checks.
+- The release tool suite passes 15 tests. The candidate selects
+  `v150.4.0-nimbus.1` and defines exactly 44 assets across seven targets.
+- Sol xhigh found and closed two P2 defects: stale offline binding reuse and
+  mutable release action references. The final exact-commit review reports no
+  P0 through P3 finding.
+- The owner prohibited Opus 5 and Fable review use. The active Opus 5 review
+  then stopped with exit 130. It is not acceptance evidence. No Opus 5 or Fable
+  review can run until the owner changes this constraint.
+
+U2 external writes remain intentionally unstarted. The active goal forbids a
+push, tag, or release without explicit authorization.
 
 ## U3 Architecture Disposition
 
@@ -125,6 +151,6 @@ followed by owner approval. RRC8 keeps exclusive ownership until that trigger.
 
 ## Current Next Action
 
-Finish the current U1 weak-handle synchronization review and rerun its exact
-full V8 gate. Then complete U2 publication. Start U3 from clean upstream 2.9.6
-with the architecture disposition above before the first Deno edit.
+Keep U2 publication deferred. Start U3 from clean upstream Deno 2.9.6 with the
+architecture disposition above. Audit every old carry before the first Deno
+edit, then replay only the current product contracts.
