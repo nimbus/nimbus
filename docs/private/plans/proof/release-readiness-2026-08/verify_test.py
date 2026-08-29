@@ -26,31 +26,35 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
     def run_verifier(
         self,
         *,
-        passing_condition: str = "tenant_lifecycle",
         proof_revisions: tuple[str, ...] = (
             CANDIDATE["nimbus"],
+            CANDIDATE["desktop"],
             CANDIDATE["deno"],
             CANDIDATE["main"],
         ),
+        header_revisions: tuple[str, ...] = (),
         candidate: dict[str, str] | None = None,
-    ) -> str:
+    ) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             proof = root / "proof.md"
             proof.write_text(
-                "# Proof\n\n## Bound evidence\n\n" + "\n".join(proof_revisions) + "\n",
+                "# Proof\n\n"
+                + "\n".join(header_revisions)
+                + "\n\n## Bound evidence\n\n"
+                + "\n".join(proof_revisions)
+                + "\n\n## Unrelated evidence\n",
                 encoding="utf-8",
             )
             conditions = []
             for condition_id in VERIFY.EXPECTED_IDS:
-                row: dict[str, object] = {"id": condition_id, "state": "blocked"}
-                if condition_id == passing_condition:
-                    row = {
+                conditions.append(
+                    {
                         "id": condition_id,
                         "state": "pass",
                         "evidence": {"path": "proof.md", "anchor": "## Bound evidence"},
                     }
-                conditions.append(row)
+                )
             matrix = root / "matrix.json"
             matrix.write_text(
                 json.dumps(
@@ -67,36 +71,48 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
             try:
                 sys.argv = [str(VERIFY_PATH), str(matrix)]
                 with contextlib.redirect_stdout(output):
-                    VERIFY.main()
+                    status = VERIFY.main()
             finally:
                 sys.argv = previous_argv
-            return output.getvalue()
+            return status, output.getvalue()
 
     def test_exact_candidate_bound_proof_has_no_structural_error(self) -> None:
-        output = self.run_verifier()
+        status, output = self.run_verifier()
+        self.assertEqual(status, 0)
         self.assertNotIn("ERROR:", output)
         self.assertIn("0 structural errors", output)
 
     def test_stale_pass_proof_is_rejected(self) -> None:
-        output = self.run_verifier(proof_revisions=(CANDIDATE["deno"], CANDIDATE["main"]))
+        status, output = self.run_verifier(
+            proof_revisions=(CANDIDATE["desktop"], CANDIDATE["deno"], CANDIDATE["main"])
+        )
+        self.assertNotEqual(status, 0)
         self.assertIn("evidence is not bound to the nimbus candidate", output)
-        self.assertIn("1 structural errors", output)
 
-    def test_desktop_pass_requires_exact_desktop_revision(self) -> None:
-        output = self.run_verifier(
-            passing_condition="desktop_app",
+    def test_candidate_mention_outside_anchor_does_not_bind_evidence(self) -> None:
+        status, output = self.run_verifier(
             proof_revisions=(
-                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
                 CANDIDATE["deno"],
                 CANDIDATE["main"],
             ),
+            header_revisions=(CANDIDATE["nimbus"],),
         )
-        self.assertIn("evidence is not bound to the desktop candidate", output)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_desktop_pass_requires_exact_desktop_revision(self) -> None:
+        status, output = self.run_verifier(
+            proof_revisions=(CANDIDATE["nimbus"], CANDIDATE["deno"], CANDIDATE["main"])
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("desktop_app: evidence is not bound to the desktop candidate", output)
 
     def test_candidate_revisions_must_be_full_lowercase_shas(self) -> None:
         malformed = dict(CANDIDATE)
         malformed["nimbus"] = "abc"
-        output = self.run_verifier(candidate=malformed)
+        status, output = self.run_verifier(candidate=malformed)
+        self.assertNotEqual(status, 0)
         self.assertIn("candidate.nimbus must be a full lowercase commit SHA", output)
 
 

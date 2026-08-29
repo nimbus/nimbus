@@ -28,6 +28,27 @@ PASS_CANDIDATE_EXTRAS = {
     "independent_reviews": ("desktop",),
 }
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+\S.*$")
+
+
+def anchored_evidence_section(proof: str, anchor: str) -> str | None:
+    anchor = anchor.strip()
+    heading = MARKDOWN_HEADING.fullmatch(anchor)
+    if heading is None:
+        return None
+    lines = proof.splitlines()
+    matches = [index for index, line in enumerate(lines) if line.strip() == anchor]
+    if len(matches) != 1:
+        return None
+    start = matches[0]
+    level = len(heading.group(1))
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        candidate_heading = MARKDOWN_HEADING.fullmatch(lines[index].strip())
+        if candidate_heading is not None and len(candidate_heading.group(1)) <= level:
+            end = index
+            break
+    return "\n".join(lines[start:end])
 
 
 def main() -> int:
@@ -95,14 +116,18 @@ def main() -> int:
         except OSError as error:
             errors.append(f"{condition_id}: cannot read evidence: {error}")
             continue
-        if anchor not in proof:
-            errors.append(f"{condition_id}: evidence anchor not found")
+        evidence_section = anchored_evidence_section(proof, anchor)
+        if evidence_section is None:
+            errors.append(
+                f"{condition_id}: evidence anchor must identify exactly one Markdown section"
+            )
+            continue
         required_candidate_keys = PASS_CANDIDATE_KEYS + PASS_CANDIDATE_EXTRAS.get(
             condition_id, ()
         )
         for key in required_candidate_keys:
             revision = candidate.get(key)
-            if isinstance(revision, str) and revision not in proof:
+            if isinstance(revision, str) and revision not in evidence_section:
                 errors.append(
                     f"{condition_id}: evidence is not bound to the {key} candidate {revision}"
                 )

@@ -33,28 +33,35 @@ release artifact.
 
 The final connection-broker repair closes the live WebSocket authorization
 gap and DNS-rebinding gap for both fetch and WebSocket connections. The Deno
-fork now authorizes the URL before resolution, authorizes every concrete
-resolved address before connect, binds WebSocket authorization to its target,
-rejects custom clients and proxy paths when it cannot prove the policy, and
-does not cache checker-bearing clients. Nimbus maps those resolved addresses
-through the same tenant gateway. Runtime tests prove that loopback and link-
-local resolutions are denied before the listener accepts a socket.
+fork now authorizes the URL before resolution and each concrete resolved
+address before connect. It binds WebSocket authorization to its target. It
+rejects custom clients and proxy paths when it cannot prove the policy. It
+does not cache checker-bearing clients.
+
+Nimbus maps those resolved addresses through the same tenant gateway. Runtime
+tests show that the gateway denies loopback and link-local resolutions before
+the listener accepts a socket.
 
 The complete local-Deno integration passed these focused checks:
 
-- fetch and WebSocket resolved-address denial: 2 of 2;
-- fetch and WebSocket allowed paths: 2 of 2;
-- bridge internal-address denial for fetch and WebSocket: 2 of 2;
-- `cargo check -p nimbus-runtime -p nimbus-bridge`;
-- Deno fetch checker, resolver, proxy, and WebSocket tests;
+- fetch and WebSocket resolved-address denial: 2 of 2.
+- fetch and WebSocket allowed paths: 2 of 2.
+- bridge internal-address denial for fetch and WebSocket: 2 of 2.
+- `cargo check -p nimbus-runtime -p nimbus-bridge`.
+- Deno fetch checker, resolver, proxy, and WebSocket tests.
 - the connection-broker verifier: 14 of 14 conditions.
 
-The final patch also rejects supervisor-proxy policies at all non-proxy
-backend start and reload seams, adds exhaustive WebSocket protocol handling,
-keeps runtime gateway authorization free of terminal audit or quota side
-effects, and records the vendored `lazy_static` lint repair accurately.
+The final patch rejects supervisor-proxy policies at all non-proxy backend
+start and reload seams. It adds exhaustive WebSocket protocol handling. It
+keeps runtime gateway authorization free of terminal audit and quota side
+effects. It also records the vendored `lazy_static` lint repair accurately.
 
 ## Documentation Gates
+
+Candidate binding: Nimbus
+`ae63f18798b2d020c029a4d65443c45c0acf347f`, Deno
+`1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
 
 - `bash scripts/check-docs.sh`: 109 pages checked with no error.
 - `bash scripts/verify-nimbus-docs-site.sh`: 17 of 17 checks passed.
@@ -62,6 +69,11 @@ effects, and records the vendored `lazy_static` lint repair accurately.
   distinguish provisional evidence from exact-candidate evidence.
 
 ## Security and Dependency Gates
+
+Candidate binding: Nimbus
+`ae63f18798b2d020c029a4d65443c45c0acf347f`, Deno
+`1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
 
 - `make deny`: passed.
 - Third-party attribution gate: one crate and eight vendored patches passed all
@@ -72,6 +84,12 @@ effects, and records the vendored `lazy_static` lint repair accurately.
 
 ## Independent Reviews
 
+Candidate binding: Nimbus
+`ae63f18798b2d020c029a4d65443c45c0acf347f`, Desktop
+`bbc103f84b2a88e2baa4b522e45447bed31e04c7`, Deno
+`1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
+
 The final uncommitted Nimbus integration received two independent structured
 reviews after the last accepted correction:
 
@@ -80,26 +98,25 @@ reviews after the last accepted correction:
 - GPT-5.6 Sol at xhigh reasoning: clean, with no accepted or actionable P0
   through P3 finding.
 
-The reviewers checked the DNS-rebinding closure, fail-closed proxy and custom-
-client behavior, gateway purity contract, supervisor-proxy rejection seams,
-WebSocket protocol exhaustiveness, the one-line lockfile delta, vendored-code
-provenance, and verification-script honesty. The Deno fork received its own
-Opus review loop and closed clean after all P3 hardening findings were fixed.
+The reviewers checked DNS rebinding, fail-closed proxy paths, custom clients,
+gateway purity, and supervisor-proxy rejection. They also checked WebSocket
+protocol coverage, the one-line lockfile delta, vendored provenance, and
+verification-script accuracy. The Deno fork had its own Opus review loop. It
+closed clean after all P3 hardening fixes.
 
 ## Remaining Release Blockers
 
 1. The Deno revision
    `1c17e86b296af380f67c48f3b9a89876db154604` is not reachable from an
    immutable remote reference. This plan does not authorize a push or tag.
-2. Therefore, Nimbus cannot commit the dependency update, produce a clean
-   exact v0.1.46 candidate, or run `make ci` and all smoke lanes against that
-   exact candidate.
+2. Nimbus therefore cannot commit the dependency update or produce a clean
+   v0.1.46 candidate. It also cannot run `make ci` or the exact smoke lanes.
 3. Apple notarization and stapling remain unverified because the authorized
    API credentials are unavailable in this local release lane.
 4. Public apt and COPR install proofs remain owned by the distribution plan and
    require separate publication authority.
-5. Exact v0.1.46 archives and OCI artifacts do not exist until the exact
-   candidate can be built.
+5. Exact v0.1.46 archives and OCI artifacts are absent because the exact
+   candidate build is absent.
 
 ## Matrix Decision
 
@@ -111,16 +128,18 @@ to an authorized publication lane. A skip or provisional result is not green.
 
 ## Cleanup
 
-The exact-test worktree and 13 GiB rebuildable Nimbus Cargo target were removed
-after both reviews. Free macOS filesystem space increased from 86 GiB to 100
-GiB. The 663 MiB candidate artifact, source changes, proof files, and desktop
-release artifacts were preserved.
+The cleanup removed the exact-test worktree and 13 GiB rebuildable Nimbus Cargo
+target after both reviews. Free macOS filesystem space increased from 86 GiB
+to 100 GiB. The cleanup preserved the 663 MiB candidate artifact, source
+changes, proof files, and desktop release artifacts.
 
 ## Required Next Action
 
-Publish the final Deno revision through an authorized immutable remote ref.
-Then update and commit the Nimbus dependency, build the exact v0.1.46 candidate
-from a clean tree, run `make ci`, repeat all critical macOS, Linux, desktop,
-archive, and OCI lanes against that candidate, and complete the authorized
-notarization, apt, and COPR proofs. The release can become GO only after the
-matrix reports 46 passes.
+1. Publish the final Deno revision through an authorized immutable remote ref.
+2. Update and commit the Nimbus dependency.
+3. Build the exact v0.1.46 candidate from a clean tree.
+4. Run `make ci` against that candidate.
+5. Repeat all critical macOS, Linux, desktop, archive, and OCI lanes.
+6. Complete the authorized notarization, apt, and COPR proofs.
+
+The release can become GO only after the matrix reports 46 passes.
