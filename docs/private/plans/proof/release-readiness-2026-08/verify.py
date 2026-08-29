@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +21,13 @@ EXPECTED_IDS = (
     "security_dependencies", "full_ci", "independent_reviews",
 )
 STATES = ("pass", "unverified", "fail", "blocked")
+CANDIDATE_KEYS = ("nimbus", "desktop", "deno", "main")
+PASS_CANDIDATE_KEYS = ("nimbus", "deno", "main")
+PASS_CANDIDATE_EXTRAS = {
+    "desktop_app": ("desktop",),
+    "independent_reviews": ("desktop",),
+}
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 def main() -> int:
@@ -34,6 +42,16 @@ def main() -> int:
 
     if data.get("schemaVersion") != 1:
         errors.append("schemaVersion must equal 1")
+    candidate = data.get("candidate")
+    if not isinstance(candidate, dict):
+        errors.append("candidate must be an object")
+        candidate = {}
+    elif set(candidate) != set(CANDIDATE_KEYS):
+        errors.append("candidate keys must be exactly nimbus, desktop, deno, and main")
+    for key in CANDIDATE_KEYS:
+        revision = candidate.get(key)
+        if not isinstance(revision, str) or FULL_SHA.fullmatch(revision) is None:
+            errors.append(f"candidate.{key} must be a full lowercase commit SHA")
     conditions = data.get("conditions")
     if not isinstance(conditions, list):
         print("matrix error: conditions must be an array")
@@ -79,6 +97,15 @@ def main() -> int:
             continue
         if anchor not in proof:
             errors.append(f"{condition_id}: evidence anchor not found")
+        required_candidate_keys = PASS_CANDIDATE_KEYS + PASS_CANDIDATE_EXTRAS.get(
+            condition_id, ()
+        )
+        for key in required_candidate_keys:
+            revision = candidate.get(key)
+            if isinstance(revision, str) and revision not in proof:
+                errors.append(
+                    f"{condition_id}: evidence is not bound to the {key} candidate {revision}"
+                )
 
     for error in errors:
         print(f"ERROR: {error}")
