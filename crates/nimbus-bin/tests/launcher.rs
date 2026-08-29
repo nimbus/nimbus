@@ -51,7 +51,10 @@ fn launcher_renders_cli_errors_for_operators() {
             .to_str()
             .expect("temporary data path should be valid UTF-8"),
     ]);
-    let output = output_with_timeout(command, Duration::from_secs(5));
+    // The macOS loader can take several seconds to map the large debug
+    // binary on a cold cache. Keep the regression bounded without treating
+    // loader startup as a policy failure.
+    let output = output_with_timeout(command, Duration::from_secs(30));
     let _ = std::fs::remove_dir_all(&data_dir);
 
     assert!(!output.status.success(), "unsafe public bind should fail");
