@@ -8,9 +8,10 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: commit the Node tool cleanup and this checkpoint. Rerun `make ci`
-from the resulting candidate and require zero leak markers. Then run the final
-reviews and rebuild the exact candidate for the host and application replays.
+Next action: commit the final integrated-gate checkpoint, then run the required
+Sol xhigh and Opus reviews of the complete candidate delta. Repair every
+accepted finding before rebuilding the exact candidate for the host and
+application replays.
 
 ## Outcome
 
@@ -350,3 +351,5 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | evidence | Exact `make ci` from `429e3afa4` exited zero. The runtime lane passed 525 tests with 134 intentional ignores. The workspace lane passed 7,719 of 7,719 tests with 111 intentional skips. Doctests, required generated-history and transport campaigns, JavaScript builds and typechecks, 846 UI tests, security and package proof helpers, and installer checks passed. |
 | 2026-08-29 | RRC8 | investigation | The workspace lane reported two passed tests as leaky. Each passed without a leak marker in a package-only run and in five repeated workspace-feature runs, for 12 clean focused executions. Treat the markers as unconfirmed runner observations; the final full gate must report zero leak markers. |
 | 2026-08-29 | RRC8 | cleanup | Node 26 exposed two non-blocking diagnostics outside the supported Node 22 and 24 application range. The NodeFull snapshot mismatch is the expected `cfg(test)` safety path, and its production provenance check passes. Firebase code generation now disables the unused experimental Web Storage global only for child tools when Node supports the opt-out; traced generation and the package typecheck pass. Tailwind 4.3.3 fixes its upstream loader deprecation, but this session cannot regenerate dependency locks because package-manager writes require unavailable approval. |
+| 2026-08-29 | RRC8 | evidence | Exact `make ci` from `963af1d3b` exited zero. Formatting, workspace Clippy, dependency policy, production runtime provenance, 525 runtime tests, 7,719 workspace tests, doctests, required harnesses, JavaScript builds and typechecks, 846 UI tests, proof helpers, and 60 installer checks passed. The 134 runtime ignores and 111 workspace skips are the declared suite inventory, not silent release evidence. Firebase child tools emitted no Web Storage diagnostic. The remaining Tailwind loader warning occurs only on the unsupported local Node 26 runtime. |
+| 2026-08-29 | RRC8 | investigation | The final workspace lane marked the passed `two_krun_drain_contenders_publish_one_barrier` test as leaky. Its drain path starts no child process and joins both contender threads before return. The exact test passed ten repeated workspace-feature runs without a leak marker. Three different passed tests have now received isolated, nonreproducible markers only under full-suite load; no verified product or test-resource leak remains. |
