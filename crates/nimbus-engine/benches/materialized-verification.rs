@@ -3,7 +3,7 @@ use std::fs;
 use std::hint::black_box;
 use std::io::Read;
 use std::mem::size_of;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,8 +25,6 @@ const SOURCE_BASE_COMMIT: &str = "9c807015a3049adbd8e24b15a57ccac34b2fc380";
 const QUICK_DOCUMENTS: usize = 10_000;
 const QUICK_PAYLOAD_BYTES: usize = 1_024;
 const CHURN_BASIS_POINTS: [u32; 4] = [0, 10, 100, 1_000];
-const DEFAULT_FULL_SAMPLES: usize = 3;
-const QUICK_FULL_SAMPLES: usize = 1;
 const CANDIDATE_SAMPLES: usize = 21;
 const CANDIDATE_COMPARISONS_PER_SAMPLE: usize = 10_000;
 const CANDIDATE_PRODUCTION_DOCUMENTS: [usize; 2] = [100_000, 1_000_000];
@@ -89,24 +87,10 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
-#[derive(Debug)]
-struct Arguments {
-    output: Option<PathBuf>,
-    quick: bool,
-    candidate_only: bool,
-    documents: Option<usize>,
-    payload_bytes: Option<usize>,
-    full_samples: usize,
-    child: Option<ChildArguments>,
-}
+#[path = "materialized_verification/arguments.rs"]
+mod arguments;
 
-#[derive(Debug)]
-struct ChildArguments {
-    data_dir: PathBuf,
-    documents: usize,
-    payload_bytes: usize,
-    churn_basis_points: u32,
-}
+use arguments::{Arguments, ChildArguments, parse_arguments};
 
 #[derive(Debug, Clone, Serialize)]
 struct BenchmarkReport {
@@ -1096,119 +1080,6 @@ fn summarize(mut samples: Vec<u128>) -> Option<SampleSummary> {
 fn percentile(sorted: &[u128], percentile: usize) -> u128 {
     let index = ((sorted.len() - 1) * percentile).div_ceil(100);
     sorted[index]
-}
-
-fn parse_arguments() -> Result<Arguments> {
-    let mut output = None;
-    let mut quick = false;
-    let mut candidate_only = false;
-    let mut documents = None;
-    let mut payload_bytes = None;
-    let mut full_samples = DEFAULT_FULL_SAMPLES;
-    let mut child_data_dir = None;
-    let mut child_churn = None;
-    let mut arguments = std::env::args().skip(1);
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "--bench" => {}
-            "--quick" => {
-                quick = true;
-                full_samples = QUICK_FULL_SAMPLES;
-            }
-            "--candidate-only" => candidate_only = true,
-            "--output" => output = Some(PathBuf::from(next_value(&mut arguments, "--output")?)),
-            "--documents" => {
-                documents = Some(parse_usize(
-                    next_value(&mut arguments, "--documents")?,
-                    "--documents",
-                )?)
-            }
-            "--payload-bytes" => {
-                payload_bytes = Some(parse_usize(
-                    next_value(&mut arguments, "--payload-bytes")?,
-                    "--payload-bytes",
-                )?)
-            }
-            "--full-samples" => {
-                full_samples = parse_usize(
-                    next_value(&mut arguments, "--full-samples")?,
-                    "--full-samples",
-                )?
-            }
-            "--child-full" => {
-                child_data_dir = Some(PathBuf::from(next_value(&mut arguments, "--child-full")?))
-            }
-            "--churn-basis-points" => {
-                child_churn = Some(parse_u32(
-                    next_value(&mut arguments, "--churn-basis-points")?,
-                    "--churn-basis-points",
-                )?)
-            }
-            _ => {
-                return Err(Error::InvalidInput(format!(
-                    "unknown materialized-verification argument: {argument}"
-                )));
-            }
-        }
-    }
-    if full_samples == 0 {
-        return Err(Error::InvalidInput(
-            "--full-samples must be positive".to_string(),
-        ));
-    }
-    if candidate_only
-        && (quick
-            || documents.is_some()
-            || payload_bytes.is_some()
-            || child_data_dir.is_some()
-            || child_churn.is_some())
-    {
-        return Err(Error::InvalidInput(
-            "--candidate-only accepts only --output".to_string(),
-        ));
-    }
-    let child = match child_data_dir {
-        Some(data_dir) => Some(ChildArguments {
-            data_dir,
-            documents: documents.ok_or_else(|| {
-                Error::InvalidInput("--child-full requires --documents".to_string())
-            })?,
-            payload_bytes: payload_bytes.ok_or_else(|| {
-                Error::InvalidInput("--child-full requires --payload-bytes".to_string())
-            })?,
-            churn_basis_points: child_churn.ok_or_else(|| {
-                Error::InvalidInput("--child-full requires --churn-basis-points".to_string())
-            })?,
-        }),
-        None => None,
-    };
-    Ok(Arguments {
-        output,
-        quick,
-        candidate_only,
-        documents,
-        payload_bytes,
-        full_samples,
-        child,
-    })
-}
-
-fn next_value(arguments: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
-    arguments
-        .next()
-        .ok_or_else(|| Error::InvalidInput(format!("{flag} requires a value")))
-}
-
-fn parse_usize(value: String, flag: &str) -> Result<usize> {
-    value
-        .parse()
-        .map_err(|error| Error::InvalidInput(format!("invalid {flag}: {error}")))
-}
-
-fn parse_u32(value: String, flag: &str) -> Result<u32> {
-    value
-        .parse()
-        .map_err(|error| Error::InvalidInput(format!("invalid {flag}: {error}")))
 }
 
 fn write_report(path: Option<&Path>, report: &impl Serialize) -> Result<()> {
