@@ -1086,6 +1086,40 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn sqlite_tenant_provider_uses_the_retained_redb_control_database() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let data_dir = temp.path().join("data");
+        let control_data_dir = temp.path().join("control");
+        let tenant = TenantId::new("sqlite-control-contract").expect("tenant should build");
+        let engine = open_engine(
+            &data_dir,
+            Some(&control_data_dir),
+            ObjectStorageProvider::Sqlite,
+        )
+        .await
+        .expect("SQLite tenant engine should open");
+        engine
+            .create_tenant(tenant)
+            .expect("SQLite tenant should create through redb control authority");
+        engine.quiesce().await;
+
+        let retained_control =
+            control_data_dir.join(EmbeddedProviderKind::Redb.control_database_filename());
+        assert!(
+            retained_control.is_file(),
+            "SQLite tenant persistence must retain the redb control-plane database"
+        );
+        assert!(
+            !control_data_dir
+                .join(EmbeddedProviderKind::Sqlite.control_database_filename())
+                .exists(),
+            "tenant provider kind must not select the control-plane filename"
+        );
+        require_existing_control_plane(&control_data_dir)
+            .expect("tenant removal precheck must accept SQLite tenants' redb control plane");
+    }
+
     #[test]
     #[cfg(unix)]
     fn bootstrap_object_master_key_creates_0600_file() {

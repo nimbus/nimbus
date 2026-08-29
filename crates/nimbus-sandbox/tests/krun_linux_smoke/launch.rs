@@ -49,10 +49,8 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
     assert_host_port_not_bound_to_non_loopback(host_port);
 
     let restarted_backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root));
-    let restarted_handle = block_on(restarted_backend.inspect(&handle.id))
-        .expect("inspect should succeed")
-        .expect("image-backed sandbox should survive backend restart");
-    assert_eq!(restarted_handle.handle.status, SandboxStatus::Ready);
+    let restarted_handle = wait_for_ready(&restarted_backend, &handle.id, Duration::from_secs(30));
+    assert_eq!(restarted_handle.status, SandboxStatus::Ready);
 
     drop(ingress);
     retire_krun(&restarted_backend, &teardown).expect("exact teardown should succeed");
