@@ -3,8 +3,8 @@
 Status: `active`. Owner: this plan. Created: 2026-08-27.
 Baseline: `codex/storage-review-repairs` @ `1403bc780` (`origin/main` @ `b57a2d680`)
 Proof root: `proof/release-readiness-2026-08/`
-Next action: pin the reachable Deno revision, commit the Nimbus integration,
-then run the exact candidate and release gates
+Next action: run `make ci` from Nimbus commit `f0725ac57`, then rebuild and
+repeat the critical release-candidate smoke tests
 
 ## Outcome
 
@@ -84,7 +84,7 @@ renamed, duplicated, or unsupported condition.
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | RRC0 | Pin both repositories, hosts, published state, and the red release verifier. | `done` | `proof/release-readiness-2026-08/rrc0-baseline.md` |
-| RRC1 | Audit source, advertised claims, dependency security, workflows, and release configuration. | `blocked(Deno WebSocket hook needs a reachable ref)` | `proof/release-readiness-2026-08/rrc1-audit.md`, `proof/release-readiness-2026-08/rrc1-capability-trace.md` |
+| RRC1 | Audit source, advertised claims, dependency security, workflows, and release configuration. | `done` | Deno PR #1 at `1c17e86b29`; Nimbus `f0725ac57`; `proof/release-readiness-2026-08/rrc1-audit.md`, `proof/release-readiness-2026-08/rrc1-capability-trace.md` |
 | RRC2 | Smoke-test the candidate CLI, server, operator UI, core data, auth, scheduler, and diagnostics on macOS. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc2-product-smoke.md` |
 | RRC3 | Run every application and protocol-adapter smoke lane, including browser-visible app flows. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc3-app-adapter-smoke.md` |
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
@@ -333,3 +333,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | blocked | Issued a NO-GO verdict in `proof/release-readiness-2026-08/rrc8-release-verdict.md`. The fixed matrix is 3 pass, 43 blocked, 0 unverified, 0 failed, and 0 structurally invalid. A reachable immutable Deno ref, exact clean candidate and CI replay, notarization, and public apt/COPR proof remain required. No public state changed. |
 | 2026-08-29 | RRC8 | cleanup | Removed the disposable exact-test worktree and 13 GiB rebuildable Cargo target after the reviews. Free filesystem space increased from 86 GiB to 100 GiB; candidate and desktop release artifacts remain preserved. |
 | 2026-08-29 | RRC8 | resumed | The owner authorized updates to all repositories under `~/src/github.com/nimbus/`. Pushed Deno branch `codex/release-readiness-websocket-egress`; remote revision `1c17e86b296af380f67c48f3b9a89876db154604` removes the exact-candidate dependency blocker. |
+| 2026-08-29 | RRC1 | done | Opened Deno PR #1 and pinned every Nimbus Deno patch to remote commit `1c17e86b296af380f67c48f3b9a89876db154604`. Nimbus commit `f0725ac57` contains the reviewed connection-broker repair. The remote exact graph passes locked runtime and bridge checks, 2/2 denial-before-connect tests, 3/3 gateway allow-path tests, 2/2 bridge internal-address denials, 1/1 embedded-anchor install, both anchor provenance checks, and the 14/14 connection-broker verifier. |
