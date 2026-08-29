@@ -8,11 +8,10 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: uplift the Nimbus Deno fork from upstream `v2.9.3` to current
-upstream `v2.9.6`, including the new `deno_v8` and V8 150.4 boundary. Replay
-only the required Nimbus carries, complete the Deno and V8 candidate gates and
-dual review, publish a new immutable fork release, then repin Nimbus and rebuild
-the exact candidate for the host and application replays.
+Next action: finish U1 and publish the reviewed V8 150.4 fork in U2. Then start
+U3 from exact upstream Deno `v2.9.6`. Replay only required product contracts.
+Complete the controlled A/B, publish the immutable fork, and rebuild Nimbus for
+the exact host and application replays.
 
 ## Outcome
 
@@ -374,3 +373,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | review | Two additional Deno review rounds found and closed checker-less client churn, a tautological proxy regression, custom-client contract drift, checker-bearing client churn, and checker-equivalence reuse risks. `ResolvedAddressChecker` now supports an opaque equivalence key, Deno retains a bounded 16-entry client cache, Nimbus derives the key from the complete unresolved egress request, and unverifiable checker-bearing custom clients fail closed. The final disputed `WebSocketStream` custom-client finding was refuted from its JavaScript and TypeScript surface, which has no client option. |
 | 2026-08-29 | RRC8 | evidence | Deno PR #1 merged at `d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63`. Candidate, branch, and annotated-tag CI runs `33248587436`, `33249117117`, and `33249117869` passed. Public non-draft release `v2.9.3-nimbus.2` is immutable at that commit. Nimbus's tag-based checkpoint passes runtime compilation, 16 fetch egress tests, 5 runtime bootstrap tests, warning-denied runtime Clippy, both fork provenance policies, and the 14-condition connection-broker verifier. |
 | 2026-08-29 | RRC8 | blocked | The previously unreachable Deno-ref blocker is closed, but the tracks-latest standardization gate detects upstream `v2.9.6` while Nimbus consumes `v2.9.3-nimbus.2`. Upstream also changed the runtime boundary to `deno_v8` 0.3.0 over V8 150.4. RRC8 remains NO-GO while the fork is uplifted, reviewed, released, repinned, and replayed as the exact candidate. |
+| 2026-08-29 | RRC8 | decision | Independent source review accepted the proposed runtime-strategy lifecycle and kept RRC8 as the current owner. U3 will omit proven realm-only carries, pair the omission with Nimbus consumer cleanup before U4, and complete the exact replay-scaffolding A/B before U5. The lifecycle plan can activate only after terminal U6 evidence and owner approval. No RSL implementation started. |
