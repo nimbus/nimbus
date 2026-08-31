@@ -3965,11 +3965,7 @@ Object.defineProperty(deno, "env", {
   writable: false,
 });
 Object.defineProperty(deno, "version", {
-  value: {
-    deno: "2.9.0-nimbus.1",
-    v8: "149.4.0-nimbus.10",
-    typescript: "0.0.0-nimbus",
-  },
+  value: core.ops.op_nimbus_runtime_versions(),
   configurable: true,
   enumerable: true,
   writable: false,
@@ -4257,9 +4253,10 @@ if (typeof internals.__initWorkerThreads === "function") {
         internals.nodeGlobals.process.env = workerEnv;
       }
     }
-    // HG7: same fresh-realm argument as __nimbusStartWorkerMessagePump above
-    // (read by worker_threads.rs:456,502 as part of the same never-reused
-    // worker-bundle preamble); slot-hardened anyway.
+    // HG7: same worker-bundle isolation argument as
+    // __nimbusStartWorkerMessagePump above (read by worker_threads.rs:456,502
+    // as part of the same never-reused worker-bundle preamble); slot-hardened
+    // anyway.
     Object.defineProperty(globalThis, "__nimbusWorkerThreadEnv", {
       value: workerEnv,
       configurable: false,

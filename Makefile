@@ -383,9 +383,11 @@ proof-helpers:
 	bash -n scripts/render-release-oci-image-report.sh
 	bash -n scripts/verify-release-oci-image-report.sh
 	bash -n scripts/nimbus-release-rust-features.sh
-	bash -n scripts/verify-node-full-substrate-realm.sh
+	bash -n scripts/verify-profile-aware-isolate-runtime.sh
+	bash scripts/verify-profile-aware-isolate-runtime.sh
 	bash -n scripts/verify-runtime-execution-classification.sh
 	bash -n scripts/verify-profile-aware-isolate-runtime-crossover.sh
+	python3 -m unittest scripts.test_verify_profile_aware_isolate_runtime_crossover_trace
 	bash -n scripts/verify-release-oci-image-assets.sh
 	bash -n scripts/smoke-release-oci-image.sh
 	bash -n scripts/verify-release-oci-image-helper.sh

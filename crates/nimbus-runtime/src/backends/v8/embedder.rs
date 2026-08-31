@@ -7,10 +7,10 @@
 
 pub(crate) use deno_core::error::JsError;
 pub(crate) use deno_core::{
-    CancelFuture, CancelHandle, CreateRealmOptions, Extension, ExtensionFileSource, JsRealm,
-    JsRuntime, JsRuntimeForSnapshot, ModuleCodeString, ModuleLoadOptions, ModuleLoadReferrer,
-    ModuleLoadResponse, ModuleLoader, ModuleName, ModuleSource, ModuleSourceCode, ModuleSpecifier,
-    ModuleType, OpState, PollEventLoopOptions, RequestedModuleType, ResolutionKind, RuntimeOptions,
+    CancelFuture, CancelHandle, Extension, ExtensionFileSource, JsRuntime, JsRuntimeForSnapshot,
+    ModuleCodeString, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
+    ModuleName, ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState,
+    PollEventLoopOptions, RequestedModuleType, ResolutionKind, RuntimeOptions,
     SharedArrayBufferStore, SourceCodeCacheInfo, SourceMapData, ValidateImportAttributesCb,
     ascii_str_include, extension, op2, resolve_import, scope, serde_v8, v8,
 };

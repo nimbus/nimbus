@@ -469,7 +469,6 @@ pub(crate) async fn translate_commonjs_to_esm(
         Arc::new(NullNodeAnalysisCache),
         cjs_tracker,
         module_export_analyzer,
-        RealSys,
     );
     let translator = LocalCjsTranslator::new(
         Arc::new(CjsModuleExportAnalyzer::new(

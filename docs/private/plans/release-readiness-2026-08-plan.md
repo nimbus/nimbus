@@ -8,9 +8,10 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: keep U2 publication deferred because external writes need explicit
-authorization. Start U3 from exact upstream Deno `v2.9.6`. Audit every carry,
-then replay only the required product contracts and prepare the controlled A/B.
+Next action: record the Nimbus candidate commit that consumes public tags
+`v2.9.6-nimbus.1` and `v150.4.0-nimbus.1`. Repeat the smoke, archive, OCI, and
+higher-memory Linux full-LTO lanes from that commit, then update the release
+verdict.
 
 ## Outcome
 
@@ -63,7 +64,7 @@ After:
 3. Product smoke tests use the candidate build. Use installed releases only
    for explicit upgrade and distribution comparisons.
 4. Tests use disposable data, control, application, and credential roots.
-5. A confirmed defect gets a regression test at its owning seam before it
+5. A confirmed defect gets a regression test at its owning boundary before it
    closes.
 6. Keep the three client mutation paths and all repository architecture
    invariants. A confirmed defect can require an explicit design task.
@@ -99,7 +100,7 @@ renamed, duplicated, or unsupported condition.
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `blocked(exact-candidate replay depends on RRC1; provisional pass)` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `blocked(exact-candidate replay and notarization remain; provisional pass)` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
 | RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `blocked(exact-candidate replay and public apt/COPR proofs remain; provisional pass)` | `proof/release-readiness-2026-08/rrc7-distribution.md` |
-| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol and Opus reviews, and issue the GO or NO-GO report. | `in_progress` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
+| RRC8 | Run final repository gates, repeat critical smoke tests, run Sol-only reviews, and issue the GO or NO-GO report. | `in_progress` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
 ## Tasks
@@ -108,7 +109,7 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: the repository has many independent proofs but no single candidate
   matrix for every advertised release surface.
-- Owning seam and paths: this plan and
+- Owning components and paths: this plan and
   `proof/release-readiness-2026-08/`.
 - Steps:
   1. Pin Nimbus, desktop, macOS, Linux, toolchain, release, and hosted-CI state.
@@ -126,8 +127,8 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: tests cannot find every stale claim, unreachable branch, unsafe
   default, dependency issue, or workflow gap.
-- Owning seam and paths: advertised source map, critical composition roots,
-  manifests, release workflows, install scripts, and desktop security seams.
+- Owning components and paths: advertised source map, critical composition roots,
+  manifests, release workflows, install scripts, and desktop security boundaries.
 - Steps: trace each advertised capability to source and tests. Inspect all
   three mutation paths. Run dependency and secret gates. Compare claims to
   release configuration.
@@ -141,7 +142,7 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: repository tests do not prove that an operator can start and use
   the release candidate as one system.
-- Owning seam and paths: `nimbus-cli`, `nimbus-server`, the operator UI, and
+- Owning components and paths: `nimbus-cli`, `nimbus-server`, the operator UI, and
   core engine routes.
 - Steps: build the release candidate in debug and release forms. Use disposable
   roots. Test CLI discovery, lifecycle, and core data contracts. Use Playwright
@@ -157,7 +158,7 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: the public protocols and example apps can drift while unit tests
   stay green.
-- Owning seam and paths: `scripts/examples-verify-cases.json`, adapter crates,
+- Owning components and paths: `scripts/examples-verify-cases.json`, adapter crates,
   packages, and example applications.
 - Steps: run all nine repository application cases. Exercise each advertised
   adapter with its official client. Use Playwright for browser flows.
@@ -171,7 +172,7 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: release readiness needs live provider, recovery, encryption, backup,
   object, and consistency evidence.
-- Owning seam and paths: `nimbus-storage`, `nimbus-object-storage`,
+- Owning components and paths: `nimbus-storage`, `nimbus-object-storage`,
   `nimbus-blob`, backup commands, encryption commands, and consistency routes.
 - Steps: test embedded providers locally. Use repository fixtures for external
   providers. Test backup, restore, key rotation, and object administration.
@@ -187,8 +188,8 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: workload claims depend on host capabilities that unit tests cannot
   fully model.
-- Owning seam and paths: network, services, sandbox, machine, Compose, node,
-  proxy, and SDK resource seams.
+- Owning components and paths: network, services, sandbox, machine, Compose, node,
+  proxy, and SDK resource boundaries.
 - Steps: test the macOS machine path, test Linux container and libkrun paths on
   `nimbus@minicloud`, verify deny-by-default egress, and test lifecycle cleanup.
 - Acceptance: network control, resource APIs, sandbox backends, machines, and
@@ -202,7 +203,7 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: the separate Electron shell can fail discovery, process lifecycle,
   navigation, recovery, packaging, security, or update behavior.
-- Owning seam and paths: `/Users/jack/src/github.com/nimbus/desktop` and the
+- Owning components and paths: `/Users/jack/src/github.com/nimbus/desktop` and the
   candidate server's discovery and UI routes.
 - Steps: run desktop static and packaged-shell gates. Start the app against a
   disposable candidate server. Operate the Mac app. Test reconnect and error
@@ -218,7 +219,7 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: source correctness does not prove archives, installers, packages,
   images, and upgrade paths.
-- Owning seam and paths: local release workflow inputs and distribution helper
+- Owning components and paths: local release workflow inputs and distribution helper
   scripts. Public channel ownership stays in `distribution-plan.md`.
 - Steps: build candidate archives and packages. Verify archive and license
   layout. Smoke-test the OCI image. Test local install and upgrade flows.
@@ -234,20 +235,21 @@ renamed, duplicated, or unsupported condition.
 
 - Problem: repaired slices need one final integrated result and an independent
   review.
-- Owning seam and paths: both candidate repositories and this proof root.
+- Owning components and paths: both candidate repositories and this proof root.
 - Steps: rerun critical smoke cases and complete gates on macOS and Linux.
-  Update all matrix evidence. Run Sol xhigh and Opus reviews. Write a release
-  verdict.
+  Update all matrix evidence. Run Sol xhigh reviews while the owner restriction
+  applies. Write a release verdict.
 - Acceptance: all 46 matrix conditions pass. Nimbus and desktop gates pass.
   Required host lanes pass. No accepted P0 through P2 review finding remains.
 - Fail-before: the matrix stays red until the last required proof closes.
 - Verification: run the matrix verifier, `make ci`, affected nightly harnesses,
-  desktop checks, Nimbus autoreview, and the independent Opus review.
+  desktop checks, and Nimbus autoreview with Sol. Do not use Opus 5 or Fable
+  until the owner explicitly lifts the restriction.
 
 ### RRC99 Cleanup
 
 - Problem: a merged plan must not remain an active control plane.
-- Owning seam and paths: this plan, its proof root, and the plans index.
+- Owning components and paths: this plan, its proof root, and the plans index.
 - Steps: confirm the final merge, then delete or archive the plan and update the
   index.
 - Acceptance: the plans index has no active entry for this completed campaign.
@@ -269,7 +271,7 @@ branch codex/release-readiness-2026-08. Coordinate desktop fixes in
 confirmed defect requires a change. Chat history is not progress state. Resume
 from the status ledger, execution log, matrix, and git state. If compaction
 happens, continue from those files rather than restarting. Loop: keep one task
-in_progress, test the owning seam, capture fail-before evidence, fix each
+in_progress, test the owning boundary, capture fail-before evidence, fix each
 confirmed defect, run the verification commands, commit the work, write the
 proof file, append the execution log, mark the task terminal with evidence,
 commit the plan update, then advance to the next task. Decide rather than ask.
@@ -375,3 +377,46 @@ are clean, and RRC99 waits only for merge.
 | 2026-08-29 | RRC8 | decision | Independent source review accepted the proposed runtime-strategy lifecycle and kept RRC8 as the current owner. U3 will omit proven realm-only carries, pair the omission with Nimbus consumer cleanup before U4, and complete the exact replay-scaffolding A/B before U5. The lifecycle plan can activate only after terminal U6 evidence and owner approval. No RSL implementation started. |
 | 2026-08-29 | RRC8 | evidence | U1 completed at rusty_v8 `dbb70a973d28cfe8cd6a2ea66d4f3d14fee488f0`. Source-built nextest passes 308 tests across 25 binaries; 13 documentation tests, warning-denied Clippy, formatting, 15 release-tool tests, action syntax, the 44-asset manifest, and the final Sol xhigh review pass. Two review P2 findings closed stale offline binding reuse and mutable release action references. |
 | 2026-08-29 | RRC8 | constraint | The owner prohibited Opus 5 and Fable for review because credits are low. The active Opus process stopped with exit 130. Final V8 acceptance uses the exact-commit Sol review and local gates. U2 push, tag, and publication remain unstarted pending explicit authorization; U3 can continue from its clean worktree. |
+| 2026-08-29 | RRC8 | evidence | U3 now has six clean local Deno commits ending at `e8fffe9029283b5f51111647ce5e2a79eadf5ef2`. The paired Nimbus cleanup removes the rejected fresh-realm product path, fixes guest-visible runtime versions and snapshot parsing, and updates current runtime verifiers. Focused exact-candidate suites and 43 shell-verifier checks pass. Controlled A/B evidence and the Sol-only final review remain. |
+| 2026-08-29 | RRC8 | evidence | The selected candidate crossover passes with a live Node22 anchor: startup snapshot 8.304–8.582 ms versus exact warm pool 2.524–2.631 ms; Web unsnapshotted cache 19.635–19.815 ms versus exact warm pool 1.213–1.259 ms. The controlled old-graph replay A/B finds no Web change, a small favorable Node replay-off result after counterbalancing, and only 16 replay-table bytes in the 14,958,851-byte Node22 blob. |
+| 2026-08-29 | RRC8 | review | The Sol-only Deno branch review found four items. Three were accepted: stale task spawners could cross a warm lease, the public foreground-task drain did not require a live isolate scope, and fork CI did not run the changed Node module integration test. The proposed `deno_kv` test lane was refuted because the crate has zero Rust tests and the changed initializer is already covered by workspace check and carry-crate Clippy. No Opus 5 or Fable review ran. |
+| 2026-08-29 | RRC8 | finding | The local Deno correction generation-fences task spawners, rotates both active handles during reset, binds foreground-task draining to a live mutable `PinScope`, and builds the fork CLI and test server before the Node module integration lane. Full `deno_core` passes 476 tests with 2 declared ignores. Four task-spawner tests, both warm-reset tests, the Node module integration lane, warning-denied core Clippy, and the Nimbus runtime compile pass against the exact local Deno and V8 graph. |
+| 2026-08-29 | RRC8 | review | The required Sol xhigh follow-up reports no actionable P0 through P3 finding in the corrective diff. The Deno release lockfile is restored. U3 remains in progress because the reviewed correction is not yet an exact commit, and U2 publication remains deferred. |
+| 2026-08-29 | RRC8 | finding | The broad Nimbus runtime replay found that the old Locker smoke test still treated raw `UnenteredIsolate` as `Send` and called its now-unsafe constructor without the required contract. The test now uses V8's explicit `SendableUnenteredIsolate` wrapper only for isolated cross-thread smoke coverage. Production Locker runtimes remain thread-affine. |
+| 2026-08-29 | RRC8 | evidence | The corrected Locker suite passes 8 tests. The broad non-Node runtime replay passes 498 tests with 94 declared ignores, plus the generated anchor, Locker integration, and active doctest. The replay also exposed and closed a cross-graph `TempDir::into_path()` warning without raising Deno's dependency floor. Deno helper and binary checks and warning-denied Clippy pass. |
+| 2026-08-29 | RRC8 | review | The Sol-only full Nimbus review reported two items. The P2 crossover finding is accepted because separate greps could mix fields from different JSONL records. The P3 cancellation-test deletion is refuted: the test remains registered and its body is byte-identical to `HEAD`. No Opus 5 or Fable review ran. |
+| 2026-08-29 | RRC8 | finding | The crossover gate now parses JSONL and validates the schema, benchmark group, profile, workload, execution model, pool kind, benchmark ID, strategy label, and actual construction mode on each selected record. Three helper tests pass, including the mixed-row regression. The exact local Deno/V8 graph passes both live Node22 and WebStandard crossover rows. |
+| 2026-08-30 | RRC8 | review | The Sol-only crossover follow-up found three accepted evidence defects: construction mode came from the requested profile, strategy was not a first-class trace field, and the success test did not assert its result. No Opus 5 or Fable review ran. |
+| 2026-08-30 | RRC8 | finding | Successful V8 construction now increments one of two runtime-owned counters after bootstrap finalization. Benchmark traces derive actual mode from those counters, reject absent or mixed modes, and report explicit strategy plus both counts. Five helper tests, focused Node22 and Web construction tests, warning-denied all-target runtime Clippy, and the live local-graph crossover pass. |
+| 2026-08-30 | RRC8 | review | The next Sol-only review found two accepted verifier defects: a reused trace directory could admit stale rows, and an unknown expected mode could pass with zero counters. Each run now gets a unique trace directory, and the validator accepts only the two supported modes. The follow-up found no remaining trace defect. Its only P1 is the known release-order gate: the normal Cargo graph cannot consume unpublished fork revisions. No Opus 5 or Fable review ran. |
+| 2026-08-30 | RRC8 | evidence | The unpublished local graph passes macOS fresh-root product smoke, the 10-step embedded UI Chromium walk, all 9 applications and 37 anchors, and the clean Desktop worktree's 186 unit tests plus 5 packaged Electron tests. The isolated Debian 13.4 x86_64 build on `minicloud.local` passes native product smoke and all 9 applications. |
+| 2026-08-30 | RRC8 | finding | The release replay closed four local defects: generated `.env.local` files no longer invalidate application source-integrity checks; harness source capture fails closed; cargo-deny recognizes the Deno 2.9.6 libuv and bindgen graph; and the lockfile replaces yanked `chacha20` 0.10.0 with 0.10.2. The test-only snapshot fallback diagnostic now states its real cause. |
+| 2026-08-30 | RRC8 | evidence | Full local `make ci` on the unpublished Deno 2.9.6 and V8 150.4 graph exits zero. It passes formatting, warning-denied Clippy, dependency policy, snapshot provenance, 498 focused runtime tests, 7,722 workspace tests, required liveness and protocol campaigns, JavaScript build and typecheck lanes, 846 UI tests, proof helpers, and 60 installer checks. The declared inventory is 94 focused runtime ignores and 111 workspace skips. |
+| 2026-08-30 | RRC8 | review | A Sol xhigh review repeated the known normal-graph P1 and accepted one verifier-coverage P1. U3 restored the old profile verifier name as a compact current-contract aggregator instead of restoring rejected realm checks. The repair also updates stale TFA paths and verifies the compute-owned scaling boundary. The focused gate passes 24 REC checks, 19 tenant-isolation checks, 32 TFA checks, 8 crossover-trace tests, and the rejected-symbol check. No Opus 5 or Fable review ran. |
+| 2026-08-30 | RRC8 | review | The next Sol xhigh review accepted two more verifier defects. The completion gate validated only synthetic trace fixtures, and the parser could accept an appended prior measurement series. The gate now validates the saved real Node and Web traces and rejects duplicate or non-increasing measured-iteration rows for each pool kind. No Opus 5 or Fable review ran. |
+| 2026-08-30 | RRC8 | evidence | A fresh 10-sample exact-graph run wrote 16-record Node and Web JSONL traces into the RRC8 artifact directory. Both traces pass exact selector, strategy, construction-mode, counter, and measurement-order validation. The compact completion gate and its 8 validator tests pass. |
+| 2026-08-30 | RRC8 | review | A later Sol xhigh review repeated the two known normal-graph P1 reports and accepted one trace-identity P1. Increasing iteration counts could not prove that selected rows came from one benchmark generation. No Opus 5 or Fable review ran. |
+| 2026-08-30 | RRC8 | finding | PIR0 crossover traces now use schema v3 and carry one generated run ID through both benchmark processes and strategies. Validation rejects an empty identity, mixed generations, and non-increasing samples. A fresh exact-graph replay, 8 regression tests, the aggregate runtime-strategy gate, and all proof helpers pass. |
+| 2026-08-30 | RRC8 | review | The focused Sol follow-up accepted one cross-file identity defect. Separate validator processes could accept a consistent Node trace and a consistent Web trace from different generations. It repeated the known normal-graph P1. No Opus 5 or Fable review ran. |
+| 2026-08-30 | RRC8 | finding | Live validation now supplies the generated run ID to both trace checks. Durable closeout validates the Node artifact, extracts its identity, and requires the Web artifact to match. The aggregate gate, 8 regression tests, and all proof helpers pass. |
+| 2026-08-30 | RRC8 | review | The final Sol xhigh follow-up reports no remaining trace-integrity defect. Its two P1 findings are duplicate reports of the known unpublished normal-graph blocker. No Opus 5 or Fable review ran. |
+| 2026-08-30 | RRC8 | blocked | The exact unpublished Linux release build completed all dependencies but made only 11 minutes 29 seconds of CPU progress during 9 hours 57 minutes of final full-LTO linking on the 8 GiB `minicloud.local` host. The linker retained approximately 6.8 GiB and waited on swapped pages. The attempt was stopped after a bounded health check. Temporary swap and kernel tuning were fully reverted, and the 4.6 GiB compilation cache remains. No release binary was produced. The exact release lane needs a higher-memory runner after the immutable graph exists. |
+| 2026-08-30 | RRC8 | resumed | The owner authorized the exact fork commits, immutable fork publication, Nimbus repin, and a higher-memory hosted Linux build. The Opus 5 and Fable restriction remains. |
+| 2026-08-30 | RRC8 | checkpoint | Deno correction commit `8d48dc4a68df8e083ed4b17855440b1df6405620` records the reviewed nine-file warm-reset repair. The rusty_v8 versioned branch `nimbus/v150.4.0` now points at reviewed commit `dbb70a973d28cfe8cd6a2ea66d4f3d14fee488f0`; branch workflows `33340050199` and `33340050226` are pending. |
+| 2026-08-30 | RRC8 | finding | The first rusty_v8 branch run found that both hosted source-build workflows lacked the V8 Linux `glib-2.0` development prerequisite. Commit `0990fe0da72431f86bcebfd2dc9a5145dd7fcc00` installs `libglib2.0-dev` in both workflows. Actionlint, 15 release-tool tests, tag validation, and the exact-commit Sol xhigh review pass. |
+| 2026-08-30 | RRC8 | cleanup | Removed 98.7 GiB of ignored, rebuildable Cargo artifacts from the inactive SA6 and IMV worktrees after confirming that no process used either target. Free macOS data-volume space increased from 11 GiB to 109 GiB. Source changes, proofs, and all active Nimbus, Deno, and rusty_v8 caches remain intact. |
+| 2026-08-30 | RRC8 | finding | Hosted run `33340402232` reached the test suite and exposed three Rust 1.91 compile-fail snapshots generated with `rust-src`; Linux lacked that declared component and omitted only standard-library source excerpts. Commit `2eed57dce3eb88a2937318276481d92095057580` declares `rust-src`. All 20 compile-fail cases, formatting, release tools, tag validation, action lint, whitespace, and the Sol-only exact-commit review pass. Superseded runs were cancelled. Replacement runs are `33342584853` and `33342584858`. |
+| 2026-08-30 | RRC8 | finding | Run `33342584858` passed 305 of 306 native Windows ARM64 tests. The checksum test then caught a missing-sidecar panic, and Windows ARM64 aborted during unwind. Commit `62a8eddbfc3fa1f4d6a8554c87eb58cc898cbfe5` exposes the same fail-closed checks as `Result` helpers and tests errors without unwind. The source suite passes 306 tests with 2 skips, and six build-script tests pass. Focused Clippy, formatting, 15 release-tool tests, action lint, whitespace, and Sol review pass. RRC8 cancelled the superseded runs and started replacements `33351121161` and `33351121128`. |
+| 2026-08-31 | RRC8 | finding | Replacement run `33351121128` proved the corrected native Windows ARM64 lane. Two AArch64 GNU jobs then reached the inherited matrix's exact 180-minute limit during source build. They reported cancellation, not a test failure. Commit `597ebc820d8de0039ec10b84f9f7adc0645c6db9` preserves upstream's 180-minute limit and gives Nimbus public runners the existing 360-minute cold-build allowance. Action lint, formatting, 15 release-tool tests, whitespace, strict comment lint, and Sol review pass. RRC8 cancelled the superseded runs and started replacements `33361207769` and `33361207758`. |
+| 2026-08-31 | RRC8 | finding | Run `33361207758` then hit a GitHub transport reset while it downloaded `sccache`. The one-attempt download failed before any build, and branch fail-fast cancelled 27 unrelated matrix jobs. Commit `961a76d0cee88efdecfa9224c519fd153c404b51` adds bounded retries for that immutable public download and disables fail-fast only on Nimbus versioned branches. Upstream branch behavior remains unchanged. Action lint, formatting, 15 release-tool tests, whitespace, strict comment lint, and Sol review pass. Exact-head replacements are `33361461904` and `33361461885`. |
+| 2026-08-31 | RRC8 | evidence | Exact-head branch workflows passed at `961a76d0cee88efdecfa9224c519fd153c404b51`: inherited CI run `33361461904` passed 39 of 39 jobs, and asset run `33361461885` passed 9 of 9 jobs. Annotated tag object `39585d3144a61d16067bd13c2a59463b5831825f` peels to that commit. The tag-only push started release-asset run `33376771045` and inherited CI run `33376770979`. |
+| 2026-08-31 | RRC8 | finding | Cold annotated-tag runs exposed runner-only failures without a source change. Asset run `33376771045` built AArch64 GNU, then QEMU raised `SIGILL` in `clear_kept_objects`; the exact branch asset job passed all four configurations. Inherited run `33376770979` reached its six-hour limit in two AArch64 variants; their paired variants and all exact branch variants passed. Each workflow has one macOS job still active. After they finish, rerun only the failed or timed-out jobs on the same tag and commit. |
+| 2026-08-31 | RRC8 | evidence | Same-commit reruns closed the cold-runner failures. Inherited tag run `33376770979` passed 39 of 39 jobs. Asset and publication run `33376771045` passed all seven target jobs, matrix derivation, and publication. Public release `v150.4.0-nimbus.1` is non-draft and non-prerelease. Its annotated tag peels to `961a76d0cee88efdecfa9224c519fd153c404b51`. A fresh download passed the repository verifier with 44 nonempty payloads and 44 checksum sidecars. The fork default branch is `nimbus/v150.4.0`. U2 is complete, and U4 starts with the Deno tag repin. |
+| 2026-08-31 | RRC8 | finding | U4 found that the first AES-GCM short-tag policy treated Node 20 and 22 like Node 24 and consumed the one-shot warning before input validation. Current Node source requires Node 20 and 22 to warn only with `--pending-deprecation`, Node 24 to warn by default, and Node 26 to deny. Deno commit `15b0156a3033bcb327b92a4200355aca82ac23be` exposes the three-state policy and validates before warning. Nimbus maps each target to that policy and has focused regressions for silent Node 20 operation and warning order. |
+| 2026-08-31 | RRC8 | evidence | The immutable V8 repin is Deno commit `96832ab2dbbe711842d13d0d0aeaf88f8387a5b3`. Locked workspace check, formatting, warning-denied carry Clippy, 183 focused carry tests, all 1,517 tests in the Node AES-GCM file, and the focused Nimbus Node 20 and Node 24 regressions pass. The exact Sol xhigh follow-up reports no accepted or actionable product-code finding. No Opus 5 or Fable review ran. |
+| 2026-08-31 | RRC8 | finding | Hosted Deno runs found three workflow-only gaps. Isolated `deno_node`, `deno_fetch`, `deno_websocket`, and `deno_runtime` tests did not select a V8 backend. The Node module test also requires the pinned `tests/util/std` submodule. The workflow now enables `deno_core/default`, initializes only that depth-one fixture, and runs both changed Node integration cases. All corrected commands and three focused Sol-only reviews pass. |
+| 2026-08-31 | RRC8 | evidence | Exact Deno branch run `33442674740` passed every step at `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3`. Annotated tag object `4d8b978255e8ca9a78d040531ee764d695fd3bcf` peels to that commit. Tag run `33444743536` is in progress. |
+| 2026-08-31 | RRC8 | evidence | Deno tag run `33444743536` passed at `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3`. Public release `v2.9.6-nimbus.1` is non-draft and non-prerelease, and the default branch is `nimbus/v2.9.6`. U5 is complete. |
+| 2026-08-31 | RRC8 | evidence | U6 repinned the normal Nimbus graph to public Deno `v2.9.6-nimbus.1` and rusty_v8 `v150.4.0-nimbus.1`. Cargo resolves 41 Deno packages and V8 to the exact published commits. Fork provenance, policy, standardization, the all-target runtime check, 499 canonical runtime tests, the embedded anchor, eight Locker tests, and the active doctest pass. Full repository and artifact replay remain in progress. |
+| 2026-08-31 | RRC8 | finding | The first public-tag CI replay found two release-graph defects. Cargo deny rejected Wasmtime 46.0.2 for RUSTSEC-2026-0268 and RUSTSEC-2026-0269; the lock now uses fixed Wasmtime 46.0.3 and Cranelift 0.133.3, and 17 focused Wasmtime tests pass. The workspace V8 asset override and digest manifest still named 149.4.0; both now bind `v150.4.0-nimbus.1` and its exact published Linux x86_64 asset digests. |
+| 2026-08-31 | RRC8 | evidence | Full `make ci` passes without a local V8 override on the public-tag graph. It passes formatting, warning-denied Clippy, dependency policy, live Node22 anchor provenance, 499 canonical runtime tests with 94 declared ignores, 7,722 workspace tests with 111 declared skips, two active workspace doctests, required liveness and protocol campaigns, JavaScript builds and typechecks, 846 UI tests, proof helpers, and 60 installer checks. |

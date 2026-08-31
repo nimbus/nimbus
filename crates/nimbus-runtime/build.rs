@@ -86,8 +86,8 @@ fn main() {
 
     // The lib `include_bytes!`es one of two embedded NodeFull(Node22) anchor snapshots, selected by
     // the `v8-pointer-compression` cfg (`.pc.bin` = pointer-compressed = release; `.bin` = feature
-    // off = dev/test). The REAL blobs are produced by `make build-node22-anchor-snapshot` (which runs
-    // the builder binary once per config) and committed. So a fresh checkout / a bootstrap build
+    // off = dev/test). The real blobs are produced by `make build-node22-anchor-snapshot` (which runs
+    // the builder binary once per config) and remain gitignored. A fresh checkout or bootstrap build
     // compiles for EITHER config, write an EMPTY placeholder for BOTH paths when absent — an empty
     // blob fails the provenance guard at runtime and falls back to a runtime build (slow-but-correct)
     // until the blob is generated. Never overwrite a real blob.

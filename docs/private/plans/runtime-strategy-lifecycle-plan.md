@@ -45,9 +45,10 @@ After:
   schema, experiment archive, and promotion or removal workflow.
 - Owns: separate product runtime choices and diagnostic choices in
   `nimbus-runtime` and its benchmark harness.
-- Owns: the audit and removal of `WarmContextRecycle` product code if the
-  promotion audit confirms that no supported product path selects it.
-- Owns: audit and classify Deno realm-replay carries and Nimbus snapshot data.
+- Owns: the post-RRC8 audit that confirms `WarmContextRecycle` is absent from
+  product policy and execution, and closes any post-handoff residual.
+- Owns: consume the RRC8 realm-carry disposition, audit its durable archive,
+  and classify future Deno or V8 strategy carries.
 - Owns: durable contributor documentation, a project runtime-strategy skill,
   and narrow source comments at stable concept seams.
 - Coordinates with: `release-readiness-2026-08-plan.md`, which owns the active
@@ -76,6 +77,7 @@ After:
 4. Source and tests win when a historical label conflicts with current
    construction behavior.
 5. The owner must resolve any overlap before this plan becomes `active`.
+6. Use only Sol for review while the owner's Opus 5 and Fable restriction is active.
 
 ## Activation Gate
 
@@ -168,10 +170,10 @@ fixtures map these concepts without copying V8-only API names.
 |---|---|---|
 | RSF1 | The user-provided commit `f5f81336688dbb6e1994b76ab256f72d4f1362c7` is not a pre-PIR runtime baseline. | It is dated 2026-08-21. `WarmContextRecycle` entered in `0d934c5b9` on 2026-06-21. The Web snapshot restriction entered in `53ad5e25c` on 2026-06-27. RSL0 must use `3ce860f01`, `0d934c5b9`, `53ad5e25c`, `f5f813366`, and the activated candidate as distinct anchors. |
 | RSF2 | The principal runtime-strategy files have no diff from `f5f813366` to this draft baseline. | `git diff --quiet f5f813366..304a2e677 --` over `limits/axes.rs`, runtime construction and invocation, and `runtime_pool_modes.rs` exits 0. RSL0 must not attribute an unmeasured post-`f5f813366` regression to those files. |
-| RSF3 | `RuntimePoolKind::WarmContextRecycle` is public, serialize-only Rust policy data with product execution branches. No CLI, package, server, or compute selector was found. | Both Nimbus facade crates re-export the type. Runtime code branches in execution planning, the worker loop, invocation, and pooling. Server and UI surfaces report the value. RSL4 must complete the caller and serialization audit before removal. |
+| RSF3 | At the draft baseline, `RuntimePoolKind::WarmContextRecycle` is public, serialize-only Rust policy data with product execution branches. No CLI, package, server, or compute selector was found. | RRC8 U3 completed the caller audit and removes the value and product branches in its paired candidate. RSL4 must verify the final post-U6 graph instead of repeating the removal. |
 | RSF4 | WebStandard currently builds without a startup snapshot. Node targets use a startup snapshot. | `V8RuntimeConstructionMode::for_compatibility_target` in `backends/v8/startup.rs` owns the mapping. Benchmark output must record this actual mode. |
 | RSF5 | Current proof rejects `WarmContextRecycle` as a default. | PIR2 records Web rows at 2.23 to 2.50 times its labelled startup-snapshot lane. NFR6 records Node rows at 5.38 to 10.01 times startup snapshots and 13.35 to 16.13 times exact warm pools. The Web label does not prove snapshot use. |
-| RSF6 | Realm replay affects Nimbus snapshot companion data and Deno runtime construction. | `backends/v8/startup.rs` serializes replay source tables. The Deno fork keeps replay sources in `libs/core/runtime/jsruntime.rs`. No exact ordinary-runtime A/B without this scaffolding exists in the current proof. RSL8 must measure or report this cost as unknown. |
+| RSF6 | Realm replay affects Nimbus snapshot companion data and Deno runtime construction. | RRC8's exact old-graph A/B found no detected Web construction change, a small favorable Node replay-off result after counterbalancing, and 16 encoded replay-table bytes in the Node22 blob. RSL8 must reproduce this study through the permanent lab before it treats the result as a cross-host performance claim. |
 | RSF7 | The generic lazy-ESM termination repair can outlive realm recycle. | The Deno carry `core: avoid lazy esm abort on termination` has a separate failure contract. RSL7 must audit it independently and must not remove it with realm-only carries. |
 | RSF8 | The Deno bump ledger is stale relative to this draft baseline. | The ledger names Deno 2.9.1 while `Cargo.toml` names `v2.9.3-nimbus.2`. RRC8 is already replacing both. This plan must consume RRC8's final ledger instead of repairing the active uplift in parallel. |
 
@@ -182,7 +184,7 @@ fixtures map these concepts without copying V8-only API names.
 | RSL-D1 | Keep exact-key `WarmPool` as the retained V8 product strategy. | PIR warm-hit, fanout, and isolation evidence. | A runtime-version or workload change moves it off the Pareto frontier. |
 | RSL-D2 | Keep NodeFull startup snapshots and WebStandard unsnapshotted construction under the shared cage. | Node cold-start evidence and the cross-profile cage-crash proof. | A separate cage design or upstream heap change passes all hard gates. |
 | RSL-D3 | Keep the shared read-only heap and pointer compression on proven targets. | Existing density evidence and current anchor design. | Controlled density evidence shows that cost exceeds the memory benefit. |
-| RSL-D4 | Remove `WarmContextRecycle` from product policy and product execution after the archive can reproduce it. | It is non-default, measured slower, and adds realm-specific fork and snapshot seams. | New Deno/V8 behavior or a new workload predicts a Pareto win. |
+| RSL-D4 | Accept RRC8's removal of `WarmContextRecycle` from product policy and execution, and preserve its exact old graph in the experiment archive. | It is non-default, measured slower, and adds realm-specific fork and snapshot seams. | New Deno/V8 behavior or a new workload predicts a Pareto win. |
 | RSL-D5 | Preserve rejected strategies as lab metadata and exact patches, not dormant product branches. | This keeps future comparison possible without permanent product cost. | A strategy becomes a supported product winner through the promotion gate. |
 
 RRC8 timing decision: U3 omits realm-only carries during the untouched 2.9.6
@@ -199,9 +201,9 @@ and completes the A/B before U5. A supported caller reopens this decision.
 | RSL3 | Add the project skill and narrow contributor routing for the runtime-strategy workflow. | `todo` | |
 | RSL4 | Audit current product strategies, callers, serialized surfaces, snapshots, and every Deno and V8 carry. | `todo` | |
 | RSL5 | Separate diagnostic strategy definitions from product runtime policy and preserve exact experiment recipes. | `todo` | |
-| RSL6 | Remove confirmed `WarmContextRecycle` Nimbus product code and realm-only verifier obligations. | `todo` | |
-| RSL7 | Prepare the realm-carry cleanup as an unpublished Deno candidate and retain independent repairs. | `todo` | |
-| RSL8 | Run controlled construction studies, accept a verdict, then publish and repin the fork candidate. | `todo` | |
+| RSL6 | Audit the RRC8 Nimbus realm-recycle cleanup and close any post-handoff residual. | `todo` | |
+| RSL7 | Audit the immutable post-RRC8 fork carries, removal triggers, and rejected-experiment archive. | `todo` | |
+| RSL8 | Reproduce the controlled construction studies in the permanent lab and accept a lifecycle verdict. | `todo` | |
 | RSL9 | Run final repository gates, independent reviews, and the completion audit. | `todo` | |
 | RSL99 | Clean up this plan after the final pull request merges. | `todo` | |
 
@@ -317,9 +319,13 @@ and completes the A/B before U5. A supported caller reopens this decision.
   `WarmContextRecycle`.
 - Fail-before: retain the pre-audit inventory and each initial mismatch.
 - Verification: run `cargo test -p nimbus-runtime`,
-  `bash scripts/verify-profile-aware-isolate-runtime.sh`,
-  `bash scripts/verify-node-full-substrate-realm.sh`, `bash
-  scripts/verify-runtime-execution-classification.sh`, and the RSL verifier.
+  `make verify-profile-aware-runtime-crossover`, `bash
+  scripts/verify-profile-aware-isolate-runtime.sh`, `bash
+  scripts/verify-runtime-execution-classification.sh`, `bash
+  scripts/verify-runtime-tenant-isolation.sh`, and the RSL verifier. The
+  compatibility-named profile verifier aggregates current contracts. The
+  removed NodeFull realm verifier remains archived evidence, not a post-U6
+  gate.
 
 ### RSL5 Product And Lab Type Separation
 
@@ -335,85 +341,87 @@ and completes the A/B before U5. A supported caller reopens this decision.
   4. Reject diagnostic strategy names in product configuration and diagnostics.
 - Acceptance: product policy cannot select a lab-only candidate. The lab can
   still locate and reproduce its exact historical implementation.
-- Fail-before: a test proves that the public Rust policy currently serializes
-  or selects the rejected candidate.
+- Fail-before: an old-graph fixture proves the public Rust policy selected or
+  serialized the rejected candidate before RRC8 removed it.
 - Verification: run `cargo test -p nimbus-runtime limits`,
   `cargo test -p nimbus-compute`, `cargo bench -p nimbus-runtime --bench
   runtime_pool_modes --no-run`, and the RSL verifier.
 
-### RSL6 Nimbus Realm-Recycle Cleanup
+### RSL6 Nimbus Realm-Recycle Cleanup Closure
 
-- Problem: confirmed realm-recycle product branches, state, and verifiers add
-  code and fork coupling after the strategy lost promotion.
+- Problem: RRC8 removes realm-recycle product branches before activation. The
+  lifecycle needs a closure audit so no residual or reintroduction stays live.
 - Owning seam and paths: `nimbus-runtime` invocation, worker, V8 snapshot,
   metrics, tests, benches, and runtime verifier scripts.
 - Steps:
-  1. Remove the product fresh-realm invocation and lease path.
-  2. Remove replay companion data only when RSL4 proves no remaining consumer.
-  3. Delete realm-only metrics, tests, and verifier requirements.
+  1. Compare the activated source with the exact RRC8 cleanup and archive.
+  2. Confirm no realm-recycle residual remains in product policy, invocation,
+     replay data, metrics, tests, or verifier obligations.
+  3. Close a post-handoff residual in Nimbus if RSL4 finds one.
   4. Keep retained-lazy-source behavior and all independent termination fixes.
-  5. Add structural tests that reject reintroduction on the product path.
+  5. Keep structural tests that reject reintroduction on the product path.
 - Acceptance: `rg WarmContextRecycle crates/nimbus-runtime/src` finds only an
   approved historical or rejection reference, or finds no match.
 - Acceptance: WebStandard unsnapshotted construction, Node startup snapshots,
   warm-pool reuse, cancellation, teardown, authority isolation, and cage tests
   stay green.
-- Fail-before: the structural test detects the current product branches.
+- Fail-before: the RRC8 archive and pre-cleanup source retain the removed
+  product branches. A structural mutation proves the current gate rejects them.
 - Verification: run `cargo test -p nimbus-runtime`, `make
-  test-rust-runtime-cage`, all three existing runtime verifier scripts named in
-  RSL4, and the RSL verifier.
+  test-rust-runtime-cage`, the three current runtime gates named in RSL4, and
+  the RSL verifier.
 
-### RSL7 Deno Realm-Carry Cleanup Candidate
+### RSL7 Post-RRC8 Fork Carry And Archive Audit
 
-- Problem: the Deno fork must not keep realm-only APIs after Nimbus removes the
-  last product consumer.
-- Owning seam and paths: the dedicated Deno cleanup worktree, its fork ledger,
-  and the exact archived experiment patch.
+- Problem: RRC8 publishes Deno 2.9.6 without realm-only carries. This plan must
+  verify that graph without a second release or loss of the rejected experiment.
+- Owning seam and paths: the post-RRC8 fork ledger, immutable fork references,
+  and the exact archived experiment recipe.
 - Steps:
-  1. Start from the exact post-RRC8 upstream and Nimbus fork tags.
-  2. Remove only carries that RSL4 classifies as realm-only.
+  1. Pin the exact post-RRC8 upstream and Nimbus fork tags.
+  2. Confirm that the released fork has no Nimbus realm-only API or replay
+     construction state.
   3. Audit lazy-ESM termination, Locker, egress, heap, TCP, and CI carries
      independently.
-  4. Run fork and Nimbus gates against the unpublished candidate.
-  5. Preserve the candidate commit and exact experiment patch for RSL8.
+  4. Verify that each retained carry has a consumer, proof, and removal trigger.
+  5. Reconstruct the rejected strategy in a detached experiment worktree.
 - Acceptance: Deno exposes no Nimbus-only realm API without a current consumer.
   Every retained carry has a proof and a removal trigger.
-- Acceptance: no Deno tag, release, or Nimbus repin exists for this candidate
-  before the RSL8 verdict.
-- Fail-before: the carry audit identifies each current realm-only commit and its
+- Acceptance: RSL7 does not edit, tag, release, or repin either product graph.
+  RRC8's immutable graph stays the product source of truth.
+- Fail-before: the archive identifies each pre-cleanup realm-only commit and its
   Nimbus consumer.
-- Verification: run the unpublished-candidate commands in the post-RRC8 fork
-  ledger, `cargo test -p nimbus-runtime`, `make test-rust-runtime-cage`, and the
-  RSL verifier.
+- Verification: run the immutable-reference and fork-policy commands from the
+  terminal RRC8 ledger, `cargo test -p nimbus-runtime`, `make
+  test-rust-runtime-cage`, and the RSL verifier.
 
-### RSL8 Construction Truth, Controlled A/B, And Fork Repin
+### RSL8 Construction Truth And Controlled Lab Reproduction
 
 - Problem: an architectural decision needs measurements that distinguish pool
   policy, actual construction, runtime version, and shared-heap behavior.
 - Owning seam and paths: runtime traces, benchmark schema, uplift proof, and
   architecture decision records.
 - Steps:
-  1. Run the same admissible workloads on the pre-uplift and post-uplift
-     toolchains with the same build flags and machine controls.
-  2. Compare shared-heap on and off only on supported isolated builds.
-  3. Compare Node snapshot and unsnapshotted cold construction.
-  4. Measure ordinary construction and snapshot size with and without removable
+  1. Reproduce replay-on and replay-off on the archived exact graph and controls.
+  2. Run the same admissible workloads on the exact post-RRC8 graph.
+  3. Compare shared-heap on and off only on supported isolated builds.
+  4. Compare Node snapshot and unsnapshotted cold construction.
+  5. Measure ordinary construction and snapshot size with and without removable
      replay scaffolding.
-  5. Write raw data, statistical summaries, environmental variance, and a
+  6. Write raw data, statistical summaries, environmental variance, and a
      separate verdict.
-  6. If the verdict accepts cleanup, review, publish, repin, and verify the
-     immutable fork through the repository workflow.
+  7. Ratify or revise the lifecycle decision. Do not change the RRC8 product
+     fork as part of this reproduction.
 - Acceptance: every result identifies actual construction mode. No Web row
   calls itself snapshotted when the selector used `Unsnapshotted`.
 - Acceptance: the final product set satisfies every hard gate and stays on the
   measured Pareto frontier for its workload class.
-- Acceptance: an accepted fork resolves published tags and exact lockfile SHAs.
-  It has no local path or unpublished revision.
+- Acceptance: the consumed RRC8 graph resolves published tags and exact
+  lockfile SHAs. It has no local path or unpublished revision.
 - Fail-before: schema fixtures reject the old ambiguous label and incomplete
   environment data.
-- Verification: run the lab command with its fixed manifest and the fork
-  release commands. Then run both fork policy scripts, `make
-  verify-profile-aware-runtime-crossover`, and the RSL verifier.
+- Verification: run the lab command with its fixed manifest, both fork policy
+  scripts, `make verify-profile-aware-runtime-crossover`, and the RSL verifier.
 
 ### RSL9 Completion Audit
 
@@ -423,9 +431,9 @@ and completes the A/B before U5. A supported caller reopens this decision.
   complete proof root.
 - Steps:
   1. Run focused and full repository gates.
-  2. Run the configured Nimbus pre-PR autoreview after final commits.
-  3. Request an independent cross-lab review of code, docs, results, and fork
-     carries.
+  2. Run the configured Sol-only Nimbus pre-PR autoreview after final commits.
+  3. Run an independent allowed-model review of code, docs, results, and fork
+     carries. Do not use Opus 5 or Fable unless the owner lifts the restriction.
   4. Reproduce one product winner and one archived rejected experiment from
      their manifests.
   5. Issue the completion verdict and route all residual work.
@@ -496,3 +504,4 @@ Append rows at the end. This section stays last.
 |---|---|---|---|
 | 2026-08-29 | meta | Authored the deferred draft from a source and history audit. | Baseline `304a2e677`; no implementation started and no active-plan routing changed. |
 | 2026-08-29 | meta | Completed an independent review and promoted the corrected plan to proposed. | `proof/runtime-strategy-lifecycle/draft-plan-audit.md`; RRC8 keeps fork ownership and no RSL implementation started. |
+| 2026-08-30 | meta | Corrected the post-U6 fork ownership and verification workflow. | RRC8 owns realm omission, publication, and repin. RSL7 and RSL8 only audit and reproduce the immutable result. Sol-only review restriction recorded; no RSL implementation started. |

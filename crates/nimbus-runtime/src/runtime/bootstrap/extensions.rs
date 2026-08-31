@@ -281,6 +281,7 @@ impl NodeBootstrapExtensionSlot {
                 )),
                 context.fs.clone(),
                 deno_node::HeapSnapshotNearHeapLimitPolicy::Deny,
+                aes_gcm_implicit_short_tag_policy(context.limits.compatibility_target),
             ),
             Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
         }
@@ -333,6 +334,25 @@ impl NodeBootstrapExtensionSlot {
             Self::NodeSqlite => "node_sqlite",
             Self::Node => "node",
             Self::NodeRuntimeBootstrap => "node_runtime_bootstrap",
+        }
+    }
+}
+
+fn aes_gcm_implicit_short_tag_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_node::AesGcmImplicitShortTagPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            deno_node::AesGcmImplicitShortTagPolicy::AllowPendingDeprecation
+        }
+        RuntimeCompatibilityTarget::Node24 => {
+            deno_node::AesGcmImplicitShortTagPolicy::WarnDeprecated
+        }
+        RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::AesGcmImplicitShortTagPolicy::Deny
         }
     }
 }
@@ -641,6 +661,27 @@ mod tests {
         assert_eq!(
             egress_transport_label(deno_fetch::EgressGatewayTransport::WebSocket),
             "WebSocket"
+        );
+    }
+
+    #[test]
+    fn node_gcm_implicit_short_tag_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+        ] {
+            assert_eq!(
+                aes_gcm_implicit_short_tag_policy(target),
+                deno_node::AesGcmImplicitShortTagPolicy::AllowPendingDeprecation
+            );
+        }
+        assert_eq!(
+            aes_gcm_implicit_short_tag_policy(RuntimeCompatibilityTarget::Node24),
+            deno_node::AesGcmImplicitShortTagPolicy::WarnDeprecated
+        );
+        assert_eq!(
+            aes_gcm_implicit_short_tag_policy(RuntimeCompatibilityTarget::Node26),
+            deno_node::AesGcmImplicitShortTagPolicy::Deny
         );
     }
 }

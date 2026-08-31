@@ -452,7 +452,7 @@ jobs:
           github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
-      - name: Run PIR0/PIR2 crossover smoke benches
+      - name: Run selected runtime-strategy crossover smoke benches
         env:
           NIMBUS_PIR_CROSSOVER_SAMPLE_SIZE: "10"
           NIMBUS_PIR_CROSSOVER_MEASUREMENT_TIME: "1"
@@ -2564,7 +2564,8 @@ jobs:
           bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
           bash -n scripts/verify-bun-jsc-release-assets.sh
           bash -n scripts/verify-bun-jsc-release-assets-helper.sh
-          bash -n scripts/verify-node-full-substrate-realm.sh
+          bash -n scripts/verify-profile-aware-isolate-runtime.sh
+          bash -n scripts/verify-tenant-function-autoscaling.sh
           bash -n scripts/verify-runtime-execution-classification.sh
           bash -n scripts/verify-profile-aware-isolate-runtime-crossover.sh
           bash -n scripts/verify-node-release-train.sh

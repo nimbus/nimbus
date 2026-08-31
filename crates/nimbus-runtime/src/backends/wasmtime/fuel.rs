@@ -351,7 +351,6 @@ impl CooperativeBackendDriver for WasmtimeFuelDriver {
             }
             RuntimePoolKind::StartupSnapshotCache
             | RuntimePoolKind::WarmPool
-            | RuntimePoolKind::WarmContextRecycle
             | RuntimePoolKind::BunJscTrustedRetained
             | RuntimePoolKind::BunJscFreshDiscard => {
                 unreachable!("non-Wasmtime pool kinds are rejected before Wasmtime invocation")

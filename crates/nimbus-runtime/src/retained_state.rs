@@ -751,7 +751,6 @@ pub(crate) fn validate_retained_state_admission(
     if matches!(
         policy.limits().runtime_pool_kind,
         RuntimePoolKind::WarmPool
-            | RuntimePoolKind::WarmContextRecycle
             | RuntimePoolKind::RetainedStorePool
             | RuntimePoolKind::BunJscTrustedRetained
     ) {

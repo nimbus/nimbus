@@ -2478,6 +2478,74 @@ assert.strictEqual(typeof common.isInsideDirWithUnusualChars, 'boolean');
     .expect("node_compat common fixture platform booleans should execute");
 }
 
+#[test]
+fn node20_gcm_implicit_short_tag_is_silent_without_pending_deprecation() {
+    execute_upstream_node_compat_test_with_extra_files(
+        "test/parallel/test-nimbus-crypto-gcm-implicit-short-tag-silent.js",
+        r#"'use strict';
+
+const assert = require('assert');
+const { createDecipheriv } = require('crypto');
+
+let dep0182Warnings = 0;
+process.on('warning', (warning) => {
+  if (warning.code === 'DEP0182') dep0182Warnings++;
+});
+
+createDecipheriv('aes-128-gcm', Buffer.alloc(16), Buffer.alloc(12))
+  .setAuthTag(Buffer.alloc(12));
+
+setImmediate(() => assert.strictEqual(dep0182Warnings, 0));
+"#,
+        &[],
+        false,
+        Some(NodeCompatLane::Node20),
+        None,
+        None,
+    )
+    .expect("Node20 should accept an implicit short GCM tag without a default warning");
+}
+
+#[test]
+fn node24_invalid_gcm_tag_does_not_consume_implicit_short_tag_warning() {
+    execute_upstream_node_compat_test_with_extra_files(
+        "test/parallel/test-nimbus-crypto-gcm-invalid-tag-warning-order.js",
+        r#"'use strict';
+
+const assert = require('assert');
+const { createDecipheriv } = require('crypto');
+
+let dep0182Warnings = 0;
+process.on('warning', (warning) => {
+  if (warning.code === 'DEP0182') dep0182Warnings++;
+});
+
+const invalid = createDecipheriv(
+  'aes-128-gcm',
+  Buffer.alloc(16),
+  Buffer.alloc(12),
+);
+assert.throws(
+  () => invalid.setAuthTag(Buffer.alloc(17)),
+  /Invalid authentication tag length: 17/,
+);
+
+setImmediate(() => {
+  assert.strictEqual(dep0182Warnings, 0);
+  createDecipheriv('aes-128-gcm', Buffer.alloc(16), Buffer.alloc(12))
+    .setAuthTag(Buffer.alloc(12));
+  setImmediate(() => assert.strictEqual(dep0182Warnings, 1));
+});
+"#,
+        &[],
+        false,
+        Some(NodeCompatLane::Node24),
+        None,
+        None,
+    )
+    .expect("Node24 should warn only after accepting a valid implicit short GCM tag");
+}
+
 fn execute_manifested_node_compat_test(
     test_relative_path: &str,
     fixture_source_path: &str,

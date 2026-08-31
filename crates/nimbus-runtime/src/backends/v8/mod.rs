@@ -33,7 +33,7 @@ pub(crate) use self::startup::{
     create_v8_startup_snapshot, try_embedded_node22_anchor_snapshot,
 };
 pub use self::startup::{
-    build_embeddable_node22_snapshot_blob, check_committed_embedded_anchor_snapshot,
+    build_embeddable_node22_snapshot_blob, check_generated_embedded_anchor_snapshot,
 };
 pub(crate) use self::startup_key::RuntimeStartupSnapshotKey;
 pub(crate) use self::warm_pool::{ReusableV8Runtime, V8WorkerRuntimePool};

@@ -1006,12 +1006,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "az"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be5eb007b7cacc6c660343e96f650fedf4b5a77512399eb952ca6642cf8d13f7"
-
-[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1090,12 +1084,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "bincode"
-version = "1.3.3"
+name = "bindgen"
+version = "0.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+checksum = "f49d8fed880d473ea71efb9bf597651e77201bdd4893efe54c9e5d65ae04ce6f"
 dependencies = [
- "serde",
+ "bitflags 2.11.0",
+ "cexpr",
+ "clang-sys",
+ "itertools 0.13.0",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash 1.1.0",
+ "shlex",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1582,9 +1587,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chacha20"
-version = "0.10.0"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -1951,27 +1956,27 @@ dependencies = [
 
 [[package]]
 name = "cranelift-assembler-x64"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47ca6361f42d0c945fadc1103501e1c07438e034fd5a86896a3074eff3e860bd"
+checksum = "0aadfd45214f09461ba0406f7dacecce5cac39bf0bdb4890eeb468f4ef090e07"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
 
 [[package]]
 name = "cranelift-assembler-x64-meta"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c1dbc96db7cebf747bd5722d482338a5acff91d6be43b6bec145f9471327ffa"
+checksum = "57069faede9bd1f926364b4cf69ccc9bebc6f4af5ab897083581b7bc991bf20a"
 dependencies = [
  "cranelift-srcgen",
 ]
 
 [[package]]
 name = "cranelift-bforest"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "353b309eef494e4adb4c6cca76f30ef27daa907534db7d05b5986500f51aa4e1"
+checksum = "0b1221450f2f9efaa996d916bf53a0a4d13346a4a75468afb828390209a4fdd4"
 dependencies = [
  "cranelift-entity",
  "wasmtime-internal-core",
@@ -1979,9 +1984,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3cafe127a4c5d9765b1df54052245d2cbaca7238782805bb5ac94986ccdb591"
+checksum = "97706f2b466d67bdf0f69d1cf5c5c4a5cd31087cf1fa2e8e5fe0450dddc8661d"
 dependencies = [
  "serde",
  "serde_derive",
@@ -1990,9 +1995,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3964f31c6dc9d21e926ef884d3eec2f1ca83266a233521da4a737143262ceb84"
+checksum = "432246ee44b2fc0140b412dca55801d200d6fb25d2d7d18c44bb29e8cd71268b"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -2021,9 +2026,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-meta"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2f8b35746603b792e4ae34499a39251f310a06c98d4bc2ca02cf4bd29ce3c84"
+checksum = "b5aa51eff0949f06a5c8f3d5adefef94a12ea99f71cd8985047b91d45f367150"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -2034,24 +2039,24 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-shared"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "584bd91987927dfe35e79c5d6dd52a117cb64c4fce26df881d02dcc17bd59a8f"
+checksum = "6095e7095930b6169490138b4262fe7ec24290d3f604d7fe62e1e3138e740daa"
 
 [[package]]
 name = "cranelift-control"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af277352af76db01bb42fa4978b672a44406715798edb693cc02e363e12dc505"
+checksum = "e61dfa0766c0eadf42b3febd145a35f81f31086e207f534e5fb406fc3d08fc47"
 dependencies = [
  "arbitrary",
 ]
 
 [[package]]
 name = "cranelift-entity"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ad4f0c556d3d57580d07477be9e665f4d2a826971a5ab4642ead20a19df443"
+checksum = "e93867a79a06dd5d9ffeb96f7563dc7b6b142b5d89e42ab77e458a408a8aa9d5"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -2061,9 +2066,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-frontend"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29d69a6b7d8412c716e8599c7330dfbd122c1bc145f3bda05a9e237fba20419d"
+checksum = "d1991dc32fefa54f14d2a63570d1e963826257605e478558733f83450b7e7661"
 dependencies = [
  "cranelift-codegen",
  "hashbrown 0.17.1",
@@ -2074,15 +2079,15 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52fcdcd4a5c7fa8bfea35e72c0979ad5a699c836364870f0a84169d02a085a88"
+checksum = "784546de9988ff6e1df0fd4d2450760469a7607344156c661e69ec28082c5da4"
 
 [[package]]
 name = "cranelift-native"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fee933cf8ec90e58e68163a02bdb0e4d29f2260a7592b3f09cbba52fcd34d12"
+checksum = "7107a4ae4a2ba48b5df8648365e638b08322fa1da11e86206bf5eddb862b21dd"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -2091,9 +2096,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-srcgen"
-version = "0.133.2"
+version = "0.133.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd75e1e2719808c80af27ebe168d2220ec10e519e1d5a52bdbed9bd5cac1a32"
+checksum = "4b3f161aa81ee5dd8d7b0eb8828988f57baf2f78d288e62b6b3714b37aa6d6a1"
 
 [[package]]
 name = "crc"
@@ -2571,8 +2576,8 @@ dependencies = [
 
 [[package]]
 name = "deno_cache_dir"
-version = "0.47.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.50.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2597,8 +2602,8 @@ dependencies = [
 
 [[package]]
 name = "deno_config"
-version = "0.105.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.108.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -2623,23 +2628,21 @@ dependencies = [
 
 [[package]]
 name = "deno_core"
-version = "0.408.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.411.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "anyhow",
- "az",
  "base64 0.22.1",
- "bincode",
  "bit-set",
  "bit-vec 0.8.0",
  "boxed_error",
  "bytes",
- "capacity_builder",
  "cooked-waker",
  "deno_error",
  "deno_ops",
  "deno_path_util",
  "deno_unsync",
+ "deno_v8",
  "futures",
  "indexmap 2.14.0",
  "inventory",
@@ -2659,15 +2662,15 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "url",
- "v8",
+ "uuid",
  "wasm_dep_analyzer",
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "deno_crypto"
-version = "0.269.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.272.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2680,9 +2683,9 @@ dependencies = [
  "ctr",
  "curve25519-dalek",
  "deno_core",
+ "deno_crypto_provider",
  "deno_error",
  "ecdsa",
- "ed448-goldilocks",
  "elliptic-curve 0.13.8",
  "fips203",
  "fips205",
@@ -2702,6 +2705,7 @@ dependencies = [
  "sha3 0.10.9",
  "signature 2.2.0",
  "spki 0.7.3",
+ "subtle",
  "thiserror 2.0.18",
  "tiny-keccak",
  "tokio",
@@ -2711,16 +2715,17 @@ dependencies = [
 
 [[package]]
 name = "deno_crypto_provider"
-version = "0.49.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.52.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "aws-lc-sys 0.40.0",
+ "ed448-goldilocks",
 ]
 
 [[package]]
 name = "deno_dotenv"
-version = "0.24.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.27.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_path_util",
  "sys_traits",
@@ -2754,16 +2759,16 @@ dependencies = [
 
 [[package]]
 name = "deno_features"
-version = "0.52.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.55.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
 ]
 
 [[package]]
 name = "deno_fetch"
-version = "0.279.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.282.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-compression",
  "base64 0.22.1",
@@ -2800,8 +2805,8 @@ dependencies = [
 
 [[package]]
 name = "deno_fs"
-version = "0.165.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.168.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-trait",
  "boxed_error",
@@ -2826,9 +2831,9 @@ dependencies = [
 
 [[package]]
 name = "deno_graph"
-version = "0.110.1"
+version = "0.111.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f21645060a437bd3790c07ce715fc4e9727945527269d0cccee21e596f6bb953"
+checksum = "74d39f55639b6bffe4e886d2ea33724606729d3ec9c8e05a48952a56c1cef961"
 dependencies = [
  "async-trait",
  "boxed_error",
@@ -2859,8 +2864,8 @@ dependencies = [
 
 [[package]]
 name = "deno_http"
-version = "0.253.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.256.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-compression",
  "async-trait",
@@ -2877,7 +2882,6 @@ dependencies = [
  "flate2",
  "http 1.4.2",
  "http-body-util",
- "httparse",
  "httpdate",
  "hyper 1.10.1",
  "hyper-util",
@@ -2898,8 +2902,8 @@ dependencies = [
 
 [[package]]
 name = "deno_http_h1"
-version = "0.6.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.9.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "httparse",
  "memchr",
@@ -2909,8 +2913,8 @@ dependencies = [
 
 [[package]]
 name = "deno_inspector_server"
-version = "0.29.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.32.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2927,8 +2931,8 @@ dependencies = [
 
 [[package]]
 name = "deno_io"
-version = "0.165.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.168.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -2950,8 +2954,8 @@ dependencies = [
 
 [[package]]
 name = "deno_lockfile"
-version = "0.57.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.60.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-trait",
  "deno_semver",
@@ -2962,10 +2966,11 @@ dependencies = [
 
 [[package]]
 name = "deno_maybe_sync"
-version = "0.42.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.45.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "dashmap 5.5.3",
+ "rustc-hash 2.1.2",
 ]
 
 [[package]]
@@ -2982,8 +2987,8 @@ dependencies = [
 
 [[package]]
 name = "deno_napi"
-version = "0.186.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.189.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -2992,6 +2997,7 @@ dependencies = [
  "denort_helper",
  "libc",
  "libloading 0.7.4",
+ "libuv-sys-lite",
  "log",
  "napi_sym",
  "object 0.36.7",
@@ -3014,8 +3020,8 @@ dependencies = [
 
 [[package]]
 name = "deno_net"
-version = "0.247.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.250.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -3039,12 +3045,13 @@ dependencies = [
  "tokio-vsock",
  "url",
  "web-transport-proto",
+ "x509-parser 0.15.1",
 ]
 
 [[package]]
 name = "deno_node"
-version = "0.193.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.196.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "base64 0.22.1",
  "boxed_error",
@@ -3061,6 +3068,7 @@ dependencies = [
  "deno_native_certs",
  "deno_net",
  "deno_node_crypto",
+ "deno_os",
  "deno_package_json",
  "deno_path_util",
  "deno_permissions",
@@ -3100,8 +3108,8 @@ dependencies = [
 
 [[package]]
 name = "deno_node_crypto"
-version = "0.25.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.28.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "aead-gcm-stream",
  "aes",
@@ -3163,8 +3171,8 @@ dependencies = [
 
 [[package]]
 name = "deno_node_sqlite"
-version = "0.25.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.28.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -3175,10 +3183,9 @@ dependencies = [
 
 [[package]]
 name = "deno_npm"
-version = "0.67.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.70.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
- "arrayref",
  "async-trait",
  "bytemuck",
  "capacity_builder",
@@ -3200,8 +3207,8 @@ dependencies = [
 
 [[package]]
 name = "deno_npmrc"
-version = "0.16.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.19.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "log",
  "monch",
@@ -3212,8 +3219,8 @@ dependencies = [
 
 [[package]]
 name = "deno_ops"
-version = "0.284.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.287.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "indexmap 2.14.0",
  "proc-macro2",
@@ -3228,8 +3235,8 @@ dependencies = [
 
 [[package]]
 name = "deno_os"
-version = "0.72.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.75.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -3245,8 +3252,8 @@ dependencies = [
 
 [[package]]
 name = "deno_package_json"
-version = "0.57.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.60.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "boxed_error",
  "capacity_builder",
@@ -3277,8 +3284,8 @@ dependencies = [
 
 [[package]]
 name = "deno_permissions"
-version = "0.114.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.117.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "capacity_builder",
  "chrono",
@@ -3306,8 +3313,8 @@ dependencies = [
 
 [[package]]
 name = "deno_process"
-version = "0.70.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.73.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -3333,8 +3340,8 @@ dependencies = [
 
 [[package]]
 name = "deno_resolver"
-version = "0.86.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.89.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "anyhow",
  "async-once-cell",
@@ -3368,6 +3375,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "phf 0.11.3",
+ "rustc-hash 2.1.2",
  "serde",
  "serde_json",
  "sys_traits",
@@ -3396,8 +3404,8 @@ dependencies = [
 
 [[package]]
 name = "deno_signals"
-version = "0.46.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.49.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "libc",
  "signal-hook",
@@ -3408,19 +3416,19 @@ dependencies = [
 
 [[package]]
 name = "deno_subprocess_windows"
-version = "0.50.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.53.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
- "fastrand",
  "futures-channel",
  "libc",
+ "rand 0.8.5",
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "deno_telemetry"
-version = "0.77.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.80.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-trait",
  "deno_core",
@@ -3464,8 +3472,8 @@ dependencies = [
 
 [[package]]
 name = "deno_tls"
-version = "0.242.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.245.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
  "deno_error",
@@ -3509,9 +3517,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "deno_v8"
+version = "0.3.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
+dependencies = [
+ "v8",
+ "v8x",
+]
+
+[[package]]
 name = "deno_web"
-version = "0.286.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.289.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "async-trait",
  "brotli 6.0.0",
@@ -3532,16 +3549,16 @@ dependencies = [
 
 [[package]]
 name = "deno_webidl"
-version = "0.255.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.258.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_core",
 ]
 
 [[package]]
 name = "deno_websocket"
-version = "0.260.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.263.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "bytes",
  "deno_core",
@@ -3573,12 +3590,14 @@ dependencies = [
 
 [[package]]
 name = "denort_helper"
-version = "0.53.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.56.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_error",
  "deno_path_util",
+ "libc",
  "sys_traits",
+ "tempfile",
  "thiserror 2.0.18",
  "twox-hash",
 ]
@@ -6009,6 +6028,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libuv-sys-lite"
+version = "1.48.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10de9b449ef5865c757dc2a0c1b1dde1578adf466db4bb0074e5d83b530164f1"
+dependencies = [
+ "bindgen 0.70.1",
+ "libloading 0.8.9",
+]
+
+[[package]]
 name = "libz-ng-sys"
 version = "1.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6372,8 +6401,8 @@ dependencies = [
 
 [[package]]
 name = "napi_sym"
-version = "0.185.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.188.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "quote",
  "serde",
@@ -7443,8 +7472,8 @@ dependencies = [
 
 [[package]]
 name = "node_resolver"
-version = "0.93.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.96.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7464,6 +7493,7 @@ dependencies = [
  "percent-encoding",
  "pretty_assertions",
  "regex",
+ "rustc-hash 2.1.2",
  "serde",
  "serde_json",
  "sys_traits",
@@ -7473,8 +7503,8 @@ dependencies = [
 
 [[package]]
 name = "node_shim"
-version = "0.30.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.33.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "serde_json",
  "url",
@@ -9225,9 +9255,9 @@ dependencies = [
 
 [[package]]
 name = "pulley-interpreter"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3683e69168d2e2374cea51a79fce2e9870e7c622366b8bf7af87fb5c2428a2a9"
+checksum = "3f647f8aefd39efd5e38b484a8b7a926dd035ae366127df75c1d94d196f0a4ba"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -9237,9 +9267,9 @@ dependencies = [
 
 [[package]]
 name = "pulley-macros"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ebbd6dada1e3df36ea4a4b8feca2ed230aa92d59e55bf5714eb4286cdd632b0"
+checksum = "3e902032e329008b189b67498b1be7784d5849276f32402eca17441df08a6bcb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10452,15 +10482,15 @@ dependencies = [
 
 [[package]]
 name = "serde_v8"
-version = "0.317.0"
-source = "git+https://github.com/nimbus/deno?tag=v2.9.3-nimbus.2#d0a6b9094e0da6acbb53ecd0d88ed6b81a142e63"
+version = "0.320.0"
+source = "git+https://github.com/nimbus/deno?tag=v2.9.6-nimbus.1#6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3"
 dependencies = [
  "deno_error",
+ "deno_v8",
  "num-bigint",
  "serde",
  "smallvec",
  "thiserror 2.0.18",
- "v8",
 ]
 
 [[package]]
@@ -12417,8 +12447,8 @@ dependencies = [
 
 [[package]]
 name = "v8"
-version = "149.4.0"
-source = "git+https://github.com/nimbus/rusty_v8?tag=v149.4.0-nimbus.10#f9457373150679d9db9eb577dcd3a687a3ec25ef"
+version = "150.4.0"
+source = "git+https://github.com/nimbus/rusty_v8?tag=v150.4.0-nimbus.1#961a76d0cee88efdecfa9224c519fd153c404b51"
 dependencies = [
  "bindgen 0.72.1",
  "bitflags 2.11.0",
@@ -12427,8 +12457,24 @@ dependencies = [
  "home",
  "miniz_oxide",
  "paste",
+ "sha2 0.10.9",
  "temporal_capi",
  "which 6.0.3",
+]
+
+[[package]]
+name = "v8x"
+version = "149.4.0-rc.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3701ffb3692a24808503d17f758b0a3f688d2c451779247982566b5941033e63"
+dependencies = [
+ "bindgen 0.70.1",
+ "bitflags 2.11.0",
+ "cc",
+ "paste",
+ "temporal_capi",
+ "temporal_rs",
+ "timezone_provider",
 ]
 
 [[package]]
@@ -12733,9 +12779,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed27b4a4a5271d2608406a99c8d1cf8aea1e894fe4ec361d470063bcf342f1d7"
+checksum = "d39226663bd765601279a79b88645a7c4a4d3c2fe73040afdc27bead02ee6659"
 dependencies = [
  "addr2line 0.26.1",
  "async-trait",
@@ -12786,9 +12832,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-environ"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7712f99b0920d4638023405eb9723ef200efd6d39bfc7466c92e926ca5d130f0"
+checksum = "2595a168541e8a7faeacf21e3d59da93628ee71468cd69fee9fc2a92c9b1c7d8"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -12817,9 +12863,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-cache"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb07d96412d6958817749712969cfd6416cbce11639c3f3431dc659816d84ace"
+checksum = "a37d629957320219db11336663e0947e19afe77150403509cac21c47ead60c69"
 dependencies = [
  "base64 0.22.1",
  "directories-next",
@@ -12837,9 +12883,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-component-macro"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f60f3492a55dbd4eb2e4f1f33ed0626d141f5f4cf4c0194168a4c5006f6601b0"
+checksum = "9abf0fb4ce458eb6edbfaf6cbf13fcbf4216eac5a85febfe90224a1f6064c990"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -12852,15 +12898,15 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-component-util"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c777c83bb4c3414b23fe84fecd47a46016a0a0b0a39aa786cad0a701fe3cbc7f"
+checksum = "0e50df18c9a8e0deec353ad1e6364ef50538231719a12d80fa5dcb300be8d36b"
 
 [[package]]
 name = "wasmtime-internal-core"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffb54b5de8723a9acf2c0bc531df8e773462796a5f87e8f49a3d5ea5c3b32ef7"
+checksum = "93b097389e5fad89c8ff8ee0aeafd16447b5a288d52aa1131f17ab4c19fd5be3"
 dependencies = [
  "anyhow",
  "hashbrown 0.17.1",
@@ -12870,9 +12916,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-cranelift"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c60bb70116a88791ccceef605b31010c4888a7305e450f01dc7d4f430ad25f0"
+checksum = "08b3e909115836655b83c8bdef7c2e20a34293e785218d9f71a4e5382a09c6b0"
 dependencies = [
  "cfg-if",
  "cranelift-codegen",
@@ -12897,9 +12943,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-fiber"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24bdf54907e0bad31ad6676d03ed1008fa21489725635136f9c38979c39a98ed"
+checksum = "a000d1124dd40417ce8433d07de1063ecc9be7cac21745c8de7f9cf7684c3ead"
 dependencies = [
  "cc",
  "cfg-if",
@@ -12912,9 +12958,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-debug"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef4edaf07e20511f3ca070a4a0f026c407969f09e536075729872f548ca6f8d4"
+checksum = "a7439956e78ba68e2cd766f34c3f056d625fad9a055eafb0c4569ac91c09e6b4"
 dependencies = [
  "cc",
  "object 0.39.1",
@@ -12924,9 +12970,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f96a6d7eb246d1306b7db8915a169cd8628a9e6b8299d1d1f8ab109801ef0a66"
+checksum = "ee3a381a9dd1ffe3893507733300b420605f465655d78c7a75a965a09d7b43d5"
 dependencies = [
  "cfg-if",
  "libc",
@@ -12936,9 +12982,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-unwinder"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39472572ea3eb11b7cc7fe7bd6df0005cef87b580eb06a3378d103ac99d45bc3"
+checksum = "22f951f78a1a09001547838fa557522d56655385db97e47307d0f582ca866974"
 dependencies = [
  "cfg-if",
  "cranelift-codegen",
@@ -12949,9 +12995,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-versioned-export-macros"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bf2eff1c108b01566a7c8870de34821e7bda7d327e86e12a548c026e1e3677d"
+checksum = "51e06f9fabbe647e5c2ed186e6920ab1fb48174688d7d3fdadbda537b8499b51"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12960,9 +13006,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-wit-bindgen"
-version = "46.0.2"
+version = "46.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1d9d3ffd05d6e864adc35cff702f56307c454caec3b1d2d89dd6c843219b663"
+checksum = "f49ac5121036c2255bdc203b1b75a1c04544744cd5f51c93240b58bddca9f0f1"
 dependencies = [
  "anyhow",
  "bitflags 2.11.0",
