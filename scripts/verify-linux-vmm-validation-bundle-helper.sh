@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # Single-quoted probes must match literal generated variables.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,13 +42,24 @@ bash "${repo_root}/scripts/prepare-linux-vmm-validation-bundle.sh" \
   --guest-port 8080 \
   > "${tmp_dir}/stdout.txt"
 
+if bash "${repo_root}/scripts/prepare-linux-vmm-validation-bundle.sh" \
+  --crun-source "${fake_crun_source}" \
+  --output-root "${tmp_dir}/source-only-bundle" \
+  > "${tmp_dir}/source-only-stdout.txt" \
+  2> "${tmp_dir}/source-only-stderr.txt"; then
+  echo "source-only validation bundle unexpectedly succeeded" >&2
+  exit 70
+fi
+grep -F "provide released --nimbus-crun-asset plus --nimbus-libkrun-archive" \
+  "${tmp_dir}/source-only-stderr.txt" >/dev/null
+
 for expected_file in \
   "${bundle_root}/session.env" \
   "${bundle_root}/README.md" \
   "${bundle_root}/99-writeback-checklist.txt" \
   "${bundle_root}/commands/00-run-through-lh6.sh" \
   "${bundle_root}/commands/01-lh1-host-preflight.sh" \
-  "${bundle_root}/commands/02-lh2-verify-crun-patch.sh" \
+  "${bundle_root}/commands/02-lh2-record-crun-source.sh" \
   "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" \
   "${bundle_root}/commands/04-lh3-install-private-runtime.sh" \
   "${bundle_root}/commands/05-lh4-verify-runtime-separation.sh" \
@@ -80,19 +92,27 @@ grep -F "bash ${bundle_root}/commands/01-lh1-host-preflight.sh" "${bundle_root}/
 grep -F 'exec sudo -n -- bash "$0" "$@"' "${bundle_root}/commands/00-run-through-lh6.sh" >/dev/null
 grep -F "scripts/check-vmm-host.sh" "${bundle_root}/commands/01-lh1-host-preflight.sh" >/dev/null
 grep -F 'host_check_args+=(--allow-pending-private-runtime)' "${bundle_root}/commands/01-lh1-host-preflight.sh" >/dev/null
-grep -F "scripts/verify-crun-patch.sh" "${bundle_root}/commands/02-lh2-verify-crun-patch.sh" >/dev/null
-grep -F "using released runtime artifacts" "${bundle_root}/commands/02-lh2-verify-crun-patch.sh" >/dev/null
-grep -F "scripts/build-nimbus-crun.sh" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
+grep -F 'git -C "${CRUN_SOURCE}" rev-parse --verify HEAD' "${bundle_root}/commands/02-lh2-record-crun-source.sh" >/dev/null
+grep -F 'git -C "${CRUN_SOURCE}" describe --always --dirty' "${bundle_root}/commands/02-lh2-record-crun-source.sh" >/dev/null
 grep -F "stage.source=released-artifacts" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
 grep -F "stage.nimbus_libkrun_root=\${STAGE_DIR}" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
 grep -F "install.source=released-artifacts" "${bundle_root}/commands/04-lh3-install-private-runtime.sh" >/dev/null
-grep -F "sudo tar -xzf" "${bundle_root}/commands/04-lh3-install-private-runtime.sh" >/dev/null
+grep -F 'exec sudo -n -- bash "$0" "$@"' "${bundle_root}/commands/04-lh3-install-private-runtime.sh" >/dev/null
+grep -F 'tar -xzf "${NIMBUS_LIBKRUN_ARCHIVE}" -C /usr/libexec/nimbus' "${bundle_root}/commands/04-lh3-install-private-runtime.sh" >/dev/null
+if grep -F 'sudo tar' "${bundle_root}/commands/04-lh3-install-private-runtime.sh" >/dev/null; then
+  echo "generated install command must not require sudo after it becomes root" >&2
+  exit 70
+fi
 grep -F "check-vmm-host-post-install.txt" "${bundle_root}/commands/05-lh4-verify-runtime-separation.sh" >/dev/null
 grep -F 'scripts/check-vmm-host.sh' "${bundle_root}/commands/05-lh4-verify-runtime-separation.sh" >/dev/null
 grep -F "scripts/prepare-krun-bundle.sh" "${bundle_root}/commands/07-lh5-prepare-krun-bundle.sh" >/dev/null
 grep -F "buildah from --name" "${bundle_root}/commands/06-lh5-buildah-rootfs.sh" >/dev/null
 grep -F 'exec sudo -n -- bash "$0" "$@"' "${bundle_root}/commands/06-lh5-buildah-rootfs.sh" >/dev/null
-grep -F 'cp -a --no-preserve=ownership "${mounted_rootfs}/." "${copied_rootfs}/"' "${bundle_root}/commands/06-lh5-buildah-rootfs.sh" >/dev/null
+grep -F 'cp -a "${mounted_rootfs}/." "${copied_rootfs}/"' "${bundle_root}/commands/06-lh5-buildah-rootfs.sh" >/dev/null
+if grep -F -- '--no-preserve=ownership' "${bundle_root}/commands/06-lh5-buildah-rootfs.sh" >/dev/null; then
+  echo "generated rootfs copy must preserve OCI ownership" >&2
+  exit 70
+fi
 grep -F "scripts/prepare-direct-krun-drill.sh" "${bundle_root}/commands/08-lh5-prepare-direct-drill.sh" >/dev/null
 grep -F "scripts/prepare-conmon-krun-drill.sh" "${bundle_root}/commands/10-lh6-prepare-conmon-drill.sh" >/dev/null
 grep -F 'bash "${START_CONTAINER}" 60' "${bundle_root}/commands/11-lh6-run-conmon-drill.sh" >/dev/null

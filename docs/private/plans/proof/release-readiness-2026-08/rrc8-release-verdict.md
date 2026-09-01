@@ -217,7 +217,8 @@ effects. It also records the vendored `lazy_static` lint repair accurately.
 ## Documentation Gates
 
 Candidate binding: Nimbus
-`ae63f18798b2d020c029a4d65443c45c0acf347f`, Deno
+`ae63f18798b2d020c029a4d65443c45c0acf347f`, Desktop
+`bbc103f84b2a88e2baa4b522e45447bed31e04c7`, Deno
 `1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
 `b57a2d680891de852d5576e65ccaea787b005431`.
 
@@ -229,7 +230,8 @@ Candidate binding: Nimbus
 ## Security and Dependency Gates
 
 Candidate binding: Nimbus
-`ae63f18798b2d020c029a4d65443c45c0acf347f`, Deno
+`ae63f18798b2d020c029a4d65443c45c0acf347f`, Desktop
+`bbc103f84b2a88e2baa4b522e45447bed31e04c7`, Deno
 `1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
 `b57a2d680891de852d5576e65ccaea787b005431`.
 
