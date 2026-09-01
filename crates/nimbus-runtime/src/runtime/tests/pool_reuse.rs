@@ -3570,13 +3570,13 @@ async fn embedded_node22_snapshot_roundtrips_and_guard_is_fail_safe() {
     let snapshot = crate::backends::v8::try_embedded_node22_anchor_snapshot(&blob)
         .expect("fresh embedded blob must pass the provenance guard and deserialize");
 
-    // The content header is enforced by the eager build gate, not by the deployed serving path.
-    // Changing only that header must not make runtime validation reopen build-only source files.
+    // A source checkout still validates content when the build-only files are present. An in-place
+    // source edit or a corrupt content header must not silently reuse a stale snapshot.
     let mut content_header_changed = blob.clone();
     content_header_changed[0] ^= 0xff;
     assert!(
-        crate::backends::v8::try_embedded_node22_anchor_snapshot(&content_header_changed).is_some(),
-        "runtime validation must use the portable header"
+        crate::backends::v8::try_embedded_node22_anchor_snapshot(&content_header_changed).is_none(),
+        "source-checkout validation must reject stale content provenance"
     );
 
     // Corrupt the portable provenance header. The serving guard must refuse it and never install a

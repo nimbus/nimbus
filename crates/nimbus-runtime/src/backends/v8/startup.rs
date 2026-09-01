@@ -319,10 +319,12 @@ fn hash_snapshot_extension_source<H: std::hash::Hasher>(
 
 /// Domain-separated provenance over everything that determines the NodeFull snapshot's RO heap.
 /// The content form reads and hashes all source bytes while the build checkout exists. The release
-/// gate compares it before the final binary is accepted. The portable form hashes the immutable
-/// build-path identity for sources that Deno intentionally loads only while it creates a snapshot;
-/// all other source bytes remain in the hash. The deployed binary compares the portable value, so
-/// it does not reopen absolute paths from the build machine. Coverage:
+/// gate compares it before the final binary is accepted. The portable form hashes the build-source
+/// path identity for sources that Deno intentionally loads only while it creates a snapshot; Cargo
+/// git dependency paths include the exact revision. All other source bytes remain in the hash. A
+/// source checkout compares both forms, so an in-place source edit with an unchanged path still
+/// rejects a stale blob. A deployed binary can compare the portable form when the build-only files
+/// no longer exist. Coverage:
 ///   - the build TARGET arch + OS (a V8 startup snapshot is platform-specific — a darwin-arm64
 ///     snapshot deserialized on linux-x86_64 is a hard V8_Fatal; the generated blob is per-platform,
 ///     so a foreign-target blob must fail validation and never install);
@@ -451,15 +453,16 @@ pub(crate) fn v8_startup_snapshot_from_embedded_blob(blob: &[u8]) -> Result<V8St
     ))
 }
 
-/// Guarded loader for the embedded NodeFull snapshot. Returns `Some` only when the embedded blob's
-/// runtime-safe provenance matches the current binary and the blob parses cleanly. On a mismatch or
-/// parse error, the caller uses its existing runtime-build fallback. Release packaging must prevent
-/// that fallback because Deno sources marked `LoadedFromFsDuringSnapshot` exist only in the build
-/// checkout and are not available on a deployed host.
+/// Guarded loader for the embedded NodeFull snapshot. It always validates runtime-safe provenance.
+/// When build-only extension sources remain accessible, it also validates their content provenance
+/// so an in-place source edit cannot reuse a stale blob. A deployed binary skips that second check
+/// only when those source files are unavailable. On a mismatch or parse error, the caller uses its
+/// existing runtime-build fallback. Release packaging must prevent that fallback because Deno
+/// sources marked `LoadedFromFsDuringSnapshot` are not available on a deployed host.
 pub(crate) fn try_embedded_node22_anchor_snapshot(blob: &[u8]) -> Option<V8StartupSnapshot> {
-    let stored = embedded_blob_portable_provenance(blob).ok()?;
-    let current = embedded_node22_snapshot_portable_provenance().ok()?;
-    if stored != current {
+    let stored_portable = embedded_blob_portable_provenance(blob).ok()?;
+    let current_portable = embedded_node22_snapshot_portable_provenance().ok()?;
+    if stored_portable != current_portable {
         #[cfg(test)]
         eprintln!(
             "nimbus-runtime: the test-only snapshot extensions do not match the embedded \
@@ -467,11 +470,27 @@ pub(crate) fn try_embedded_node22_anchor_snapshot(blob: &[u8]) -> Option<V8Start
         );
         #[cfg(not(test))]
         eprintln!(
-            "nimbus-runtime: embedded NodeFull anchor snapshot is STALE (provenance {stored:016x} \
-             != current {current:016x}); rejecting the embedded fast path. Regenerate via \
-             `make build-node22-anchor-snapshot` before packaging."
+            "nimbus-runtime: embedded NodeFull anchor snapshot is STALE (portable provenance \
+             {stored_portable:016x} != current {current_portable:016x}); rejecting the embedded \
+             fast path. Regenerate via `make build-node22-anchor-snapshot` before packaging."
         );
         return None;
+    }
+
+    // Preserve the source-checkout stale-blob guard. Deployed artifacts do not contain Deno files
+    // marked `LoadedFromFsDuringSnapshot`, so failure to read those build-only paths is the expected
+    // signal to rely on the portable identity that the eager release gate already validated.
+    if let Ok(current_content) = embedded_node22_snapshot_provenance() {
+        let stored_content = embedded_blob_provenance(blob).ok()?;
+        if stored_content != current_content {
+            #[cfg(not(test))]
+            eprintln!(
+                "nimbus-runtime: embedded NodeFull anchor snapshot is STALE (content provenance \
+                 {stored_content:016x} != current {current_content:016x}); rejecting the embedded \
+                 fast path. Regenerate via `make build-node22-anchor-snapshot` before packaging."
+            );
+            return None;
+        }
     }
     v8_startup_snapshot_from_embedded_blob(blob).ok()
 }
