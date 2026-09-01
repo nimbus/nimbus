@@ -134,12 +134,11 @@ impl RuntimeBackend for BunJscRuntimeBackend {
             self.pool.acknowledge(BunJscLifecycleAck::GuestEntered)?;
             let result = self.execution_adapter.invoke(invocation, pool_policy).await;
             deadline_registration.disarm().await;
-            if matches!(result, Err(NimbusRuntimeError::Cancelled)) {
+            let deadline_triggered = deadline_triggered.load(Ordering::SeqCst);
+            if matches!(result, Err(NimbusRuntimeError::Cancelled)) || deadline_triggered {
                 self.pool.request_cancellation()?;
             }
-            let result = if matches!(result, Err(NimbusRuntimeError::Cancelled))
-                && deadline_triggered.load(Ordering::SeqCst)
-            {
+            let result = if deadline_triggered {
                 Err(deadline.error())
             } else {
                 result
@@ -800,18 +799,18 @@ mod tests {
     #[test]
     fn bun_jsc_linked_backend_enforces_execution_deadline() {
         #[derive(Debug, Default)]
-        struct WaitForCancellationAdapterFactory;
+        struct LateSuccessAdapterFactory;
 
-        impl BunJscExecutionAdapterFactory for WaitForCancellationAdapterFactory {
+        impl BunJscExecutionAdapterFactory for LateSuccessAdapterFactory {
             fn create(&self) -> Box<dyn BunJscExecutionAdapter> {
-                Box::new(WaitForCancellationAdapter)
+                Box::new(LateSuccessAdapter)
             }
         }
 
         #[derive(Debug)]
-        struct WaitForCancellationAdapter;
+        struct LateSuccessAdapter;
 
-        impl BunJscExecutionAdapter for WaitForCancellationAdapter {
+        impl BunJscExecutionAdapter for LateSuccessAdapter {
             fn state(&self) -> RuntimeExecutionAdapterState {
                 RuntimeExecutionAdapterState::Linked
             }
@@ -827,7 +826,7 @@ mod tests {
                         .expect("linked execution must receive a cancellation token")
                         .cancelled()
                         .await;
-                    Err(NimbusRuntimeError::Cancelled)
+                    Ok(json!({ "late": "success" }))
                 })
             }
         }
@@ -837,9 +836,8 @@ mod tests {
         limits.execution_timeout = timeout;
         limits.system_timeout = Duration::from_secs(1);
         let policy = Arc::new(crate::limits::RuntimePolicy::new(limits));
-        let mut backend = BunJscRuntimeBackend::with_execution_adapter_factory(
-            &WaitForCancellationAdapterFactory,
-        );
+        let mut backend =
+            BunJscRuntimeBackend::with_execution_adapter_factory(&LateSuccessAdapterFactory);
         let error = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
