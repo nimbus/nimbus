@@ -160,6 +160,49 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         self.assertNotEqual(status, 0)
         self.assertIn("evidence is not bound to the nimbus candidate", output)
 
+    def test_inline_and_container_html_comments_cannot_supply_candidate_binding(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                f"Visible text <!-- {CANDIDATE['nimbus']} -->",
+                "Visible text <!--",
+                CANDIDATE["desktop"],
+                "-->",
+                f"> Visible text <!-- {CANDIDATE['deno']} -->",
+                f"- Visible text <!-- {CANDIDATE['main']} -->",
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        for key in ("nimbus", "desktop", "deno", "main"):
+            self.assertIn(f"evidence is not bound to the {key} candidate", output)
+
+    def test_html_comment_syntax_inside_a_fence_remains_visible_evidence(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "```text",
+                f"<!-- {CANDIDATE['nimbus']} -->",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "```",
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertEqual(status, 0)
+        self.assertIn("0 structural errors", output)
+
     def test_fenced_headings_do_not_create_or_truncate_evidence_sections(self) -> None:
         proof_text = "\n".join(
             (
@@ -324,6 +367,19 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
                 status, output = self.run_verifier(matrix_value=matrix_value)
                 self.assertNotEqual(status, 0)
                 self.assertIn("matrix error: root must be an object", output)
+
+    def test_schema_version_must_be_an_integer(self) -> None:
+        for schema_version in (True, 1.0):
+            with self.subTest(schema_version=schema_version):
+                status, output = self.run_verifier(
+                    matrix_value={
+                        "schemaVersion": schema_version,
+                        "candidate": CANDIDATE,
+                        "conditions": [],
+                    }
+                )
+                self.assertNotEqual(status, 0)
+                self.assertIn("schemaVersion must equal 1", output)
 
     def test_duplicate_object_keys_are_rejected(self) -> None:
         status, output = self.run_verifier(

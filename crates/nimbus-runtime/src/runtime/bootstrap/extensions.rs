@@ -496,7 +496,7 @@ fn nimbus_egress_gateway_hook(
                                 )));
                             }
                             let mut request = resolved_request.clone();
-                            request.resolved_ip = Some(*resolved_ip);
+                            request.resolved_ip = Some(canonicalize_resolved_ip(*resolved_ip));
                             let authorization = resolved_gateway.authorize(&request);
                             let decision = match transport {
                                 deno_fetch::EgressGatewayTransport::Fetch => {
@@ -517,6 +517,15 @@ fn nimbus_egress_gateway_hook(
                 Err(reason) => Err(JsErrorBox::generic(reason)),
             }
         }
+    }
+}
+
+fn canonicalize_resolved_ip(address: std::net::IpAddr) -> std::net::IpAddr {
+    match address {
+        std::net::IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map_or(std::net::IpAddr::V6(address), std::net::IpAddr::V4),
+        std::net::IpAddr::V4(address) => std::net::IpAddr::V4(address),
     }
 }
 
@@ -662,6 +671,36 @@ mod tests {
             egress_transport_label(deno_fetch::EgressGatewayTransport::WebSocket),
             "WebSocket"
         );
+    }
+
+    #[test]
+    fn resolved_egress_addresses_canonicalize_ipv4_mapped_ipv6() {
+        assert_eq!(
+            canonicalize_resolved_ip(
+                "::ffff:127.0.0.1"
+                    .parse()
+                    .expect("mapped loopback should parse")
+            ),
+            "127.0.0.1"
+                .parse::<std::net::IpAddr>()
+                .expect("IPv4 loopback should parse")
+        );
+        assert_eq!(
+            canonicalize_resolved_ip(
+                "::ffff:10.20.30.40"
+                    .parse()
+                    .expect("mapped private address should parse")
+            ),
+            "10.20.30.40"
+                .parse::<std::net::IpAddr>()
+                .expect("IPv4 private address should parse")
+        );
+        for address in ["192.0.2.1", "2001:db8::1"] {
+            let address = address
+                .parse::<std::net::IpAddr>()
+                .expect("test address should parse");
+            assert_eq!(canonicalize_resolved_ip(address), address);
+        }
     }
 
     #[test]

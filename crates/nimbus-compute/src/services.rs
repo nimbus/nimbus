@@ -474,7 +474,7 @@ async fn stop_service_lifecycle(
         &cancellation,
         async move {
             retirer
-                .submit_service_teardown_until_terminal(
+                .submit_public_service_teardown_until_terminal(
                     &retirement_context,
                     &retirement_service_name,
                     &retirement_cancellation,

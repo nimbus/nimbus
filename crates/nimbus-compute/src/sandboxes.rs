@@ -225,7 +225,7 @@ pub async fn stop_sandbox(
         &cancellation,
         async move {
             retirer
-                .submit_sandbox_teardown_until_terminal(
+                .submit_public_sandbox_teardown_until_terminal(
                     &retirement_context,
                     &retirement_sandbox_id,
                     &retirement_cancellation,

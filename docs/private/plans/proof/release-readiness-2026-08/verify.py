@@ -104,6 +104,60 @@ def markdown_html_block_start(content: str) -> tuple[re.Pattern[str] | None, boo
     return None
 
 
+def markdown_without_html_comments(markdown: str) -> str:
+    visible_lines: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    inside_comment = False
+    for line in markdown.splitlines():
+        indentation, content_offset = markdown_indentation(line)
+        content = line[content_offset:]
+        if fence_character is not None:
+            visible_lines.append(line)
+            marker = content.rstrip(" \t")
+            if (
+                indentation <= 3
+                and marker
+                and set(marker) == {fence_character}
+                and len(marker) >= fence_length
+            ):
+                fence_character = None
+                fence_length = 0
+            continue
+        if not inside_comment:
+            fence = markdown_fence_after_list_markers(content, indentation)
+            if fence is not None and not (
+                fence.group(1).startswith("`") and "`" in fence.group(2)
+            ):
+                marker = fence.group(1)
+                fence_character = marker[0]
+                fence_length = len(marker)
+                visible_lines.append(line)
+                continue
+
+        visible = ""
+        cursor = 0
+        while cursor < len(line):
+            if inside_comment:
+                comment_end = line.find("-->", cursor)
+                if comment_end < 0:
+                    cursor = len(line)
+                else:
+                    inside_comment = False
+                    cursor = comment_end + 3
+            else:
+                comment_start = line.find("<!--", cursor)
+                if comment_start < 0:
+                    visible += line[cursor:]
+                    cursor = len(line)
+                else:
+                    visible += line[cursor:comment_start]
+                    inside_comment = True
+                    cursor = comment_start + 4
+        visible_lines.append(visible)
+    return "\n".join(visible_lines)
+
+
 def markdown_structure(
     lines: list[str],
 ) -> tuple[list[tuple[int, int, str]], set[int]]:
@@ -175,7 +229,7 @@ def anchored_evidence_section(proof: str, anchor: str) -> str | None:
     heading = MARKDOWN_HEADING.fullmatch(anchor)
     if heading is None:
         return None
-    lines = proof.splitlines()
+    lines = markdown_without_html_comments(proof).splitlines()
     headings, html_lines = markdown_structure(lines)
     matches = [index for index, _level, text in headings if text == anchor]
     if len(matches) != 1:
@@ -207,7 +261,8 @@ def main() -> int:
         print("matrix error: root must be an object")
         return 1
 
-    if data.get("schemaVersion") != 1:
+    schema_version = data.get("schemaVersion")
+    if type(schema_version) is not int or schema_version != 1:
         errors.append("schemaVersion must equal 1")
     candidate = data.get("candidate")
     if not isinstance(candidate, dict):
