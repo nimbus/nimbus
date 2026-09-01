@@ -6,6 +6,12 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      build_release_candidate:
+        description: "Build a full-LTO Linux release candidate without publishing it"
+        required: true
+        type: boolean
+        default: false
   schedule:
     # Weekly security audit — catches newly disclosed CVEs between PRs
     - cron: "0 8 * * 1"
@@ -1222,6 +1228,99 @@ jobs:
           path: target/disk-report.json
           if-no-files-found: error
           retention-days: 1
+
+  linux-release-candidate:
+    name: Linux Release Candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    if: github.event_name == 'workflow_dispatch' && inputs.build_release_candidate
+    needs: [ui-artifacts]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Free runner disk for release build
+        run: |
+          df -h /
+          sudo rm -rf \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet
+          df -h /
+
+      - name: Set up Rust with verified pointer-compressed V8
+        id: setup-rust
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-linux-release-candidate-ptrcomp-no-bin-v2
+          linux-linker: default
+          consume-prebuilt-v8: ptrcomp
+          github-token: ${{ github.token }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
+      - name: Generate pointer-compressed Node22 anchor snapshot
+        run: cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
+
+      - name: Enforce disk budget before release build
+        run: bash scripts/ci/disk-guard.sh enforce --label before-linux-release-candidate --min-free-gib 40
+
+      - name: Build full-LTO release candidate
+        run: cargo build --release --locked -p nimbus-bin --features v8-pointer-compression
+
+      - name: Package build-only candidate and identity evidence
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/nimbus dist/nimbus
+          cp README.md LICENSE dist/
+          tar -czf nimbus_linux_x86_64.tar.gz -C dist nimbus README.md LICENSE
+          {
+            echo "nimbus_sha=${GITHUB_SHA}"
+            echo "rusty_v8_tag=${{ steps.setup-rust.outputs.rusty-v8-tag }}"
+            echo "deno_tag=${{ steps.setup-rust.outputs.deno-tag }}"
+            echo "target=${{ steps.setup-rust.outputs.rust-target }}"
+            echo "runtime_features=v8-pointer-compression"
+            echo "profile=release"
+            echo "publish=false"
+            target/release/nimbus --version
+            sha256sum target/release/nimbus nimbus_linux_x86_64.tar.gz
+          } | tee linux-release-candidate.txt
+
+      - name: Enforce disk budget after release build
+        if: always()
+        run: bash scripts/ci/disk-guard.sh enforce --label after-linux-release-candidate --min-free-gib 10
+
+      - name: Upload build-only release candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-release-candidate-${{ github.sha }}
+          path: |
+            nimbus_linux_x86_64.tar.gz
+            linux-release-candidate.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
 
   workspace-run-nightly:
     name: Nightly Rust Workspace Tests (shard ${{ matrix.partition }})
