@@ -45,6 +45,24 @@ struct NativeAddonDisabledError {
     path: PathBuf,
 }
 
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error("{message}")]
+#[class(generic)]
+#[property("code" = "ERR_ACCESS_DENIED")]
+#[property("permission" = "FileSystemRead")]
+#[property("path" = self.path.display().to_string())]
+struct ModuleReadDeniedError {
+    message: String,
+    path: PathBuf,
+}
+
+fn module_read_denied_error(path: &Path, error: impl std::fmt::Display) -> JsErrorBox {
+    JsErrorBox::from_err(ModuleReadDeniedError {
+        message: error.to_string(),
+        path: path.to_path_buf(),
+    })
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ScopedInNpmPackageChecker;
 
@@ -169,19 +187,20 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
         _permissions: &mut PermissionsContainer,
         path: Cow<'a, Path>,
     ) -> Result<Cow<'a, Path>, JsErrorBox> {
+        let requested_path = path.as_ref().to_path_buf();
         let canonical_path = self
             .path_policy
             .ensure_module_read_path(path.as_ref())
-            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+            .map_err(|error| module_read_denied_error(&requested_path, error))?;
         let path = self
             .module_read_permissions
             .borrow_mut()
             .check_open(
-                Cow::Owned(canonical_path),
+                Cow::Borrowed(canonical_path.as_path()),
                 OpenAccessKind::ReadNoFollow,
                 Some("require()"),
             )
-            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+            .map_err(|error| module_read_denied_error(&canonical_path, error))?;
         Ok(Cow::Owned(path.to_path_buf()))
     }
 
@@ -929,6 +948,12 @@ mod tests {
             error.to_string().contains("Requires read access"),
             "unexpected require permission denial: {error}"
         );
+        assert_error_code(&error, "ERR_ACCESS_DENIED");
+        let permission = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "permission")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(permission.as_deref(), Some("FileSystemRead"));
     }
 
     #[test]

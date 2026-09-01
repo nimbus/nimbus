@@ -1,11 +1,12 @@
 {
   "as_of": "2026-09-01",
   "dashboard_summary": {
-    "canary_check_count": 0,
+    "canary_check_count": 101,
     "canary_claim_count": 79,
     "required_canary_gap_count": 0
   },
   "drift": {
+    "evidence_drift": [],
     "lifecycle_drift": [],
     "metadata": [],
     "proof_drift": [],
@@ -105,11 +106,11 @@
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
-      "sha256": "817aff71376fde56bb3daa78502776b6262b9e430849271dc62705b602d3b3fa"
+      "sha256": "76340e1b0ec2a149cac9c930b8eefc41f20c4b580e9431b16603afb46c20b716"
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json",
-      "sha256": "64213325c8d77c51b66eda9b7eb2a9794027defb9ba21bbf0197c3eb166aa882"
+      "sha256": "0f909cfe6359f56747d709e351ad937c60924b61d267d05bc716bcf85ec0ef68"
     }
   ],
   "source_urls": [

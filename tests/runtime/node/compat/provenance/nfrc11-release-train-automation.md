@@ -90,9 +90,10 @@ identity and classification catalogs and republished the evidence.
 
 The refreshed evidence contains `20,621` official vendored test files, `7,768`
 documented manifested green files, `150` explicit Rust watchpoints, `37` active
-canaries, and `79` canary claims. Every official file is either in the measured
-green subset or has an explicit expected-failure, known-gap, or skipped
-classification. The refresh does not convert known gaps into pass claims.
+canaries, `79` canary claims, and `101` current canary checks. Every official
+file is either in the measured green subset or has an explicit expected-failure,
+known-gap, or skipped classification. The refresh does not convert known gaps
+into pass claims.
 
 A representative live replay covered core, process, stream, network, and
 loader slices. It retained observed incompatibilities as failures in the raw
@@ -142,9 +143,8 @@ The initial 2026-05-28 publication reported:
 
 The 2026-09-01 refresh reports the same lane roles with Node22 `v22.23.2`,
 Node24 `v24.20.0`, and Node26 `v26.8.1`. It reports `79` canary claims, no
-required canary gaps, and no release-train drift. The current dashboard has no
-published canary execution reports, so it reports `0` canary checks instead of
-reusing historical executions.
+required canary gaps, and no release-train drift. Two fresh canary reports
+contain `101` checks for the current candidate.
 
 ## Verification
 
@@ -157,9 +157,13 @@ reusing historical executions.
 - `make node-compat-release-train CHECK=1`: pass. The generated release-train
   summary is current.
 - `python3 scripts/runtime/node/release_train.py self-test`: pass. The negative
-  tests detected tag, lifecycle, dashboard-role, and product-default drift.
+  tests detected tag, lifecycle, dashboard-role, product-default, and missing
+  canary-execution drift.
 - `python3 scripts/runtime/node/release_train.py probe-live`: pass with
   network approval, 4 lanes matched official release feeds.
+- `make node-compat-canaries PRESET=application`: pass, with current application
+  and host-heavy evidence for Node20, Node22, Node24, and Node26.
+- `make node-compat-canaries PRESET=tooling`: pass for Node22 and Node24.
 - `bash scripts/verify-node-latest-suite-tags.sh`: pass, 4 lanes, 0 needing
   fixture sync, negative self-tests passed.
 - `bash scripts/verify-node-lts-lanes.sh`: pass, 4 lanes, product default
@@ -174,6 +178,8 @@ reusing historical executions.
   the live probe.
 - Require source digest markers in this proof. A future lane/tag metadata edit
   cannot pass release-train verification without updating the proof.
+- Reject active canary claims when the current dashboard has no canary checks.
+  Also reject any required canary gap.
 - Treat search snippets as advisory only. The official schedule JSON is the
   source of truth when snippets disagree.
 
