@@ -827,7 +827,7 @@ globalThis.__nimbusInvoke = async function(request) {
         )
         .expect("bundle should be written");
 
-        let policy = bun_policy();
+        let policy = bun_no_timeout_policy();
         let request = InvocationRequest {
             kind: InvocationKind::Query,
             function_name: "messages:bunProof".to_string(),
