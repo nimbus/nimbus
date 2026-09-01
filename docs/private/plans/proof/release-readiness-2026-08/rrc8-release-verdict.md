@@ -31,8 +31,11 @@ source for ordinary and service-snapshot construction, and fails closed on a
 provider miss.
 
 Focused feature-off and pointer-compressed tests and the final Sol xhigh review
-pass. A fresh source-free package replay must still prove the repair before
-this blocker closes.
+pass. An OS-sandboxed macOS release package passed all four `nimbus/agent-chat`
+runtime anchors while every Deno source checkout was unreadable. A production-
+configuration integration test also invoked a Node22 service-bearing runtime
+under the same denial policy. Linux source-free package replay must still prove
+the repair before this blocker closes.
 
 The exact replay found and closed two dependency-graph defects.
 

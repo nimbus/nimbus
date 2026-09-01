@@ -41,7 +41,7 @@ in the final dependency closure.
 | U3 | Audit the 21 Deno carries and replay only product-required concepts on upstream 2.9.6. | `complete` | Seven local commits end at exact reviewed correction `8d48dc4a68df8e083ed4b17855440b1df6405620`. Nimbus commit `d6636b980deedfeee8a64afb06230fa8a19a10a9` records the paired cleanup and public-tag repin. Controlled A/B, observed-mode crossover, full local CI, macOS, Linux debug-profile, application, desktop, and final Sol review evidence pass. The 8 GiB Linux full-LTO attempt is recorded as resource-blocked. |
 | U4 | Test Deno itself and Nimbus against the exact unpublished candidate. | `complete` | Exact candidate `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3` uses immutable rusty_v8 tag `v150.4.0-nimbus.1`. Locked workspace checks, formatting, warning-denied carry Clippy, 183 focused carry tests, 1,517 Node AES-GCM tests, and focused Nimbus integration pass. |
 | U5 | Review and publish an immutable Deno 2.9.6 release. | `complete` | Public successor release `v2.9.6-nimbus.2` uses annotated tag object `6fd2b3a0a7fb227388283cf30de9dd5de90ab949`, which peels to exact candidate `625e4c259488dfa1c3c9d03fabde17758e1130d9`. It preserves the reviewed `.1` carries and adds only the construction-time extension source provider required by source-free packages. The full 478-test `deno_core` suite, warning-denied Clippy, formatting, secret scan, and Sol xhigh review pass. The default branch is `nimbus/v2.9.6`. |
-| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `in_progress` | Exact substantive candidate `76165b0b9` resolves 41 Deno packages at `v2.9.6-nimbus.2#625e4c25` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. It packages build-only extension sources for ordinary and service-snapshot construction and fails closed on provider misses. Both blob variants, focused source-free regressions, pointer-compressed embedded-anchor integration, all-target runtime checks, warning-denied Clippy, formatting, whitespace, secret scans, and the final Sol xhigh review pass. Fresh source-free package replay remains. |
+| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `in_progress` | Exact substantive candidate `76165b0b9` resolves 41 Deno packages at `v2.9.6-nimbus.2#625e4c25` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. Test-only checkpoint `208c2e6f5` adds the non-`cfg(test)` service-snapshot invocation proof. Both blob variants, focused source-free regressions, the macOS package run, all-target runtime checks, warning-denied Clippy, formatting, whitespace, secret scans, and final Sol xhigh reviews pass. Linux source-free package replay remains. |
 
 ## Carry Rules
 
@@ -534,8 +534,8 @@ followed by owner approval. RRC8 keeps exclusive ownership until that trigger.
 ## Current Next Action
 
 Push the reviewed Nimbus branch. Repeat the release-critical smoke and artifact
-lanes from exact substantive candidate `76165b0b9`. The first source-free
-WebStandard invocation and service-bearing Node snapshot must pass before the
+lanes from exact substantive candidate `76165b0b9` plus test-only checkpoint
+`208c2e6f5`. The Linux source-free WebStandard invocation must pass before the
 higher-memory Linux full-LTO, archive, OCI, desktop, and hosted evidence can
 close U6.
 
@@ -613,6 +613,19 @@ all-target runtime checks, warning-denied Clippy, formatting, and whitespace
 pass. Two Sol xhigh reviews found the residual-ordering and provider-miss
 defects. The final follow-up is clean, and all review secret scans are clean.
 
-This repair is not complete release evidence. A fresh package without a source
-checkout must pass the first WebStandard invocation. It must also build the
-service-bearing Node snapshot. U6 remains `in_progress`.
+The exact macOS pointer-compressed release binary is 197 MiB with SHA-256
+`5b096caf088c37862a083f412e17a61f516e6d6931ca0a5b8cb8bc70e79bb555`.
+An OS sandbox denied all Cargo Deno checkouts and both local Deno worktrees.
+The `nimbus/agent-chat` lane passed all four runtime anchors. It covered
+conversation, memory, recall, scheduled execution, and WebSocket delivery.
+
+Test-only checkpoint `208c2e6f5` extends the non-`cfg(test)` embedded-anchor
+integration test. After the anchor installs, the test invokes a Node22 WarmPool
+runtime with service capability and an exact service grant. The same denial
+sandbox passes that test. Both Sol xhigh reviews are clean. The net change
+after the built `823b29c7e` candidate is only the integration test. Production
+library source did not change.
+
+This repair is not complete release evidence. A fresh Linux package without a
+source checkout must pass the first WebStandard invocation. U6 remains
+`in_progress`.

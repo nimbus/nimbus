@@ -9,10 +9,9 @@ Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
 Next action: push the reviewed Nimbus candidate that consumes public tags
-`v2.9.6-nimbus.2` and `v150.4.0-nimbus.1`. Build source-free macOS and Linux
-release packages. Prove the first WebStandard invocation and service-bearing
-Node snapshot path. Then repeat the remaining hosted, smoke, archive, OCI, and
-desktop lanes from the exact branch head.
+`v2.9.6-nimbus.2` and `v150.4.0-nimbus.1`. Build the source-free Linux release
+package and repeat the WebStandard invocation. Then repeat the remaining
+hosted, smoke, archive, OCI, and desktop lanes from the exact branch head.
 
 ## Outcome
 
@@ -436,3 +435,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-01 | RRC8 | finding | Deno release `v2.9.6-nimbus.2` adds a construction-only extension source provider. Annotated tag object `6fd2b3a0a7fb227388283cf30de9dd5de90ab949` peels to `625e4c259488dfa1c3c9d03fabde17758e1130d9`. The full 478-test `deno_core` suite, warning-denied Clippy, formatting, the focused missing-path regression, secret scan, and Sol xhigh review pass. |
 | 2026-09-01 | RRC8 | finding | Nimbus commits `b573663788c76c236f2c2add46aef42287520433`, `e0a790681`, and `76165b0b9` repin all 41 Deno packages and extend embedded snapshot schema 6 with the exact WebStandard and Node build-only source union. Runtime construction validates and uses that table without retaining replay state. Service-snapshot residual collection uses the same provider before Deno construction, and a present provider fails closed on any miss instead of opening a host path. |
 | 2026-09-01 | RRC8 | evidence | The 18,385,928-byte feature-off blob and 17,808,664-byte pointer-compressed blob pass exact provenance and parser checks. Nine feature-off startup tests, two pointer-compressed source-free residual tests, the pointer-compressed embedded-anchor integration test, all-target runtime checks, warning-denied runtime Clippy, formatting, whitespace, and secret scans pass. Two Sol xhigh follow-ups found and closed the residual-ordering and provider-miss defects; the final review is clean. The fresh source-free package oracle remains required before this blocker can close. |
+| 2026-09-01 | RRC8 | evidence | The exact macOS pointer-compressed release binary is 197 MiB with SHA-256 `5b096caf088c37862a083f412e17a61f516e6d6931ca0a5b8cb8bc70e79bb555`. An OS sandbox denied all Cargo Deno checkouts and local Deno worktrees. The source-free `nimbus/agent-chat` lane passed conversation, memory, recall, scheduler, and WebSocket anchors. A non-`cfg(test)` integration test then installed the embedded NodeFull anchor and invoked a Node22 WarmPool runtime with service capability and an exact service grant under the same denial sandbox. Both Sol xhigh reviews are clean. The net checkpoint after `823b29c7e` changes only this integration test. Linux source-free replay remains required. |
