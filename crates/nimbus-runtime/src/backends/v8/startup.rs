@@ -122,9 +122,13 @@ pub(crate) fn create_v8_startup_snapshot(
     // stay in the separate finalize step for ordinary runtimes until the fork
     // offers an explicit snapshot-safe replacement.
     let extensions = snapshot_extensions(compatibility_target, service_extension_enabled);
-    let (residual_lazy_js_sources, residual_lazy_esm_sources) =
-        collect_startup_snapshot_extension_sources(compatibility_target, &extensions)?;
     let extension_source_provider = packaged_runtime_extension_source_provider(&extensions)?;
+    let (residual_lazy_js_sources, residual_lazy_esm_sources) =
+        collect_startup_snapshot_extension_sources(
+            compatibility_target,
+            &extensions,
+            extension_source_provider.as_deref(),
+        )?;
     let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
         extensions,
         extension_transpiler: extension_transpiler_for_target(compatibility_target),
@@ -671,6 +675,7 @@ pub(crate) fn packaged_runtime_extension_source_provider(
 fn collect_startup_snapshot_extension_sources(
     compatibility_target: RuntimeCompatibilityTarget,
     extensions: &[Extension],
+    extension_source_provider: Option<&ExtensionSourceProvider>,
 ) -> Result<(ResidualLazySources, ResidualLazySources)> {
     let mut residual_lazy_js_sources = Vec::new();
     let mut residual_lazy_esm_sources = Vec::new();
@@ -681,7 +686,7 @@ fn collect_startup_snapshot_extension_sources(
                 residual_lazy_js_sources.push(transpile_snapshot_extension_source(
                     compatibility_target,
                     file.specifier,
-                    file.load()?,
+                    load_snapshot_extension_source(file, extension_source_provider)?,
                 )?);
             }
         }
@@ -690,7 +695,7 @@ fn collect_startup_snapshot_extension_sources(
                 residual_lazy_esm_sources.push(transpile_snapshot_extension_source(
                     compatibility_target,
                     file.specifier,
-                    file.load()?,
+                    load_snapshot_extension_source(file, extension_source_provider)?,
                 )?);
             }
         }
@@ -700,6 +705,18 @@ fn collect_startup_snapshot_extension_sources(
         leak_extension_sources(residual_lazy_js_sources, "residual lazy JS")?,
         leak_extension_sources(residual_lazy_esm_sources, "residual lazy ESM")?,
     ))
+}
+
+fn load_snapshot_extension_source(
+    file: &ExtensionFileSource,
+    extension_source_provider: Option<&ExtensionSourceProvider>,
+) -> Result<ModuleCodeString> {
+    if !file.is_runtime_loadable()
+        && let Some(source) = extension_source_provider.and_then(|provider| provider(file))
+    {
+        return Ok(source);
+    }
+    Ok(file.load()?)
 }
 
 fn transpile_snapshot_extension_source(
@@ -903,6 +920,41 @@ mod tests {
         };
 
         assert!(error.to_string().contains("exceeds the remaining body"));
+    }
+
+    #[test]
+    fn source_free_snapshot_residuals_use_the_extension_source_provider() {
+        const LAZY_JS_SPECIFIER: &str = "ext:nimbus/source_free_service_lazy.js";
+        const LAZY_ESM_SPECIFIER: &str = "ext:nimbus/source_free_service_lazy.mjs";
+        const MISSING_PATH: &str =
+            "/nimbus-build-only-path-that-must-not-exist/service_snapshot.js";
+        let extension = Extension {
+            name: "nimbus_source_free_service_snapshot_test",
+            lazy_loaded_js_files: std::borrow::Cow::Owned(vec![
+                ExtensionFileSource::loaded_during_snapshot(LAZY_JS_SPECIFIER, MISSING_PATH),
+            ]),
+            lazy_loaded_esm_files: std::borrow::Cow::Owned(vec![
+                ExtensionFileSource::loaded_during_snapshot(LAZY_ESM_SPECIFIER, MISSING_PATH),
+            ]),
+            ..Default::default()
+        };
+        let provider: Rc<ExtensionSourceProvider> = Rc::new(|source| match source.specifier {
+            LAZY_JS_SPECIFIER => Some("globalThis.__nimbusLazyJs = 1;".to_string().into()),
+            LAZY_ESM_SPECIFIER => Some("export const nimbusLazyEsm = 1;".to_string().into()),
+            _ => None,
+        });
+
+        let (lazy_js, lazy_esm) = collect_startup_snapshot_extension_sources(
+            RuntimeCompatibilityTarget::Node22,
+            &[extension],
+            Some(provider.as_ref()),
+        )
+        .expect("the service snapshot must not open build-only paths when a provider is present");
+
+        assert_eq!(lazy_js[0].0, LAZY_JS_SPECIFIER);
+        assert!(lazy_js[0].1.contains("__nimbusLazyJs"));
+        assert_eq!(lazy_esm[0].0, LAZY_ESM_SPECIFIER);
+        assert!(lazy_esm[0].1.contains("nimbusLazyEsm"));
     }
 
     #[test]
