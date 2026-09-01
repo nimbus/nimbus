@@ -28,6 +28,13 @@ slow-timeout = { period = "15m", terminate-after = 2 }
 filter = 'package(nimbus-runtime) and test(/backends::v8::|runtime::tests::pool_reuse::isol_|runtime::tests::verification_harness::|runtime::tests::snapshot_lifecycle::|runtime::tests::warm_pool::/)'
 test-group = 'runtime-v8-global'
 
+# This test enforces wall-clock budgets for embedded storage operations. Give
+# it the runner while it measures so unrelated CPU and I/O load cannot decide
+# whether the regression gate passes.
+[[profile.default.overrides]]
+filter = 'package(nimbus-storage) and test(redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_pitr_and_gc)'
+threads-required = "num-test-threads"
+
 # These matrices launch synchronized child-process fleets and perform durable
 # recovery work inside one test. Run each without unrelated workspace load so
 # their existing semantic checkpoint bounds remain meaningful.
