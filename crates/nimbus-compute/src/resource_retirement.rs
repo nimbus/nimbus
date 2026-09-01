@@ -366,16 +366,21 @@ impl ComputeResourceRetirer {
         let owner = self.clone();
         let owner_context = context.clone();
         let owner_service_name = service_name.to_owned();
+        // Keep the complete teardown state machine off the public handler
+        // stack. The one-shot retirement future is large because it owns all
+        // durable recovery phases, and embedding it here by value can exhaust
+        // normal request-task stacks before the supervisor spawns it.
+        let retirement = Box::pin(async move {
+            owner
+                .submit_service_teardown_until_terminal(
+                    &owner_context,
+                    &owner_service_name,
+                    &WorkloadTeardownCancellationToken::new(),
+                )
+                .await
+        });
         self.supervisor
-            .submit_service(key, cancellation, async move {
-                owner
-                    .submit_service_teardown_until_terminal(
-                        &owner_context,
-                        &owner_service_name,
-                        &WorkloadTeardownCancellationToken::new(),
-                    )
-                    .await
-            })
+            .submit_service(key, cancellation, retirement)
             .await
     }
 
@@ -503,16 +508,19 @@ impl ComputeResourceRetirer {
         let owner = self.clone();
         let owner_context = context.clone();
         let owner_sandbox_id = sandbox_id.to_owned();
+        // Keep the complete teardown state machine off the public handler
+        // stack. See the service path above for the matching invariant.
+        let retirement = Box::pin(async move {
+            owner
+                .submit_sandbox_teardown_until_terminal(
+                    &owner_context,
+                    &owner_sandbox_id,
+                    &WorkloadTeardownCancellationToken::new(),
+                )
+                .await
+        });
         self.supervisor
-            .submit_sandbox(key, cancellation, async move {
-                owner
-                    .submit_sandbox_teardown_until_terminal(
-                        &owner_context,
-                        &owner_sandbox_id,
-                        &WorkloadTeardownCancellationToken::new(),
-                    )
-                    .await
-            })
+            .submit_sandbox(key, cancellation, retirement)
             .await
     }
 
