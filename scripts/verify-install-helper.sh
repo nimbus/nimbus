@@ -340,8 +340,8 @@ manifest_path.write_text(json.dumps({
     "adapter_version": "v0.1.0-bun-proof-main-20260525",
     "nimbus_version": "v0.1.0",
     "bun_source_repository": "https://github.com/nimbus/bun",
-    "bun_source_ref": "nimbus-bun-jsc-proof-main-20260709",
-    "bun_source_revision": "cc0a59c301ac2f56e94102c4ad16c3f085821409",
+    "bun_source_ref": "nimbus-bun-jsc-proof-main-20260901",
+    "bun_source_revision": "c09efa5c28e550782902d7185ea6eb760fca57df",
     "target_triple": "x86_64-unknown-linux-gnu",
     "platform": "linux",
     "library": "libnimbus_bun_jsc_embedder.so",
@@ -364,7 +364,7 @@ sbom_path.write_text(json.dumps({
     "bomFormat": "CycloneDX",
     "components": [
         {"name": "libnimbus_bun_jsc_embedder.so", "hashes": [{"alg": "SHA-256", "content": library_sha}]},
-        {"name": "bun", "version": "nimbus-bun-jsc-proof-main-20260709"},
+        {"name": "bun", "version": "nimbus-bun-jsc-proof-main-20260901"},
     ],
 }, separators=(",", ":")) + "\n")
 

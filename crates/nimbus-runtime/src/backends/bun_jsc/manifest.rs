@@ -1011,7 +1011,7 @@ mod tests {
             .manifest
             .as_ref()
             .expect("verified manifest metadata should be exposed");
-        assert_eq!(manifest.source_ref, "nimbus-bun-jsc-proof-main-20260709");
+        assert_eq!(manifest.source_ref, "nimbus-bun-jsc-proof-main-20260901");
         assert_eq!(manifest.library_file, shared_library_basename());
         assert!(
             !serde_json::to_string(&resolved.diagnostics)
@@ -1103,7 +1103,7 @@ mod tests {
                 .expected
                 .expect("expected contract should be present")
                 .source_ref,
-            "nimbus-bun-jsc-proof-main-20260709"
+            "nimbus-bun-jsc-proof-main-20260901"
         );
     }
 

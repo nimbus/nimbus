@@ -427,6 +427,10 @@ printf '\n[8/11] Bun embedder FFI and same-process V8+Bun/JSC proof\n'
 LINKED_CARGO_JOBS="${NIMBUS_BUN_LINKED_CARGO_JOBS:-1}"
 NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
   CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
+  cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --test \
+    bun_jsc_concurrent_init -- --nocapture
+NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
+  CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
   cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib \
     backends::bun_jsc -- --nocapture
 NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
