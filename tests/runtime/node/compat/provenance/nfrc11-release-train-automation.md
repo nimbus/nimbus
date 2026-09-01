@@ -1,9 +1,11 @@
 # NFRC11 Release-Train Automation
 
-Date: 2026-05-28
+Initial date: 2026-05-28
+Last refreshed: 2026-09-01
 Authoring agent: Codex
-Repository baseline: `e7e8b9d6`
-Relevant Node lanes: Node20 `v20.20.2`, Node22 `v22.22.3`, Node24 `v24.16.0`, Node26 `v26.2.0`
+Initial repository baseline: `e7e8b9d6`
+Refresh repository baseline: `af5bf1455`
+Relevant Node lanes: Node20 `v20.20.2`, Node22 `v22.23.2`, Node24 `v24.20.0`, Node26 `v26.8.1`
 
 ## Git Status Summary
 
@@ -11,16 +13,16 @@ The worktree contains the active NFRC0-NFRC11 implementation wave. The
 NFRC11-specific changes add release-train automation that validates checked-in
 Node lane metadata, latest official tags, dashboard role separation, and a
 proof digest gate. It also adds an optional live probe against official Node
-release feeds so future scheduled automation can detect new patch/minor tags
-or lifecycle changes before public docs move.
+release feeds. Future scheduled automation can detect new patch/minor tags or
+lifecycle changes before public docs move.
 
 ## Source Digest Gate
 
 Future changes to release metadata must update this proof because the verifier
 requires these digest markers:
 
-- tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: beaa3816420eb6263aa186340217a662978e9e9098efb1241fb27e23f61bb7e1
-- tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: 48d7181e4be7e5928342e0a87eae81c62adf47d0546ad186c3630e0985a98038
+- tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: bfcd0f33987e3e80beb5c08bd5043ea5e552c0fedc42f33b610ba7ffe6e210f3
+- tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: bf47d0f1c5c53d02efdb9e251e7c7f9af19ff91ae474875fe51c385ae7ef6bc8
 
 ## Files Changed
 
@@ -57,15 +59,15 @@ NFRC11 followed the wide-then-focused loop for release drift:
 `scripts/runtime/node/release_train.py` validates:
 
 - Node24 is the product default.
-- Node22 is supported Maintenance LTS.
+- Nimbus supports Node22 as Maintenance LTS.
 - Node20 is legacy-grace/EOL regression coverage.
 - Node26 is Current/non-LTS, not product default and not supported LTS.
 - Latest official tags match the lane registry and fixture corpus tags.
 - Dashboard lane roles match registry roles: `legacy`, `supported`, `default`,
   and `current`.
 - Generated release-train docs match current inputs.
-- This proof file exists, is listed by the proof README, and contains the
-  current lane/latest-tag source digest markers.
+- This proof file exists and contains the current lane/latest-tag source digest
+  markers. The proof README lists this file.
 
 The optional live probe reads:
 
@@ -76,6 +78,26 @@ Those are the official machine-readable feeds used to detect new tags and
 release lifecycle changes. Web research on 2026-05-28 also confirmed Node.js
 `v26.2.0` is a Current release and the Node Release Working Group schedule is
 the canonical lifecycle source.
+
+## 2026-09-01 Release-Readiness Refresh
+
+The release-readiness replay detected newer official patch releases after the
+offline checks passed. The live probe found `v22.23.2`, `v24.20.0`, and
+`v26.8.1`, while the checked-in corpora still used `v22.22.3`, `v24.16.0`, and
+`v26.2.0`. The refresh resolved each annotated tag to its tag object and peeled
+commit. It synchronized the official fixture subtree. It also regenerated the
+identity and classification catalogs and republished the evidence.
+
+The refreshed evidence contains `20,621` official vendored test files, `7,768`
+documented manifested green files, `150` explicit Rust watchpoints, `37` active
+canaries, and `79` canary claims. Every official file is either in the measured
+green subset or has an explicit expected-failure, known-gap, or skipped
+classification. The refresh does not convert known gaps into pass claims.
+
+A representative live replay covered core, process, stream, network, and
+loader slices. It retained observed incompatibilities as failures in the raw
+reports. The release-train gate verifies metadata and evidence integrity. It
+does not claim complete Node compatibility.
 
 ## Wide Feedback And Focused Fixes
 
@@ -103,11 +125,11 @@ Result: pass, `4` lanes matched official release feeds.
 
 ## Generated Summary
 
-The generated summary is checked in at
+The repository stores the generated summary at
 `tests/runtime/node/compat/node-lts-compat/node-release-train.md` and
 `node-release-train.json`.
 
-It reports:
+The initial 2026-05-28 publication reported:
 
 - Node20: `legacy_grace`, `eol_legacy`, dashboard role `legacy`.
 - Node22: `supported_lts`, `maintenance_lts`, dashboard role `supported`.
@@ -118,20 +140,24 @@ It reports:
 - Required canary gaps: `0`.
 - Release-train drift: none.
 
+The 2026-09-01 refresh reports the same lane roles with Node22 `v22.23.2`,
+Node24 `v24.20.0`, and Node26 `v26.8.1`. It reports `79` canary claims, no
+required canary gaps, and no release-train drift. The current dashboard has no
+published canary execution reports, so it reports `0` canary checks instead of
+reusing historical executions.
+
 ## Verification
 
-- `python3 scripts/runtime/node/release_train.py publish`: pass; generated
+- `python3 scripts/runtime/node/release_train.py publish`: pass. It generated
   `node-release-train.json` and `node-release-train.md`.
-- `python3 scripts/runtime/node/release_train.py publish --check-proof`: pass;
-  generated release-train summary with proof file present, proof README listed,
-  and no missing digest markers.
-- `bash scripts/verify-node-release-train.sh`: pass; 4 lanes, 0 drift entries,
-  negative self-tests passed.
-- `make node-compat-release-train CHECK=1`: pass; generated release-train
+- `python3 scripts/runtime/node/release_train.py publish --check-proof`: pass.
+  The summary has a proof file, a proof README entry, and all digest markers.
+- `bash scripts/verify-node-release-train.sh`: pass. Four lanes and zero drift
+  entries. The negative self-tests passed.
+- `make node-compat-release-train CHECK=1`: pass. The generated release-train
   summary is current.
-- `python3 scripts/runtime/node/release_train.py self-test`: pass; negative
-  self-tests detected tag drift, lifecycle drift, dashboard role drift, and
-  product-default drift.
+- `python3 scripts/runtime/node/release_train.py self-test`: pass. The negative
+  tests detected tag, lifecycle, dashboard-role, and product-default drift.
 - `python3 scripts/runtime/node/release_train.py probe-live`: pass with
   network approval, 4 lanes matched official release feeds.
 - `bash scripts/verify-node-latest-suite-tags.sh`: pass, 4 lanes, 0 needing
@@ -144,10 +170,10 @@ It reports:
 ## Decisions
 
 - Keep live official feed reads out of the default offline verifier. NFRC12
-  owns scheduled/nightly placement for live checks; NFRC11 makes the live probe
-  available and proves it.
-- Require source digest markers in this proof so a future lane/tag metadata
-  edit cannot pass release-train verification without updating the proof.
+  owns scheduled/nightly placement for live checks. NFRC11 provides and proves
+  the live probe.
+- Require source digest markers in this proof. A future lane/tag metadata edit
+  cannot pass release-train verification without updating the proof.
 - Treat search snippets as advisory only. The official schedule JSON is the
   source of truth when snippets disagree.
 

@@ -8,14 +8,14 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 - support phase: `Maintenance LTS`
 - product default: `no`
 - evidence policy: `lane-local LTS evidence`
-- upstream fixture line: `v22.22.3`
+- upstream fixture line: `v22.23.2`
 - runtime execution target: `Node22`
-- vendored official fixtures: `4748`
-- passed official fixtures: `2363`
-- expected failure / known gap fixtures: `2365`
+- vendored official fixtures: `4762`
+- passed official fixtures: `2362`
+- expected failure / known gap fixtures: `2380`
 - skipped / excluded fixtures: `20`
 - unclassified fixtures: `0`
-- official fixture pass rate: `49.8%`
+- official fixture pass rate: `49.6%`
 - classified coverage: `100.0%`
 
 ## Classification Catalog
@@ -25,50 +25,14 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 | Expectation | Count |
 | --- | ---: |
 | Expected failure | 21 |
-| Known gap | 2344 |
+| Known gap | 2359 |
 | Skipped / excluded | 20 |
 
 ## Canary Coverage
 
 | Package | Preset | Pinned version | Evidence | Support boundary | Status |
 | --- | --- | --- | --- | --- | --- |
-| `@anthropic-ai/sdk` | Application | `0.100.0` | Support | Supported | Passed |
-| `@aws-sdk/client-s3` | Application | `3.1056.0` | Support | Supported | Passed |
-| `axios` | Application | `1.20.0` | Support | Supported | Passed |
-| `convex-use-node-action` | Application | `nimbus` | Support | Supported | Passed |
-| `convex-use-node-real-app` | Application | `nimbus` | Support | Supported | Passed |
-| `express` | Application | `4.22.2` | Support | Supported | Passed |
-| `fastify` | Application | `5.12.1` | Support | Supported | Passed |
-| `node:child_process` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `esbuild` | Application | `0.28.2` | Diagnostic | Service/microVM required | Passed |
-| `node:inspector` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `native-addon` | Application | `nimbus` | Diagnostic | Service/microVM required | Passed |
-| `node --test` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `persistent-filesystem` | Application | `nimbus` | Diagnostic | Service/microVM required | Passed |
-| `prisma` | Application | `engine-boundary` | Diagnostic | Service/microVM required | Passed |
-| `raw-server-listen` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `node:repl` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `sharp` | Application | `0.35.4` | Diagnostic | Service/microVM required | Passed |
-| `node:worker_threads` | Application | `builtin` | Diagnostic | Service/microVM required | Passed |
-| `jose` | Application | `6.2.3` | Support | Supported | Passed |
-| `nanoid` | Application | `5.1.16` | Support | Supported | Passed |
-| `node-platform-builtins` | Application | `builtin` | Support | Supported | Passed |
-| `octokit` | Application | `5.0.5` | Support | Supported | Passed |
-| `openai` | Application | `6.39.1` | Support | Supported | Passed |
-| `resend` | Application | `6.12.4` | Support | Supported | Passed |
-| `@slack/web-api` | Application | `7.16.0` | Support | Supported | Passed |
-| `socket.io` | Application | `4.8.3` | Support | Supported | Passed |
-| `stripe` | Application | `22.2.0` | Support | Supported | Passed |
-| `undici` | Application | `6.28.0` | Support | Supported | Passed |
-| `@upstash/redis` | Application | `1.38.0` | Support | Supported | Passed |
-| `uuid` | Application | `14.0.0` | Support | Supported | Passed |
-| `ai` | Application | `6.0.192` | Support | Supported | Passed |
-| `zod` | Application | `4.4.3` | Support | Supported | Passed |
-| `jest` | Tooling | `30.4.2` | Support | Supported | Passed |
-| `next` | Tooling | `16.3.3` | Support | Supported | Passed |
-| `prisma` | Tooling | `7.10.0` | Support | Supported | Passed |
-| `ts-node` | Tooling | `10.9.2` | Support | Supported | Passed |
-| `tsx` | Tooling | `4.21.0` | Support | Supported | Passed |
+| none in current snapshot | n/a | n/a | n/a | n/a | n/a |
 
 ## Claim Boundary
 
