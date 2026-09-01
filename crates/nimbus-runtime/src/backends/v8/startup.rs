@@ -711,12 +711,18 @@ fn load_snapshot_extension_source(
     file: &ExtensionFileSource,
     extension_source_provider: Option<&ExtensionSourceProvider>,
 ) -> Result<ModuleCodeString> {
-    if !file.is_runtime_loadable()
-        && let Some(source) = extension_source_provider.and_then(|provider| provider(file))
-    {
-        return Ok(source);
+    if file.is_runtime_loadable() {
+        return Ok(file.load()?);
     }
-    Ok(file.load()?)
+    let Some(provider) = extension_source_provider else {
+        return Ok(file.load()?);
+    };
+    provider(file).ok_or_else(|| {
+        crate::error::NimbusRuntimeError::Contract(format!(
+            "packaged runtime extension source provider is missing {}",
+            file.specifier
+        ))
+    })
 }
 
 fn transpile_snapshot_extension_source(
@@ -955,6 +961,34 @@ mod tests {
         assert!(lazy_js[0].1.contains("__nimbusLazyJs"));
         assert_eq!(lazy_esm[0].0, LAZY_ESM_SPECIFIER);
         assert!(lazy_esm[0].1.contains("nimbusLazyEsm"));
+    }
+
+    #[test]
+    fn source_free_snapshot_residuals_reject_a_packaged_provider_miss() {
+        const SPECIFIER: &str = "ext:nimbus/source_free_missing.js";
+        const MISSING_PATH: &str =
+            "/nimbus-build-only-path-that-must-not-exist/missing_service_snapshot.js";
+        let extension = Extension {
+            name: "nimbus_source_free_missing_snapshot_test",
+            lazy_loaded_js_files: std::borrow::Cow::Owned(vec![
+                ExtensionFileSource::loaded_during_snapshot(SPECIFIER, MISSING_PATH),
+            ]),
+            ..Default::default()
+        };
+        let provider: Rc<ExtensionSourceProvider> = Rc::new(|_| None);
+
+        let error = collect_startup_snapshot_extension_sources(
+            RuntimeCompatibilityTarget::Node22,
+            &[extension],
+            Some(provider.as_ref()),
+        )
+        .expect_err("a packaged provider miss must not fall back to a build-only path");
+
+        assert_eq!(
+            error.to_string(),
+            "runtime contract error: packaged runtime extension source provider is missing \
+             ext:nimbus/source_free_missing.js"
+        );
     }
 
     #[test]
