@@ -6542,6 +6542,7 @@ dependencies = [
 name = "nimbus-bin"
 version = "0.1.46"
 dependencies = [
+ "libc",
  "nimbus-cli",
  "tokio",
  "tracing-subscriber",
