@@ -30,7 +30,7 @@ pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSour
     BunJscLinkedAdapterSourceContract {
         repository: "https://github.com/nimbus/bun",
         source_ref: "codex/bun-v1.4.0-release-readiness",
-        git_revision: "489fa2dfe92acdcdc066af1102296b710ee8622e",
+        git_revision: "a89a0199f109edece51bda281bdd13084ae44cfa",
         proof_target: "check-bun-embed-shared",
         simdutf_namespace: "nimbus_bun_simdutf",
         required_exports: &[
