@@ -54,7 +54,7 @@ BUN_JSC_ADAPTER_CHECKSUMS_FILE="checksums-sha256.txt"
 BUN_JSC_ADAPTER_README_FILE="README.md"
 BUN_JSC_ADAPTER_SOURCE_REPOSITORY="https://github.com/nimbus/bun"
 BUN_JSC_ADAPTER_SOURCE_REF="codex/bun-v1.4.0-release-readiness"
-BUN_JSC_ADAPTER_SOURCE_REVISION="c67722b6fcf706947b301f160a584fd5ae35ce8c"
+BUN_JSC_ADAPTER_SOURCE_REVISION="d42871f797d1dd6cbd44deb9a9b879c50d638f3b"
 BUN_JSC_ADAPTER_SBOM_FILE="nimbus-bun-jsc-adapter.sbom.cdx.json"
 BUN_JSC_ADAPTER_SLSA_FILE="nimbus-bun-jsc-adapter.intoto.jsonl"
 
