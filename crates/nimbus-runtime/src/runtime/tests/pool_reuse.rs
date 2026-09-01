@@ -3555,12 +3555,12 @@ fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort_subprocess()
     );
 }
 
-/// FAIL-SAFE gate for the embedded NodeFull(Node22) anchor snapshot. A freshly built blob round-trips
-/// (build -> serialize -> deserialize) into a USABLE, cage-correct NodeFull runtime, AND the
-/// provenance guard REFUSES a corrupted or truncated blob (returns `None`, so the serving path
-/// runtime-builds and NEVER installs a mismatched snapshot). The blob is built with THIS build's
-/// provenance (which under cfg(test) includes the test-only extension), so the match path is
-/// non-vacuous — a committed production blob would mismatch here and tell us nothing.
+/// Guard for the embedded NodeFull(Node22) anchor snapshot. A freshly built blob round-trips (build
+/// -> serialize -> deserialize) into a usable, cage-correct NodeFull runtime. The eager release gate
+/// validates source content while the build checkout exists. The serving path validates the second,
+/// runtime-safe provenance header without reopening build-only source paths, and refuses a corrupt
+/// or truncated portable header. The blob is built with this build's provenance (which under
+/// `cfg(test)` includes the test-only extension), so the match path is non-vacuous.
 #[tokio::test(flavor = "current_thread")]
 async fn embedded_node22_snapshot_roundtrips_and_guard_is_fail_safe() {
     let blob = crate::backends::v8::build_embeddable_node22_snapshot_blob()
@@ -3570,17 +3570,26 @@ async fn embedded_node22_snapshot_roundtrips_and_guard_is_fail_safe() {
     let snapshot = crate::backends::v8::try_embedded_node22_anchor_snapshot(&blob)
         .expect("fresh embedded blob must pass the provenance guard and deserialize");
 
-    // GUARD FIRES PATH: corrupt the provenance header -> guard must REFUSE and return None
-    // (fail-safe: the caller then runtime-builds; it must NEVER install a mismatched snapshot).
+    // The content header is enforced by the eager build gate, not by the deployed serving path.
+    // Changing only that header must not make runtime validation reopen build-only source files.
+    let mut content_header_changed = blob.clone();
+    content_header_changed[0] ^= 0xff;
+    assert!(
+        crate::backends::v8::try_embedded_node22_anchor_snapshot(&content_header_changed).is_some(),
+        "runtime validation must use the portable header"
+    );
+
+    // Corrupt the portable provenance header. The serving guard must refuse it and never install a
+    // snapshot whose runtime-safe identity does not match the current binary.
     let mut stale = blob.clone();
-    stale[0] ^= 0xff;
+    stale[8] ^= 0xff;
     assert!(
         crate::backends::v8::try_embedded_node22_anchor_snapshot(&stale).is_none(),
-        "stale/corrupt provenance MUST fail the guard (fail-safe to runtime build, never install)"
+        "stale portable provenance must fail the serving guard"
     );
-    // Truncated blob must also fail the guard, not panic.
+    // A truncated portable header must also fail the guard, not panic.
     assert!(
-        crate::backends::v8::try_embedded_node22_anchor_snapshot(&blob[..4]).is_none(),
+        crate::backends::v8::try_embedded_node22_anchor_snapshot(&blob[..12]).is_none(),
         "truncated blob MUST fail the guard"
     );
 

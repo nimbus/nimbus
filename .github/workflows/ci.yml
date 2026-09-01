@@ -426,7 +426,7 @@ jobs:
 
       - name: Verify embedded anchor installs under the cage
         # The cfg(test) cage oracle above CANNOT exercise the EMBEDDED anchor path: under cfg(test)
-        # snapshot_extensions adds a test-only extension, so provenance mismatches the committed blob
+        # snapshot_extensions adds a test-only extension, so provenance mismatches the generated blob
         # and try_embedded falls back to a runtime build. This integration test links NON-cfg(test)
         # nimbus-runtime, so the anchor installs FROM the committed .pc.bin into the real shared cage
         # — the production serving path. The shipped first-installer guard stays silent (the anchor is

@@ -181,10 +181,10 @@ test-rust-runtime-cage:
 # config (a V8 startup snapshot is platform-specific) and are NOT committed (gitignored). The serving
 # path DESERIALIZES the generated blob (~19ms) instead of building it lazily (~4.18s, which blows
 # per-request timeouts). Each CI lane / a release build regenerates the blob for ITS target+config
-# BEFORE building the consuming binary; the runtime provenance guard (arch+OS+V8+pc+extensions+ops+JS)
-# falls back to a runtime build if a blob is missing or built for the wrong target/config, so a fresh
-# `cargo build` without this step is slow-but-correct, never wrong. Each target also `--check`s that
-# the just-generated blob is live (a self-test of the generator). `-off`/`-on` do ONE config (the
+# BEFORE building the consuming binary. The runtime provenance guard rejects a missing, stale, or
+# foreign blob. A source checkout can then build the snapshot from its Deno sources, but a deployed
+# artifact cannot access build-only source paths. Release packaging must run this target and its
+# post-generation `--check`. `-off`/`-on` do ONE config (the
 # single-config CI lanes); the bare target does both for local dev (the `-on` half in a separate
 # CARGO_TARGET_DIR so its pointer-compression V8 prebuilt does not collide with the shared
 # gn_out/obj/librusty_v8.a a preceding feature-off build wrote — the build.rs guard otherwise fails).
@@ -194,10 +194,12 @@ test-rust-runtime-cage:
 # regenerates both (the `-on` half in a separate CARGO_TARGET_DIR to dodge the shared-.a guard).
 build-node22-anchor-snapshot-off:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check \
-		|| cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
+		|| { cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot \
+			&& cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check; }
 build-node22-anchor-snapshot-on:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check \
-		|| cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
+		|| { cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression \
+			&& cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check; }
 build-node22-anchor-snapshot:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check

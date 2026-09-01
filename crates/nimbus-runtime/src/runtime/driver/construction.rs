@@ -55,10 +55,11 @@ impl NimbusRuntime {
             // (~19ms) instead of building it (~4.18s, which — armed lazily — lands inside the first
             // request and blows per-request timeouts). Active in BOTH pointer-compression configs
             // (release/cage `.pc.bin` and dev/test `.bin`), each with its own generated blob.
-            // Provenance-guarded and FAIL-SAFE: a stale, empty, or corrupt blob returns None and we
-            // fall back to a runtime build (slow-but-correct); the embedded snapshot is NEVER
-            // installed on any doubt. The cage's first-installer ORDERING is independently guarded by
-            // `anchor::assert_cage_install_ordering` below.
+            // Provenance-guarded: a stale, empty, or corrupt blob returns None and is never
+            // installed. A source checkout can use the runtime-build fallback because its Deno
+            // sources remain present. Release packaging must generate and check the blob because a
+            // deployed artifact does not contain build-only Deno paths. The cage's first-installer
+            // ordering is independently guarded by `anchor::assert_cage_install_ordering` below.
             if matches!(snapshot_key, RuntimeStartupSnapshotKey::NodeFull)
                 && let Some(embedded) = crate::backends::v8::try_embedded_node22_anchor_snapshot(
                     crate::backends::v8::EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
