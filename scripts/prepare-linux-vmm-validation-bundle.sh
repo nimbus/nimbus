@@ -398,6 +398,12 @@ Or run the prepared sequence through:
 bash ${queue_runner}
 \`\`\`
 
+The queue runner re-executes through noninteractive \`sudo\` when necessary.
+This matches the system-service privilege boundary and keeps Buildah, crun,
+conmon, and their lifecycle commands in one namespace with access to
+\`/dev/kvm\`. When you run numbered commands separately, prefix each command
+with \`sudo -n\`.
+
 Important files:
 
 - session env: \`${session_env}\`
@@ -412,7 +418,11 @@ set -euo pipefail
 source ${session_env}
 
 echo "lh1.host_preflight.output=\${LH1_DIR}/check-vmm-host.txt"
-bash "\${REPO_ROOT}/scripts/check-vmm-host.sh" | tee "\${LH1_DIR}/check-vmm-host.txt"
+host_check_args=()
+if [[ -n "\${NIMBUS_CRUN_ASSET}" && -n "\${NIMBUS_LIBKRUN_ARCHIVE}" ]]; then
+  host_check_args+=(--allow-pending-private-runtime)
+fi
+bash "\${REPO_ROOT}/scripts/check-vmm-host.sh" "\${host_check_args[@]}" | tee "\${LH1_DIR}/check-vmm-host.txt"
 
 echo "lh1.package_versions.output=\${LH1_DIR}/collect-vmm-package-versions.txt"
 bash "\${REPO_ROOT}/scripts/collect-vmm-package-versions.sh" | tee "\${LH1_DIR}/collect-vmm-package-versions.txt"
@@ -499,6 +509,9 @@ cat > "${lh4_script}" <<EOF
 set -euo pipefail
 source ${session_env}
 
+echo "lh4.host_post_install.output=\${LH4_DIR}/check-vmm-host-post-install.txt"
+bash "\${REPO_ROOT}/scripts/check-vmm-host.sh" | tee "\${LH4_DIR}/check-vmm-host-post-install.txt"
+
 echo "lh4.runtime_separation.output=\${LH4_DIR}/verify-runtime-separation.txt"
 bash "\${REPO_ROOT}/scripts/verify-runtime-separation.sh" \\
   --system-runtime "\${SYSTEM_RUNTIME}" \\
@@ -510,6 +523,10 @@ cat > "${lh5_rootfs_script}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 source ${session_env}
+
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo -n -- bash "\$0" "\$@"
+fi
 
 existing_name=""
 if buildah containers --format '{{.ContainerName}}' 2>/dev/null | grep -Fx "\${BUILDAH_NAME}" >/dev/null 2>&1; then
@@ -525,7 +542,17 @@ echo "lh5.buildah_from.output=\${LH5_DIR}/buildah-from.txt"
 buildah from --name "\${BUILDAH_NAME}" "\${IMAGE_REF}" | tee "\${LH5_DIR}/buildah-from.txt"
 
 echo "lh5.rootfs_file=\${ROOTFS_FILE}" | tee "\${LH5_DIR}/buildah-mount.txt"
-buildah mount "\${BUILDAH_NAME}" | tee "\${ROOTFS_FILE}" | tee -a "\${LH5_DIR}/buildah-mount.txt" >/dev/null
+mounted_rootfs="\$(buildah mount "\${BUILDAH_NAME}")"
+cleanup_mount() {
+  buildah umount "\${BUILDAH_NAME}" >/dev/null 2>&1 || true
+}
+trap cleanup_mount EXIT
+
+copied_rootfs="\${LH5_DIR}/rootfs"
+rm -rf "\${copied_rootfs}"
+mkdir -p "\${copied_rootfs}"
+cp -a --no-preserve=ownership "\${mounted_rootfs}/." "\${copied_rootfs}/"
+printf '%s\n' "\${copied_rootfs}" | tee "\${ROOTFS_FILE}" | tee -a "\${LH5_DIR}/buildah-mount.txt" >/dev/null
 
 buildah inspect "\${BUILDAH_NAME}" | tee "\${BUILDAH_INSPECT_FILE}" >/dev/null
 EOF
@@ -618,6 +645,9 @@ bash "\${COMMAND_FILE}" >"\${run_stdout}" 2>"\${run_stderr}" &
 run_wrapper_pid=\$!
 printf '%s\n' "\${run_wrapper_pid}" | tee "\${LH6_DIR}/run-conmon-wrapper.pid" >/dev/null
 
+echo "lh6.start_container.output=\${LH6_DIR}/start-container.txt"
+bash "\${START_CONTAINER}" 60 | tee "\${LH6_DIR}/start-container.txt"
+
 deadline=\$((SECONDS + 60))
 while (( SECONDS <= deadline )); do
   if curl -fsS "\${PROBE_URL}" >/dev/null 2>&1; then
@@ -648,8 +678,16 @@ chmod 0755 "${lh6_run_script}"
 cat > "${cleanup_script}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo -n -- bash "\$0" "\$@"
+fi
+
 source ${session_env}
 
+if "\${INSTALL_PATH}" state "\${DIRECT_CONTAINER_ID}" >/dev/null 2>&1; then
+  "\${INSTALL_PATH}" delete -f "\${DIRECT_CONTAINER_ID}"
+fi
 buildah umount "\${BUILDAH_NAME}" >/dev/null 2>&1 || true
 buildah rm "\${BUILDAH_NAME}" >/dev/null 2>&1 || true
 echo "cleanup.buildah_name=\${BUILDAH_NAME}"
@@ -659,6 +697,10 @@ chmod 0755 "${cleanup_script}"
 cat > "${queue_runner}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo -n -- bash "\$0" "\$@"
+fi
 
 bash ${lh1_script}
 bash ${lh2_script}
@@ -697,6 +739,7 @@ LH3:
 - install path: ${install_path}
 
 LH4:
+- ${lh4_dir}/check-vmm-host-post-install.txt
 - ${lh4_dir}/verify-runtime-separation.txt
 
 LH5:

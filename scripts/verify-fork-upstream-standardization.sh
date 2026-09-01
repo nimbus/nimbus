@@ -50,8 +50,13 @@ forks_tsv=$(cat <<EOF
 nimbus/deno	${HOME}/src/github.com/nimbus/deno	full_source	nimbus/v2.9.6	git@github.com:nimbus/deno.git	git@github.com:denoland/deno.git	v2.9.6	v2.9.6-nimbus.2	v[0-9]*	yes	v2.9.6
 nimbus/rusty_v8	${HOME}/src/github.com/nimbus/rusty_v8	full_source	nimbus/v150.4.0	git@github.com:nimbus/rusty_v8.git	git@github.com:denoland/rusty_v8.git	v150.4.0	v150.4.0-nimbus.1	v[0-9]*	no	v150.4.0
 nimbus/bun	${HOME}/src/github.com/nimbus/bun	full_source	nimbus/bun-main-20260708	git@github.com:nimbus/bun.git	git@github.com:oven-sh/bun.git	bun-v1.3.14	nimbus-bun-jsc-proof-main-20260901.2	bun-v[0-9]*	yes	332f7444f9
-nimbus/nimbus-crun	${HOME}/src/github.com/nimbus/nimbus-crun	patch_carrier	nimbus/1.27.1	git@github.com:nimbus/nimbus-crun.git	git@github.com:containers/crun.git	1.27.1	v1.27.1-nimbus.2	[0-9]*	yes	1.27.1
-nimbus/nimbus-libkrun	${HOME}/src/github.com/nimbus/nimbus-libkrun	full_source	nimbus/v1.18.1	git@github.com:nimbus/nimbus-libkrun.git	git@github.com:containers/libkrun.git	v1.18.1	v1.18.1-nimbus.1	v[0-9]*	yes	v1.18.1
+nimbus/nimbus-crun	${HOME}/src/github.com/nimbus/nimbus-crun	patch_carrier	nimbus/1.29.1	git@github.com:nimbus/nimbus-crun.git	git@github.com:containers/crun.git	1.29.1	v1.29.1-nimbus.2	[0-9]*	yes	1.29.1
+nimbus/nimbus-libkrun	${HOME}/src/github.com/nimbus/nimbus-libkrun	full_source	nimbus/v1.19.4	git@github.com:nimbus/nimbus-libkrun.git	git@github.com:containers/libkrun.git	v1.19.4	v1.19.4-nimbus.3	v[0-9]*	yes	v1.19.4
+EOF
+)
+
+companions_tsv=$(cat <<'EOF'
+nimbus/nimbus-libkrun	libkrunfw	https://github.com/libkrun/libkrunfw.git	v5.5.0	v[0-9]*	yes
 EOF
 )
 
@@ -234,6 +239,29 @@ while IFS=$'\t' read -r fork path kind expected_branch expected_origin expected_
     record_issue "${fork}" "newer upstream tag detected expected=${selected_source_tag} latest=${latest_tag}"
   fi
 done <<<"${forks_tsv}"
+
+printf 'companion\towner_fork\tupstream_url\tselected_tag\tremote_tag\tlatest_upstream_tag\ttracks_latest\n'
+
+while IFS=$'\t' read -r owner_fork companion upstream_url selected_tag tag_pattern tracks_latest; do
+  if ! fork_selected "${owner_fork}"; then
+    continue
+  fi
+
+  remote_tag="$(remote_tag_state "${upstream_url}" "${selected_tag}")"
+  latest_tag="$(remote_latest_tag "${upstream_url}" "${tag_pattern}")"
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${companion}" "${owner_fork}" "${upstream_url}" "${selected_tag}" \
+    "${remote_tag}" "${latest_tag:-unavailable}" "${tracks_latest}"
+
+  if [[ "${remote_tag}" == "missing" ]]; then
+    record_issue "${owner_fork}/${companion}" "selected companion tag missing upstream: ${selected_tag}"
+  fi
+
+  if [[ "${tracks_latest}" == "yes" && "${latest_tag}" != "skipped" && "${latest_tag}" != "unavailable" && "${latest_tag}" != "${selected_tag}" ]]; then
+    record_issue "${owner_fork}/${companion}" "newer upstream tag detected expected=${selected_tag} latest=${latest_tag}"
+  fi
+done <<<"${companions_tsv}"
 
 if [[ ${#selected_forks[@]} -gt 0 ]]; then
   for selected in "${selected_forks[@]}"; do

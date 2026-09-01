@@ -7,7 +7,9 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-krun-bundle-verify.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 config_path="${tmp_dir}/config.json"
+default_config_path="${tmp_dir}/default-config.json"
 cp "${fixture_path}" "${config_path}"
+cp "${fixture_path}" "${default_config_path}"
 
 bash "${repo_root}/scripts/prepare-krun-bundle.sh" \
   --config-path "${config_path}" \
@@ -38,6 +40,32 @@ assert config["process"]["args"] == [
 ]
 assert config["annotations"]["run.oci.handler"] == "krun"
 assert config["annotations"]["krun.port_map"] == "15432:5432"
+PY
+
+bash "${repo_root}/scripts/prepare-krun-bundle.sh" \
+  --config-path "${default_config_path}" \
+  --skip-spec \
+  --rootfs /srv/nimbus/default-rootfs \
+  --host-port 18080 \
+  --guest-port 8080
+
+python3 - "${default_config_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+with config_path.open("r", encoding="utf-8") as fh:
+    config = json.load(fh)
+
+assert config["process"]["args"] == [
+    "/bin/busybox",
+    "sh",
+    "-c",
+    'set -e; /bin/busybox mkdir -p /tmp/nimbus-http; printf "nimbus krun probe\\n" > /tmp/nimbus-http/index.html; trap "exit 0" TERM INT; /bin/busybox httpd -f -h /tmp/nimbus-http -p "$1" & wait "$!"',
+    "nimbus-httpd",
+    "8080",
+]
 PY
 
 echo "verified: krun bundle helper updated ${config_path}"

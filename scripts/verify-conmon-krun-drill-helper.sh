@@ -88,12 +88,22 @@ grep -F "drill.process_tree_cmd=bash ${capture_process_tree_script}" "${output_f
 grep -F "drill.graceful_stop_cmd=bash ${graceful_stop_script}" "${output_file}" >/dev/null
 
 grep -F "exec /usr/bin/conmon --api-version 1 -c nimbus-http -u nimbus-http -r /usr/libexec/nimbus/crun -b ${bundle_dir} -p ${pidfile} -n nimbus-http --exit-dir ${exit_dir} --persist-dir ${persist_dir} --full-attach -l k8s-file:${ctr_log} --log-level debug --syslog --conmon-pidfile ${conmon_pidfile} --runtime-arg --log-format=json --runtime-arg --log --runtime-arg ${oci_log}" "${command_file}" >/dev/null
+grep -F 'exec sudo -n -- "$0" "$@"' "${command_file}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun delete nimbus-http" "${command_file}" >/dev/null
+grep -F "rm -f ${ctr_log} ${oci_log} ${pidfile} ${conmon_pidfile} ${exit_status_file}" "${command_file}" >/dev/null
+grep -F "rm -rf ${persist_dir}" "${command_file}" >/dev/null
+grep -F "mkdir -p ${persist_dir}" "${command_file}" >/dev/null
 grep -F "find ${persist_dir} -type s -print | sort" "${find_attach_sockets_script}" >/dev/null
 grep -F "conmon_pid=\"\$(cat ${conmon_pidfile})\"" "${capture_process_tree_script}" >/dev/null
 grep -F "runtime_pid=\"\$(cat ${pidfile})\"" "${capture_process_tree_script}" >/dev/null
 grep -F "cat ${exit_status_file}" "${show_exit_status_script}" >/dev/null
-grep -F "kill -TERM \"\${runtime_pid}\"" "${graceful_stop_script}" >/dev/null
-grep -F "kill -KILL \"\${runtime_pid}\"" "${force_stop_script}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun kill nimbus-http TERM" "${graceful_stop_script}" >/dev/null
+grep -F 'exec sudo -n -- "$0" "$@"' "${graceful_stop_script}" >/dev/null
+grep -F 'stop.escalation=KILL' "${graceful_stop_script}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun kill nimbus-http KILL" "${graceful_stop_script}" >/dev/null
+grep -F 'stop.result=forced' "${graceful_stop_script}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun kill nimbus-http KILL" "${force_stop_script}" >/dev/null
+grep -F 'exec sudo -n -- "$0" "$@"' "${force_stop_script}" >/dev/null
 grep -F "EXIT_STATUS_FILE=${exit_status_file}" "${metadata_file}" >/dev/null
 
 echo "verified: conmon krun drill helper generated ${command_file}"
