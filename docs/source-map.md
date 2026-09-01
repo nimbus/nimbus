@@ -160,7 +160,7 @@ sources exist.
 | `concepts/nodejs-runtime.md` | Compatibility targets and permission modes are separate axes; in-process V8 | `crates/nimbus-runtime/src/limits/axes.rs`, `crates/nimbus-runtime/src/limits/grants.rs`, `crates/nimbus-runtime/src/backends/v8/` |
 | `reference/runtimes/node-apis.md` | API-family support table | generated evidence: `tests/runtime/node/published/nodejs/reference/node-apis.md` |
 | `reference/runtimes/packages.md` | Package-support matrix | generated evidence: `tests/runtime/node/published/nodejs/reference/packages.md` |
-| `reference/runtimes/node-compat.md` | Version table, contract, headline coverage numbers (2026-05-28) | generated evidence: `tests/runtime/node/published/nodejs/compatibility.md`, `tests/runtime/node/published/nodejs/evidence/latest.md` |
+| `reference/runtimes/node-compat.md` | Version table, contract, headline coverage numbers (2026-09-01) | generated evidence: `tests/runtime/node/published/nodejs/compatibility.md`, `tests/runtime/node/published/nodejs/evidence/latest.md` |
 
 ## Operators — install, deploy, lifecycle
 

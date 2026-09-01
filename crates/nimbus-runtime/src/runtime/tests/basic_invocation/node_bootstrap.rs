@@ -101,8 +101,8 @@ export {};
             "globalAliasIsSelf": true,
             "bufferValue": "function",
             "bufferRoundTrip": "hi",
-            "processVersion": "v22.22.3",
-            "nodeVersion": "22.22.3",
+            "processVersion": "v22.23.2",
+            "nodeVersion": "22.23.2",
             "moduleVersion": "127",
             "releaseName": "node",
             "releaseLts": "Jod",
@@ -332,8 +332,8 @@ export {};
     assert_eq!(
         result,
         serde_json::json!({
-            "processVersion": "v26.2.0",
-            "nodeVersion": "26.2.0",
+            "processVersion": "v26.8.1",
+            "nodeVersion": "26.8.1",
             "moduleVersion": "147",
             "releaseName": "node",
             "releaseLts": null,

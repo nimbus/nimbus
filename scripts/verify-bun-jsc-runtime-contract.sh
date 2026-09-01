@@ -31,9 +31,11 @@ printf '\n[5/7] Runtime diagnostics API contract\n'
 cargo test -p nimbus-server registry_and_license::runtime_metrics --lib
 
 printf '\n[6/7] Tenant admission permits only the proven Bun/JSC profile\n'
-cargo test -p nimbus-server \
-  tenant_isolation::tests::production_untrusted_runtime_admission_allows_bun_jsc_fresh_discard_policy \
-  --lib
+tenant_admission_test="tests::production_untrusted_runtime_admission_allows_bun_jsc_fresh_discard_policy"
+tenant_admission_inventory="$(cargo test -p nimbus-tenant --lib -- --list)"
+grep -Fqx "${tenant_admission_test}: test" <<<"${tenant_admission_inventory}"
+cargo test -p nimbus-tenant \
+  --lib "${tenant_admission_test}" -- --exact
 
 printf '\n[7/7] Operator UI runtime diagnostics contract\n'
 npm run test --workspace nimbus-ui -- \

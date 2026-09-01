@@ -172,7 +172,7 @@ jobs:
         with:
           shared-key: bun-jsc-adapter-${{ matrix.target }}-v1
           save-cache: always
-          consume-prebuilt-v8: release
+          consume-prebuilt-v8: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'release' || 'false' }}
           github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 

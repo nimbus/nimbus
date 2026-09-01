@@ -84,9 +84,9 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             NodeCompatPublicContractRole::Supported,
             "Node22",
             "application_node22",
-            "v22.22.3",
-            "fdfa0ff0dbaf0fbf4d7d6d89a2ab807f3177fa5c",
-            "354ef4b9bd94d5b662a9c300ddacc67f95a1bbe8",
+            "v22.23.2",
+            "aa4c77582be995286fc6e00aaf530dc7ade102a9",
+            "490a9fef8f8adcda5a95bd6f96035b05cb43fe5b",
         ),
         (
             "node24",
@@ -96,9 +96,9 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             NodeCompatPublicContractRole::Default,
             "Node24",
             "application_node24",
-            "v24.16.0",
-            "c7d10158bc31036de6783d66beaaaf551e3167aa",
-            "75143a8d75629c5d429dd0becb0d725e955f48fb",
+            "v24.20.0",
+            "71b8b174857e25106d39b61a9e6f30d927da8b01",
+            "8392e555cbdef2145d2cd2a2a7d29204d88d4e15",
         ),
         (
             "node26",
@@ -108,9 +108,9 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             NodeCompatPublicContractRole::Current,
             "Node26",
             "application_node26",
-            "v26.2.0",
-            "cfd7920d5a2d84905c4292362d01d07870047e93",
-            "30ffe3cfc2fda3684c38ec43aa79c381d398bf14",
+            "v26.8.1",
+            "7be6d3af31a65adea57c94c41e50c2b071ed0b3a",
+            "03c764c3c9fc07333d5fa4fc58c56ee946f56b2f",
         ),
     ];
 
@@ -165,7 +165,7 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             if expected_lane == "node20" {
                 "17a6bf48e3d69a5c153ffc89300629cc798346a5"
             } else {
-                "e7e8b9d6d7c21af04e31a72d9d419863834ecc21"
+                "af5bf1455bb9fddaa8bc05bb22fd8e89f08e859b"
             }
         );
         assert_eq!(
@@ -173,15 +173,27 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             if expected_lane == "node20" {
                 "2026-05-11T19:29:29-05:00"
             } else {
-                "2026-05-28T20:32:23Z"
+                "2026-09-01T05:15:00Z"
             }
         );
-        assert_eq!(metadata.fixture_provenance.recorded_at, "2026-05-28");
+        assert_eq!(
+            metadata.fixture_provenance.recorded_at,
+            if expected_lane == "node20" {
+                "2026-05-28"
+            } else {
+                "2026-09-01"
+            }
+        );
+        let expected_identity_command = if expected_lane == "node20" {
+            "git rev-list -n 1"
+        } else {
+            "git ls-remote"
+        };
         assert!(
             metadata
                 .fixture_provenance
                 .recorded_from
-                .contains("git rev-list -n 1"),
+                .contains(expected_identity_command),
             "fixture provenance should explain how commit identity was recorded",
         );
 
