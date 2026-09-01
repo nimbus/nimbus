@@ -217,6 +217,28 @@ pub fn smoke_install_generated_embedded_anchor() -> std::result::Result<(), Stri
     Ok(())
 }
 
+/// Release-package verification entry: construct and restore the service-bearing NodeFull
+/// snapshot with the same packaged extension-source table that deployed binaries use. Run the
+/// integration-test executable under a filesystem sandbox that denies the Deno checkout to prove
+/// that neither residual-source collection nor Deno runtime construction opens a build-only path.
+pub fn smoke_build_packaged_node_service_snapshot() -> std::result::Result<(), String> {
+    let snapshot =
+        NimbusRuntime::create_bootstrap_snapshot(RuntimeCompatibilityTarget::Node22, true)
+            .map_err(|error| format!("create service-bearing NodeFull snapshot failed: {error}"))?;
+    let mut limits = RuntimeLimits::application_node22();
+    limits.service_capability_enabled = true;
+    limits.grants.service = vec!["release-smoke-service".to_string()];
+    let owner = NimbusRuntime::with_policy(
+        Arc::new(AnchorNoopHost),
+        Arc::new(RuntimePolicy::new(limits)),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    owner
+        .create_runtime_from_snapshot(&RuntimeBundle::virtual_anchor(), &snapshot)
+        .map_err(|error| format!("restore service-bearing NodeFull snapshot failed: {error}"))?;
+    Ok(())
+}
+
 /// Fail-closed FLOOR (a regression assertion, NOT the live path). Every isolate build must
 /// occur after the anchor is installed. In correct operation this never fires, because
 /// `install_nodefull_anchor` runs (and blocks) at process init before any isolate creation.

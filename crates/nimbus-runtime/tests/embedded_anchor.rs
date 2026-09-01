@@ -11,12 +11,18 @@
 //! (`--features v8-pointer-compression`, the `rust-runtime-ptrcomp-check` CI job) it installs the
 //! embedded NodeFull superset into the real shared cage. Either way the generated blob must
 //! deserialize into a working NodeFull isolate — if it were stale or V8-incompatible, this aborts
-//! loud (provenance `Err`, or a V8 read-only-heap `V8_Fatal`).
+//! loud (provenance `Err`, or a V8 read-only-heap `V8_Fatal`). The same process then builds and
+//! restores the service-bearing NodeFull snapshot. Running this executable under a filesystem
+//! sandbox that denies Deno source checkouts proves both service-snapshot source consumers use the
+//! packaged table.
 
-#[test]
-fn embedded_nodefull_anchor_installs_from_generated_blob() {
+#[tokio::test(flavor = "current_thread")]
+async fn embedded_nodefull_anchor_installs_from_generated_blob() {
     nimbus_runtime::smoke_install_generated_embedded_anchor().expect(
         "the generated embedded NodeFull(Node22) anchor snapshot should deserialize and install a \
          working isolate on the serving path",
+    );
+    nimbus_runtime::smoke_build_packaged_node_service_snapshot().expect(
+        "the packaged source table should build and restore the service-bearing NodeFull snapshot",
     );
 }
