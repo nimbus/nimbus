@@ -365,10 +365,11 @@ jobs:
           fi
           echo "release runtime features: ${cargo_features:-<none>}"
           # V8 startup snapshots are platform-specific. Generate and then validate this target's
-          # gitignored blob before the consuming build. A deployed binary cannot rebuild the
-          # snapshot because Deno's build-only source paths are absent. Native build: the generator
-          # runs on its own target. Windows is outside the current release matrix; its restoration
-          # must generate and check the matching feature-off blob.
+          # gitignored blob before the consuming build. The blob packages both the NodeFull anchor
+          # and the build-only extension sources needed by deployed unsnapshotted or service-bearing
+          # runtimes. Native build: the generator runs on its own target. Windows is outside the
+          # current release matrix; its restoration must generate and check the matching feature-off
+          # blob.
           if echo "${cargo_features}" | grep -q v8-pointer-compression; then
             make build-node22-anchor-snapshot-on
           fi

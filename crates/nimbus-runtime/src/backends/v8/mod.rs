@@ -30,7 +30,8 @@ pub(crate) use self::lifecycle::{
 pub(crate) use self::startup::v8_bootstrap_snapshot_build_count_for_test;
 pub(crate) use self::startup::{
     EMBEDDED_NODE22_ANCHOR_SNAPSHOT, V8RuntimeConstructionMode, V8StartupSnapshot,
-    create_v8_startup_snapshot, try_embedded_node22_anchor_snapshot,
+    create_v8_startup_snapshot, packaged_runtime_extension_source_provider,
+    try_embedded_node22_anchor_snapshot,
 };
 pub use self::startup::{
     build_embeddable_node22_snapshot_blob, check_generated_embedded_anchor_snapshot,

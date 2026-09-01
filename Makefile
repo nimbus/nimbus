@@ -182,8 +182,8 @@ test-rust-runtime-cage:
 # path DESERIALIZES the generated blob (~19ms) instead of building it lazily (~4.18s, which blows
 # per-request timeouts). Each CI lane / a release build regenerates the blob for ITS target+config
 # BEFORE building the consuming binary. The runtime provenance guard rejects a missing, stale, or
-# foreign blob. A source checkout can then build the snapshot from its Deno sources, but a deployed
-# artifact cannot access build-only source paths. Release packaging must run this target and its
+# foreign blob. The blob also packages the build-only extension sources that unsnapshotted and
+# service-bearing runtimes need after deployment. Release packaging must run this target and its
 # post-generation `--check`. `-off`/`-on` do ONE config (the
 # single-config CI lanes); the bare target does both for local dev (the `-on` half in a separate
 # CARGO_TARGET_DIR so its pointer-compression V8 prebuilt does not collide with the shared

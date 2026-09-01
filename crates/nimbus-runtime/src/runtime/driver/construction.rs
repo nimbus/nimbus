@@ -7,7 +7,7 @@ use crate::backends::v8::embedder::{
 };
 use crate::backends::v8::{
     RuntimeStartupSnapshotKey, V8RuntimeConstructionMode, V8StartupSnapshot,
-    create_v8_startup_snapshot,
+    create_v8_startup_snapshot, packaged_runtime_extension_source_provider,
 };
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeCompatibilityTarget;
@@ -57,9 +57,10 @@ impl NimbusRuntime {
             // (release/cage `.pc.bin` and dev/test `.bin`), each with its own generated blob.
             // Provenance-guarded: a stale, empty, or corrupt blob returns None and is never
             // installed. A source checkout can use the runtime-build fallback because its Deno
-            // sources remain present. Release packaging must generate and check the blob because a
-            // deployed artifact does not contain build-only Deno paths. The cage's first-installer
-            // ordering is independently guarded by `anchor::assert_cage_install_ordering` below.
+            // sources remain present. Release packaging must generate and check the blob so the
+            // deployed artifact also carries every build-only extension source needed for later
+            // runtime construction. The cage's first-installer ordering is independently guarded
+            // by `anchor::assert_cage_install_ordering` below.
             if matches!(snapshot_key, RuntimeStartupSnapshotKey::NodeFull)
                 && let Some(embedded) = crate::backends::v8::try_embedded_node22_anchor_snapshot(
                     crate::backends::v8::EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
@@ -223,6 +224,7 @@ impl NimbusRuntime {
             self.policy.file_system(),
         );
         extensions.push(worker_threads_state_extension(worker_bootstrap_state));
+        let extension_source_provider = packaged_runtime_extension_source_provider(&extensions)?;
         let startup_snapshot_bytes = startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot);
         let residual_lazy_js_sources = startup_snapshot
             .map(V8StartupSnapshot::residual_lazy_js_sources)
@@ -244,6 +246,7 @@ impl NimbusRuntime {
             extension_transpiler: extension_transpiler_for_target(
                 self.policy.limits().compatibility_target,
             ),
+            extension_source_provider,
             inspector: matches!(
                 self.policy.limits().compatibility_target,
                 RuntimeCompatibilityTarget::Node20
