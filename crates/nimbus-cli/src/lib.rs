@@ -14,6 +14,7 @@ mod credentials;
 mod deploy;
 mod dev;
 mod dirs;
+mod embedded_control_plane;
 mod encryption;
 mod explain;
 mod function_scaling;

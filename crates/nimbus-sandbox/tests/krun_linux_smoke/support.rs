@@ -1,4 +1,9 @@
 use super::*;
+use std::collections::{BTreeSet, VecDeque};
+use std::ffi::OsString;
+use std::path::{Component, Path};
+
+use ulid::Ulid;
 
 pub(super) use super::provision_support::{ExactTeardownFixture, provision_krun, retire_krun};
 
@@ -152,9 +157,13 @@ pub(super) fn built_busybox_image_spec(
     dockerfile_metadata: &str,
 ) -> SandboxSpec {
     let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
-    let context_dir = base_dir.join("build-contexts").join(name);
-    std::fs::create_dir_all(&context_dir)
-        .expect("the Linux smoke build context directory should be created");
+    let build_contexts = base_dir.join("build-contexts");
+    std::fs::create_dir_all(&build_contexts)
+        .expect("the Linux smoke build-context root should be created");
+    let run_id = Ulid::new().to_string().to_ascii_lowercase();
+    let context_dir = build_contexts.join(format!("{name}-{run_id}"));
+    std::fs::create_dir(&context_dir)
+        .expect("the Linux smoke build context must be fresh and unique");
 
     let fixture_rootfs = env_path("NIMBUS_KRUN_SMOKE_ROOTFS");
     std::fs::copy(
@@ -171,11 +180,25 @@ pub(super) fn built_busybox_image_spec(
     let mut runtime_copy_instructions = String::new();
     for library_root in ["lib", "lib64"] {
         let source = fixture_rootfs.join(library_root);
-        if source.is_dir() {
-            copy_smoke_tree(&source, &runtime_libraries.join(library_root));
-            runtime_copy_instructions.push_str(&format!(
-                "COPY runtime-libraries/{library_root}/ /{library_root}/\n"
-            ));
+        match std::fs::symlink_metadata(&source) {
+            Ok(_) => {
+                copy_smoke_tree(
+                    &fixture_rootfs,
+                    &source,
+                    &runtime_libraries.join(library_root),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("the Linux smoke runtime-library tree must be safe: {error}")
+                });
+                runtime_copy_instructions.push_str(&format!(
+                    "COPY runtime-libraries/{library_root}/ /{library_root}/\n"
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!(
+                "the Linux smoke runtime-library root {} must be inspectable: {error}",
+                source.display()
+            ),
         }
     }
 
@@ -192,34 +215,243 @@ pub(super) fn built_busybox_image_spec(
         sandbox_tenant(),
         SandboxOwnerSpec::standalone_named(name),
         SandboxBackendKind::Krun,
-        SandboxRootSpec::oci_image_build(image_name, dockerfile_path, context_dir),
+        SandboxRootSpec::oci_image_build(
+            format!("{image_name}-{run_id}"),
+            dockerfile_path,
+            context_dir,
+        ),
         SandboxProcessSpec::new(Vec::<String>::new()),
     )
 }
 
-fn copy_smoke_tree(source: &std::path::Path, destination: &std::path::Path) {
-    std::fs::create_dir_all(destination)
-        .expect("the Linux smoke runtime-library directory should be created");
-    for entry in std::fs::read_dir(source)
-        .expect("the Linux smoke runtime-library source should be readable")
-    {
-        let entry = entry.expect("the Linux smoke runtime-library entry should be readable");
-        let source_entry = entry.path();
-        let destination_entry = destination.join(entry.file_name());
-        let metadata = std::fs::metadata(&source_entry)
-            .expect("the Linux smoke runtime-library entry should resolve");
-        if metadata.is_dir() {
-            copy_smoke_tree(&source_entry, &destination_entry);
-        } else if metadata.is_file() {
-            std::fs::copy(&source_entry, &destination_entry)
-                .expect("the Linux smoke runtime-library entry should copy");
+fn copy_smoke_tree(rootfs: &Path, source: &Path, destination: &Path) -> Result<(), String> {
+    let relative_source = source.strip_prefix(rootfs).map_err(|_| {
+        format!(
+            "source {} is outside fixture root {}",
+            source.display(),
+            rootfs.display()
+        )
+    })?;
+    let canonical_root = std::fs::canonicalize(rootfs).map_err(|error| {
+        format!(
+            "failed to resolve fixture root {}: {error}",
+            rootfs.display()
+        )
+    })?;
+    let source = canonical_root.join(relative_source);
+    let mut active_directories = BTreeSet::new();
+    copy_smoke_tree_inner(
+        &canonical_root,
+        &source,
+        destination,
+        &mut active_directories,
+    )
+}
+
+fn copy_smoke_tree_inner(
+    rootfs: &Path,
+    source: &Path,
+    destination: &Path,
+    active_directories: &mut BTreeSet<PathBuf>,
+) -> Result<(), String> {
+    let source = resolve_smoke_rootfs_path(rootfs, source)?;
+    let metadata = std::fs::symlink_metadata(&source)
+        .map_err(|error| format!("failed to inspect {}: {error}", source.display()))?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "runtime-library root {} is not a directory",
+            source.display()
+        ));
+    }
+    if !active_directories.insert(source.clone()) {
+        return Err(format!(
+            "runtime-library directory link cycle reaches {}",
+            source.display()
+        ));
+    }
+
+    let result = (|| {
+        std::fs::create_dir_all(destination).map_err(|error| {
+            format!(
+                "failed to create runtime-library directory {}: {error}",
+                destination.display()
+            )
+        })?;
+        let entries = std::fs::read_dir(&source).map_err(|error| {
+            format!(
+                "failed to read runtime-library directory {}: {error}",
+                source.display()
+            )
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!(
+                    "failed to read an entry under runtime-library directory {}: {error}",
+                    source.display()
+                )
+            })?;
+            let source_entry = resolve_smoke_rootfs_path(rootfs, &entry.path())?;
+            let destination_entry = destination.join(entry.file_name());
+            let metadata = std::fs::symlink_metadata(&source_entry).map_err(|error| {
+                format!(
+                    "failed to inspect runtime-library entry {}: {error}",
+                    source_entry.display()
+                )
+            })?;
+            if metadata.is_dir() {
+                copy_smoke_tree_inner(
+                    rootfs,
+                    &source_entry,
+                    &destination_entry,
+                    active_directories,
+                )?;
+            } else if metadata.is_file() {
+                std::fs::copy(&source_entry, &destination_entry).map_err(|error| {
+                    format!(
+                        "failed to copy runtime-library entry {} to {}: {error}",
+                        source_entry.display(),
+                        destination_entry.display()
+                    )
+                })?;
+            } else {
+                return Err(format!(
+                    "unsupported runtime-library entry {}",
+                    source_entry.display()
+                ));
+            }
+        }
+        Ok(())
+    })();
+    active_directories.remove(&source);
+    result
+}
+
+fn resolve_smoke_rootfs_path(rootfs: &Path, path: &Path) -> Result<PathBuf, String> {
+    let relative = path.strip_prefix(rootfs).map_err(|_| {
+        format!(
+            "runtime-library path {} escapes fixture root {}",
+            path.display(),
+            rootfs.display()
+        )
+    })?;
+    let mut pending = VecDeque::new();
+    prepend_smoke_path_components(relative, &mut pending)?;
+    let mut resolved = rootfs.to_path_buf();
+    let mut followed_links = 0_u8;
+
+    while let Some(component) = pending.pop_front() {
+        if component == "." {
+            continue;
+        }
+        if component == ".." {
+            if resolved == rootfs {
+                return Err(format!(
+                    "runtime-library path {} escapes fixture root {}",
+                    path.display(),
+                    rootfs.display()
+                ));
+            }
+            resolved.pop();
+            continue;
+        }
+
+        let candidate = resolved.join(&component);
+        let metadata = std::fs::symlink_metadata(&candidate)
+            .map_err(|error| format!("failed to inspect {}: {error}", candidate.display()))?;
+        if metadata.file_type().is_symlink() {
+            followed_links = followed_links.saturating_add(1);
+            if followed_links > 64 {
+                return Err(format!(
+                    "runtime-library symlink chain from {} exceeds 64 links",
+                    path.display()
+                ));
+            }
+            let target = std::fs::read_link(&candidate).map_err(|error| {
+                format!("failed to read symlink {}: {error}", candidate.display())
+            })?;
+            if target.is_absolute() {
+                resolved = rootfs.to_path_buf();
+            }
+            prepend_smoke_path_components(&target, &mut pending)?;
         } else {
-            panic!(
-                "unsupported Linux smoke runtime-library entry {}",
-                source_entry.display()
-            );
+            resolved = candidate;
         }
     }
+    Ok(resolved)
+}
+
+fn prepend_smoke_path_components(
+    path: &Path,
+    pending: &mut VecDeque<OsString>,
+) -> Result<(), String> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) => {
+                return Err(format!(
+                    "runtime-library path {} has an unsupported platform prefix",
+                    path.display()
+                ));
+            }
+            Component::RootDir | Component::CurDir => {}
+            Component::ParentDir => components.push(OsString::from("..")),
+            Component::Normal(component) => components.push(component.to_os_string()),
+        }
+    }
+    for component in components.into_iter().rev() {
+        pending.push_front(component);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn smoke_tree_resolves_fixture_relative_and_absolute_symlinks_inside_root() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("smoke-tree fixture should build");
+    let rootfs = temp.path().join("rootfs");
+    let source = rootfs.join("lib");
+    std::fs::create_dir_all(&source).expect("fixture library root should build");
+    std::fs::write(source.join("libreal.so"), b"library").expect("fixture library should write");
+    symlink("libreal.so", source.join("librelative.so"))
+        .expect("relative fixture symlink should build");
+    symlink("/lib/libreal.so", source.join("libabsolute.so"))
+        .expect("absolute fixture symlink should build");
+    let destination = temp.path().join("context/lib");
+
+    copy_smoke_tree(&rootfs, &source, &destination)
+        .expect("safe rootfs links should resolve inside the fixture");
+
+    for name in ["libreal.so", "librelative.so", "libabsolute.so"] {
+        assert_eq!(
+            std::fs::read(destination.join(name)).expect("copied library should read"),
+            b"library",
+            "{name} must come from the fixture root"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn smoke_tree_rejects_a_relative_symlink_that_escapes_the_fixture_root() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("smoke-tree fixture should build");
+    let rootfs = temp.path().join("rootfs");
+    let source = rootfs.join("lib");
+    std::fs::create_dir_all(&source).expect("fixture library root should build");
+    std::fs::write(temp.path().join("host-secret"), b"do not copy")
+        .expect("outside sentinel should write");
+    symlink("../../host-secret", source.join("escape.so"))
+        .expect("escaping fixture symlink should build");
+
+    let error = copy_smoke_tree(&rootfs, &source, &temp.path().join("context/lib"))
+        .expect_err("an escaping rootfs link must fail closed");
+    assert!(
+        error.contains("escapes fixture root"),
+        "diagnostic must identify the rootfs escape: {error}"
+    );
 }
 
 pub(super) fn busybox_http_process(guest_port: u16) -> SandboxProcessSpec {

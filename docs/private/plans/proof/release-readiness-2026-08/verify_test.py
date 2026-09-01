@@ -38,6 +38,7 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         proof_text: str | None = None,
         candidate: dict[str, str] | None = None,
         matrix_value: object = DEFAULT_MATRIX,
+        matrix_text: str | None = None,
     ) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -73,7 +74,10 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
                     "candidate": CANDIDATE if candidate is None else candidate,
                     "conditions": conditions,
                 }
-            matrix.write_text(json.dumps(matrix_value), encoding="utf-8")
+            matrix.write_text(
+                json.dumps(matrix_value) if matrix_text is None else matrix_text,
+                encoding="utf-8",
+            )
             previous_argv = sys.argv
             output = io.StringIO()
             try:
@@ -171,6 +175,30 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
                 "```sh",
                 "# make ci",
                 "```",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertEqual(status, 0)
+        self.assertIn("0 structural errors", output)
+
+    def test_list_item_fence_does_not_create_an_evidence_heading(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "- ```text",
+                "  ## Bound evidence",
+                "  fake",
+                "  ```",
+                "",
+                "## Bound evidence",
                 CANDIDATE["nimbus"],
                 CANDIDATE["desktop"],
                 CANDIDATE["deno"],
@@ -296,6 +324,34 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
                 status, output = self.run_verifier(matrix_value=matrix_value)
                 self.assertNotEqual(status, 0)
                 self.assertIn("matrix error: root must be an object", output)
+
+    def test_duplicate_object_keys_are_rejected(self) -> None:
+        status, output = self.run_verifier(
+            matrix_text='{"schemaVersion": 1, "schemaVersion": 1}'
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("matrix error: duplicate object key 'schemaVersion'", output)
+
+    def test_non_string_condition_id_fails_without_a_traceback(self) -> None:
+        conditions = [
+            {
+                "id": condition_id,
+                "state": "pass",
+                "evidence": {"path": "proof.md", "anchor": "## Bound evidence"},
+            }
+            for condition_id in VERIFY.EXPECTED_IDS
+        ]
+        conditions[0]["id"] = []
+        status, output = self.run_verifier(
+            matrix_value={
+                "schemaVersion": 1,
+                "candidate": CANDIDATE,
+                "conditions": conditions,
+            }
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("[]: condition ID must be a string", output)
+        self.assertIn("structural errors", output)
 
 
 if __name__ == "__main__":

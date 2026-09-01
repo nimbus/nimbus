@@ -30,6 +30,7 @@ PASS_CANDIDATE_EXTRAS = {
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+\S.*$")
 MARKDOWN_FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+MARKDOWN_LIST_MARKER = re.compile(r"^(?:[*+-]|[0-9]{1,9}[.)])([ \t]+)(.*)$")
 MARKDOWN_HTML_RAW_TAG = re.compile(
     r"^<(script|pre|style|textarea)(?:[ \t]|>|$)", re.IGNORECASE
 )
@@ -46,6 +47,15 @@ class UnterminatedMarkdownFence(ValueError):
     pass
 
 
+def reject_duplicate_object_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate object key {key!r}")
+        result[key] = value
+    return result
+
+
 def markdown_indentation(line: str) -> tuple[int, int]:
     columns = 0
     offset = 0
@@ -58,6 +68,21 @@ def markdown_indentation(line: str) -> tuple[int, int]:
             break
         offset += 1
     return columns, offset
+
+
+def markdown_fence_after_list_markers(content: str, indentation: int) -> re.Match[str] | None:
+    if indentation > 3:
+        return None
+    candidate = content
+    while True:
+        list_marker = MARKDOWN_LIST_MARKER.fullmatch(candidate)
+        if list_marker is None:
+            break
+        separator_columns, _ = markdown_indentation(list_marker.group(1))
+        if separator_columns > 4:
+            return None
+        candidate = list_marker.group(2)
+    return MARKDOWN_FENCE.fullmatch(candidate)
 
 
 def markdown_html_block_start(content: str) -> tuple[re.Pattern[str] | None, bool] | None:
@@ -113,7 +138,7 @@ def markdown_structure(
             else:
                 html_lines.add(index)
                 continue
-        fence = MARKDOWN_FENCE.fullmatch(content) if indentation <= 3 else None
+        fence = markdown_fence_after_list_markers(content, indentation)
         if fence is not None and not (
             fence.group(1).startswith("`") and "`" in fence.group(2)
         ):
@@ -170,8 +195,11 @@ def main() -> int:
     root = matrix_path.resolve().parent
     errors: list[str] = []
     try:
-        data = json.loads(matrix_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        data = json.loads(
+            matrix_path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_object_keys,
+        )
+    except (OSError, ValueError) as error:
         print(f"matrix error: {error}")
         return 1
 
@@ -204,12 +232,17 @@ def main() -> int:
         if not isinstance(row, dict):
             errors.append("each condition must be an object")
             continue
-        condition_id = row.get("id", "<missing>")
+        condition_id = row.get("id")
+        condition_label = condition_id if isinstance(condition_id, str) else repr(condition_id)
+        if not isinstance(condition_id, str):
+            errors.append(f"{condition_label}: condition ID must be a string")
         state = row.get("state")
         if state not in STATES:
-            errors.append(f"{condition_id}: invalid state {state!r}")
+            errors.append(f"{condition_label}: invalid state {state!r}")
             continue
         counts[state] += 1
+        if not isinstance(condition_id, str):
+            continue
         if state != "pass":
             print(f"{condition_id}: {state}")
             continue

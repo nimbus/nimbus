@@ -15,6 +15,7 @@ use rand::RngCore;
 use serde::Serialize;
 
 use crate::cli_ux;
+use crate::embedded_control_plane::require_existing_control_plane;
 
 mod backup_restore;
 use backup_restore::{run_backup_object_store, run_restore_object_store};
@@ -536,7 +537,7 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         .control_data_dir
         .as_deref()
         .unwrap_or(&command.data_dir);
-    require_existing_control_plane(control_data_dir)?;
+    require_existing_control_plane(control_data_dir, "tenant rm")?;
     // Resolve configuration and PROVE exclusive ownership of every byte-
     // plane root BEFORE any destructive step: config errors must not strike
     // after partial deletion, and unlinking a tree a running server still
@@ -664,32 +665,6 @@ async fn run_tenant_rm(command: TenantRemoveCommand) -> Result<(), Box<dyn Error
         "tenant rm tenant={} object_blobs_removed=true erasure_trees_removed={}",
         tenant, erasure_trees_removed
     ));
-    Ok(())
-}
-
-fn require_existing_control_plane(control_data_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let control_database =
-        control_data_dir.join(EmbeddedProviderKind::Redb.control_database_filename());
-    let metadata = std::fs::symlink_metadata(&control_database).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            format!(
-                "tenant rm requires an existing control-plane database at {}; pass the deployment's exact --control-data-dir for split-root storage",
-                control_database.display()
-            )
-        } else {
-            format!(
-                "tenant rm could not inspect control-plane database {}: {error}",
-                control_database.display()
-            )
-        }
-    })?;
-    if !metadata.file_type().is_file() {
-        return Err(format!(
-            "tenant rm requires a regular control-plane database at {}; refusing a directory or symlink",
-            control_database.display()
-        )
-        .into());
-    }
     Ok(())
 }
 
@@ -1116,7 +1091,7 @@ mod tests {
                 .exists(),
             "tenant provider kind must not select the control-plane filename"
         );
-        require_existing_control_plane(&control_data_dir)
+        require_existing_control_plane(&control_data_dir, "tenant rm")
             .expect("tenant removal precheck must accept SQLite tenants' redb control plane");
     }
 

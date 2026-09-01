@@ -21,6 +21,7 @@ use nimbus::{
 use serde::{Deserialize, Serialize};
 
 use crate::cli_ux;
+use crate::embedded_control_plane::require_existing_control_plane;
 
 const BACKUP_FORMAT_VERSION: u16 = 3;
 
@@ -189,6 +190,11 @@ async fn run_backup_create(command: BackupCreateCommand) -> Result<(), Box<dyn E
         )
         .into());
     }
+    let control_data_dir = command
+        .control_data_dir
+        .as_deref()
+        .unwrap_or(&command.data_dir);
+    require_existing_control_plane(control_data_dir, "backup create")?;
     let engine = open_engine(
         &command.data_dir,
         command.control_data_dir.as_deref(),
@@ -547,6 +553,40 @@ mod tests {
             );
         }
         restored_engine.quiesce().await;
+    }
+
+    #[tokio::test]
+    async fn backup_create_refuses_to_bootstrap_a_missing_control_plane() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let data_dir = temp.path().join("tenant-data");
+        let control_data_dir = temp.path().join("missing-control");
+        let backup_path = temp.path().join("deployment.json");
+
+        let error = run_backup_create(BackupCreateCommand {
+            data_dir,
+            control_data_dir: Some(control_data_dir.clone()),
+            provider: BackupProvider::Sqlite,
+            out: backup_path.clone(),
+        })
+        .await
+        .expect_err("a missing source control plane must fail before engine bootstrap");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("backup create requires an existing control-plane database")
+                && message.contains("--control-data-dir"),
+            "diagnostic must identify the missing source authority: {message}"
+        );
+        assert!(
+            !backup_path.exists(),
+            "rejected backup must not create an archive"
+        );
+        assert!(
+            !control_data_dir
+                .join(EmbeddedProviderKind::Redb.control_database_filename())
+                .exists(),
+            "rejected backup must not bootstrap an empty control plane"
+        );
     }
 
     #[tokio::test]
