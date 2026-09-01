@@ -1500,18 +1500,16 @@ uninstall_linux() {
     return 0
   fi
 
-  foreign_nimbus_symlink=""
   if [ -L "${NIMBUS_PREFIX}/bin/nimbus" ]; then
-    foreign_nimbus_symlink=1
     say_info "Leaving package-manager-owned symlink ${NIMBUS_PREFIX}/bin/nimbus unchanged"
+    say_info "Use the owning package manager to remove its Nimbus binary and Linux runtime payload"
+    return 0
   elif [ -f "${NIMBUS_PREFIX}/bin/nimbus" ]; then
     maybe_sudo rm -f "${NIMBUS_PREFIX}/bin/nimbus"
     say_info "Removed ${NIMBUS_PREFIX}/bin/nimbus"
   fi
 
-  if [ -z "$foreign_nimbus_symlink" ]; then
-    uninstall_nimbus_release_documents
-  fi
+  uninstall_nimbus_release_documents
 
   if [ -f "/usr/libexec/nimbus/crun" ]; then
     maybe_sudo rm -f "/usr/libexec/nimbus/crun"

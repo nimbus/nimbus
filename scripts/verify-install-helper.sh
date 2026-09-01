@@ -771,6 +771,28 @@ else
   fail "direct uninstaller preserves a package-manager-owned symlink"
 fi
 
+linux_package_root="${output_dir}/linux-package-uninstall-prefix"
+mkdir -p "${linux_package_root}/bin" "${linux_package_root}/share/doc/nimbus"
+ln -s "/opt/nimbus/bin/nimbus" "${linux_package_root}/bin/nimbus"
+printf 'package license\n' > "${linux_package_root}/share/doc/nimbus/LICENSE"
+printf 'package readme\n' > "${linux_package_root}/share/doc/nimbus/README.md"
+
+if PATH="/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    uninstall_linux
+    [ -L "$NIMBUS_PREFIX/bin/nimbus" ]
+    [ -f "$NIMBUS_PREFIX/share/doc/nimbus/LICENSE" ]
+    [ -f "$NIMBUS_PREFIX/share/doc/nimbus/README.md" ]
+  ' sh "${testable_install_sh}" "${linux_package_root}" \
+    > "${output_dir}/linux-symlink-uninstall-preservation.txt" 2>&1 &&
+   grep -Fq "Use the owning package manager" \
+     "${output_dir}/linux-symlink-uninstall-preservation.txt"; then
+  pass "Linux direct uninstaller preserves a package-manager-owned payload"
+else
+  fail "Linux direct uninstaller preserves a package-manager-owned payload"
+fi
+
 incomplete_prefix="${output_dir}/incomplete-prefix"
 mkdir -p "${incomplete_prefix}/bin" "${incomplete_prefix}/libexec"
 cp "${custom_prefix}/bin/nimbus" "${incomplete_prefix}/bin/nimbus"

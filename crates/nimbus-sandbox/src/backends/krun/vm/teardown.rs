@@ -597,6 +597,7 @@ impl KrunSandboxBackend {
                 KrunLaunchAuthority::Reserved { .. }
                     | KrunLaunchAuthority::Adopting { .. }
                     | KrunLaunchAuthority::Adopted { .. }
+                    | KrunLaunchAuthority::ProviderOwned
             )
         {
             return self.persist_execution_stopped(claim, manifest, "creator_never_spawned", None);
@@ -907,6 +908,7 @@ fn pre_activation_stop_is_exact(manifest: &KrunSandboxManifest) -> bool {
             KrunLaunchAuthority::Reserved { .. }
                 | KrunLaunchAuthority::Adopting { .. }
                 | KrunLaunchAuthority::Adopted { .. }
+                | KrunLaunchAuthority::ProviderOwned
         )
 }
 

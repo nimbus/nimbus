@@ -30,6 +30,16 @@ PASS_CANDIDATE_EXTRAS = {
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+\S.*$")
 MARKDOWN_FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+MARKDOWN_HTML_RAW_TAG = re.compile(
+    r"^<(script|pre|style|textarea)(?:[ \t]|>|$)", re.IGNORECASE
+)
+MARKDOWN_HTML_BLOCK_TAG = re.compile(
+    r"^</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|/?>|$)",
+    re.IGNORECASE,
+)
+MARKDOWN_HTML_COMPLETE_TAG = re.compile(
+    r"^</?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ \t\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*[ \t]*/?>[ \t]*$"
+)
 
 
 class UnterminatedMarkdownFence(ValueError):
@@ -50,10 +60,34 @@ def markdown_indentation(line: str) -> tuple[int, int]:
     return columns, offset
 
 
-def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
+def markdown_html_block_start(content: str) -> tuple[re.Pattern[str] | None, bool] | None:
+    raw_tag = MARKDOWN_HTML_RAW_TAG.match(content)
+    if raw_tag is not None:
+        return re.compile(rf"</{raw_tag.group(1)}[ \t]*>", re.IGNORECASE), False
+    if content.startswith("<!--"):
+        return re.compile(r"-->"), False
+    if content.startswith("<?"):
+        return re.compile(r"\?>"), False
+    if content.startswith("<![CDATA["):
+        return re.compile(r"\]\]>"), False
+    if re.match(r"^<![A-Z]", content) is not None:
+        return re.compile(r">"), False
+    if MARKDOWN_HTML_BLOCK_TAG.match(content) is not None:
+        return None, True
+    if MARKDOWN_HTML_COMPLETE_TAG.fullmatch(content) is not None:
+        return None, True
+    return None
+
+
+def markdown_structure(
+    lines: list[str],
+) -> tuple[list[tuple[int, int, str]], set[int]]:
     headings: list[tuple[int, int, str]] = []
+    html_lines: set[int] = set()
     fence_character: str | None = None
     fence_length = 0
+    html_end: re.Pattern[str] | None = None
+    html_until_blank = False
     for index, line in enumerate(lines):
         indentation, content_offset = markdown_indentation(line)
         content = line[content_offset:]
@@ -68,6 +102,17 @@ def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
                 fence_character = None
                 fence_length = 0
             continue
+        if html_end is not None:
+            html_lines.add(index)
+            if html_end.search(content) is not None:
+                html_end = None
+            continue
+        if html_until_blank:
+            if not content.strip():
+                html_until_blank = False
+            else:
+                html_lines.add(index)
+                continue
         fence = MARKDOWN_FENCE.fullmatch(content) if indentation <= 3 else None
         if fence is not None and not (
             fence.group(1).startswith("`") and "`" in fence.group(2)
@@ -79,11 +124,24 @@ def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
         if indentation >= 4:
             continue
         stripped = content.strip()
+        html_block = markdown_html_block_start(stripped)
+        if html_block is not None:
+            html_lines.add(index)
+            end, until_blank = html_block
+            if end is not None and end.search(stripped) is None:
+                html_end = end
+            html_until_blank = until_blank
+            continue
         heading = MARKDOWN_HEADING.fullmatch(stripped)
         if heading is not None:
             headings.append((index, len(heading.group(1)), stripped))
     if fence_character is not None:
         raise UnterminatedMarkdownFence
+    return headings, html_lines
+
+
+def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    headings, _html_lines = markdown_structure(lines)
     return headings
 
 
@@ -93,7 +151,7 @@ def anchored_evidence_section(proof: str, anchor: str) -> str | None:
     if heading is None:
         return None
     lines = proof.splitlines()
-    headings = markdown_headings(lines)
+    headings, html_lines = markdown_structure(lines)
     matches = [index for index, _level, text in headings if text == anchor]
     if len(matches) != 1:
         return None
@@ -104,7 +162,7 @@ def anchored_evidence_section(proof: str, anchor: str) -> str | None:
         if index > start and candidate_level <= level:
             end = index
             break
-    return "\n".join(lines[start:end])
+    return "\n".join(line for index, line in enumerate(lines[start:end], start) if index not in html_lines)
 
 
 def main() -> int:
@@ -115,6 +173,10 @@ def main() -> int:
         data = json.loads(matrix_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         print(f"matrix error: {error}")
+        return 1
+
+    if not isinstance(data, dict):
+        print("matrix error: root must be an object")
         return 1
 
     if data.get("schemaVersion") != 1:

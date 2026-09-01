@@ -177,27 +177,47 @@ fn pre_cancelled_foreground_stop_makes_zero_source_store_or_provider_mutation() 
 }
 
 #[test]
-fn public_stop_deadline_detaches_the_waiter_and_reports_retryable_pending_state() {
+fn public_stop_deadline_detaches_durable_recovery_and_reports_retryable_pending_state() {
     run_async_test(async {
         const TEST_DEADLINE: std::time::Duration = std::time::Duration::from_millis(10);
         let cancellation = WorkloadTeardownCancellationToken::new();
+        let (release_recovery, wait_for_release) = tokio::sync::oneshot::channel();
+        let (recovery_finished, finished) = tokio::sync::oneshot::channel();
 
         let error = super::super::await_retirement_with_timeout(
             "test stop",
             &cancellation,
-            std::future::pending::<Result<(), ComputeResourceRetirementError>>(),
+            async move {
+                wait_for_release
+                    .await
+                    .expect("test should release detached recovery");
+                recovery_finished
+                    .send(())
+                    .expect("test should retain the recovery observer");
+                Ok(())
+            },
             TEST_DEADLINE,
         )
         .await
         .expect_err("a public stop waiter must not remain attached past its deadline");
 
-        assert!(cancellation.is_cancelled());
+        assert!(
+            !cancellation.is_cancelled(),
+            "the public deadline must not revoke the durable teardown owner"
+        );
         assert!(matches!(
             error,
             crate::state::ComputeError::Core(nimbus_core::Error::Transport(message))
                 if message.contains("test stop remains pending")
                     && message.contains("retry the request")
         ));
+        release_recovery
+            .send(())
+            .expect("detached recovery should remain alive after the deadline");
+        tokio::time::timeout(std::time::Duration::from_secs(1), finished)
+            .await
+            .expect("detached recovery should finish after release")
+            .expect("detached recovery should report completion");
     });
 }
 

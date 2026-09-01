@@ -156,7 +156,7 @@ for (const relativeLockPath of trackedPackageLocks) {
 
   for (const [packagePath, packageEntry] of Object.entries(nestedLock.packages ?? {})) {
     const stagedPrefix = ".nimbus/packages/";
-    if (!packagePath.startsWith(stagedPrefix) || packageEntry?.version === undefined) continue;
+    if (!packagePath.startsWith(stagedPrefix)) continue;
 
     const stagedSegments = packagePath.slice(stagedPrefix.length).split("/");
     const stagedPackageName = stagedSegments[0].startsWith("@")
@@ -169,7 +169,7 @@ for (const relativeLockPath of trackedPackageLocks) {
     if (packagePath === stagedPackageRoot && localPackageNames.has(stagedPackageName)) {
       checks.push([
         `${relativeLockPath} ${packagePath} version`,
-        packageEntry.version,
+        packageEntry?.version,
       ]);
     }
   }

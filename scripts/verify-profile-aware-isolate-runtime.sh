@@ -11,6 +11,12 @@ if rg -n \
   crates/nimbus-runtime crates/nimbus; then
   printf '\nFAIL rejected fresh-realm product symbols remain in the Nimbus release graph\n' >&2
   exit 1
+else
+  search_status=$?
+  if [[ "${search_status}" -ne 1 ]]; then
+    printf '\nFAIL rejected-symbol search could not run (rg exit %s)\n' "${search_status}" >&2
+    exit "${search_status}"
+  fi
 fi
 printf 'PASS rejected fresh-realm product symbols are absent\n'
 

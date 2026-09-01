@@ -20,6 +20,7 @@ CANDIDATE = {
     "deno": "3" * 40,
     "main": "4" * 40,
 }
+DEFAULT_MATRIX = object()
 
 
 class ReleaseReadinessVerifierTests(unittest.TestCase):
@@ -36,6 +37,7 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         blocked_conditions: tuple[str, ...] = (),
         proof_text: str | None = None,
         candidate: dict[str, str] | None = None,
+        matrix_value: object = DEFAULT_MATRIX,
     ) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -65,16 +67,13 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
                         }
                     )
             matrix = root / "matrix.json"
-            matrix.write_text(
-                json.dumps(
-                    {
-                        "schemaVersion": 1,
-                        "candidate": CANDIDATE if candidate is None else candidate,
-                        "conditions": conditions,
-                    }
-                ),
-                encoding="utf-8",
-            )
+            if matrix_value is DEFAULT_MATRIX:
+                matrix_value = {
+                    "schemaVersion": 1,
+                    "candidate": CANDIDATE if candidate is None else candidate,
+                    "conditions": conditions,
+                }
+            matrix.write_text(json.dumps(matrix_value), encoding="utf-8")
             previous_argv = sys.argv
             output = io.StringIO()
             try:
@@ -107,6 +106,53 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
             ),
             header_revisions=(CANDIDATE["nimbus"],),
         )
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_html_comment_heading_does_not_bind_evidence(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "<!--",
+                "## Bound evidence",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "-->",
+                "",
+                "## Bound evidence",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_html_block_content_cannot_supply_candidate_binding(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "<!--",
+                CANDIDATE["nimbus"],
+                "-->",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
         self.assertNotEqual(status, 0)
         self.assertIn("evidence is not bound to the nimbus candidate", output)
 
@@ -243,6 +289,13 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         status, output = self.run_verifier(candidate=malformed)
         self.assertNotEqual(status, 0)
         self.assertIn("candidate.nimbus must be a full lowercase commit SHA", output)
+
+    def test_matrix_root_must_be_an_object(self) -> None:
+        for matrix_value in ([], None, "matrix", 1):
+            with self.subTest(matrix_value=matrix_value):
+                status, output = self.run_verifier(matrix_value=matrix_value)
+                self.assertNotEqual(status, 0)
+                self.assertIn("matrix error: root must be an object", output)
 
 
 if __name__ == "__main__":

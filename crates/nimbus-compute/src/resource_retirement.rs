@@ -824,7 +824,10 @@ where
             ))))
         }
         Err(_) => {
-            cancellation.cancel();
+            // The public request deadline does not revoke the durable teardown
+            // owner. Dropping a JoinHandle detaches its task, so disarm the
+            // cancellation-on-drop guard and let recovery continue.
+            waiter.armed = false;
             Err(ComputeError::from(Error::Transport(format!(
                 "{operation} remains pending after {timeout:?}; retry the request while Nimbus continues durable teardown recovery"
             ))))

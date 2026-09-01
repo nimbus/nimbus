@@ -25,7 +25,7 @@ const MAX_VALUE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_METADATA_BYTES: usize = 1024;
 const MIN_EXPIRATION_TTL_SECONDS: i64 = 60;
 pub(super) const DEFAULT_LIST_LIMIT: usize = 1000;
-pub(super) const MIN_LIST_LIMIT: usize = 1;
+pub(super) const MIN_LIST_LIMIT: usize = 10;
 pub(super) const MAX_LIST_LIMIT: usize = 1000;
 
 pub(crate) fn router(config: Arc<CloudflareConfig>) -> Router<Arc<AppState>> {
@@ -731,10 +731,27 @@ mod tests {
             json_body(&body)
         );
 
+        for index in 1..=9 {
+            let (status, _, body) = request(
+                router,
+                axum::http::Method::PUT,
+                &format!("{base}/values/greeting-{index:02}"),
+                Some(AUTH),
+                format!("hello {index}"),
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "pagination fixture put body: {}",
+                json_body(&body)
+            );
+        }
+
         let (status, _, body) = request(
             router,
             axum::http::Method::GET,
-            &format!("{base}/keys?prefix=g&limit=1"),
+            &format!("{base}/keys?prefix=g&limit=10"),
             Some(AUTH),
             Body::empty(),
         )
@@ -756,7 +773,7 @@ mod tests {
         let (status, _, body) = request(
             router,
             axum::http::Method::GET,
-            &format!("{base}/keys?prefix=g&limit=1&cursor={cursor}"),
+            &format!("{base}/keys?prefix=g&limit=10&cursor={cursor}"),
             Some(AUTH),
             Body::empty(),
         )
@@ -794,22 +811,24 @@ mod tests {
         let router = test_router(&app);
         let base = "/client/v4/accounts/acct/storage/kv/namespaces/namespace-prod";
 
-        let (status, _, body) = request(
-            router,
-            axum::http::Method::GET,
-            &format!("{base}/keys?limit=0"),
-            Some(AUTH),
-            Body::empty(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
-            json_body(&body)["errors"][0]["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("between 1 and 1000")),
-            "got {}",
-            json_body(&body)
-        );
+        for invalid_limit in [0, 1, 9, 1001] {
+            let (status, _, body) = request(
+                router,
+                axum::http::Method::GET,
+                &format!("{base}/keys?limit={invalid_limit}"),
+                Some(AUTH),
+                Body::empty(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(
+                json_body(&body)["errors"][0]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("between 10 and 1000")),
+                "got {}",
+                json_body(&body)
+            );
+        }
 
         let (status, _, body) = request(
             router,

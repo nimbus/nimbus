@@ -28,11 +28,15 @@ The workspace V8 asset override and digest manifest still named the prior
 149.4 release. Both files now bind the 150.4 release and its exact published
 asset digests.
 
-The paired Nimbus runtime cleanup and repin are not yet committed. Exact
-release-critical smoke, archive, OCI, and higher-memory Linux full-LTO replay
-therefore remain. Apple notarization and public apt and COPR proofs also remain
-pending. At the owner's direction, current reviews use Sol only. No Opus 5 or
-Fable review ran during this uplift.
+Nimbus commit `d6636b980deedfeee8a64afb06230fa8a19a10a9` records the runtime
+cleanup and public-tag repin. Its Sol xhigh branch review found eight valid
+corrections and two false reports. The focused corrective regressions pass, but
+the corrective delta and clean follow-up review remain. Exact release-critical
+smoke, archive, OCI, and higher-memory Linux full-LTO replay also remain.
+
+Apple notarization and public apt and COPR proofs still need verification. At
+the owner's direction, current reviews use Sol only. No Opus 5 or Fable review
+ran during this uplift.
 
 The sections below preserve the earlier v2.9.3 checkpoint evidence. The U3
 uplift proof is the current source for Deno 2.9.6 and V8 150.4 identity and
@@ -224,9 +228,8 @@ changes, proof files, and desktop release artifacts.
 
 ## Required Next Action
 
-1. Commit the reviewed Nimbus cleanup and repin to both immutable fork
-   releases.
-2. Build the exact v0.1.46 candidate from that commit. Use a Linux runner with
+1. Commit and review the eight release-review corrections.
+2. Build the exact v0.1.46 candidate from the corrected commit. Use a Linux runner with
    enough memory for full LTO. Do not reuse the 8 GiB host for this lane.
 3. Repeat all critical macOS, Linux, application, desktop,
    archive, and OCI lanes on that clean candidate.
