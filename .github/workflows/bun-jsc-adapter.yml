@@ -22,7 +22,7 @@ on:
       bun_source_revision:
         description: "Expected Bun source commit"
         required: true
-        default: "38bf56fed2bfd8bbf7feb0971086d48358492f68"
+        default: "5ff83e0995e7911055555834b3358143510a28a0"
       install_bun_with_npm:
         description: "Install a pinned Bun CLI with npm before building; keep enabled for self-sufficient hosted runner dispatches"
         required: true

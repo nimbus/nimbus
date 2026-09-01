@@ -341,7 +341,7 @@ manifest_path.write_text(json.dumps({
     "nimbus_version": "v0.1.0",
     "bun_source_repository": "https://github.com/nimbus/bun",
     "bun_source_ref": "codex/bun-v1.4.0-release-readiness",
-    "bun_source_revision": "38bf56fed2bfd8bbf7feb0971086d48358492f68",
+    "bun_source_revision": "5ff83e0995e7911055555834b3358143510a28a0",
     "target_triple": "x86_64-unknown-linux-gnu",
     "platform": "linux",
     "library": "libnimbus_bun_jsc_embedder.so",
