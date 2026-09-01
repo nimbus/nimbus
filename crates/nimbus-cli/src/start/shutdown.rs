@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn second_signal_interrupts_a_stalled_graceful_shutdown() {
+    async fn second_signal_interrupts_a_stalled_lifecycle_cleanup() {
         let temp = tempfile::tempdir().expect("temporary root should build");
         let engine = Arc::new(
             nimbus_engine::Engine::new(temp.path().join("data"))
@@ -167,7 +167,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert!(
             !task.is_finished(),
-            "the first signal should leave graceful shutdown in progress"
+            "the first signal should leave lifecycle cleanup in progress"
         );
         signal_tx
             .send("SIGINT")

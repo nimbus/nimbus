@@ -389,21 +389,21 @@ async fn run_start_command_inner(
     }
 
     tracing::info!("nimbus listening on {listener_addr}");
-    let server_result = serve_until_shutdown(
-        serve_leased(listener, serve_options),
-        shutdown_signals,
-        server_shutdown,
-    )
-    .await;
-    drop(discovery_lease);
-    let _ = shutdown_tx.send(true);
-    let _ = scheduler_handle.await;
-    if let Some(handle) = first_boot_handle {
-        handle.abort();
-        let _ = handle.await;
-    }
-    shutdown_engine.quiesce().await;
-    drop(prepared_network);
+    let server_lifecycle = Box::pin(async move {
+        let server_result = serve_leased(listener, serve_options).await;
+        drop(discovery_lease);
+        let _ = shutdown_tx.send(true);
+        let _ = scheduler_handle.await;
+        if let Some(handle) = first_boot_handle {
+            handle.abort();
+            let _ = handle.await;
+        }
+        shutdown_engine.quiesce().await;
+        drop(prepared_network);
+        server_result
+    });
+    let server_result =
+        serve_until_shutdown(server_lifecycle, shutdown_signals, server_shutdown).await;
     server_result.map_err(|error| conventional_wire_port_guidance(&command, error))?;
     Ok(())
 }
