@@ -857,7 +857,7 @@ fn redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_p
     restored
         .import_point_in_time_restore_archive(&archive)
         .expect("PITR archive should import");
-    assert_seq13_budget("PITR export/import", started.elapsed(), 2_000);
+    assert_seq13_budget("PITR export/import", started.elapsed(), 1_000);
 
     let started = Instant::now();
     let summary = store
