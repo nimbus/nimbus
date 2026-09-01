@@ -1,6 +1,7 @@
 # Runtime Strategy Lifecycle Draft Audit
 
 Date: 2026-08-30.
+Independent re-review: 2026-09-01.
 Plan: `docs/private/plans/runtime-strategy-lifecycle-plan.md`.
 Draft baseline: `304a2e677293fec7d150e12ffc0ba98960917753`.
 Verdict: independently reviewed and ready as `proposed`, but not ready for
@@ -37,7 +38,7 @@ fork code and does not start an RSL task.
 | Replay scaffolding cost | closed after review | RRC8's exact old-graph A/B found no detected Web change, a small favorable Node replay-off result after counterbalancing, and 16 encoded replay-table bytes in the Node22 blob. RSL8 owns permanent-lab reproduction. |
 | Lazy-ESM termination | pass with independent audit required | Its error contract does not depend on realm pooling. RSL7 forbids automatic removal with realm-only carries. |
 | Fork ledger drift | pass | The current ledger names Deno 2.9.1 while `Cargo.toml` names `v2.9.3-nimbus.2`. RRC8 already owns the replacement. |
-| Uplift state | pass after update | U1 is complete at `dbb70a973d28cfe8cd6a2ea66d4f3d14fee488f0`. U2 publication is deferred. U3 has six clean local Deno commits through `e8fffe9029283b5f51111647ce5e2a79eadf5ef2` and a paired uncommitted Nimbus cleanup. |
+| Uplift state | pass after re-review | RRC8 U1 through U6 are terminal for the runtime handoff. The immutable releases are Deno `625e4c259488dfa1c3c9d03fabde17758e1130d9` (`v2.9.6-nimbus.2`) and rusty_v8 `961a76d0cee88efdecfa9224c519fd153c404b51` (`v150.4.0-nimbus.1`). Nimbus records the substantive runtime graph at `76165b0b91da274ba0d70a2f4fbd6c7b81c1ee88`, the test checkpoint at `208c2e6f5b5507214ce5c8a75c1617ea9d0259c4`, and the Linux evidence checkpoint at `cb84dfec8ad61cabaf5b4d763e5c3ff8b9abbcf8`. |
 
 ## Control-Plane Audit
 
@@ -45,7 +46,7 @@ fork code and does not start an RSL task.
 |---|---|---|
 | One outcome | pass | Product code keeps supported winners. The lab and archive preserve reproducible alternatives. |
 | Active-plan precedence | pass | RRC8 keeps exclusive ownership of the Deno 2.9.6 and V8 150.4 uplift. |
-| Safe plan state | pass | Status is `proposed`. The activation gate requires terminal U6 evidence and owner approval. |
+| Safe plan state | pass | Status is `proposed`. Terminal U6 evidence is recorded. Owner approval of activation and the project skill remains required. |
 | Source authority | pass | Current source and tests override historical labels. Historical measurements remain unchanged. |
 | Conditional cleanup | pass | RSL4 must prove callers and carry ownership before RSL5 through RSL7 remove code. |
 | Safety before speed | pass | Isolation, semantics, cancellation, memory, recovery, and crash gates precede scoring. |
@@ -63,7 +64,7 @@ The ledger and task bodies have matching IDs from RSL0 through RSL9, plus
 RSL99. Each task has these fields:
 
 - problem.
-- owning seam and paths.
+- owning boundary and paths.
 - ordered steps.
 - falsifiable acceptance.
 - fail-before evidence.
@@ -88,7 +89,7 @@ Nimbus pull request unless execution finds a scope tripwire.
 | DPA8 | Task consolidation left one stale task reference. | The ledger, task headings, finding route, and goal now use RSL0 through RSL9 and RSL99. | closed |
 | DPA9 | RSL7 published and repinned before RSL8 measured the cleanup. | The first correction delayed publication, but the post-U6 activation gate made even that workflow stale. DPA18 owns the final correction. | superseded |
 | DPA10 | RSL6 referred to three runtime verifiers, but RSL4 named two. | U3 removed the NodeFull realm verifier and replaced the old profile monolith with a compact current-contract aggregator. RSL4 and RSL6 now use that entry point plus the crossover, execution-classification, and tenant-isolation successor gates. | closed |
-| DPA11 | The first promotion gate mixed proposal review with post-RRC8 activation inputs. | The reviewed plan is proposed. Exact commits, U6 evidence, and owner approval remain activation inputs. | closed |
+| DPA11 | The first promotion gate mixed proposal review with post-RRC8 activation inputs. | The reviewed plan is proposed. Exact handoff commits and U6 evidence are now recorded. Owner approval remains an activation input. | closed |
 | DPA12 | The first reachability text omitted the serialize-only and report-only boundaries. | RSF3 now records public re-exports, live product branches, report surfaces, and the lack of a found external selector. | closed |
 | DPA13 | U3 had no recorded decision about the realm-only carries. | U3 omits them, pairs the omission with Nimbus consumer cleanup, and completed the controlled A/B before U5. | closed |
 | DPA14 | `RuntimePoolKind::StartupSnapshotCache` source documentation calls it the current default although `RuntimeLimits::default` selects `WarmPool`. | RSL4 now owns this source-documentation mismatch with the other strategy labels. | open for RSL4 |
@@ -98,15 +99,16 @@ Nimbus pull request unless execution finds a scope tripwire.
 | DPA18 | The plan activated after U6 but still scheduled a second Deno cleanup publication and repin in RSL7 and RSL8. | RSL7 now audits the immutable RRC8 graph and archive. RSL8 reproduces the A/B without fork edits or publication. | closed |
 | DPA19 | Several fail-before criteria assumed realm product code still existed after RRC8 removed it. | RSL5 through RSL7 now use the exact archived pre-cleanup graph and mutation fixtures as fail-before evidence. | closed |
 | DPA20 | The review workflow did not record the owner's temporary model-credit restriction. | Coordination and RSL9 require Sol-only review and prohibit Opus 5 and Fable until the owner lifts the restriction. | closed |
+| DPA21 | The draft audit still described an in-progress U2 and U3 after RRC8 made the runtime handoff terminal. | The source audit and activation gate now record the immutable fork releases and the three Nimbus evidence checkpoints. | closed |
 
 ## Remaining Activation Inputs
 
-The owner and RRC8 must supply these items before activation:
+RRC8 supplied the immutable handoff anchors. RSL0 will bind the exact execution
+baseline from the current release branch at activation. The owner must still
+supply these approvals:
 
-1. Which exact post-RRC8 Nimbus, Deno, and V8 commits become the execution
-   baseline?
-2. Does the owner approve activation after RRC8 U6 becomes terminal?
-3. Does the owner accept the proposed project skill and narrow routing entry?
+1. Activate the plan.
+2. Accept the proposed project skill and narrow routing entry.
 
 ## Verification
 

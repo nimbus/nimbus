@@ -5,7 +5,9 @@ Owner: this plan.
 Created: 2026-08-29.
 Baseline: `codex/release-readiness-2026-08` @ `304a2e677293fec7d150e12ffc0ba98960917753`.
 Proof root: `proof/runtime-strategy-lifecycle/`.
-Next action: wait for RRC8 U6 to record its exact commits and runtime-strategy evidence, then request owner activation.
+Next action: keep the plan proposed until the owner approves activation and the
+project skill. At activation, RSL0 binds the execution baseline to the current
+release branch while retaining the recorded RRC8 handoff anchors.
 
 ## Outcome
 
@@ -50,7 +52,7 @@ After:
 - Owns: consume the RRC8 realm-carry disposition, audit its durable archive,
   and classify future Deno or V8 strategy carries.
 - Owns: durable contributor documentation, a project runtime-strategy skill,
-  and narrow source comments at stable concept seams.
+  and narrow source comments at stable concept boundaries.
 - Coordinates with: `release-readiness-2026-08-plan.md`, which owns the active
   Deno 2.9.6 and V8 150.4 uplift and the release verdict.
 - Consumes: `profile-aware-isolate-runtime-final-architecture-plan.md` and the
@@ -82,13 +84,12 @@ After:
 ## Activation Gate
 
 This plan passed its independent scope, source, ordering, and acceptance review.
-It remains `proposed` while RRC8 owns the active fork work. Activate it only
-when every item holds:
-
-- RRC8 U6 is terminal and records exact Nimbus, Deno, and rusty_v8 commits.
-- RRC8 records the realm-carry disposition and the exact controlled A/B result.
-- The plans index still names one owner for each affected fork and product seam.
-- The owner approves activation and the proposed project skill.
+RRC8 completed the fork handoff, omitted the realm-only carries, recorded the
+controlled A/B, and preserved one owner for each affected boundary. Its handoff
+anchors are Nimbus `76165b0b9`, test checkpoint `208c2e6f5`, Linux evidence
+checkpoint `cb84dfec8`, Deno `625e4c259`, and rusty_v8 `961a76d0c`. The plan
+remains `proposed`. Activate it only when the owner approves activation and the
+proposed project skill.
 
 At activation, RSL0 replaces the draft baseline and initializes task proofs. An
 unrelated release blocker does not prevent the handoff after terminal U6.
@@ -184,7 +185,7 @@ fixtures map these concepts without copying V8-only API names.
 | RSL-D1 | Keep exact-key `WarmPool` as the retained V8 product strategy. | PIR warm-hit, fanout, and isolation evidence. | A runtime-version or workload change moves it off the Pareto frontier. |
 | RSL-D2 | Keep NodeFull startup snapshots and WebStandard unsnapshotted construction under the shared cage. | Node cold-start evidence and the cross-profile cage-crash proof. | A separate cage design or upstream heap change passes all hard gates. |
 | RSL-D3 | Keep the shared read-only heap and pointer compression on proven targets. | Existing density evidence and current anchor design. | Controlled density evidence shows that cost exceeds the memory benefit. |
-| RSL-D4 | Accept RRC8's removal of `WarmContextRecycle` from product policy and execution, and preserve its exact old graph in the experiment archive. | It is non-default, measured slower, and adds realm-specific fork and snapshot seams. | New Deno/V8 behavior or a new workload predicts a Pareto win. |
+| RSL-D4 | Accept RRC8's removal of `WarmContextRecycle` from product policy and execution, and preserve its exact old graph in the experiment archive. | It is non-default, measured slower, and adds realm-specific fork and snapshot boundaries. | New Deno/V8 behavior or a new workload predicts a Pareto win. |
 | RSL-D5 | Preserve rejected strategies as lab metadata and exact patches, not dormant product branches. | This keeps future comparison possible without permanent product cost. | A strategy becomes a supported product winner through the promotion gate. |
 
 RRC8 timing decision: U3 omits realm-only carries during the untouched 2.9.6
@@ -212,7 +213,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 ### RSL0 Baseline And Red Verifier
 
 - Problem: the active uplift can change the code and dependency baseline before this plan starts.
-- Owning seam and paths: this plan and `proof/runtime-strategy-lifecycle/`.
+- Owning boundary and paths: this plan and `proof/runtime-strategy-lifecycle/`.
 - Steps:
   1. Wait for the activation gate.
   2. Pin Nimbus, Deno, rusty_v8, build features, and machine data.
@@ -233,7 +234,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: historical plans record decisions, but no short current document
   owns proposal, evaluation, promotion, archive, removal, and re-open steps.
-- Owning seam and paths:
+- Owning boundary and paths:
   `docs/private/architecture/runtime/runtime-strategy-lifecycle.md` and the
   runtime architecture routing index.
 - Steps:
@@ -253,7 +254,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: current benchmark names can mix requested policy with actual runtime
   construction. Archived prose is not a reusable experiment schema.
-- Owning seam and paths: `crates/nimbus-runtime/benches/`, a concept-owned lab
+- Owning boundary and paths: `crates/nimbus-runtime/benches/`, a concept-owned lab
   manifest, and `proof/runtime-strategy-lifecycle/experiments/`.
 - Steps:
   1. Define admissible axes without creating the full Cartesian product.
@@ -277,14 +278,14 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: future agents need one discoverable workflow before they change a
   product runtime strategy or a runtime fork carry.
-- Owning seam and paths: `.agents/skills/runtime-strategy-lifecycle/SKILL.md`,
+- Owning boundary and paths: `.agents/skills/runtime-strategy-lifecycle/SKILL.md`,
   runtime architecture routing, Deno fork workflow, and approved routing text.
 - Steps:
   1. Add a project skill that reads the canonical contract and current fork
      ledger before runtime-strategy work.
   2. Add one routing entry to the nearest contributor index after owner review.
   3. Put source comments only on stable strategy-selection, construction-mode,
-     and experiment-manifest seams.
+     and experiment-manifest boundaries.
   4. Make each comment state an invariant or removal trigger. Do not add comments
      that only tell an agent to read documentation.
   5. Add skill fixtures for proposal, promotion, archive, and re-open states.
@@ -301,7 +302,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: cleanup must use current callers and fork commits, not historical
   assumptions.
-- Owning seam and paths: `crates/nimbus-runtime`, `nimbus-compute`, the Deno and
+- Owning boundary and paths: `crates/nimbus-runtime`, `nimbus-compute`, the Deno and
   rusty_v8 worktrees, the fork ledger, and RSL4 proof files.
 - Steps:
   1. Trace every runtime strategy from public data through all selectors and
@@ -331,7 +332,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: a rejected diagnostic strategy should not remain a public product
   policy value only to keep a benchmark executable.
-- Owning seam and paths: runtime limit types, execution planning, benchmark lab
+- Owning boundary and paths: runtime limit types, execution planning, benchmark lab
   types, experiment manifests, and serialization tests.
 - Steps:
   1. Define the minimal product strategy enum from RSL4 evidence.
@@ -351,7 +352,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: RRC8 removes realm-recycle product branches before activation. The
   lifecycle needs a closure audit so no residual or reintroduction stays live.
-- Owning seam and paths: `nimbus-runtime` invocation, worker, V8 snapshot,
+- Owning boundary and paths: `nimbus-runtime` invocation, worker, V8 snapshot,
   metrics, tests, benches, and runtime verifier scripts.
 - Steps:
   1. Compare the activated source with the exact RRC8 cleanup and archive.
@@ -375,7 +376,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: RRC8 publishes Deno 2.9.6 without realm-only carries. This plan must
   verify that graph without a second release or loss of the rejected experiment.
-- Owning seam and paths: the post-RRC8 fork ledger, immutable fork references,
+- Owning boundary and paths: the post-RRC8 fork ledger, immutable fork references,
   and the exact archived experiment recipe.
 - Steps:
   1. Pin the exact post-RRC8 upstream and Nimbus fork tags.
@@ -399,7 +400,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: an architectural decision needs measurements that distinguish pool
   policy, actual construction, runtime version, and shared-heap behavior.
-- Owning seam and paths: runtime traces, benchmark schema, uplift proof, and
+- Owning boundary and paths: runtime traces, benchmark schema, uplift proof, and
   architecture decision records.
 - Steps:
   1. Reproduce replay-on and replay-off on the archived exact graph and controls.
@@ -427,7 +428,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 
 - Problem: removal can hide a behavior loss, stale proof, or experiment that
   nobody can reproduce. One final review checks all repositories and evidence.
-- Owning seam and paths: all changed Nimbus, Deno, and rusty_v8 paths and the
+- Owning boundary and paths: all changed Nimbus, Deno, and rusty_v8 paths and the
   complete proof root.
 - Steps:
   1. Run focused and full repository gates.
@@ -449,7 +450,7 @@ and completes the A/B before U5. A supported caller reopens this decision.
 ### RSL99 Cleanup
 
 - Problem: a merged plan must not remain as a stale control plane.
-- Owning seam and paths: this plan, its proof root, and the plans index.
+- Owning boundary and paths: this plan, its proof root, and the plans index.
 - Steps:
   1. Confirm that the final pull request merged.
   2. Archive or delete the plan under the repository plan policy.
@@ -475,7 +476,7 @@ docs/private/plans/nimbus-runtime-tenant-isolation-plan.md,
 docs/private/operating/deno-fork-workflow.md, and
 docs/private/architecture/runtime/isolate-glossary.md. Chat history is not
 progress state. Resume from the status ledger, the execution log, and git state.
-If compaction happens, continue from the plan and git state. Loop: keep one task in_progress, implement at the owning seam,
+If compaction happens, continue from the plan and git state. Loop: keep one task in_progress, implement at the owning boundary,
 capture fail-before evidence, run the verification commands, commit the work
 per the commit policy, write the proof file, append the execution log with the
 work commit, mark the task terminal with evidence, commit the plan update, then
@@ -505,3 +506,4 @@ Append rows at the end. This section stays last.
 | 2026-08-29 | meta | Authored the deferred draft from a source and history audit. | Baseline `304a2e677`; no implementation started and no active-plan routing changed. |
 | 2026-08-29 | meta | Completed an independent review and promoted the corrected plan to proposed. | `proof/runtime-strategy-lifecycle/draft-plan-audit.md`; RRC8 keeps fork ownership and no RSL implementation started. |
 | 2026-08-30 | meta | Corrected the post-U6 fork ownership and verification workflow. | RRC8 owns realm omission, publication, and repin. RSL7 and RSL8 only audit and reproduce the immutable result. Sol-only review restriction recorded; no RSL implementation started. |
+| 2026-09-01 | meta | Revalidated the draft after the RRC8 runtime handoff became terminal. | Recorded the exact Nimbus, Deno, and rusty_v8 anchors. Kept the plan proposed pending owner approval of activation and the project skill; no RSL implementation started. |
