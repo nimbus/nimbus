@@ -105,6 +105,20 @@ if [[ -e "${bundle_root}/artifacts/lh2/crun-source.txt" ]]; then
   echo "source identity command wrote evidence after a Git lookup failed" >&2
   exit 70
 fi
+git -C "${tmp_dir}" init --quiet
+git -C "${tmp_dir}" add crun-source/src/libcrun/handlers/krun.c
+git -C "${tmp_dir}" \
+  -c user.name=Nimbus \
+  -c user.email=release@nimbus.local \
+  commit --quiet -m "nested crun source fixture"
+if bash "${bundle_root}/commands/02-lh2-record-crun-source.sh" \
+  > "${tmp_dir}/nested-source-stdout.txt" \
+  2> "${tmp_dir}/nested-source-stderr.txt"; then
+  echo "source identity command unexpectedly accepted a directory below a Git worktree" >&2
+  exit 70
+fi
+grep -F "crun source must be the Git worktree root" \
+  "${tmp_dir}/nested-source-stderr.txt" >/dev/null
 grep -F "stage.source=released-artifacts" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
 grep -F "stage.nimbus_libkrun_root=\${STAGE_DIR}" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
 grep -F "install.source=released-artifacts" "${bundle_root}/commands/04-lh3-install-private-runtime.sh" >/dev/null

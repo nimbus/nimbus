@@ -444,6 +444,14 @@ if [[ ! -f "\${CRUN_SOURCE}/src/libcrun/handlers/krun.c" ]]; then
   exit 66
 fi
 
+source_root="\$(git -C "\${CRUN_SOURCE}" rev-parse --show-toplevel)"
+source_root="\$(cd "\${source_root}" && pwd -P)"
+requested_root="\$(cd "\${CRUN_SOURCE}" && pwd -P)"
+if [[ "\${source_root}" != "\${requested_root}" ]]; then
+  echo "crun source must be the Git worktree root: \${CRUN_SOURCE}" >&2
+  exit 66
+fi
+
 source_commit="\$(git -C "\${CRUN_SOURCE}" rev-parse --verify HEAD)"
 source_describe="\$(git -C "\${CRUN_SOURCE}" describe --always --dirty)"
 
