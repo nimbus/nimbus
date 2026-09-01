@@ -1693,17 +1693,18 @@ inline_check_command() {
 resolve_nimbus_release_document() {
   document_name="$1"
 
-  if [ -s "${NIMBUS_PREFIX}/share/doc/nimbus/${document_name}" ]; then
-    printf '%s\n' "${NIMBUS_PREFIX}/share/doc/nimbus/${document_name}"
-    return 0
+  if [ -x "${NIMBUS_PREFIX}/bin/nimbus" ]; then
+    nimbus_path="${NIMBUS_PREFIX}/bin/nimbus"
+    if [ -s "${NIMBUS_PREFIX}/share/doc/nimbus/${document_name}" ]; then
+      printf '%s\n' "${NIMBUS_PREFIX}/share/doc/nimbus/${document_name}"
+      return 0
+    fi
+    # A direct-install binary owns its prefix payload. Do not let documents from
+    # a different package-manager or Cask channel mask a partial direct install.
+    [ ! -L "$nimbus_path" ] && return 1
+  else
+    nimbus_path="$(command -v nimbus 2>/dev/null || true)"
   fi
-
-  # A direct-install binary owns its prefix payload. Do not let documents from
-  # a different package-manager or Cask channel mask a partial direct install.
-  [ -x "${NIMBUS_PREFIX}/bin/nimbus" ] &&
-    [ ! -L "${NIMBUS_PREFIX}/bin/nimbus" ] && return 1
-
-  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
   if [ -n "$nimbus_path" ]; then
     real_path="$(readlink "$nimbus_path" 2>/dev/null || echo "$nimbus_path")"
     if [ "${real_path#/}" = "$real_path" ]; then

@@ -293,11 +293,33 @@ condition_srm1_adapter_surfaces_stay_clean() {
     packages/convex/src packages/firebase/src packages/mongodb/src packages/dynamodb/src
 }
 
+sdk_has_service_definition_list_signature() {
+  awk '
+    /^[[:space:]]+list[[:space:]]*\(/ {
+      signature = $0
+      capture = 1
+      next
+    }
+    capture {
+      signature = signature $0
+      if (/\): Promise<NimbusServiceDefinitionCollection>/) {
+        compact = signature
+        gsub(/[[:space:]]/, "", compact)
+        if (compact ~ /^list\(input:NimbusServiceListRequest=\{\},?\):Promise<NimbusServiceDefinitionCollection>\{$/) {
+          found = 1
+        }
+        capture = 0
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "${SDK_ROOT_FILES[@]}"
+}
+
 condition_srm2_sdk_definition_surface() {
   grep -q 'create(input: NimbusServiceCreateRequest)' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'update(input: NimbusServiceUpdateRequest)' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'delete(input: NimbusServiceDeleteRequest)' "${SDK_ROOT_FILES[@]}" &&
-    grep -q 'input: NimbusServiceListRequest = {}' "${SDK_ROOT_FILES[@]}" &&
+    sdk_has_service_definition_list_signature &&
     grep -q 'kind: "builtIn"' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'kind: "external"' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'ifMatchGeneration' "${SDK_ROOT_FILES[@]}" &&

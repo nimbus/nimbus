@@ -68,16 +68,18 @@ resolve_nimbus_release_document() {
   local derived_prefix=""
   local candidate=""
 
-  if [[ -s "${install_prefix}/share/doc/nimbus/${document_name}" ]]; then
-    printf '%s\n' "${install_prefix}/share/doc/nimbus/${document_name}"
-    return 0
+  if [[ -x "${install_prefix}/bin/nimbus" ]]; then
+    nimbus_path="${install_prefix}/bin/nimbus"
+    if [[ -s "${install_prefix}/share/doc/nimbus/${document_name}" ]]; then
+      printf '%s\n' "${install_prefix}/share/doc/nimbus/${document_name}"
+      return 0
+    fi
+    # A direct-install binary owns its prefix payload. Falling through to a
+    # different channel would turn a partial direct install into a false pass.
+    [[ ! -L "${nimbus_path}" ]] && return 1
+  else
+    nimbus_path="$(command -v nimbus 2>/dev/null || true)"
   fi
-
-  # A binary in the requested prefix owns its payload. Falling through to a
-  # different PATH channel would turn a partial direct install into a false pass.
-  [[ -x "${install_prefix}/bin/nimbus" && ! -L "${install_prefix}/bin/nimbus" ]] && return 1
-
-  nimbus_path="$(command -v nimbus 2>/dev/null || true)"
   if [[ -n "${nimbus_path}" ]]; then
     real_path="$(readlink "${nimbus_path}" 2>/dev/null || echo "${nimbus_path}")"
     if [[ "${real_path#/}" == "${real_path}" ]]; then

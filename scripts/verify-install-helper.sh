@@ -726,6 +726,34 @@ else
   fail "inline verification resolves Homebrew Cask release documents"
 fi
 
+stale_docs_prefix="${output_dir}/stale-docs-prefix"
+mkdir -p "${stale_docs_prefix}/share/doc/nimbus"
+printf 'stale license\n' > "${stale_docs_prefix}/share/doc/nimbus/LICENSE"
+printf 'stale readme\n' > "${stale_docs_prefix}/share/doc/nimbus/README.md"
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${stale_docs_prefix}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${cask_root}" \
+    > "${output_dir}/stale-prefix-doc-layout.txt" 2>&1; then
+  pass "standalone verification ignores documents outside the selected binary channel"
+else
+  fail "standalone verification ignores documents outside the selected binary channel"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$3"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' sh "${testable_install_sh}" "${cask_root}" "${stale_docs_prefix}" \
+    > "${output_dir}/stale-prefix-inline-doc-layout.txt" 2>&1; then
+  pass "inline verification ignores documents outside the selected binary channel"
+else
+  fail "inline verification ignores documents outside the selected binary channel"
+fi
+
 if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${brew_root}" bash -c '
     . "$1"
     [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]

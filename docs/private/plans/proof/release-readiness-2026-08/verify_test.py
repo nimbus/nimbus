@@ -354,6 +354,16 @@ class ReleaseReadinessVerifierTests(unittest.TestCase):
         self.assertNotEqual(status, 0)
         self.assertIn("desktop_app: evidence is not bound to the desktop candidate", output)
 
+    def test_dependency_security_pass_requires_exact_desktop_revision(self) -> None:
+        status, output = self.run_verifier(
+            proof_revisions=(CANDIDATE["nimbus"], CANDIDATE["deno"], CANDIDATE["main"])
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn(
+            "security_dependencies: evidence is not bound to the desktop candidate",
+            output,
+        )
+
     def test_candidate_revisions_must_be_full_lowercase_shas(self) -> None:
         malformed = dict(CANDIDATE)
         malformed["nimbus"] = "abc"

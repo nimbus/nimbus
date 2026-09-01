@@ -25,6 +25,7 @@ CANDIDATE_KEYS = ("nimbus", "desktop", "deno", "main")
 PASS_CANDIDATE_KEYS = ("nimbus", "deno", "main")
 PASS_CANDIDATE_EXTRAS = {
     "desktop_app": ("desktop",),
+    "security_dependencies": ("desktop",),
     "independent_reviews": ("desktop",),
 }
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")

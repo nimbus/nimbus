@@ -12,7 +12,7 @@ use nimbus_compute::state::{ComputeError, ComputeState};
 use nimbus_core::{Error, TenantId, WorkloadId};
 use nimbus_tenant::TenantIsolationContext;
 
-/// Exact static services that a managed server must desire during startup.
+/// Ordered static services that a managed server starts during startup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerWorkloadBootPlan {
     tenant_id: TenantId,
