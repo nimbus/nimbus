@@ -2,7 +2,7 @@
 
 Date: 2026-08-29
 
-Status: `in_progress`.
+Status: `complete`.
 
 ## Outcome
 
@@ -41,7 +41,7 @@ in the final dependency closure.
 | U3 | Audit the 21 Deno carries and replay only product-required concepts on upstream 2.9.6. | `complete` | Seven local commits end at exact reviewed correction `8d48dc4a68df8e083ed4b17855440b1df6405620`. Nimbus commit `d6636b980deedfeee8a64afb06230fa8a19a10a9` records the paired cleanup and public-tag repin. Controlled A/B, observed-mode crossover, full local CI, macOS, Linux debug-profile, application, desktop, and final Sol review evidence pass. The 8 GiB Linux full-LTO attempt is recorded as resource-blocked. |
 | U4 | Test Deno itself and Nimbus against the exact unpublished candidate. | `complete` | Exact candidate `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3` uses immutable rusty_v8 tag `v150.4.0-nimbus.1`. Locked workspace checks, formatting, warning-denied carry Clippy, 183 focused carry tests, 1,517 Node AES-GCM tests, and focused Nimbus integration pass. |
 | U5 | Review and publish an immutable Deno 2.9.6 release. | `complete` | Public successor release `v2.9.6-nimbus.2` uses annotated tag object `6fd2b3a0a7fb227388283cf30de9dd5de90ab949`, which peels to exact candidate `625e4c259488dfa1c3c9d03fabde17758e1130d9`. It preserves the reviewed `.1` carries and adds only the construction-time extension source provider required by source-free packages. The full 478-test `deno_core` suite, warning-denied Clippy, formatting, secret scan, and Sol xhigh review pass. The default branch is `nimbus/v2.9.6`. |
-| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `in_progress` | Exact substantive candidate `76165b0b9` resolves 41 Deno packages at `v2.9.6-nimbus.2#625e4c25` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. Test-only checkpoint `208c2e6f5` adds the non-`cfg(test)` service-snapshot invocation proof. Both blob variants, focused source-free regressions, the macOS package run, all-target runtime checks, warning-denied Clippy, formatting, whitespace, secret scans, and final Sol xhigh reviews pass. Linux source-free package replay remains. |
+| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `complete` | Exact substantive candidate `76165b0b9` resolves 41 Deno packages at `v2.9.6-nimbus.2#625e4c25` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. Test-only checkpoint `208c2e6f5` adds the non-`cfg(test)` service-snapshot invocation proof. Both blob variants, focused source-free regressions, source-free macOS and Linux arm64 package runs, all-target runtime checks, warning-denied Clippy, formatting, whitespace, secret scans, and final Sol xhigh reviews pass. The Linux package at `cb84dfec8` passes the previously failing first WebStandard invocation. |
 
 ## Carry Rules
 
@@ -626,6 +626,23 @@ sandbox passes that test. Both Sol xhigh reviews are clean. The net change
 after the built `823b29c7e` candidate is only the integration test. Production
 library source did not change.
 
-This repair is not complete release evidence. A fresh Linux package without a
-source checkout must pass the first WebStandard invocation. U6 remains
-`in_progress`.
+The exact Linux arm64 release build at `cb84dfec8` used pointer compression,
+thin LTO, and one build job. The new schema 6 companion blob passed provenance
+and parse checks before the release build. The build completed in 29 minutes
+16 seconds. The 230,018,488-byte ELF has SHA-256
+`d8e670b289a6cf6ae092b3fdac2d69cc02ca2f68502706a3ac5e133124f3d0e7`.
+The release archive has SHA-256
+`3c692b37abe43298c7b607ee2d98b3d34d0a8bd6e7e7edfc5020fe2f5b139437`.
+
+A fresh Ubuntu 24.04 arm64 container mounted only the read-only artifact
+directory. No Nimbus or Deno source checkout existed in the container. It
+became healthy and accepted the same generated `nimbus/agent-chat` bundle that
+exposed the fail-before panic.
+
+Conversation, memory write, recall, scheduled execution, and
+WebSocket delivery passed. Post-smoke health passed. The container log contains
+no runtime panic or missing-source error. Direct `SIGTERM` completed graceful
+shutdown with exit status 0.
+
+The later storage-test commits change only nextest scheduling in the net tree.
+They do not change production source or the built binary. U6 is complete.

@@ -14,11 +14,11 @@ Their annotated tags peel to reviewed commits
 and local release gates pass. A fresh rusty_v8 download verifies all 44
 payloads and 44 checksum sidecars.
 
-The current substantive Nimbus code candidate is
-`76165b0b9`. A proof-only commit follows it before the final hosted and artifact
-replay. Its normal Cargo graph resolves 41 Deno packages and rusty_v8 from the
-immutable tags. The earlier full `make ci` replay passed without a local V8
-override. The final branch head still needs its complete hosted replay.
+The current substantive Nimbus code candidate is `76165b0b9`. Later commits
+add focused tests, proof updates, and nextest scheduling. Its normal Cargo graph
+resolves 41 Deno packages and rusty_v8 from the immutable tags. The earlier
+full `make ci` replay passed without a local V8 override. The final branch head
+still needs its complete hosted replay.
 
 A source-free Linux arm64 package from the previous branch head passed health
 and application deployment. Its first WebStandard function invocation then
@@ -34,8 +34,24 @@ Focused feature-off and pointer-compressed tests and the final Sol xhigh review
 pass. An OS-sandboxed macOS release package passed all four `nimbus/agent-chat`
 runtime anchors while every Deno source checkout was unreadable. A production-
 configuration integration test also invoked a Node22 service-bearing runtime
-under the same denial policy. Linux source-free package replay must still prove
-the repair before this blocker closes.
+under the same denial policy.
+
+The exact Linux arm64 release artifact at `cb84dfec8` has SHA-256
+`d8e670b289a6cf6ae092b3fdac2d69cc02ca2f68502706a3ac5e133124f3d0e7`.
+A fresh Ubuntu 24.04 container received only its read-only archive directory.
+Health, deployment, the four application anchors, post-smoke health, and
+graceful `SIGTERM` exit status 0 passed. No runtime panic or missing-source
+error appears in the log. This result closes the source-free runtime packaging
+blocker.
+
+Final-head shard run `33514162769` then found that the redb PITR wall-clock
+test had no nextest isolation. K=1 and K=2 exceeded the unchanged 1 second
+limit. K=3 and K=4 passed.
+
+The repair reserves all test threads for this test
+and does not weaken its budget. Ten focused runs and the full CI-profile
+storage suite pass. Sol xhigh accepted the isolation and rejected a temporary
+budget increase. The correction removes that increase.
 
 The exact replay found and closed two dependency-graph defects.
 
@@ -249,8 +265,9 @@ closed clean after all P3 hardening fixes.
 ## Remaining Release Blockers
 
 1. Final hosted workflows have not passed on the proof-updated branch head.
-2. Release-critical macOS, Linux x86_64 and arm64, application, desktop,
-   archive, and OCI lanes have not replayed from that branch head.
+2. Release-critical Linux x86_64, archive, OCI, and remaining application and
+   distribution lanes have not replayed from the final branch head. The
+   source-free macOS and Linux arm64 runtime package oracles pass.
 3. Live dual-target cloud proofs remain blocked because four provider URLs and
    their credentials are not configured in the repository secrets.
 4. Apple notarization and stapling remain unverified because the authorized
