@@ -25,14 +25,19 @@ type SharedAdapterLoadResult =
     std::result::Result<BunJscSharedAdapterLibrary, manifest::BunJscAdapterDiscoveryError>;
 
 type BunJscProbeFn = unsafe extern "C" fn() -> i32;
+type BunJscIsCancelledFn = unsafe extern "C" fn(context: *mut c_void) -> bool;
 type BunJscInvokeProgramWrapperJsonFn = unsafe extern "C" fn(
     bundle_ptr: *const u8,
     bundle_len: usize,
+    expected_sha256_ptr: *const u8,
+    expected_sha256_len: usize,
     request_ptr: *const u8,
     request_len: usize,
     output_ptr: *mut u8,
     output_cap: usize,
     output_len: *mut usize,
+    cancellation_context: *mut c_void,
+    is_cancelled: Option<BunJscIsCancelledFn>,
 ) -> i32;
 type BunJscHostCallJsonFn = unsafe extern "C" fn(
     context: *mut c_void,
@@ -45,6 +50,8 @@ type BunJscHostCallJsonFn = unsafe extern "C" fn(
 type BunJscInvokeProgramWrapperJsonWithHostBridgeFn = unsafe extern "C" fn(
     bundle_ptr: *const u8,
     bundle_len: usize,
+    expected_sha256_ptr: *const u8,
+    expected_sha256_len: usize,
     request_ptr: *const u8,
     request_len: usize,
     output_ptr: *mut u8,
@@ -52,6 +59,8 @@ type BunJscInvokeProgramWrapperJsonWithHostBridgeFn = unsafe extern "C" fn(
     output_len: *mut usize,
     host_context: *mut c_void,
     host_call_json: Option<BunJscHostCallJsonFn>,
+    cancellation_context: *mut c_void,
+    is_cancelled: Option<BunJscIsCancelledFn>,
 ) -> i32;
 
 #[derive(Debug)]
@@ -134,19 +143,33 @@ fn invoke_program_wrapper_json(
     bundle.verify_integrity()?;
     policy.validate_bundle_content_kind(bundle.content_kind())?;
 
+    let expected_sha256 = bundle.identity().expected_sha256().map(str::as_bytes);
+    let (expected_sha256_ptr, expected_sha256_len) = expected_sha256
+        .map(|digest| (digest.as_ptr(), digest.len()))
+        .unwrap_or((std::ptr::null(), 0));
     let bundle_source = std::fs::read(bundle.entrypoint()).map_err(NimbusRuntimeError::from)?;
     let request_json = serde_json::to_vec(&request)?;
     let mut output = vec![0_u8; BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP];
     let mut output_len = 0_usize;
+    let cancellation_was_supplied = cancellation.is_some();
     let host_context = BunJscHostBridgeCallContext {
         host: host.bridge(),
         cancellation: cancellation.unwrap_or_default(),
     };
+    let cancellation_context = if cancellation_was_supplied {
+        &host_context as *const BunJscHostBridgeCallContext as *mut c_void
+    } else {
+        std::ptr::null_mut()
+    };
+    let is_cancelled =
+        cancellation_was_supplied.then_some(bun_jsc_is_cancelled as BunJscIsCancelledFn);
 
     let status = unsafe {
         (shared_library.invoke_program_wrapper_json_with_host_bridge)(
             bundle_source.as_ptr(),
             bundle_source.len(),
+            expected_sha256_ptr,
+            expected_sha256_len,
             request_json.as_ptr(),
             request_json.len(),
             output.as_mut_ptr(),
@@ -154,9 +177,14 @@ fn invoke_program_wrapper_json(
             &mut output_len,
             &host_context as *const BunJscHostBridgeCallContext as *mut c_void,
             Some(bun_jsc_host_bridge_call_json),
+            cancellation_context,
+            is_cancelled,
         )
     };
 
+    if status == 314 {
+        return Err(NimbusRuntimeError::Cancelled);
+    }
     if status == 307 {
         return Err(NimbusRuntimeError::Contract(format!(
             "Bun/JSC linked execution response exceeded {} bytes; embedder reported {} bytes",
@@ -184,6 +212,17 @@ fn invoke_program_wrapper_json(
 struct BunJscHostBridgeCallContext {
     host: Arc<dyn HostBridge>,
     cancellation: HostCallCancellation,
+}
+
+unsafe extern "C" fn bun_jsc_is_cancelled(context: *mut c_void) -> bool {
+    if context.is_null() {
+        return true;
+    }
+
+    // SAFETY: Bun calls this callback synchronously while the Nimbus invocation
+    // owns the context stack frame. The callback never stores the reference.
+    let context = unsafe { &*(context as *const BunJscHostBridgeCallContext) };
+    context.cancellation.is_cancelled()
 }
 
 unsafe extern "C" fn bun_jsc_host_bridge_call_json(
@@ -275,6 +314,8 @@ fn embedder_status_name(status: i32) -> &'static str {
         310 => "host_bridge_transport_initialization_failed",
         311 => "host_bridge_not_installed",
         312 => "host_bridge_response_json_failed",
+        313 => "bundle_integrity_failed",
+        314 => "invocation_cancelled",
         _ => "unknown",
     }
 }
@@ -438,5 +479,16 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(output_len, expected_response.len());
         assert_eq!(&output[..output_len], expected_response.as_slice());
+    }
+
+    #[test]
+    fn cancellation_callback_reads_the_invocation_signal() {
+        let context = host_bridge_context(json!(null));
+        let context_ptr = &context as *const BunJscHostBridgeCallContext as *mut c_void;
+
+        assert!(!unsafe { bun_jsc_is_cancelled(context_ptr) });
+        context.cancellation.cancel();
+        assert!(unsafe { bun_jsc_is_cancelled(context_ptr) });
+        assert!(unsafe { bun_jsc_is_cancelled(std::ptr::null_mut()) });
     }
 }

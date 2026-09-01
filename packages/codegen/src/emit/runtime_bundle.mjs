@@ -75,7 +75,45 @@ function generateRuntimeProgramBundle(manifest) {
   }
   return buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
     module: false,
+    inlineRuntimeHandlerFactories: buildInlineRuntimeHandlerFactories(manifest),
   });
+}
+
+function buildInlineRuntimeHandlerFactories(manifest) {
+  return (manifest.functions ?? [])
+    .filter(
+      (definition) =>
+        typeof definition.runtime_handler === "string"
+        && definition.runtime_handler.length > 0,
+    )
+    .map((definition) => {
+      const bindingNames = Object.keys(definition.runtime_bindings ?? {});
+      for (const name of bindingNames) {
+        if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
+          throw new Error(
+            `runtime program bundle binding is not a JavaScript identifier: ${name}`,
+          );
+        }
+      }
+      const factoryParameters = bindingNames.join(", ");
+      return `[${JSON.stringify(definition.name)}, async function(definition) {
+  const runtimeBindings = await materializeRuntimeBindings(definition.runtime_bindings);
+  const bindingValues = ${JSON.stringify(bindingNames)}.map((name) => runtimeBindings[name]);
+  const invoke = ((${factoryParameters}) => (ctx, args, request) =>
+    (${definition.runtime_handler})(ctx, args, request)
+  )(...bindingValues);
+  const handlerOrigin = {
+    module: typeof definition.module === "string" ? definition.module : null,
+    line:
+      typeof definition.runtime_handler_line === "number"
+        ? definition.runtime_handler_line
+        : null,
+  };
+  return (ctx, args, request) =>
+    nimbusWrapRuntimeInvoke(invoke, [], ctx, args, request, handlerOrigin);
+}]`;
+    })
+    .join(",\n");
 }
 
 function collectNodeRuntimeSpecifiers(manifest) {

@@ -816,7 +816,7 @@ mod tests {
             "library_sha256": library_sha256,
             "abi": {
                 "name": "nimbus-bun-jsc-embedder",
-                "version": 1,
+                "version": 2,
                 "required_exports": contract.required_exports,
             },
             "memory_enforcement": "outer_quota_required",
@@ -1011,7 +1011,7 @@ mod tests {
             .manifest
             .as_ref()
             .expect("verified manifest metadata should be exposed");
-        assert_eq!(manifest.source_ref, "nimbus-bun-jsc-proof-main-20260901.2");
+        assert_eq!(manifest.source_ref, "codex/bun-v1.4.0-release-readiness");
         assert_eq!(manifest.library_file, shared_library_basename());
         assert!(
             !serde_json::to_string(&resolved.diagnostics)
@@ -1103,7 +1103,7 @@ mod tests {
                 .expected
                 .expect("expected contract should be present")
                 .source_ref,
-            "nimbus-bun-jsc-proof-main-20260901.2"
+            "codex/bun-v1.4.0-release-readiness"
         );
     }
 
