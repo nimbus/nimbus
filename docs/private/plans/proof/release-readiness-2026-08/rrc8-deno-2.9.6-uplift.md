@@ -40,8 +40,8 @@ in the final dependency closure.
 | U2 | Review, publish, and re-query an immutable rusty_v8 150.4 release. | `complete` | Public non-draft, non-prerelease release `v150.4.0-nimbus.1` peels to exact candidate `961a76d0cee88efdecfa9224c519fd153c404b51`. Branch runs `33361461904` and `33361461885` pass. Same-commit tag reruns `33376770979` and `33376771045` pass. A fresh download verifies 44 payloads and 44 checksum sidecars. |
 | U3 | Audit the 21 Deno carries and replay only product-required concepts on upstream 2.9.6. | `complete` | Seven local commits end at exact reviewed correction `8d48dc4a68df8e083ed4b17855440b1df6405620`. Nimbus commit `d6636b980deedfeee8a64afb06230fa8a19a10a9` records the paired cleanup and public-tag repin. Controlled A/B, observed-mode crossover, full local CI, macOS, Linux debug-profile, application, desktop, and final Sol review evidence pass. The 8 GiB Linux full-LTO attempt is recorded as resource-blocked. |
 | U4 | Test Deno itself and Nimbus against the exact unpublished candidate. | `complete` | Exact candidate `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3` uses immutable rusty_v8 tag `v150.4.0-nimbus.1`. Locked workspace checks, formatting, warning-denied carry Clippy, 183 focused carry tests, 1,517 Node AES-GCM tests, and focused Nimbus integration pass. |
-| U5 | Review and publish an immutable Deno 2.9.6 release. | `complete` | Public non-draft, non-prerelease release `v2.9.6-nimbus.1` uses annotated tag object `4d8b978255e8ca9a78d040531ee764d695fd3bcf`, which peels to exact candidate `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3`. Branch run `33442674740` and tag run `33444743536` pass. The default branch is `nimbus/v2.9.6`. Sol xhigh review of the product code and each workflow correction passes. |
-| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `in_progress` | Exact code candidate `818af5c68653fbdfa8d41d371ac449a28ef2ec85` resolves 41 Deno packages at `v2.9.6-nimbus.1#6c37e683` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. Four Sol-only review rounds accepted 21 of 33 reports and refuted 12. The final `make ci` passes 500 canonical runtime tests, 7,726 workspace tests, 846 UI tests, and every required repository gate. Release-critical smoke, artifact replay, and the higher-memory Linux release build remain. |
+| U5 | Review and publish an immutable Deno 2.9.6 release. | `complete` | Public successor release `v2.9.6-nimbus.2` uses annotated tag object `6fd2b3a0a7fb227388283cf30de9dd5de90ab949`, which peels to exact candidate `625e4c259488dfa1c3c9d03fabde17758e1130d9`. It preserves the reviewed `.1` carries and adds only the construction-time extension source provider required by source-free packages. The full 478-test `deno_core` suite, warning-denied Clippy, formatting, secret scan, and Sol xhigh review pass. The default branch is `nimbus/v2.9.6`. |
+| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `in_progress` | Exact substantive candidate `76165b0b9` resolves 41 Deno packages at `v2.9.6-nimbus.2#625e4c25` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. It packages build-only extension sources for ordinary and service-snapshot construction and fails closed on provider misses. Both blob variants, focused source-free regressions, pointer-compressed embedded-anchor integration, all-target runtime checks, warning-denied Clippy, formatting, whitespace, secret scans, and the final Sol xhigh review pass. Fresh source-free package replay remains. |
 
 ## Carry Rules
 
@@ -451,19 +451,19 @@ The fork identities are:
 
 - Public rusty_v8 tag `v150.4.0-nimbus.1` peels to
   `961a76d0cee88efdecfa9224c519fd153c404b51`.
-- Public Deno tag `v2.9.6-nimbus.1` peels to clean candidate
-  `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3`.
+- Public Deno tag `v2.9.6-nimbus.2` peels to clean candidate
+  `625e4c259488dfa1c3c9d03fabde17758e1130d9`.
   Its seventh commit, `8d48dc4a68df8e083ed4b17855440b1df6405620`,
   contains the reviewed nine-file diff with pre-commit SHA-256
   `6bcaa1948d86ef65af2a7ccb65f4a1d21ee7687fbd98d9730e35ab6de1d57b55`.
-  Later commits add the GCM policy, immutable V8 pin, and hosted gate repairs.
-- The exact Nimbus code candidate is
-  `818af5c68653fbdfa8d41d371ac449a28ef2ec85`. Its six-commit public-tag
+  Later commits add the GCM policy, immutable V8 pin, hosted gate repairs, and
+  the construction-only packaged-source interface.
+- The exact Nimbus substantive candidate is `76165b0b9`. Its public-tag
   integration range starts at
   `d6636b980c6f638bf9e9cd1fe75c437fbd51bd37`.
 - Nimbus `Cargo.toml` and `Cargo.lock` now select only the two public Nimbus
   tags. The lock resolves all 41 Deno packages to
-  `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3` and rusty_v8 to
+  `625e4c259488dfa1c3c9d03fabde17758e1130d9` and rusty_v8 to
   `961a76d0cee88efdecfa9224c519fd153c404b51`. No temporary revision or
   local-path fork source remains.
 
@@ -534,13 +534,14 @@ followed by owner approval. RRC8 keeps exclusive ownership until that trigger.
 ## Current Next Action
 
 Push the reviewed Nimbus branch. Repeat the release-critical smoke and artifact
-lanes from exact code candidate
-`818af5c68653fbdfa8d41d371ac449a28ef2ec85`, produce the higher-memory Linux
-full-LTO binary, and update the final release verdict.
+lanes from exact substantive candidate `76165b0b9`. The first source-free
+WebStandard invocation and service-bearing Node snapshot must pass before the
+higher-memory Linux full-LTO, archive, OCI, desktop, and hosted evidence can
+close U6.
 
 ## U6 Final Local Review And CI
 
-The exact code candidate is
+The earlier exact code checkpoint is
 `818af5c68653fbdfa8d41d371ac449a28ef2ec85`. Four Sol-only review rounds
 examined the committed integration and each correction range. No Opus 5 or
 Fable review ran.
@@ -575,3 +576,43 @@ and 63 installer checks also pass.
 
 Nextest classified one passing workspace test as leaky. The run had no failed
 test.
+
+## U6 Source-Free Runtime Packaging Repair
+
+The first source-free Linux arm64 package at Nimbus
+`82129552b6c3b01809a05002aacdd5e38ba5eafa` passed health and application
+deployment. Its first WebStandard function invocation then panicked. Ordinary
+unsnapshotted runtime construction tried to open a Deno build source that was
+absent from the deployed archive.
+
+Deno `v2.9.6-nimbus.2` adds a narrow `ExtensionSourceProvider` to
+`RuntimeOptions`. Deno consults it only for source descriptors that are not
+runtime-loadable. `JsRuntime` construction borrows the provider and does not
+retain it in runtime state. The default `None` value preserves Deno's
+source-checkout behavior. Full `deno_core` testing passes 478 tests with two
+declared ignores. Warning-denied Clippy, formatting, the missing-path
+regression, secret scan, and Sol xhigh review also pass.
+
+Nimbus schema 6 appends the sorted, deduplicated union of WebStandard and
+Node22 build-only extension sources to each embedded Node22 companion blob.
+The source union covers JavaScript, ESM, lazy JavaScript, and lazy ESM files for
+the service-enabled extension supersets. Nimbus validates every active
+build-only descriptor before construction.
+
+Ordinary runtimes and
+service-bearing snapshot construction use the same provider. Once a provider
+exists, a missing residual source is a contract error and cannot fall back to
+a host path. The provider is construction-only. Nimbus retains no fresh-realm
+replay table or runtime state.
+
+The generated feature-off blob is 18,385,928 bytes. The pointer-compressed blob
+is 17,808,664 bytes. Both pass current content and portable provenance checks.
+Nine feature-off startup tests, both pointer-compressed source-free residual
+regressions, the pointer-compressed embedded-anchor integration test,
+all-target runtime checks, warning-denied Clippy, formatting, and whitespace
+pass. Two Sol xhigh reviews found the residual-ordering and provider-miss
+defects. The final follow-up is clean, and all review secret scans are clean.
+
+This repair is not complete release evidence. A fresh package without a source
+checkout must pass the first WebStandard invocation. It must also build the
+service-bearing Node snapshot. U6 remains `in_progress`.

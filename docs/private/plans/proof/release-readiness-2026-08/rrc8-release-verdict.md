@@ -7,19 +7,32 @@ Date: 2026-09-01
 Result: **NO-GO**.
 
 RRC8 tracks upstream Deno 2.9.6 and V8 150.4. Public fork releases
-`v2.9.6-nimbus.1` and `v150.4.0-nimbus.1` are non-draft and non-prerelease.
+`v2.9.6-nimbus.2` and `v150.4.0-nimbus.1` are non-draft and non-prerelease.
 Their annotated tags peel to reviewed commits
-`6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3` and
+`625e4c259488dfa1c3c9d03fabde17758e1130d9` and
 `961a76d0cee88efdecfa9224c519fd153c404b51`. Their branch and tag workflows
-pass. A fresh rusty_v8 download verifies all 44 payloads and 44 checksum
-sidecars.
+and local release gates pass. A fresh rusty_v8 download verifies all 44
+payloads and 44 checksum sidecars.
 
 The current substantive Nimbus code candidate is
-`9b9123efacb217b922947b9d7374c9fb8f3095a7`. A proof-only commit follows it
-before the final hosted and artifact replay. Its normal Cargo graph resolves
-41 Deno packages and rusty_v8 from the immutable tags. The earlier full
-`make ci` replay passed without a local V8 override. The final branch head
-still needs its complete hosted replay.
+`76165b0b9`. A proof-only commit follows it before the final hosted and artifact
+replay. Its normal Cargo graph resolves 41 Deno packages and rusty_v8 from the
+immutable tags. The earlier full `make ci` replay passed without a local V8
+override. The final branch head still needs its complete hosted replay.
+
+A source-free Linux arm64 package from the previous branch head passed health
+and application deployment. Its first WebStandard function invocation then
+panicked when runtime construction opened a Deno build source that the archive
+did not contain. The new Deno tag provides a construction-only source
+interface.
+Nimbus now embeds the required WebStandard and Node build-only source union in
+both companion blobs. It validates every active descriptor, uses the packaged
+source for ordinary and service-snapshot construction, and fails closed on a
+provider miss.
+
+Focused feature-off and pointer-compressed tests and the final Sol xhigh review
+pass. A fresh source-free package replay must still prove the repair before
+this blocker closes.
 
 The exact replay found and closed two dependency-graph defects.
 

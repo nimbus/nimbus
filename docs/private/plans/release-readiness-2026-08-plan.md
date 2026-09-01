@@ -8,10 +8,11 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: record the Nimbus candidate commit that consumes public tags
-`v2.9.6-nimbus.1` and `v150.4.0-nimbus.1`. Repeat the smoke, archive, OCI, and
-higher-memory Linux full-LTO lanes from that commit, then update the release
-verdict.
+Next action: push the reviewed Nimbus candidate that consumes public tags
+`v2.9.6-nimbus.2` and `v150.4.0-nimbus.1`. Build source-free macOS and Linux
+release packages. Prove the first WebStandard invocation and service-bearing
+Node snapshot path. Then repeat the remaining hosted, smoke, archive, OCI, and
+desktop lanes from the exact branch head.
 
 ## Outcome
 
@@ -431,3 +432,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-01 | RRC8 | evidence | Substantive code candidate `9b9123efacb217b922947b9d7374c9fb8f3095a7` passes 765 of 765 server tests with 35 declared skips and 1,076 of 1,076 CLI and launcher tests with 4 declared skips. The real child-process `SIGTERM`, pre-requested TLS shutdown, public shutdown-handle, and two-signal escalation regressions pass. Formatting, whitespace, and warning-denied Clippy pass. One full server replay observed a post-test MongoDB `SIGSEGV`; the exact test then passed 10 of 10 runs, the 23-test MongoDB binary passed 5 of 5 runs, and the final 765-test server replay was clean. The observation is not reproduced or accepted as a product defect. |
 | 2026-09-01 | RRC8 | review | Four Sol xhigh rounds reviewed the complete shutdown range. The audit accepted three lifecycle races, refuted the plain-HTTP half of one report because it checks the current watch value, and fixed the corresponding TLS case. The final review reports no accepted or actionable P0 through P3 finding, and TruffleHog is clean. No Opus 5 or Fable review ran. |
 | 2026-09-01 | RRC8 | checkpoint | The final proof-only commit will follow substantive code candidate `9b9123efacb217b922947b9d7374c9fb8f3095a7`. Final hosted workflows, macOS and Linux release artifacts, native smoke, applications, desktop binding, archive, and OCI replay must use the resulting branch head. The earlier `979d2687d` hosted and artifact evidence is superseded. |
+| 2026-09-01 | RRC8 | fail-before | A fresh Linux arm64 container received only the release archive from Nimbus `82129552b6c3b01809a05002aacdd5e38ba5eafa`. Health and application deployment passed. The first WebStandard function invocation then panicked with `Failed to initialize a JsRuntime: No such file or directory (os error 2)`. Ordinary unsnapshotted construction still opened Deno sources marked `LoadedFromFsDuringSnapshot`, which a deployed package does not contain. |
+| 2026-09-01 | RRC8 | finding | Deno release `v2.9.6-nimbus.2` adds a construction-only extension source provider. Annotated tag object `6fd2b3a0a7fb227388283cf30de9dd5de90ab949` peels to `625e4c259488dfa1c3c9d03fabde17758e1130d9`. The full 478-test `deno_core` suite, warning-denied Clippy, formatting, the focused missing-path regression, secret scan, and Sol xhigh review pass. |
+| 2026-09-01 | RRC8 | finding | Nimbus commits `b573663788c76c236f2c2add46aef42287520433`, `e0a790681`, and `76165b0b9` repin all 41 Deno packages and extend embedded snapshot schema 6 with the exact WebStandard and Node build-only source union. Runtime construction validates and uses that table without retaining replay state. Service-snapshot residual collection uses the same provider before Deno construction, and a present provider fails closed on any miss instead of opening a host path. |
+| 2026-09-01 | RRC8 | evidence | The 18,385,928-byte feature-off blob and 17,808,664-byte pointer-compressed blob pass exact provenance and parser checks. Nine feature-off startup tests, two pointer-compressed source-free residual tests, the pointer-compressed embedded-anchor integration test, all-target runtime checks, warning-denied runtime Clippy, formatting, whitespace, and secret scans pass. Two Sol xhigh follow-ups found and closed the residual-ordering and provider-miss defects; the final review is clean. The fresh source-free package oracle remains required before this blocker can close. |
