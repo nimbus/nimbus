@@ -35,6 +35,7 @@ use super::runtime_limits::{
     runtime_adaptive_controller_settings_from_command, runtime_host_resource_budget_from_command,
     runtime_limits_from_command,
 };
+use super::shutdown::{ProcessShutdownSignals, serve_until_shutdown};
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
@@ -246,6 +247,7 @@ async fn run_start_command_inner(
         local_server_paths.clone(),
         local_admin_token,
     ));
+    let shutdown_signals = ProcessShutdownSignals::install()?;
     let engine = Arc::new(Engine::new_with_persistence_config(persistence_config).await?);
     let shutdown_engine = engine.clone();
     engine.recover_scheduled_work_on_startup_async().await?;
@@ -352,6 +354,7 @@ async fn run_start_command_inner(
             )));
         }
     };
+    let server_shutdown = serve_options.shutdown_handle();
     emit_start_startup_summary(
         &command,
         resolved_app_dir.as_ref(),
@@ -382,11 +385,16 @@ async fn run_start_command_inner(
         tracing::warn!(license_warning = %warning, "nimbus license warning");
     }
 
-    tracing::info!("nimbus listening on {listener_addr}");
     if let Some(listeners) = prebound_wire_listeners.take() {
         serve_options = serve_options.with_prebound_wire_listeners(listeners)?;
     }
-    let server_result = serve_leased(listener, serve_options).await;
+    tracing::info!("nimbus listening on {listener_addr}");
+    let server_result = serve_until_shutdown(
+        serve_leased(listener, serve_options),
+        shutdown_signals,
+        server_shutdown,
+    )
+    .await;
     drop(discovery_lease);
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;

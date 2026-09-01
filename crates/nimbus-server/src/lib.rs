@@ -66,7 +66,7 @@ pub fn enable_firebase_emulator_token_verification_bypass(
 pub use adapters::mongodb::{
     AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
 };
-pub use construction::{ServeOptions, serve, serve_leased};
+pub use construction::{ServeOptions, ServerShutdownHandle, serve, serve_leased};
 pub use listener_lease::{
     ExternalServerListenerContext, LeasedServerListener, PreboundServerListener,
     PreboundServerListeners, PreparedServerListener, RecordedListenerBindFailure,

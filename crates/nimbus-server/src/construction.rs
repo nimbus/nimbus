@@ -34,6 +34,37 @@ use crate::tls::TlsConfig;
 use crate::workload_boot::ServerWorkloadBootPlan;
 use crate::workload_composition::ServerWorkloadComposition;
 use nimbus_services::ServiceInstanceCatalog;
+use tokio::sync::watch;
+
+/// Cloneable authority for requesting an orderly server shutdown.
+///
+/// The server and its callers share this handle so local administration,
+/// process signals, and embedders all enter the same graceful listener and
+/// workload cleanup path.
+#[derive(Clone, Debug)]
+pub struct ServerShutdownHandle {
+    sender: watch::Sender<bool>,
+}
+
+impl ServerShutdownHandle {
+    fn new() -> Self {
+        let (sender, _) = watch::channel(false);
+        Self { sender }
+    }
+
+    /// Request shutdown. Repeated requests are idempotent.
+    pub fn request_shutdown(&self) {
+        self.sender.send_replace(true);
+    }
+
+    fn sender(&self) -> watch::Sender<bool> {
+        self.sender.clone()
+    }
+
+    fn subscribe(&self) -> watch::Receiver<bool> {
+        self.sender.subscribe()
+    }
+}
 
 /// Canonical public option bundle for serving Nimbus on a listener.
 pub struct ServeOptions {
@@ -42,6 +73,7 @@ pub struct ServeOptions {
     tls_config: Option<TlsConfig>,
     listener_leases: ServerListenerLeaseAuthority,
     prebound_wire_listeners: Option<PreboundServerListeners>,
+    server_shutdown: ServerShutdownHandle,
 }
 
 impl ServeOptions {
@@ -55,6 +87,7 @@ impl ServeOptions {
             tls_config: None,
             listener_leases,
             prebound_wire_listeners: None,
+            server_shutdown: ServerShutdownHandle::new(),
         }
     }
 
@@ -77,6 +110,7 @@ impl ServeOptions {
             tls_config: None,
             listener_leases: ServerListenerLeaseAuthority::new(network_authority),
             prebound_wire_listeners: None,
+            server_shutdown: ServerShutdownHandle::new(),
         }
     }
 
@@ -107,6 +141,7 @@ impl ServeOptions {
             tls_config: None,
             listener_leases,
             prebound_wire_listeners: None,
+            server_shutdown: ServerShutdownHandle::new(),
         })
     }
 
@@ -341,12 +376,20 @@ impl ServeOptions {
         self.tls_config = Some(tls_config);
         self
     }
+
+    /// Obtain a handle that requests shutdown through the same graceful path
+    /// as the authenticated local administration endpoint.
+    #[must_use]
+    pub fn shutdown_handle(&self) -> ServerShutdownHandle {
+        self.server_shutdown.clone()
+    }
 }
 
 async fn serve_with_router_config(
     listener: tokio::net::TcpListener,
     config: RouterBuildConfig,
     tls_config: Option<TlsConfig>,
+    server_shutdown: ServerShutdownHandle,
 ) -> std::io::Result<()> {
     // Load and validate the TLS identity before any engine work so a bad
     // certificate fails the boot, not the first connection.
@@ -355,7 +398,8 @@ async fn serve_with_router_config(
         .map(crate::tls::load_rustls_server_config)
         .transpose()?;
     let listen_addr = listener.local_addr()?;
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let shutdown_tx = server_shutdown.sender();
+    let mut shutdown_rx = server_shutdown.subscribe();
     let config = config
         .with_listen_addr(listen_addr)
         .with_server_shutdown(shutdown_tx);
@@ -438,6 +482,7 @@ pub async fn serve_leased(
         tls_config,
         listener_leases,
         mut prebound_wire_listeners,
+        server_shutdown,
     } = options;
     let mut main_listener = Some(listener);
     let mut listener_group = WireListenerGroup::new();
@@ -651,7 +696,10 @@ pub async fn serve_leased(
             .expect("the main listener must be consumed exactly once");
         listener_group
             .supervise(Box::pin(serve_with_router_config(
-                listener, config, tls_config,
+                listener,
+                config,
+                tls_config,
+                server_shutdown,
             )))
             .await
     }
