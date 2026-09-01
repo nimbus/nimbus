@@ -364,13 +364,13 @@ jobs:
             read -r -a cargo_feature_args <<< "${cargo_features}"
           fi
           echo "release runtime features: ${cargo_features:-<none>}"
-          # V8 startup snapshots are platform-specific; GENERATE this target's embedded anchor blob
-          # (not committed) for the pointer-compression release config before the build, so the binary
-          # embeds a target-correct snapshot (~19ms) instead of the ~4.18s first-request build. Native
-          # build (the generator runs on its own target). Non-pc targets (Windows) skip generation and
-          # the runtime provenance guard falls back safely.
+          # V8 startup snapshots are platform-specific. Generate and then validate this target's
+          # gitignored blob before the consuming build. A deployed binary cannot rebuild the
+          # snapshot because Deno's build-only source paths are absent. Native build: the generator
+          # runs on its own target. Windows is outside the current release matrix; its restoration
+          # must generate and check the matching feature-off blob.
           if echo "${cargo_features}" | grep -q v8-pointer-compression; then
-            cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
+            make build-node22-anchor-snapshot-on
           fi
           cargo build --release -p nimbus-bin "${cargo_feature_args[@]}"
 
