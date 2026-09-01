@@ -8,10 +8,11 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: push the nextest isolation repair and rerun CI and the shard
-scaling probe from the new branch head. Let the active Node, Bun/JSC, and
-CodeQL lanes finish. Then repeat the remaining smoke, archive, OCI, and
-distribution lanes from the exact branch head.
+Next action: finish the exact-source Bun/JSC adapter matrix at Bun commit
+`58b0534dbb10e40d9acfdc82a876e6ea718b7fed`. Both hosted platforms must pass.
+Then publish the immutable Bun fork tag and repin Nimbus. Run the final CI,
+native smoke, application, desktop, archive, OCI, and distribution replay from
+that exact branch head.
 
 ## Outcome
 
@@ -439,3 +440,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-01 | RRC8 | evidence | The exact Linux arm64 pointer-compressed release build at `cb84dfec8` completed in 29 minutes 16 seconds with thin LTO and one build job. The 230,018,488-byte ELF has SHA-256 `d8e670b289a6cf6ae092b3fdac2d69cc02ca2f68502706a3ac5e133124f3d0e7`; its archive has SHA-256 `3c692b37abe43298c7b607ee2d98b3d34d0a8bd6e7e7edfc5020fe2f5b139437`. A fresh Ubuntu 24.04 arm64 container mounted only the read-only artifact directory. Health, deployment, all four `nimbus/agent-chat` anchors, post-smoke health, and graceful `SIGTERM` exit status 0 passed. Logs contain no runtime panic or missing-source error. The source-free packaging blocker and uplift U6 are closed. |
 | 2026-09-01 | RRC8 | fail-before | Final-head shard-scaling run `33514162769` failed K=1 and the first K=2 partition because the redb PITR quality test exceeded its 1 second wall-clock budget at 1.255 seconds and 1.104 seconds. K=3 and K=4 passed. The same test passed five clean Linux arm64 runs at 0.603 through 0.956 seconds. On a loaded macOS host it ranged from 0.615 through 1.308 seconds. The test had no nextest isolation despite measuring wall time. |
 | 2026-09-01 | RRC8 | finding | Commits `897c71a19` and `5fae3925e` leave the 1 second PITR budget unchanged and add only a nextest rule that reserves all test threads for the storage performance gate. Temporary phase timing showed export at 0.20 through 0.26 seconds, store creation at 0.056 through 0.060 seconds, and validated import at 0.21 through 0.27 seconds. Ten focused runs and the full CI-profile storage suite pass; the suite reports 401 passes and four declared skips. Sol xhigh accepted the isolation rule, rejected a temporary 2 second limit, and the correction removed that limit. The net follow-up is configuration-only. |
+| 2026-09-01 | RRC8 | evidence | Commit `fb56b7816bc29e67b1973370feefdbfae03d860a` updates and verifies the immutable crun `v1.29.1-nimbus.2`, libkrun `v1.19.4-nimbus.3`, and libkrunfw 5.5.0 release tuple. All focused bundle, direct, conmon, package, repository, SRPM, and 63 installer-helper checks pass. The isolated minicloud LH1-LH6 queue and repeated normal-user direct and conmon invocations pass; cleanup removes only exact drill state and preserves the unrelated Podman workload. |
+| 2026-09-01 | RRC8 | fail-before | Exact Bun/JSC adapter run `33564949333` passed the product contract tests on macOS, then returned memory-probe status 192. The probe compared an uncollected `Heap::size()` reading, whose mark-state value is not required to grow after allocation. The platform-sensitive oracle exited before printing its counters. |
+| 2026-09-01 | RRC8 | finding | Bun commit `58b0534dbb10e40d9acfdc82a876e6ea718b7fed` compares live sizes from two completed full collections and prints all memory counters before the assertion. Rust formatting and whitespace checks pass. Exact replacement matrix run `33568361939` is queued behind the still-active superseded Linux build; no Bun tag or Nimbus repin has started. |
+| 2026-09-01 | RRC8 | cleanup | `cargo clean` removed 93,668 generated files and 79.7 GiB from the active Nimbus target after confirming that no Cargo process used it. Data-volume free space increased from 8.7 GiB to 87 GiB. All source worktrees and user-owned marketing directories remain intact. |

@@ -119,6 +119,17 @@ architectures:
 - `nimbus/nimbus-libkrun` v1.18.1-nimbus.1; amd64 archive SHA-256
   `a277ac30676cb32812f574dc91e598a2594bdb400173458afaa48d63e8854e11`.
 
+The final release-tuple replay supersedes those earlier fork versions for the
+candidate. Commit `fb56b7816bc29e67b1973370feefdbfae03d860a` binds crun
+`v1.29.1-nimbus.2`, libkrun `v1.19.4-nimbus.3`, and libkrunfw 5.5.0.
+
+The repository helpers passed for all release-tuple surfaces. These surfaces
+include the Krun bundle, both drills, the Linux validation bundle, both package
+formats, the apt repository, Fedora SRPMs, and the installer. The installer
+helper passed 63 tests. The package helpers built, rebuilt, installed, and
+queried x86_64 and aarch64 artifacts. The online fork gate verified both
+release tags and the current libkrunfw companion release.
+
 ## Linux Packages and Upgrade Evidence
 
 The repository builder produced real Nimbus, nimbus-crun, and

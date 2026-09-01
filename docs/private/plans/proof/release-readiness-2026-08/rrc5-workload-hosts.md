@@ -147,6 +147,35 @@ remained. The successful 38 MiB proof root stays at
 fixture, both test images, and all failed or superseded proof roots were
 unmounted and deleted after this check.
 
+## Current release-tuple lifecycle drill
+
+Commit `fb56b7816bc29e67b1973370feefdbfae03d860a` updates the release contract.
+The immutable tuple uses crun `v1.29.1-nimbus.2`, libkrun
+`v1.19.4-nimbus.3`, and libkrunfw 5.5.0. The downloaded amd64 artifacts passed
+their published SHA-256 checks:
+
+- crun: `eb136ebad6516238e8967bfff8651be67ad569772f9ea2d4b5f3d77242d7639a`.
+- libkrun: `a4a462b284f212731ac548c2f5d4039e38f825101ae59c5eb56ad5b140c473c1`.
+
+The isolated Debian 13 run at
+`/home/nimbus/tmp/rrc8-vmm-live.EXop7D` completed LH1 through LH6. The run
+installed only the private Nimbus runtime tuple and preserved the host's system
+crun. It then repeated the strict host check. Both the direct and conmon paths
+booted a copied rootfs through KVM and returned `nimbus` over HTTP. Each path
+tried graceful TERM and used the bounded KILL fallback when the guest did not
+exit. Both paths reported exit 137.
+
+The conmon process tree proved
+`conmon -> libcrun VM`. Normal-user entry re-executed through passwordless sudo
+at the system-service boundary. A second conmon run passed with the same
+container ID. This result proves stale state, log, PID, exit-file, and
+persistence cleanup.
+
+Final cleanup found no drill crun state, matching process, listener on port
+28080, or Buildah container. The unrelated `nimbus-libsql-local` Podman
+container remained running. All four generated command scripts passed
+`bash -n` before execution.
+
 Local regression evidence for commit `6ca8eb981` is also green:
 
 ```text
