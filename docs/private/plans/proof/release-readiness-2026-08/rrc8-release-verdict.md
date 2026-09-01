@@ -1,6 +1,6 @@
 # RRC8 Release Verdict
 
-Date: 2026-08-31
+Date: 2026-09-01
 
 ## Current Status Update
 
@@ -14,13 +14,12 @@ Their annotated tags peel to reviewed commits
 pass. A fresh rusty_v8 download verifies all 44 payloads and 44 checksum
 sidecars.
 
-The exact Nimbus code candidate is
-`818af5c68653fbdfa8d41d371ac449a28ef2ec85`. Its normal Cargo graph resolves
-41 Deno packages and rusty_v8 from those immutable tags. Fork provenance,
-upstream policy, standardization, the all-target runtime check, and the
-canonical runtime lane pass. Full `make ci` also passes without a local V8
-override. It includes 500 canonical runtime tests, 7,726 workspace tests, 846
-UI tests, the required harness, and the release proof helpers.
+The current substantive Nimbus code candidate is
+`9b9123efacb217b922947b9d7374c9fb8f3095a7`. A proof-only commit follows it
+before the final hosted and artifact replay. Its normal Cargo graph resolves
+41 Deno packages and rusty_v8 from the immutable tags. The earlier full
+`make ci` replay passed without a local V8 override. The final branch head
+still needs its complete hosted replay.
 
 The exact replay found and closed two dependency-graph defects.
 
@@ -37,17 +36,35 @@ retirement future that caused two default-stack server tests to abort. The
 final candidate boxes that future at the retained-supervisor boundary. Both
 regressions and all 39 resource-retirement tests pass.
 
-The final exact-candidate `make ci` exits zero. Formatting, warning-denied
-Clippy, dependency policy, and snapshot provenance pass. The gate passes 500
-runtime tests, 7,726 workspace tests, doctests, and required harnesses.
-JavaScript builds, typechecks, 846 UI tests, proof helpers, package helpers,
-and 63 installer checks pass. The declared inventory is 94 runtime ignores and
-111 workspace skips.
+The first exact Linux arm64 release smoke at `979d2687d` found a release
+defect. `SIGTERM` ended `nimbus start` with status 143 and bypassed graceful
+cleanup. The repair now routes process termination through the existing
+server shutdown channel. Signal supervision remains active through discovery,
+scheduler, engine, and network cleanup. A second signal cancels a stalled
+drain.
 
-Nextest classified one passing workspace test as leaky. No test failed.
+TLS also honors shutdown requested before its accept loop subscribes.
+RRC8 boxes the large server lifecycle at the supervision boundary. This
+prevents an overflow on the standard main-thread stack.
 
-Exact release-critical smoke, archive, OCI, and higher-memory Linux full-LTO
-replay still remain.
+The repaired code passes 765 of 765 server tests with 35 declared skips. It
+also passes 1,076 of 1,076 CLI and launcher tests with 4 declared skips. The real
+child-process `SIGTERM`, pre-requested TLS shutdown, shutdown-handle, and
+two-signal escalation regressions pass. Formatting, whitespace, and
+warning-denied Clippy pass.
+
+A final Sol xhigh review reports no accepted or
+actionable P0 through P3 finding. TruffleHog is clean. No Opus 5 or Fable
+review ran.
+
+One server replay observed `admin_whatsmyuri_over_wire` pass its assertions and
+then receive `SIGSEGV` during process teardown. The exact test passed 10 of 10
+isolated runs. The complete 23-test MongoDB binary passed five consecutive
+runs, and the final 765-test server replay was clean. This is an unconfirmed
+load-only runner observation, not an accepted product defect.
+
+Final release-critical hosted workflows, smoke, archive, OCI, and Linux
+full-LTO replay still remain on the proof-updated branch head.
 
 Apple notarization and public apt and COPR proofs still need verification. At
 the owner's direction, current reviews use Sol only. No Opus 5 or Fable review
@@ -215,12 +232,11 @@ closed clean after all P3 hardening fixes.
 
 ## Remaining Release Blockers
 
-1. The reviewed Nimbus runtime cleanup and immutable fork repin are not yet an
-   exact committed candidate.
-2. Release-critical macOS, Linux, application, desktop, archive, and OCI lanes
-   have not yet replayed from that committed candidate.
-3. The available 8 GiB Linux host cannot complete the exact full-LTO release
-   link. The committed candidate needs a higher-memory Linux build runner.
+1. Final hosted workflows have not passed on the proof-updated branch head.
+2. Release-critical macOS, Linux x86_64 and arm64, application, desktop,
+   archive, and OCI lanes have not replayed from that branch head.
+3. Live dual-target cloud proofs remain blocked because four provider URLs and
+   their credentials are not configured in the repository secrets.
 4. Apple notarization and stapling remain unverified because the authorized
    API credentials are unavailable in this local release lane.
 5. Public apt and COPR install proofs remain owned by the distribution plan and
@@ -243,10 +259,10 @@ changes, proof files, and desktop release artifacts.
 
 ## Required Next Action
 
-1. Push the reviewed branch at exact code candidate
-   `818af5c68653fbdfa8d41d371ac449a28ef2ec85`.
-2. Build the exact v0.1.46 candidate from that commit. Use a Linux runner with
-   enough memory for full LTO. Do not reuse the 8 GiB host for this lane.
+1. Commit and push the reviewed proof update after code candidate
+   `9b9123efacb217b922947b9d7374c9fb8f3095a7`.
+2. Build the exact v0.1.46 candidate from the resulting branch head. Use a
+   Linux runner with enough memory for full LTO.
 3. Repeat all critical macOS, Linux, application, desktop,
    archive, and OCI lanes on that clean candidate.
 4. Complete the authorized notarization, apt, and COPR proofs.
