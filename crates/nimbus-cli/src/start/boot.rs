@@ -247,7 +247,6 @@ async fn run_start_command_inner(
         local_server_paths.clone(),
         local_admin_token,
     ));
-    let shutdown_signals = ProcessShutdownSignals::install()?;
     let engine = Arc::new(Engine::new_with_persistence_config(persistence_config).await?);
     let shutdown_engine = engine.clone();
     engine.recover_scheduled_work_on_startup_async().await?;
@@ -355,6 +354,10 @@ async fn run_start_command_inner(
         }
     };
     let server_shutdown = serve_options.shutdown_handle();
+    let shutdown_signals = ProcessShutdownSignals::install()?;
+    if let Some(listeners) = prebound_wire_listeners.take() {
+        serve_options = serve_options.with_prebound_wire_listeners(listeners)?;
+    }
     emit_start_startup_summary(
         &command,
         resolved_app_dir.as_ref(),
@@ -385,9 +388,6 @@ async fn run_start_command_inner(
         tracing::warn!(license_warning = %warning, "nimbus license warning");
     }
 
-    if let Some(listeners) = prebound_wire_listeners.take() {
-        serve_options = serve_options.with_prebound_wire_listeners(listeners)?;
-    }
     tracing::info!("nimbus listening on {listener_addr}");
     let server_result = serve_until_shutdown(
         serve_leased(listener, serve_options),
