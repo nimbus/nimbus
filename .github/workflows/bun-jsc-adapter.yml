@@ -94,27 +94,29 @@ jobs:
           brew cleanup --prune=all
           df -h /
 
-      - name: Install LLVM 21 toolchain
+      - name: Install Bun native build toolchain
         shell: bash
         run: |
           set -euo pipefail
           # Bun's build (scripts/build/tools.ts, LLVM_VERSION 21.1.x) requires a
-          # matching clang/lld. Neither ubuntu-24.04 nor macos-14 ships it by
-          # default, so install it explicitly. Bun discovers it via
-          # /usr/lib/llvm-21/bin (apt.llvm.org) and $(brew --prefix)/opt/llvm@21.
+          # matching clang/lld and Bun 1.4 requires NASM. Neither hosted image
+          # provides the complete set, so install it explicitly. Bun discovers
+          # LLVM via /usr/lib/llvm-21/bin (apt.llvm.org) and
+          # $(brew --prefix)/opt/llvm@21.
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
             wget -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh
             chmod +x /tmp/llvm.sh
             sudo /tmp/llvm.sh 21
-            sudo apt-get install -y clang-21 lld-21
+            sudo apt-get install -y clang-21 lld-21 nasm
             echo "/usr/lib/llvm-21/bin" >> "${GITHUB_PATH}"
             /usr/lib/llvm-21/bin/clang --version
           elif [[ "${RUNNER_OS}" == "macOS" ]]; then
-            brew install llvm@21 lld@21
+            brew install llvm@21 lld@21 nasm
             echo "$(brew --prefix llvm@21)/bin" >> "${GITHUB_PATH}"
             echo "$(brew --prefix lld@21)/bin" >> "${GITHUB_PATH}"
             "$(brew --prefix llvm@21)/bin/clang" --version
           fi
+          nasm -v
 
       # The adapter build uses --webkit=local (WebKit/JSC built from source with
       # the simdutf-namespace flag so Bun's simdutf symbols don't collide with
