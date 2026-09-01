@@ -31,8 +31,8 @@ and Node26 remains Current/non-LTS until LTS promotion gates pass.
 
 - `tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json` sha256: `beaa3816420eb6263aa186340217a662978e9e9098efb1241fb27e23f61bb7e1`
 - `tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json` sha256: `48d7181e4be7e5928342e0a87eae81c62adf47d0546ad186c3630e0985a98038`
-- `tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json` sha256: `6a728dd014003ba58df330c08648329f4d9f6892d81f35e4d81b90303815e416`
-- `tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json` sha256: `2a3784005cb29027b700a031d4a380c1e947d99d4f704f23d231c9a235684b9e`
+- `tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json` sha256: `950b2da2400e42e5ac293bed4a14e9953196cc26e4f89d644cc4c0f2657b6806`
+- `tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json` sha256: `98dc34f9ff5ebb8cb2efde52ef6a902922b7dca541579deb846562b4ac75eb6c`
 
 ## Proof Gate
 

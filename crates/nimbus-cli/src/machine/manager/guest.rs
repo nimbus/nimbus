@@ -221,7 +221,9 @@ pub(super) fn requires_bootc_machine_config(config: &MachineConfigRecord) -> boo
 }
 
 pub(super) fn requires_ssh_guest_api_convergence(config: &MachineConfigRecord) -> bool {
-    config.provider.uses_managed_applehv_guest() && !requires_bootc_machine_config(config)
+    cfg!(target_os = "macos")
+        && config.provider.uses_managed_applehv_guest()
+        && !requires_bootc_machine_config(config)
 }
 
 pub(super) struct GuestMachineApiProcesses<'a> {

@@ -80,6 +80,20 @@ jobs:
           ref: ${{ inputs.bun_source_ref }}
           path: bun
 
+      - name: Free macOS runner disk for WebKit build
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          # The adapter lane does not use the Android toolchain. The hosted
+          # arm64 image includes several SDK, platform, emulator, and NDK
+          # versions whose disk would otherwise be exhausted by the cold
+          # WebKit/JSC source build.
+          sudo rm -rf /Users/runner/Library/Android/sdk
+          brew cleanup --prune=all
+          df -h /
+
       - name: Install LLVM 21 toolchain
         shell: bash
         run: |
@@ -158,6 +172,8 @@ jobs:
         with:
           shared-key: bun-jsc-adapter-${{ matrix.target }}-v1
           save-cache: always
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js
@@ -165,9 +181,6 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
-
-      - name: Install Nimbus JS dependencies
-        run: npm ci
 
       - name: Install pinned Bun CLI
         if: inputs.install_bun_with_npm == true
