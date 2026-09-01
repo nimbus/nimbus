@@ -41,9 +41,7 @@ pub use backends::v8::{
 /// DIAGNOSTIC re-export: force-install the generated embedded anchor snapshot in THIS binary to
 /// isolate "bad bytes" from "cross-binary" magic mismatches. Used by `build_node22_anchor_snapshot
 /// --smoke`. See `runtime::driver::anchor::smoke_install_generated_embedded_anchor`.
-pub use runtime::driver::anchor::{
-    smoke_build_packaged_node_service_snapshot, smoke_install_generated_embedded_anchor,
-};
+pub use runtime::driver::anchor::smoke_install_generated_embedded_anchor;
 
 pub use context::RuntimeInvocationContext;
 pub use egress::{
