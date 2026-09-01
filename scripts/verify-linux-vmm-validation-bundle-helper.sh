@@ -108,9 +108,11 @@ fi
 git -C "${tmp_dir}" init --quiet
 git -C "${tmp_dir}" add crun-source/src/libcrun/handlers/krun.c
 git -C "${tmp_dir}" \
+  -c commit.gpgSign=false \
+  -c core.hooksPath=/dev/null \
   -c user.name=Nimbus \
   -c user.email=release@nimbus.local \
-  commit --quiet -m "nested crun source fixture"
+  commit --quiet --no-gpg-sign -m "nested crun source fixture"
 if bash "${bundle_root}/commands/02-lh2-record-crun-source.sh" \
   > "${tmp_dir}/nested-source-stdout.txt" \
   2> "${tmp_dir}/nested-source-stderr.txt"; then
