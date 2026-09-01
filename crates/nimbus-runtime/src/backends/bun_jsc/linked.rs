@@ -316,6 +316,8 @@ fn embedder_status_name(status: i32) -> &'static str {
         312 => "host_bridge_response_json_failed",
         313 => "bundle_integrity_failed",
         314 => "invocation_cancelled",
+        315 => "native_permission_profile_failed",
+        316 => "cancellation_watcher_failed",
         _ => "unknown",
     }
 }
@@ -490,5 +492,14 @@ mod tests {
         context.cancellation.cancel();
         assert!(unsafe { bun_jsc_is_cancelled(context_ptr) });
         assert!(unsafe { bun_jsc_is_cancelled(std::ptr::null_mut()) });
+    }
+
+    #[test]
+    fn embedder_status_names_cover_fail_closed_invocation_setup() {
+        assert_eq!(
+            embedder_status_name(315),
+            "native_permission_profile_failed"
+        );
+        assert_eq!(embedder_status_name(316), "cancellation_watcher_failed");
     }
 }
