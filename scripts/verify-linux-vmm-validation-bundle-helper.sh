@@ -14,7 +14,8 @@ fake_crun_asset="${tmp_dir}/nimbus-crun-linux-amd64"
 fake_libkrun_archive="${tmp_dir}/nimbus-libkrun-linux-amd64.tar.gz"
 bundle_root="${tmp_dir}/bundle"
 
-mkdir -p "${fake_crun_source}"
+mkdir -p "${fake_crun_source}/src/libcrun/handlers"
+printf '/* source identity fixture */\n' > "${fake_crun_source}/src/libcrun/handlers/krun.c"
 
 cat > "${fake_crun_asset}" <<'EOF'
 #!/bin/sh
@@ -94,6 +95,16 @@ grep -F "scripts/check-vmm-host.sh" "${bundle_root}/commands/01-lh1-host-preflig
 grep -F 'host_check_args+=(--allow-pending-private-runtime)' "${bundle_root}/commands/01-lh1-host-preflight.sh" >/dev/null
 grep -F 'git -C "${CRUN_SOURCE}" rev-parse --verify HEAD' "${bundle_root}/commands/02-lh2-record-crun-source.sh" >/dev/null
 grep -F 'git -C "${CRUN_SOURCE}" describe --always --dirty' "${bundle_root}/commands/02-lh2-record-crun-source.sh" >/dev/null
+if bash "${bundle_root}/commands/02-lh2-record-crun-source.sh" \
+  > "${tmp_dir}/source-identity-stdout.txt" \
+  2> "${tmp_dir}/source-identity-stderr.txt"; then
+  echo "source identity command unexpectedly accepted a source tree without Git identity" >&2
+  exit 70
+fi
+if [[ -e "${bundle_root}/artifacts/lh2/crun-source.txt" ]]; then
+  echo "source identity command wrote evidence after a Git lookup failed" >&2
+  exit 70
+fi
 grep -F "stage.source=released-artifacts" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
 grep -F "stage.nimbus_libkrun_root=\${STAGE_DIR}" "${bundle_root}/commands/03-lh3-build-stage-runtime.sh" >/dev/null
 grep -F "install.source=released-artifacts" "${bundle_root}/commands/04-lh3-install-private-runtime.sh" >/dev/null

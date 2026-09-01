@@ -444,11 +444,14 @@ if [[ ! -f "\${CRUN_SOURCE}/src/libcrun/handlers/krun.c" ]]; then
   exit 66
 fi
 
+source_commit="\$(git -C "\${CRUN_SOURCE}" rev-parse --verify HEAD)"
+source_describe="\$(git -C "\${CRUN_SOURCE}" describe --always --dirty)"
+
 echo "lh2.source_diagnostics.output=\${LH2_DIR}/crun-source.txt"
 {
   echo "source.path=\${CRUN_SOURCE}"
-  echo "source.commit=\$(git -C "\${CRUN_SOURCE}" rev-parse --verify HEAD)"
-  echo "source.describe=\$(git -C "\${CRUN_SOURCE}" describe --always --dirty)"
+  echo "source.commit=\${source_commit}"
+  echo "source.describe=\${source_describe}"
 } | tee "\${LH2_DIR}/crun-source.txt"
 EOF
 chmod 0755 "${lh2_script}"
