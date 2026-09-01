@@ -3,7 +3,7 @@ function runtimeBundleExecutionEntrypoints() {
   const ctx = createRuntimeContext(request);
   const runtimeHandler = await getRuntimeHandler(definition);
   if (runtimeHandler) {
-    return await runtimeHandler(ctx, request.args ?? {}, request);
+    return await runtimeHandler(ctx, request.args ?? {});
   }
   const plan = resolveArgsTemplate(definition.plan, request.args ?? {});
   return await executeResolvedQueryPlan(ctx, plan);
@@ -12,7 +12,7 @@ function runtimeBundleExecutionEntrypoints() {
 async function executePaginatedQueryDefinition(definition, request) {
   const runtimeHandler = await getRuntimeHandler(definition);
   if (runtimeHandler) {
-    const result = await runtimeHandler(createRuntimeContext(request), request.args ?? {}, request);
+    const result = await runtimeHandler(createRuntimeContext(request), request.args ?? {});
     if (isRuntimeQueryBuilder(result)) {
       if (typeof request.page_size !== "number") {
         throw new Error("paginated runtime invocation missing page_size");
@@ -42,7 +42,7 @@ async function executeMutationDefinition(definition, request) {
   const ctx = createRuntimeContext(request);
   const runtimeHandler = await getRuntimeHandler(definition);
   if (runtimeHandler) {
-    return await runtimeHandler(ctx, request.args ?? {}, request);
+    return await runtimeHandler(ctx, request.args ?? {});
   }
   const plan = resolveArgsTemplate(definition.plan, request.args ?? {});
   return await executeResolvedMutationPlan(ctx, plan);
@@ -52,7 +52,7 @@ async function executeActionDefinition(definition, request) {
   const ctx = createRuntimeContext(request);
   const runtimeHandler = await getRuntimeHandler(definition);
   if (runtimeHandler) {
-    return await runtimeHandler(ctx, request.args ?? {}, request);
+    return await runtimeHandler(ctx, request.args ?? {});
   }
   const plan = resolveArgsTemplate(definition.plan, request.args ?? {});
   return await executeResolvedActionPlan(ctx, plan, request);

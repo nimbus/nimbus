@@ -129,10 +129,12 @@ fn invoke_program_wrapper_json(
         ..
     } = invocation;
 
-    if cancellation
-        .as_ref()
-        .is_some_and(crate::host::HostCallCancellation::is_cancelled)
-    {
+    let cancellation = cancellation.ok_or_else(|| {
+        NimbusRuntimeError::Contract(
+            "Bun/JSC linked execution requires a cancellation token".to_string(),
+        )
+    })?;
+    if cancellation.is_cancelled() {
         return Err(NimbusRuntimeError::Cancelled);
     }
     if !pool_policy.outer_quota_required {
@@ -158,18 +160,11 @@ fn invoke_program_wrapper_json(
     let request_json = serde_json::to_vec(&request)?;
     let mut output = vec![0_u8; BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP];
     let mut output_len = 0_usize;
-    let cancellation_was_supplied = cancellation.is_some();
     let host_context = BunJscHostBridgeCallContext {
         host: host.bridge(),
-        cancellation: cancellation.unwrap_or_default(),
+        cancellation,
     };
-    let cancellation_context = if cancellation_was_supplied {
-        &host_context as *const BunJscHostBridgeCallContext as *mut c_void
-    } else {
-        std::ptr::null_mut()
-    };
-    let is_cancelled =
-        cancellation_was_supplied.then_some(bun_jsc_is_cancelled as BunJscIsCancelledFn);
+    let cancellation_context = &host_context as *const BunJscHostBridgeCallContext as *mut c_void;
 
     let status = unsafe {
         (shared_library.invoke_program_wrapper_json_with_host_bridge)(
@@ -185,7 +180,7 @@ fn invoke_program_wrapper_json(
             &host_context as *const BunJscHostBridgeCallContext as *mut c_void,
             Some(bun_jsc_host_bridge_call_json),
             cancellation_context,
-            is_cancelled,
+            Some(bun_jsc_is_cancelled),
         )
     };
 

@@ -30,9 +30,12 @@ import { buildRuntimeBundleSource } from "./runtime_bundle_parts.mjs";
 // deploy" for single-runtime Node bundles, while leaving genuinely mixed
 // bundles on the fully lazy path.
 function generateRuntimeBundle(manifest) {
-  const bundleSource = buildRuntimeBundleSource(JSON.stringify(manifest, null, 2), {
-    module: true,
-  });
+  const bundleSource = buildRuntimeBundleSource(
+    JSON.stringify(manifest, null, 2),
+    {
+      module: true,
+    },
+  );
   const eagerImports = collectEagerNodeRuntimeImports(manifest);
   if (eagerImports.length === 0) {
     return bundleSource;
@@ -44,7 +47,9 @@ function generateRuntimeBundle(manifest) {
 }
 
 function collectEagerNodeRuntimeImports(manifest) {
-  return isSingleRuntimeNodeManifest(manifest) ? collectNodeRuntimeSpecifiers(manifest) : [];
+  return isSingleRuntimeNodeManifest(manifest)
+    ? collectNodeRuntimeSpecifiers(manifest)
+    : [];
 }
 
 // "Single-runtime Node" means every runtime-bearing surface of the manifest
@@ -56,9 +61,9 @@ function isSingleRuntimeNodeManifest(manifest) {
   const functions = manifest.functions ?? [];
   const routes = manifest.routes ?? [];
   return (
-    functions.length > 0
-    && functions.every((fn) => fn.runtime_environment === "node")
-    && routes.length === 0
+    functions.length > 0 &&
+    functions.every((fn) => fn.runtime_environment === "node") &&
+    routes.length === 0
   );
 }
 
@@ -83,8 +88,8 @@ function buildInlineRuntimeHandlerFactories(manifest) {
   return (manifest.functions ?? [])
     .filter(
       (definition) =>
-        typeof definition.runtime_handler === "string"
-        && definition.runtime_handler.length > 0,
+        typeof definition.runtime_handler === "string" &&
+        definition.runtime_handler.length > 0,
     )
     .map((definition) => {
       const bindingNames = Object.keys(definition.runtime_bindings ?? {});
@@ -99,8 +104,8 @@ function buildInlineRuntimeHandlerFactories(manifest) {
       return `[${JSON.stringify(definition.name)}, async function(definition) {
   const runtimeBindings = await materializeRuntimeBindings(definition.runtime_bindings);
   const bindingValues = ${JSON.stringify(bindingNames)}.map((name) => runtimeBindings[name]);
-  const invoke = ((${factoryParameters}) => (ctx, args, request) =>
-    (${definition.runtime_handler})(ctx, args, request)
+  const invoke = ((${factoryParameters}) => (ctx, args) =>
+    (${definition.runtime_handler})(ctx, args)
   )(...bindingValues);
   const handlerOrigin = {
     module: typeof definition.module === "string" ? definition.module : null,
@@ -109,8 +114,8 @@ function buildInlineRuntimeHandlerFactories(manifest) {
         ? definition.runtime_handler_line
         : null,
   };
-  return (ctx, args, request) =>
-    nimbusWrapRuntimeInvoke(invoke, [], ctx, args, request, handlerOrigin);
+  return (ctx, args) =>
+    nimbusWrapRuntimeInvoke(invoke, [], ctx, args, handlerOrigin);
 }]`;
     })
     .join(",\n");
@@ -125,37 +130,42 @@ function collectNodeRuntimeSpecifiers(manifest) {
       externalPackageSpecifiers,
     });
   }
-  return [...[...builtinSpecifiers].sort(), ...[...externalPackageSpecifiers].sort()];
+  return [
+    ...[...builtinSpecifiers].sort(),
+    ...[...externalPackageSpecifiers].sort(),
+  ];
 }
 
-function collectNodeRuntimeDescriptors(value, { builtinSpecifiers, externalPackageSpecifiers }) {
+function collectNodeRuntimeDescriptors(
+  value,
+  { builtinSpecifiers, externalPackageSpecifiers },
+) {
   if (value === null || typeof value !== "object") {
     return;
   }
   if (
-    (
-      value.type === "node_builtin_default"
-      || value.type === "node_builtin_namespace"
-      || value.type === "node_builtin_named"
-    )
-    && typeof value.specifier === "string"
+    (value.type === "node_builtin_default" ||
+      value.type === "node_builtin_namespace" ||
+      value.type === "node_builtin_named") &&
+    typeof value.specifier === "string"
   ) {
     builtinSpecifiers.add(value.specifier);
     return;
   }
   if (
-    (
-      value.type === "node_external_package_default"
-      || value.type === "node_external_package_namespace"
-      || value.type === "node_external_package_named"
-    )
-    && typeof value.specifier === "string"
+    (value.type === "node_external_package_default" ||
+      value.type === "node_external_package_namespace" ||
+      value.type === "node_external_package_named") &&
+    typeof value.specifier === "string"
   ) {
     externalPackageSpecifiers.add(value.specifier);
     return;
   }
   for (const child of Object.values(value)) {
-    collectNodeRuntimeDescriptors(child, { builtinSpecifiers, externalPackageSpecifiers });
+    collectNodeRuntimeDescriptors(child, {
+      builtinSpecifiers,
+      externalPackageSpecifiers,
+    });
   }
 }
 

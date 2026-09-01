@@ -154,7 +154,7 @@ async function executeQueryDefinition(definition, request) {
   const ctx = createRuntimeContext(request);
   const runtimeHandler = runtimeHandlersByName.get(definition.name);
   if (runtimeHandler) {
-    return await runtimeHandler(ctx, request.args ?? {}, request);
+    return await runtimeHandler(ctx, request.args ?? {});
   }
   const plan = resolveArgsTemplate(definition.plan, request.args ?? {});
   return await executeResolvedQueryPlan(ctx, plan);
@@ -163,7 +163,7 @@ async function executeQueryDefinition(definition, request) {
 function executePaginatedQueryDefinition(definition, request) {
   const runtimeHandler = runtimeHandlersByName.get(definition.name);
   if (runtimeHandler) {
-    return Promise.resolve(runtimeHandler(createRuntimeContext(request), request.args ?? {}, request))
+    return Promise.resolve(runtimeHandler(createRuntimeContext(request), request.args ?? {}))
       .then((result) => {
         if (isRuntimeQueryBuilder(result)) {
           if (typeof request.page_size !== "number") {
@@ -195,7 +195,7 @@ async function executeMutationDefinition(definition, request) {
   const ctx = createRuntimeContext(request);
   const runtimeHandler = runtimeHandlersByName.get(definition.name);
   if (runtimeHandler) {
-    return await runtimeHandler(ctx, request.args ?? {}, request);
+    return await runtimeHandler(ctx, request.args ?? {});
   }
   const plan = resolveArgsTemplate(definition.plan, request.args ?? {});
   return await executeResolvedMutationPlan(ctx, plan);
@@ -205,7 +205,7 @@ async function executeActionDefinition(definition, request) {
   const ctx = createRuntimeContext(request);
   const runtimeHandler = runtimeHandlersByName.get(definition.name);
   if (runtimeHandler) {
-    return await runtimeHandler(ctx, request.args ?? {}, request);
+    return await runtimeHandler(ctx, request.args ?? {});
   }
   const plan = resolveArgsTemplate(definition.plan, request.args ?? {});
   return await executeResolvedActionPlan(ctx, plan, request);

@@ -3,9 +3,13 @@ import {
   nimbusWrapRuntimeInvoke,
 } from "./runtime_remap.mjs";
 
-function runtimeBundlePreamble(manifestJson, { inlineRuntimeHandlerFactories = null } = {}) {
-  const runtimeHandlerCompiler = inlineRuntimeHandlerFactories === null
-    ? `const runtimeHandlersByName = new Map();
+function runtimeBundlePreamble(
+  manifestJson,
+  { inlineRuntimeHandlerFactories = null } = {},
+) {
+  const runtimeHandlerCompiler =
+    inlineRuntimeHandlerFactories === null
+      ? `const runtimeHandlersByName = new Map();
 
 async function getRuntimeHandler(definition) {
   if (typeof definition.runtime_handler !== "string" || definition.runtime_handler.length === 0) {
@@ -30,8 +34,7 @@ async function compileRuntimeHandler(definition) {
     ...bindingNames,
     "ctx",
     "args",
-    "request",
-    "return (" + source + ")(ctx, args, request);",
+    "return (" + source + ")(ctx, args);",
   );
 
   const handlerOrigin = {
@@ -42,10 +45,10 @@ async function compileRuntimeHandler(definition) {
         : null,
   };
 
-  return (ctx, args, request) =>
-    nimbusWrapRuntimeInvoke(invoke, bindingValues, ctx, args, request, handlerOrigin);
+  return (ctx, args) =>
+    nimbusWrapRuntimeInvoke(invoke, bindingValues, ctx, args, handlerOrigin);
 }`
-    : `const runtimeHandlersByName = new Map();
+      : `const runtimeHandlersByName = new Map();
 const runtimeHandlerFactoriesByName = new Map([
 ${inlineRuntimeHandlerFactories}
 ]);

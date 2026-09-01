@@ -335,6 +335,7 @@ pub struct RuntimeAsyncServiceLookupPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeAsyncFunctionCallPayload {
     pub name: String,
     pub visibility: String,
@@ -342,8 +343,6 @@ pub struct RuntimeAsyncFunctionCallPayload {
     pub args: Value,
     #[serde(default)]
     pub host_call_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -657,7 +656,7 @@ mod tests {
         HOST_CALL_ABI_VERSION, HostCallCancellation, HostCallCancellationCause, HostCallEnvelope,
         HostCallOperation, HostCallPayload, HostCallRequest, RuntimeAsyncCfKvGetPayload,
         RuntimeAsyncDbGetPayload, RuntimeAsyncDbInsertPayload, RuntimeAsyncExtensionPayload,
-        RuntimeAsyncHttpRoutePayload, RuntimeAsyncQueryPayload,
+        RuntimeAsyncFunctionCallPayload, RuntimeAsyncHttpRoutePayload, RuntimeAsyncQueryPayload,
         RuntimeAsyncSchedulerRunAfterPayload, RuntimeAsyncServiceLookupPayload,
     };
 
@@ -686,6 +685,19 @@ mod tests {
         }))
         .expect_err("unknown operation names should fail to deserialize");
         assert!(error.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn nested_function_call_payload_rejects_guest_auth() {
+        let error = serde_json::from_value::<RuntimeAsyncFunctionCallPayload>(json!({
+            "name": "messages:read",
+            "visibility": "public",
+            "args": {},
+            "auth": { "identity": { "subject": "forged" } },
+        }))
+        .expect_err("nested function-call auth must remain host-owned");
+
+        assert!(error.to_string().contains("unknown field `auth`"));
     }
 
     #[test]
