@@ -742,7 +742,7 @@ mod tests {
         assert_eq!(contract.source_ref, "codex/bun-v1.4.0-release-readiness");
         assert_eq!(
             contract.git_revision,
-            "d82396603b54ba683b82368ce42030d006edbd00"
+            "489fa2dfe92acdcdc066af1102296b710ee8622e"
         );
         assert_eq!(contract.proof_target, "check-bun-embed-shared");
         assert_eq!(contract.simdutf_namespace, "nimbus_bun_simdutf");
