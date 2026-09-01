@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::c_void;
 use std::future::Future;
 use std::path::Path;
@@ -5,6 +6,7 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::backends::RuntimeBackendInvocation;
 use crate::error::{NimbusRuntimeError, Result};
@@ -143,11 +145,16 @@ fn invoke_program_wrapper_json(
     bundle.verify_integrity()?;
     policy.validate_bundle_content_kind(bundle.content_kind())?;
 
-    let expected_sha256 = bundle.identity().expected_sha256().map(str::as_bytes);
-    let (expected_sha256_ptr, expected_sha256_len) = expected_sha256
-        .map(|digest| (digest.as_ptr(), digest.len()))
-        .unwrap_or((std::ptr::null(), 0));
     let bundle_source = std::fs::read(bundle.entrypoint()).map_err(NimbusRuntimeError::from)?;
+    // The private adapter ABI always binds the exact bytes that cross it. A
+    // computed digest preserves filesystem-trusted bundle semantics; only a
+    // recorded expected digest supplies provenance.
+    let expected_sha256 = bundle
+        .identity()
+        .expected_sha256()
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(format!("{:x}", Sha256::digest(&bundle_source))));
+    let expected_sha256 = expected_sha256.as_bytes();
     let request_json = serde_json::to_vec(&request)?;
     let mut output = vec![0_u8; BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP];
     let mut output_len = 0_usize;
@@ -168,8 +175,8 @@ fn invoke_program_wrapper_json(
         (shared_library.invoke_program_wrapper_json_with_host_bridge)(
             bundle_source.as_ptr(),
             bundle_source.len(),
-            expected_sha256_ptr,
-            expected_sha256_len,
+            expected_sha256.as_ptr(),
+            expected_sha256.len(),
             request_json.as_ptr(),
             request_json.len(),
             output.as_mut_ptr(),
