@@ -41,7 +41,7 @@ in the final dependency closure.
 | U3 | Audit the 21 Deno carries and replay only product-required concepts on upstream 2.9.6. | `complete` | Seven local commits end at exact reviewed correction `8d48dc4a68df8e083ed4b17855440b1df6405620`. Nimbus commit `d6636b980deedfeee8a64afb06230fa8a19a10a9` records the paired cleanup and public-tag repin. Controlled A/B, observed-mode crossover, full local CI, macOS, Linux debug-profile, application, desktop, and final Sol review evidence pass. The 8 GiB Linux full-LTO attempt is recorded as resource-blocked. |
 | U4 | Test Deno itself and Nimbus against the exact unpublished candidate. | `complete` | Exact candidate `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3` uses immutable rusty_v8 tag `v150.4.0-nimbus.1`. Locked workspace checks, formatting, warning-denied carry Clippy, 183 focused carry tests, 1,517 Node AES-GCM tests, and focused Nimbus integration pass. |
 | U5 | Review and publish an immutable Deno 2.9.6 release. | `complete` | Public non-draft, non-prerelease release `v2.9.6-nimbus.1` uses annotated tag object `4d8b978255e8ca9a78d040531ee764d695fd3bcf`, which peels to exact candidate `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3`. Branch run `33442674740` and tag run `33444743536` pass. The default branch is `nimbus/v2.9.6`. Sol xhigh review of the product code and each workflow correction passes. |
-| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `in_progress` | Initial Nimbus candidate `d6636b980deedfeee8a64afb06230fa8a19a10a9` resolves 41 Deno packages at `v2.9.6-nimbus.1#6c37e683` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. Fork provenance, upstream policy, standardization, the exact-tag all-target runtime check, the canonical runtime gate, and full repository CI pass. The final Sol review found eight valid corrections; their focused regressions pass. A clean follow-up review, release-critical smoke, artifact replay, and the higher-memory Linux release build remain. |
+| U6 | Repin Nimbus, update fork policy, and run the exact release replay. | `in_progress` | Exact code candidate `818af5c68653fbdfa8d41d371ac449a28ef2ec85` resolves 41 Deno packages at `v2.9.6-nimbus.1#6c37e683` and rusty_v8 at `v150.4.0-nimbus.1#961a76d0`. Four Sol-only review rounds accepted 21 of 33 reports and refuted 12. The final `make ci` passes 500 canonical runtime tests, 7,726 workspace tests, 846 UI tests, and every required repository gate. Release-critical smoke, artifact replay, and the higher-memory Linux release build remain. |
 
 ## Carry Rules
 
@@ -457,9 +457,10 @@ The fork identities are:
   contains the reviewed nine-file diff with pre-commit SHA-256
   `6bcaa1948d86ef65af2a7ccb65f4a1d21ee7687fbd98d9730e35ab6de1d57b55`.
   Later commits add the GCM policy, immutable V8 pin, and hosted gate repairs.
-- Nimbus is at `e0cbb5937d5390d44a597b6ef45ed7003e267a03` plus a
-  product, verifier, and proof change bundle. U6 owns its exact commit and
-  public-tag repin.
+- The exact Nimbus code candidate is
+  `818af5c68653fbdfa8d41d371ac449a28ef2ec85`. Its six-commit public-tag
+  integration range starts at
+  `d6636b980c6f638bf9e9cd1fe75c437fbd51bd37`.
 - Nimbus `Cargo.toml` and `Cargo.lock` now select only the two public Nimbus
   tags. The lock resolves all 41 Deno packages to
   `6c37e683a3199e873a9ce93f4c7ee4f58ab9b6a3` and rusty_v8 to
@@ -532,6 +533,45 @@ followed by owner approval. RRC8 keeps exclusive ownership until that trigger.
 
 ## Current Next Action
 
-Record the exact Nimbus candidate commit on the published-tag graph. Repeat the
-release-critical smoke and artifact lanes from that commit, produce the
-higher-memory Linux full-LTO binary, and update the final release verdict.
+Push the reviewed Nimbus branch. Repeat the release-critical smoke and artifact
+lanes from exact code candidate
+`818af5c68653fbdfa8d41d371ac449a28ef2ec85`, produce the higher-memory Linux
+full-LTO binary, and update the final release verdict.
+
+## U6 Final Local Review And CI
+
+The exact code candidate is
+`818af5c68653fbdfa8d41d371ac449a28ef2ec85`. Four Sol-only review rounds
+examined the committed integration and each correction range. No Opus 5 or
+Fable review ran.
+
+- The first round reported 10 items. The audit accepted eight and refuted two.
+- The first follow-up reported 8 items. The audit accepted six and refuted two.
+- The second follow-up reported 8 items. The audit accepted four and refuted
+  four.
+- The third follow-up reported 7 items. The audit accepted three and refuted
+  four.
+
+The 21 accepted findings repaired durable retirement, Krun cleanup, and
+resolved-address authorization. They also repaired backup preflight, Linux
+smoke isolation, release-matrix parsing, candidate binding, package ownership,
+installer ownership, and verifier fail-closed behavior. Focused regressions
+pass for every repair.
+
+The first non-TTY workspace replay then found two server tests that aborted
+with stack overflow. The retained retirement supervisor embedded a 95 KiB
+durable teardown future inside another large public-handler future.
+Commit `818af5c68653fbdfa8d41d371ac449a28ef2ec85` boxes that inner future at
+the supervisor boundary. Both exact tests pass on the default stack, and all
+39 resource-retirement tests pass.
+
+The final exact-candidate `make ci` exits zero. It passes formatting,
+warning-denied workspace Clippy, dependency policy, and live Node22 anchor
+provenance. It passes 500 canonical runtime tests with 94 declared ignores and
+7,726 workspace tests with 111 declared skips. Two active workspace doctests
+and the required liveness and protocol campaigns pass. JavaScript builds,
+typechecks, 97 UI test files with 846 tests, proof helpers, package helpers,
+and 63 installer checks also pass.
+
+Nextest classified one passing workspace test as leaky. The run had no failed
+test.

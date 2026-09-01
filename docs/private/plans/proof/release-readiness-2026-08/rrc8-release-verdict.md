@@ -14,12 +14,13 @@ Their annotated tags peel to reviewed commits
 pass. A fresh rusty_v8 download verifies all 44 payloads and 44 checksum
 sidecars.
 
-The normal Nimbus Cargo graph now resolves 41 Deno packages and rusty_v8 from
-those immutable tags. Fork provenance, upstream policy, standardization, the
-all-target runtime check, and the canonical runtime lane pass. Full `make ci`
-also passes without a local V8 override. It includes 499 canonical runtime
-tests, 7,722 workspace tests, 846 UI tests, the required harness, and the
-release proof helpers.
+The exact Nimbus code candidate is
+`818af5c68653fbdfa8d41d371ac449a28ef2ec85`. Its normal Cargo graph resolves
+41 Deno packages and rusty_v8 from those immutable tags. Fork provenance,
+upstream policy, standardization, the all-target runtime check, and the
+canonical runtime lane pass. Full `make ci` also passes without a local V8
+override. It includes 500 canonical runtime tests, 7,726 workspace tests, 846
+UI tests, the required harness, and the release proof helpers.
 
 The exact replay found and closed two dependency-graph defects.
 
@@ -28,11 +29,25 @@ The workspace V8 asset override and digest manifest still named the prior
 149.4 release. Both files now bind the 150.4 release and its exact published
 asset digests.
 
-Nimbus commit `d6636b980deedfeee8a64afb06230fa8a19a10a9` records the runtime
-cleanup and public-tag repin. Its Sol xhigh branch review found eight valid
-corrections and two false reports. The focused corrective regressions pass, but
-the corrective delta and clean follow-up review remain. Exact release-critical
-smoke, archive, OCI, and higher-memory Linux full-LTO replay also remain.
+Nimbus commit `d6636b980c6f638bf9e9cd1fe75c437fbd51bd37` records the runtime
+cleanup and public-tag repin. Four Sol-only review rounds then reported 33
+items. The audit accepted and fixed 21. It refuted 12 after source and test
+verification. A non-TTY workspace replay also found an oversized nested
+retirement future that caused two default-stack server tests to abort. The
+final candidate boxes that future at the retained-supervisor boundary. Both
+regressions and all 39 resource-retirement tests pass.
+
+The final exact-candidate `make ci` exits zero. Formatting, warning-denied
+Clippy, dependency policy, and snapshot provenance pass. The gate passes 500
+runtime tests, 7,726 workspace tests, doctests, and required harnesses.
+JavaScript builds, typechecks, 846 UI tests, proof helpers, package helpers,
+and 63 installer checks pass. The declared inventory is 94 runtime ignores and
+111 workspace skips.
+
+Nextest classified one passing workspace test as leaky. No test failed.
+
+Exact release-critical smoke, archive, OCI, and higher-memory Linux full-LTO
+replay still remain.
 
 Apple notarization and public apt and COPR proofs still need verification. At
 the owner's direction, current reviews use Sol only. No Opus 5 or Fable review
@@ -228,8 +243,9 @@ changes, proof files, and desktop release artifacts.
 
 ## Required Next Action
 
-1. Commit and review the eight release-review corrections.
-2. Build the exact v0.1.46 candidate from the corrected commit. Use a Linux runner with
+1. Push the reviewed branch at exact code candidate
+   `818af5c68653fbdfa8d41d371ac449a28ef2ec85`.
+2. Build the exact v0.1.46 candidate from that commit. Use a Linux runner with
    enough memory for full LTO. Do not reuse the 8 GiB host for this lane.
 3. Repeat all critical macOS, Linux, application, desktop,
    archive, and OCI lanes on that clean candidate.
