@@ -18,7 +18,7 @@ on:
       bun_source_ref:
         description: "Bun source ref or tag"
         required: true
-        default: "codex/bun-v1.4.0-release-readiness"
+        default: "bun-v1.4.0-nimbus.6"
       bun_source_revision:
         description: "Expected Bun source commit"
         required: true
