@@ -8,13 +8,12 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish the exact-head hosted replay at Nimbus commit `a5869adbb`.
-Run `33594903984` owns full CI and the non-publishing full-LTO Linux candidate.
-Runs `33594906706` through `33594934854` own the immutable Bun tag, shard,
-desktop UI, Windows, CodeQL, container egress, KV, krun, docs, Node, and
-dual-target lanes. Fix each verified failure and repeat each affected gate.
-Bind the native, application, desktop, archive, OCI, and distribution proofs
-to the final head. Rerun the 46-condition verifier.
+Next action: run full local `make ci` from the branch head that contains the
+Nextest correction. Push that head, then start new exact-head CI and shard
+replays. Runs from `a5869adbb` remain product-code evidence but cannot verify
+the corrected test profile. Finish the active Bun and Node runs. Bind the
+native, application, desktop, archive, OCI, and distribution proofs to the
+final head. Rerun the 46-condition verifier.
 
 ## Outcome
 
@@ -474,3 +473,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-02 | RRC8 | investigation | Both affected tests pass alone. The sandbox test starts no child process and joins both threads. A 500-millisecond hard leak window then marked a different no-child, joined-thread test under package load. One hundred focused executions of the only nearby child-process test passed without a leak report, and no child remained. |
 | 2026-09-02 | RRC8 | finding | The Nextest profile now reserves the runner for the two wall-clock tests and fails captured output handles that remain open for five seconds. The two exact tests pass 2 of 2. The affected CLI and sandbox package gate passes 2,307 of 2,307 tests with 51 declared skips and zero leak reports. No product assertion or deadline changed. |
 | 2026-09-02 | RRC8 | evidence | Hosted runs for shard scaling, desktop UI, Windows, CodeQL, container egress, KV, krun, and docs pass at `a5869adbb`. Dual-target run `33594934854` passes all four Nimbus targets. Its four public cloud targets fail closed because their URLs and credentials are absent while live mode is mandatory. Full CI, Bun, and Node compatibility remain in progress. |
+| 2026-09-02 | RRC8 | review | The Sol xhigh review accepted one P2 control-plane defect. The next-action text assigned final CI to pre-correction run `33594903984`. The plan now requires new exact-head CI and shard replays after the test-profile correction reaches the branch. No Opus 5 or Fable review ran. |
