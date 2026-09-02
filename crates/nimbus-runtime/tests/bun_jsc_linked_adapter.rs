@@ -439,7 +439,7 @@ globalThis.__nimbusInvoke = async function() {
 }
 
 #[test]
-fn bun_shared_adapter_host_bridge_cancellation_is_guest_visible_without_tokens() {
+fn bun_shared_adapter_host_bridge_cancellation_is_terminal_even_when_guest_catches_error() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let bun_bundle_path = temp_dir.path().join("bun-host-cancelled-wrapper.js");
     std::fs::write(
@@ -483,18 +483,13 @@ globalThis.__nimbusInvoke = async function() {
         services: BTreeMap::new(),
     };
 
-    let response =
+    let error =
         invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
-            .expect("linked Bun/JSC invocation should report host cancellation to guest");
-    assert_eq!(response["status"], "error");
-    assert_eq!(response["value"]["code"], "cancelled");
-    assert_eq!(response["value"]["rawTokenPresent"], false);
-    assert!(
-        response["value"]["message"]
-            .as_str()
-            .expect("message should be a string")
-            .contains("Bun/JSC host call was cancelled")
-    );
+            .expect_err("host cancellation must terminate the linked Bun/JSC invocation");
+    assert!(matches!(
+        error,
+        nimbus_runtime::NimbusRuntimeError::Cancelled
+    ));
 
     let calls = host.calls();
     assert_eq!(calls.len(), 1);
