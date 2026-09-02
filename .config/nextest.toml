@@ -10,6 +10,10 @@ runtime-v8-global = { max-threads = 1 }
 retries = 0
 fail-fast = false
 slow-timeout = { period = "45s", terminate-after = 3 }
+# A loaded workspace can delay the test process exit after libtest reports its
+# result. Allow that bounded exit window, but fail the gate if captured output
+# handles remain open after it.
+leak-timeout = { period = "5s", result = "fail" }
 
 [[profile.default.overrides]]
 filter = 'test(/listener_rejects_non_loopback_bind/)'
@@ -35,9 +39,16 @@ test-group = 'runtime-v8-global'
 filter = 'package(nimbus-storage) and test(redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_pitr_and_gc)'
 threads-required = "num-test-threads"
 
-# These matrices launch synchronized child-process fleets and perform durable
-# recovery work inside one test. Run each without unrelated workspace load so
-# their existing semantic checkpoint bounds remain meaningful.
+# These tests measure bounded failure and lock ordering with real wall-clock
+# deadlines. Give each the runner so unrelated workspace load cannot consume
+# its deadline or delay the in-process PEP shutdown beyond Nextest's leak gate.
+[[profile.default.overrides]]
+filter = 'test(exact_guest_teardown_accept_fails_within_its_deadline_when_a_call_is_missing) or test(krun_network_inspect_is_byte_stable_and_cannot_cross_older_execute)'
+threads-required = "num-test-threads"
+
+# These matrices launch synchronized child-process fleets. Each test also
+# recovers durable state. Run each without unrelated workspace load so its
+# semantic checkpoint bounds remain meaningful.
 [[profile.default.overrides]]
 filter = 'test(/fresh_process_network_teardown_(?:container|krun)_recovers_every_durable_checkpoint|fresh_process_(?:container|krun)_network_contenders_publish_one_result_per_operation|fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff|fresh_process_restart_reopens_engine/)'
 threads-required = "num-test-threads"
@@ -54,9 +65,9 @@ retries = { backoff = "fixed", count = 2, delay = "1s" }
 flaky-result = "fail"
 
 [profile.ci-nightly.junit]
-# Flake detection parses ONLY JUnit <flakyFailure>/<flakyError> elements —
-# the documented stable markers for fail-then-pass-on-retry (libtest JSON's
-# flaky fields are undocumented/experimental).
+# Flake detection reads only JUnit <flakyFailure>/<flakyError> elements.
+# These elements are the documented stable markers for a failed first attempt
+# that passes on retry. The libtest JSON flaky fields are experimental.
 path = "junit.xml"
 
 [profile.ci-runtime]
@@ -80,9 +91,8 @@ slow-timeout = { period = "30m", terminate-after = 1 }
 
 [profile.coverage]
 inherits = "default"
-# Coverage shards run llvm-instrumented binaries, which are several times
-# slower than the ones `default`'s 45s bound was calibrated against. Keep the
-# shape of that bound -- a genuinely hung test must still be terminated -- but
-# scale the period so instrumentation overhead alone cannot kill a healthy
-# test and report it as a coverage-lane failure.
+# LLVM instrumentation makes coverage binaries slower than default binaries.
+# The default profile uses a 45-second bound. Keep the same termination count,
+# but allow 180 seconds for instrumentation. This profile still terminates a
+# test that does not make progress.
 slow-timeout = { period = "180s", terminate-after = 3 }

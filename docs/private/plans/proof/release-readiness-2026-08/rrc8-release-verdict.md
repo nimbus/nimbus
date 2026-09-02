@@ -1,6 +1,6 @@
 # RRC8 Release Verdict
 
-Date: 2026-09-01
+Date: 2026-09-02
 
 ## Current Status Update
 
@@ -14,11 +14,12 @@ Their annotated tags peel to reviewed commits
 and local release gates pass. A fresh rusty_v8 download verifies all 44
 payloads and 44 checksum sidecars.
 
-The current substantive Nimbus code candidate is `76165b0b9`. Later commits
-add focused tests, proof updates, and nextest scheduling. Its normal Cargo graph
-resolves 41 Deno packages and rusty_v8 from the immutable tags. The earlier
-full `make ci` replay passed without a local V8 override. The final branch head
-still needs its complete hosted replay.
+The current Nimbus product-code candidate is
+`a5869adbbf36278f4a9b2bd193a8a399f91e38fc`. Its normal Cargo graph resolves
+41 Deno packages and rusty_v8 from immutable tags. It also pins the Bun/JSC
+adapter to immutable tag `bun-v1.4.0-nimbus.6`. The earlier full `make ci`
+replay passed without a local V8 override. The branch adds one test-runner
+correction on top of this product-code candidate.
 
 A source-free Linux arm64 package from the previous branch head passed health
 and application deployment. Its first WebStandard function invocation then
@@ -95,12 +96,172 @@ isolated runs. The complete 23-test MongoDB binary passed five consecutive
 runs, and the final 765-test server replay was clean. This is an unconfirmed
 load-only runner observation, not an accepted product defect.
 
-Final release-critical hosted workflows, smoke, archive, OCI, and Linux
-full-LTO replay still remain on the proof-updated branch head.
+The current Linux VMM tuple uses crun `v1.29.1-nimbus.2`, libkrun
+`v1.19.4-nimbus.3`, and libkrunfw 5.5.0. The exact `c565e89fd` validation
+bundle passed LH1 through LH6 on `minicloud.local`. Its copied OCI rootfs kept
+the fixture ownership `1234:2345`. Exact cleanup removed the runtime process,
+private state, port, Buildah container, and fixture image. It preserved the
+unrelated LibSQL container.
 
-Apple notarization and public apt and COPR proofs still need verification. At
-the owner's direction, current reviews use Sol only. No Opus 5 or Fable review
-ran during this uplift.
+The VMM review chain closed root-host installation, rootfs ownership, and
+source-identity failures. The optional source record now fails closed when Git
+cannot read the checkout and requires the supplied path to be the worktree
+root. Live checks accepted a valid Git root and rejected a nested source path.
+Commit `907a3d050` passes the focused helper, Bash syntax, ShellCheck,
+formatting, whitespace, and the final Sol xhigh review. No Opus 5 or Fable
+review ran.
+
+Hosted Bun run `33568361939` proved the corrected full-GC memory oracle on
+macOS. It measured 5,334,961 bytes of retained live-heap growth and a
+5,243,789-byte drop after release. The next probe then found stale test logic:
+it expected errors from generated binding maps that the current generated
+program wrapper no longer uses.
+
+Bun commit `1322dc50d7718dcf8ad6adc379921c0659e09886` now awaits the
+generated Node builtin and external-package helper functions and requires both
+imports to fail through the resolver policy. The probe prints each policy
+result before it checks the verdict. Formatting, whitespace, TruffleHog, and
+the Sol xhigh review pass. Exact replacement run `33572160639` passed every
+native probe on macOS and Linux, including these generated helpers. The macOS
+probe measured 5,332,760 bytes of retained live-heap growth and a 5,243,342-byte
+drop after release. The Linux probe measured 5,296,672 bytes of retained
+live-heap growth and a 5,203,260-byte drop after release.
+
+The next Nimbus test in that run failed before it reached Bun. The process-init
+proof used a tenant-affine invocation without a tenant label. The blocking
+router then replaced the specific locality error with `runtime executor
+unexpectedly closed`.
+
+Nimbus commit `248ab891c` preserves the dispatch error and rolls back failed
+dispatch accounting. The process-init proof now uses four valid, non-affine
+one-worker executors with a shared host rendezvous. Two focused router tests and
+48 executor tests pass. Formatting, Clippy with warnings denied, whitespace,
+TruffleHog, and the exact Sol xhigh review also pass. No Opus 5 or Fable review
+ran.
+
+Corrected run `33576740616` passed the process-global concurrent-init proof on
+Linux. Its eight linked-adapter integration tests then failed on both platforms
+before dispatch because their tenant-affine runtimes still used the tenantless
+convenience method. The native Bun probes had already passed.
+
+Nimbus commit `3dba5ebb6` gives every linked-adapter integration invocation one
+stable tenant owner lease and uses the production tenant-affine entry point.
+Forced-cfg check and Clippy with warnings denied type-check the gated test.
+Formatting, whitespace, TruffleHog, and the exact Sol xhigh review pass. No
+Opus 5 or Fable review ran. GitHub started replacement run `33580557154` at the
+exact Nimbus and Bun revisions.
+
+Run `33580557154` passed every native probe, the process-global concurrent-init
+proof, and seven of eight linked-adapter tests on both platforms. The remaining
+test expected a guest JSON response after its host callback cancelled the
+invocation. The Bun cancellation watcher intentionally turns any cancellation
+transition into terminal adapter status 314. Nimbus therefore returned the
+exact top-level `Cancelled` result. Guest code must not swallow platform
+cancellation.
+
+Nimbus commit `3c6436ee2` corrects the test to prove that terminal contract and
+retains the assertion that exactly one host call occurred. Forced-cfg check and
+Clippy with warnings denied, formatting, whitespace, TruffleHog, and the exact
+Sol xhigh review pass. No Opus 5 or Fable review ran. Replacement run
+`33583722755` uses that Nimbus commit and Bun commit `1322dc50d7` on macOS and
+Linux.
+
+Run `33583722755` passed the corrected linked cancellation test and reached the
+package manifest gate on both platforms. The manifest correctly recorded Bun
+commit `1322dc50d7`, but Nimbus still declared the earlier reviewed commit
+`40d63a6879`. The fail-closed package check rejected both archives.
+
+Nimbus commit `b0737a784` pins the reviewed Bun commit
+`1322dc50d7718dcf8ad6adc379921c0659e09886` across the workflow, runtime
+contract, installer, verifier, and tests. The seven-part runtime contract, 71
+Rust and UI tests, 63 installer-helper tests, action lint, formatting,
+whitespace, TruffleHog, and the exact Sol xhigh review pass. No Opus 5 or Fable
+review ran. Replacement run `33589420091` passed on macOS arm64 and Linux
+x86_64 with publishing disabled.
+
+The downloaded macOS archive has SHA-256
+`3b11cee4898b787eeada3db72daad1a07915bd136f55ad390b3b5bf23d600daf`.
+The downloaded Linux archive has SHA-256
+`0f8cd653f332af25e22589ed77aa46f52c606f09b8254348b5a7889c5d899de4`.
+Both values match their hosted summaries. The macOS archive passed an
+independent local package audit. The Linux archive passed the same manifest,
+checksum, SBOM/provenance, export, and native-symbol audit on
+`minicloud.local`.
+
+Annotated tag `bun-v1.4.0-nimbus.6` and branch `nimbus/bun-v1.4.0` resolve to
+the reviewed Bun commit. The fork default branch and canonical clone use that
+release branch. Nimbus commit `a5869adbb` repins every active consumer to the
+immutable tag and adds an assertion for the exact revision in the UI fixture.
+Its focused fork, runtime, package, release-asset, installer, format, and
+whitespace gates pass. The exact Sol xhigh review reports no actionable P0
+through P3 finding, and TruffleHog is clean. GitHub has no Bun Release or new
+Nimbus product release from this work.
+
+The desktop repository now has all seven required Apple signing and
+notarization secret names. Its prior manual workflow accepted an unused tag
+input and did not explicitly prevent publication. It also ignored the
+rotation-owned signing-identity secret and hard-coded the current certificate
+owner. Desktop commits `69a6f10`, `b8cbaaf`, and `2d35ae4` make manual dispatch
+use publish mode `never` while it signs, notarizes, staples, and uploads
+workflow artifacts. They validate and use the complete configured Developer ID
+identity. Action lint, all 186 unit tests, lint, typecheck, TruffleHog, and the
+Sol xhigh follow-up pass.
+
+Desktop run `33592790284` proved the non-publishing guard and passed Windows
+packaging. Its Linux job generated AppImage and deb artifacts, then failed RPM
+because electron-builder used the spaced visible product name as the package
+name. The same log reported a missing stable desktop identity. Run
+`33593241210` then rejected the first repair because Electron Builder does not
+permit `packageName` at the Linux configuration root.
+
+Desktop commits `b23223f`, `b22f572`, and `8dc9eaa` move the package identity
+to the deb and RPM targets. They keep `nimbus-desktop` as the stable desktop
+name and add package author metadata. They also update first-party actions,
+pin third-party actions, and correct the release runbook. Actionlint and lint
+across 40 files pass. Typecheck, all 186 tests, and a local Linux package
+schema check pass. Strict prose lint, whitespace, TruffleHog, and the exact Sol
+xhigh review also pass.
+
+Non-publishing Desktop run `33593752690` passed at exact commit
+`8dc9eaa7b858e50f40751b51526e585a87953b83` on macOS 14, Windows 2022, and
+Ubuntu 24.04. The macOS lane signed, notarized, stapled, and validated the
+application. Windows built x64, arm64, and universal installers. Linux built
+AppImage, deb, and RPM packages. Every platform passed its fuse and size
+audit, and all workflow artifacts uploaded. The logged publish mode is
+`never`. The repository still has only its pre-existing `v0.1.0` release.
+
+The first local `make ci` at `a5869adbb` passed 510 runtime tests and declared
+94 runtime ignores. The workspace lane passed 7,730 tests and declared 111
+skips. One CLI test failed because process scheduling consumed its one-second
+test deadline. One sandbox test passed but received a Nextest leak marker.
+
+Both tests pass alone. The sandbox test starts no child process and joins its
+two threads. A 500-millisecond hard leak window then marked a different
+no-child, joined-thread sandbox test under package load. These observations
+identify delayed test-process exit under load, not an open child output handle.
+
+The repaired Nextest profile reserves the runner for the two wall-clock tests.
+It also fails any captured output handle that remains open for five seconds.
+The two exact tests pass 2 of 2. The affected package gate passes 2,307 of
+2,307 tests. It declares 51 skips and reports zero leaks. The final full
+`make ci` replay remains required.
+
+Runs `33594909729`, `33594912184`, `33594915367`, `33594917976`,
+`33594920291`, `33594923052`, `33594925657`, and `33594928725` pass at
+`a5869adbb`. They cover shard scaling, desktop UI, Windows, CodeQL, container
+egress, KV, krun, and docs. Full CI, Bun, and Node compatibility remain in
+progress.
+
+Dual-target run `33594934854` passes all four Nimbus targets. Its four public
+cloud targets fail closed because their URLs and credentials are absent. The
+workflow ran with `NIMBUS_DUAL_TARGET_DRY_RUN=0` and required live proof. The
+failures leave evidence debt rather than a product regression.
+
+Exact application and desktop binding, smoke, archive, OCI, and Linux full-LTO
+replay remain on the final branch head.
+
+Public apt and COPR proofs still need verification. At the owner's direction,
+current reviews use Sol only. No Opus 5 or Fable review ran during this uplift.
 
 The sections below preserve the earlier v2.9.3 checkpoint evidence. The U3
 uplift proof is the current source for Deno 2.9.6 and V8 150.4 identity and
@@ -266,15 +427,14 @@ closed clean after all P3 hardening fixes.
 
 ## Remaining Release Blockers
 
-1. Final hosted workflows have not passed on the proof-updated branch head.
+1. The corrected full local and hosted CI gates have not passed on the final
+   branch head.
 2. Release-critical Linux x86_64, archive, OCI, and remaining application and
    distribution lanes have not replayed from the final branch head. The
    source-free macOS and Linux arm64 runtime package oracles pass.
 3. Live dual-target cloud proofs remain blocked because four provider URLs and
    their credentials are not configured in the repository secrets.
-4. Apple notarization and stapling remain unverified because the authorized
-   API credentials are unavailable in this local release lane.
-5. Public apt and COPR install proofs remain owned by the distribution plan and
+4. Public apt and COPR install proofs remain owned by the distribution plan and
    require separate publication authority.
 
 ## Matrix Decision

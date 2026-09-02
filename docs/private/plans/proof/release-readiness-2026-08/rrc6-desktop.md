@@ -1,12 +1,12 @@
 # RRC6 Desktop Application Evidence
 
-Date: 2026-08-28
+Date: 2026-09-02
 
 Result: provisional pass. The repaired desktop source, automated desktop
-matrix, packaged macOS application, and real operator workflow pass. RRC6
-cannot become an exact-candidate pass until RRC1 has reachable immutable Deno
-references. Apple notarization and stapling also remain unverified because the
-required Apple API credentials are not available in the local environment.
+matrix, packaged macOS application, real operator workflow, and hosted
+cross-platform packaging pass. The hosted macOS lane also proves signing,
+notarization, stapling, and validation. RRC6 stays provisional until the
+complete application flow passes against the final Nimbus candidate.
 
 ## Inputs
 
@@ -19,14 +19,14 @@ required Apple API credentials are not available in the local environment.
 - Provisional binary version: `nimbus 0.1.45`.
 - Provisional binary SHA-256:
   `875c1dc65b4dec6a72fda5518628b0c417bb9c3416bf0ed7ab93f6c57cf0df0f`.
-- The integrated binary was built from the RRC1 local-Deno worktree plus the
-  committed release-readiness repair set. It is not the exact clean candidate
-  because the Deno WebSocket egress commits do not yet have reachable
-  immutable references.
+- The RRC1 local-Deno worktree and committed release-readiness repair set
+  produced the integrated binary. It is not the exact clean candidate because
+  the Deno WebSocket egress commits do not yet have reachable immutable
+  references.
 
-The temporary 51.2 GiB Cargo target was removed after the candidate hash and
-runtime were verified. The preserved binary has only macOS system dynamic
-library dependencies and still reports version `0.1.45`.
+Cleanup removed the temporary 51.2 GiB Cargo target after verification recorded
+the candidate hash and runtime. The preserved binary has only macOS system
+dynamic library dependencies and still reports version `0.1.45`.
 
 ## Fail-Before and Repairs
 
@@ -42,7 +42,7 @@ library dependencies and still reports version `0.1.45`.
    Protected UI navigation returned raw `401` JSON and a connected desktop
    could remain indefinitely on the disconnected overlay. Nimbus now redirects
    invalid protected-page navigation to `/ui/auth`. The overlay probes `/ui/`
-   while disconnected and performs a full-page sign-in navigation for an
+   while disconnected and navigates the full page to sign-in after an
    authentication response. API and WebSocket authentication remain
    fail-closed.
 5. The command-palette E2E test sent a physical `KeyK` token instead of the
@@ -53,13 +53,13 @@ library dependencies and still reports version `0.1.45`.
    fuse gate. Both paths now inspect the packaged Electron fuse strip.
 8. Native branding did not have one explicit product and executable contract.
    The package now uses product name `Nimbus Desktop` and executable name
-   `nimbus-desktop`. The bundle, executable, helper names, native menu, About,
-   and Quit behavior were verified from the built product.
+   `nimbus-desktop`. The built product confirms the bundle, executable, helper
+   names, native menu, About, and Quit behavior.
 9. DS3 could pass without proving that the desktop-owned Nimbus child stopped.
-   The probe now isolates `HOME`, `TMPDIR`, and `userData`, discovers the exact
-   child record, verifies command identity, performs bounded process-group and
-   direct-PID cleanup, and fails while preserving diagnostics when cleanup is
-   not proved.
+   The probe now isolates `HOME`, `TMPDIR`, and `userData`. It discovers the
+   exact child record and verifies command identity. It cleans the process
+   group and direct PID within fixed bounds. It fails and preserves diagnostics
+   when the cleanup proof is absent.
 10. Launcher tests did not pin the full server argument contract. The unit
     test now asserts the literal host, port, and data-directory arguments.
 
@@ -75,12 +75,12 @@ library dependencies and still reports version `0.1.45`.
 | Nimbus UI typecheck | pass |
 | Nimbus UI unit suite | pass, 97 files and 845 tests |
 | `nimbus-server` local-UI suite | pass, 14 of 14 tests |
-| Restart regression | pass; the cookie is authorized before restart and stale navigation redirects after restart |
+| Restart regression | pass. The cookie is authorized before restart, and stale navigation redirects after restart. |
 
 The embedded-UI regression set covers revoked, expired, missing, and otherwise
-invalid session navigation; unreachable-server retry; reauthentication;
-in-flight probe cancellation after reconnection; and the initial no-connection
-state.
+invalid session navigation. It covers unreachable-server retry,
+reauthentication, in-flight probe cancellation after reconnection, and the
+initial no-connection state.
 
 ### Desktop Repository
 
@@ -101,7 +101,7 @@ state.
 | `hdiutil verify` | pass |
 
 One full E2E run had a command-palette focus timing failure. Its isolated retry
-passed, and a new complete 5-of-5 run passed. No expectation was weakened.
+passed, and a new complete 5-of-5 run passed. No expectation changed.
 
 ## Packaged Artifact Evidence
 
@@ -120,8 +120,8 @@ names, but configuration presence is not notarization evidence.
 
 ## Real macOS Operation
 
-The clean universal DMG was mounted and its exact application was launched
-with local computer control.
+Local computer control mounted the clean universal DMG and launched its exact
+application.
 
 1. The native application menu displayed `Nimbus Desktop`.
 2. The desktop started its owned server with:
@@ -132,8 +132,8 @@ with local computer control.
    loopback port.
 4. Sign-in reached the connected operator UI. The overview reported Nimbus
    `0.1.45` and rendered all six overview panels.
-5. Developer routes, operator routes, both palettes, tenant selection, and the
-   system-tenant lens were exercised.
+5. The test exercised developer routes, operator routes, both palettes, tenant
+   selection, and the system-tenant lens.
 6. Stopping the server displayed `Reconnecting` with the explicit stale-data
    and mutation-disabled state.
 7. Restarting on the same port caused the disconnected-session probe to route
@@ -154,21 +154,23 @@ Opus 5 reviewed the exact desktop commits and the Nimbus UI/server repair.
   strengthened exact child cleanup, bounded joint discovery, literal spawn
   arguments, and preserved failure evidence. The final review of `bbc103f`
   accepted no P0 through P3 finding.
-- The claimed discovery relocation defect was refuted by source inspection:
-  Nimbus local authentication and discovery use platform-native roots, not the
+- Source inspection refuted the claimed discovery relocation defect. Nimbus
+  local authentication and discovery use platform-native roots, not the
   persistence data directory. The real package launch also proved discovery.
-- The claimed product-name/executable mismatch was refuted by the actual
-  universal bundle, executable, helper names, native menu, and clean quit.
+- The universal bundle refuted the claimed product-name and executable
+  mismatch. The evidence includes helper names, the native menu, and clean
+  quit behavior.
 
 ## RRC6 Decision
 
-The desktop application and its repair set have a provisional pass. The two
-remaining release conditions are not desktop implementation defects:
+The desktop application and its repair set have a provisional pass. Hosted run
+`33593752690` passes at Desktop commit
+`8dc9eaa7b858e50f40751b51526e585a87953b83` on macOS 14, Windows 2022, and
+Ubuntu 24.04. It uses publish mode `never`. macOS signing, notarization,
+stapling, and validation pass. Windows produces x64, arm64, and universal
+installers. Linux produces AppImage, deb, and RPM packages. All platform fuse,
+size, and artifact-upload gates pass. No new GitHub Release exists.
 
-1. Replay this complete matrix against a clean exact candidate after RRC1 has
-   reachable immutable Deno references.
-2. Run Apple notarization and stapling with the authorized release
-   credentials, then verify the stapled DMG and application.
-
-Until both conditions have direct evidence, RRC6 stays blocked and the release
-verdict cannot be GO.
+RRC6 has one remaining condition: repeat the complete application and recovery
+flow against the final Nimbus candidate. Until that condition has direct
+evidence, RRC6 stays blocked and the release verdict cannot be GO.
