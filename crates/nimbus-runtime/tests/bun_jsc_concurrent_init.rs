@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use nimbus_runtime::{
     HostBridge, HostCallOperation, HostCallRequest, InvocationKind, InvocationRequest,
     NimbusRuntime, NimbusRuntimeError, RuntimeBundle, RuntimeEgressPosture, RuntimeLimits,
-    RuntimePolicy,
+    RuntimePolicy, RuntimeRoutingAffinity,
 };
 use serde_json::{Value, json};
 
@@ -121,21 +121,22 @@ globalThis.__nimbusInvoke = async function(request) {
     .expect("Bun/JSC bundle should be written");
 
     let host = Arc::new(RendezvousHost::new(INVOCATIONS));
-    let mut limits = RuntimeLimits::application_bun_jsc();
-    limits.max_concurrent_runtime_instances = INVOCATIONS;
-    limits.worker_threads = INVOCATIONS;
-    let runtime = NimbusRuntime::with_policy(
-        host,
-        Arc::new(RuntimePolicy::new(limits)),
-        RuntimeEgressPosture::CoarsePermissions,
-    );
     let barrier = Arc::new(Barrier::new(INVOCATIONS));
     let workers = (0..INVOCATIONS)
         .map(|worker| {
             let barrier = barrier.clone();
             let bundle_path = bundle_path.clone();
-            let runtime = runtime.clone();
+            let host = host.clone();
             std::thread::spawn(move || {
+                let mut limits = RuntimeLimits::application_bun_jsc();
+                limits.max_concurrent_runtime_instances = 1;
+                limits.worker_threads = 1;
+                limits.routing_affinity = RuntimeRoutingAffinity::None;
+                let runtime = NimbusRuntime::with_policy(
+                    host,
+                    Arc::new(RuntimePolicy::new(limits)),
+                    RuntimeEgressPosture::CoarsePermissions,
+                );
                 let request = InvocationRequest {
                     kind: InvocationKind::Query,
                     function_name: "messages:concurrentInit".to_string(),
