@@ -2,6 +2,103 @@ use super::support::*;
 use super::*;
 
 #[tokio::test]
+async fn node_dgram_default_lookup_tracks_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import dgram from "node:dgram";
+import dns from "node:dns";
+
+function bind(hostname) {
+  return new Promise((resolve, reject) => {
+    const socket = dgram.createSocket("udp4");
+    socket.once("error", (error) => {
+      try {
+        socket.close();
+      } catch (_closeError) {}
+      reject(error);
+    });
+    socket.bind(0, hostname, () => socket.close(resolve));
+  });
+}
+
+globalThis.__nimbusInvoke = async function () {
+  const originalLookup = dns.lookup;
+  const lookupHosts = [];
+  dns.lookup = (hostname, _family, callback) => {
+    lookupHosts.push(hostname);
+    queueMicrotask(() => callback(null, "127.0.0.1", 4));
+  };
+  try {
+    await bind("nimbus-dgram.invalid");
+    await bind("127.0.0.1");
+    return { node: process.versions.node, lookupHosts };
+  } finally {
+    dns.lookup = originalLookup;
+  }
+};
+
+export {};
+"#,
+    );
+
+    let cases = [
+        (
+            RuntimeLimits::application_node20_local_development(),
+            "20",
+            serde_json::json!(["nimbus-dgram.invalid", "127.0.0.1"]),
+        ),
+        (
+            RuntimeLimits::application_node22_local_development(),
+            "22",
+            serde_json::json!(["nimbus-dgram.invalid", "127.0.0.1"]),
+        ),
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            serde_json::json!(["nimbus-dgram.invalid"]),
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            serde_json::json!(["nimbus-dgram.invalid"]),
+        ),
+    ];
+
+    for (limits, expected_major, expected_lookup_hosts) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("dgram lookup bundle should execute");
+
+        assert!(
+            result["node"]
+                .as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {result}"
+        );
+        assert_eq!(result["lookupHosts"], expected_lookup_hosts);
+    }
+}
+
+#[tokio::test]
 async fn application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let (tempdir, bundle_path) = write_app_style_bundle(

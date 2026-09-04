@@ -282,6 +282,7 @@ impl NodeBootstrapExtensionSlot {
                 context.fs.clone(),
                 deno_node::HeapSnapshotNearHeapLimitPolicy::Deny,
                 aes_gcm_implicit_short_tag_policy(context.limits.compatibility_target),
+                dgram_default_lookup_policy(context.limits.compatibility_target),
             ),
             Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
         }
@@ -353,6 +354,23 @@ fn aes_gcm_implicit_short_tag_policy(
         | RuntimeCompatibilityTarget::BunJsc
         | RuntimeCompatibilityTarget::WasmComponent => {
             deno_node::AesGcmImplicitShortTagPolicy::Deny
+        }
+    }
+}
+
+fn dgram_default_lookup_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_node::DgramDefaultLookupPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            deno_node::DgramDefaultLookupPolicy::ResolveIpLiteralsThroughPublicDns
+        }
+        RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::DgramDefaultLookupPolicy::BypassIpLiterals
         }
     }
 }
@@ -722,5 +740,27 @@ mod tests {
             aes_gcm_implicit_short_tag_policy(RuntimeCompatibilityTarget::Node26),
             deno_node::AesGcmImplicitShortTagPolicy::Deny
         );
+    }
+
+    #[test]
+    fn node_dgram_default_lookup_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+        ] {
+            assert_eq!(
+                dgram_default_lookup_policy(target),
+                deno_node::DgramDefaultLookupPolicy::ResolveIpLiteralsThroughPublicDns
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+        ] {
+            assert_eq!(
+                dgram_default_lookup_policy(target),
+                deno_node::DgramDefaultLookupPolicy::BypassIpLiterals
+            );
+        }
     }
 }

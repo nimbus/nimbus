@@ -20,7 +20,7 @@ worktrees.
 
 | State | Repository | Tag | Peeled commit | Meaning |
 | --- | --- | --- | --- | --- |
-| consumed | `nimbus/deno` | `v2.9.6-nimbus.2` | `625e4c259488dfa1c3c9d03fabde17758e1130d9` | Deno 2.9.6 with the selected Locker, egress, Node heap-policy, lazy-ESM, and packaged extension-source contracts |
+| consumed | `nimbus/deno` | `v2.9.6-nimbus.4` | `ded7d15771894d157b6369b8193d6e5bd055ce9e` | Deno 2.9.6 with the selected Locker, egress, Node heap-policy, lazy-ESM, packaged extension-source, and Node network and HTTP compatibility contracts |
 | consumed | `nimbus/rusty_v8` | `v150.4.0-nimbus.1` | `961a76d0cee88efdecfa9224c519fd153c404b51` | V8 150.4 line declared by Deno 2.9.6, with the Nimbus Locker bridge |
 | published, not consumed | `nimbus/rusty_v8` | `v150.2.0-nimbus.1` | `4786595e29679ee5ad9ba4925cdcd1cc83ab6448` | Forward-maintenance V8 150 line; awaits a compatible Deno V8 roll |
 
