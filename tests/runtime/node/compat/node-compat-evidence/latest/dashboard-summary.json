@@ -5,7 +5,7 @@
   "canary_report_count": 2,
   "canary_claim_count": 79,
   "canary_check_count": 101,
-  "oracle_report_count": 0,
+  "oracle_report_count": 4,
   "inventory_report_count": 3,
   "suite_status_report": {
     "path": "target/node-compat/status/status-summary.json",
@@ -103305,9 +103305,9 @@
         "loopback-net"
       ],
       "counts": {
-        "passed": 25,
+        "passed": 26,
         "skipped": 0,
-        "failed": 4,
+        "failed": 3,
         "missing": 0
       },
       "total_expected_results": 29,
@@ -103358,9 +103358,9 @@
           "expected_fixture_count": 9,
           "observed_fixture_count": 9,
           "counts": {
-            "passed": 7,
+            "passed": 8,
             "skipped": 0,
-            "failed": 2,
+            "failed": 1,
             "missing": 0
           }
         }
@@ -105873,7 +105873,72 @@
       ]
     }
   ],
-  "oracle_reports": [],
+  "oracle_reports": [
+    {
+      "path": "target/node-compat/oracle/node20/test-parallel-test-buffer-alloc-js/oracle-node20-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node20",
+      "upstream_fixture_line": "Node20",
+      "lane_role": "legacy",
+      "public_contract_role": "legacy_contract",
+      "runtime_execution_target": "Node20",
+      "runtime_limits_preset": "application_node20",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v20.20.2"
+    },
+    {
+      "path": "target/node-compat/oracle/node22/test-parallel-test-buffer-alloc-js/oracle-node22-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node22",
+      "upstream_fixture_line": "Node22",
+      "lane_role": "supported",
+      "public_contract_role": "supported_contract",
+      "runtime_execution_target": "Node22",
+      "runtime_limits_preset": "application_node22",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v22.23.1"
+    },
+    {
+      "path": "target/node-compat/oracle/node24/test-parallel-test-buffer-alloc-js/oracle-node24-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node24",
+      "upstream_fixture_line": "Node24",
+      "lane_role": "default",
+      "public_contract_role": "default_contract",
+      "runtime_execution_target": "Node24",
+      "runtime_limits_preset": "application_node24",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v24.16.0"
+    },
+    {
+      "path": "target/node-compat/oracle/node26/test-parallel-test-buffer-alloc-js/oracle-node26-test-parallel-test-buffer-alloc-js.json",
+      "family": "core-semantics",
+      "slice": "assert-and-buffer-foundation",
+      "lane": "node26",
+      "upstream_fixture_line": "Node26",
+      "lane_role": "current",
+      "public_contract_role": "current_contract",
+      "runtime_execution_target": "Node26",
+      "runtime_limits_preset": "application_node26",
+      "fixture": "test/parallel/test-buffer-alloc.js",
+      "runtime_state": "pass",
+      "oracle_state": "pass",
+      "drift_class": "agreement_pass",
+      "node_version": "v26.8.1"
+    }
+  ],
   "claim_summaries": [
     {
       "id": "application-platform-builtins",

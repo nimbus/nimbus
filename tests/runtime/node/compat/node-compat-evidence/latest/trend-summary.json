@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-01T05:51:16.713487+00:00",
+  "generated_at": "2026-09-04T20:12:50.763153+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -8,8 +8,8 @@
     "dashboard": "target/node-compat/dashboard/dashboard-summary.json"
   },
   "baseline_sources": {
-    "status": "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
-    "dashboard": "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
+    "status": "target/node-compat/head-baseline.4ckTly/tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
+    "dashboard": "target/node-compat/head-baseline.4ckTly/tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
   },
   "lane_trends": [
     {
@@ -68,8 +68,8 @@
   "evidence_trends": {
     "canary_report_count": {
       "current": 2,
-      "baseline": 0,
-      "delta": 2
+      "baseline": 2,
+      "delta": 0
     },
     "expectation_catalog_entry_count": {
       "current": 150,
@@ -77,9 +77,9 @@
       "delta": 0
     },
     "oracle_report_count": {
-      "current": 0,
+      "current": 4,
       "baseline": 0,
-      "delta": 0
+      "delta": 4
     },
     "required_canary_gap_count": {
       "current": 0,

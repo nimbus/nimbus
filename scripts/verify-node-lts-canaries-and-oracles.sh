@@ -128,6 +128,21 @@ if supported_lanes == ["node22", "node24"]:
 else:
     note_fail(f"Unexpected supported active-LTS lanes: {supported_lanes}")
 
+required_oracle_lanes = [
+    lane["lane_name"]
+    for lane in lane_registry["lanes"]
+    if lane["evidence_policy"]
+    in {
+        "supported_lts_lane_local_evidence",
+        "current_non_lts_lane_local_evidence_until_lts_promotion",
+    }
+]
+required_oracle_lane_set = set(required_oracle_lanes)
+if required_oracle_lanes == ["node22", "node24", "node26"]:
+    note_pass("Required oracle lanes include supported LTS and Node26 current-line")
+else:
+    note_fail(f"Unexpected required oracle lanes: {required_oracle_lanes}")
+
 claims = canary_registry["claims"]
 claim_by_id = {claim["id"]: claim for claim in claims}
 claim_surfaces = {
@@ -232,14 +247,14 @@ else:
 
 oracle_reports = dashboard.get("oracle_reports", [])
 oracle_by_lane = {report["lane"]: report for report in oracle_reports}
-missing_oracle_lanes = sorted(supported_lane_set - set(oracle_by_lane))
+missing_oracle_lanes = sorted(required_oracle_lane_set - set(oracle_by_lane))
 if not missing_oracle_lanes:
-    note_pass("Published dashboard includes oracle reports for every supported LTS lane")
+    note_pass("Published dashboard includes every required LTS and current-line oracle")
 else:
     note_fail(f"Missing oracle report lanes: {missing_oracle_lanes}")
 
 bad_oracle_versions = []
-for lane in supported_lanes:
+for lane in required_oracle_lanes:
     report = oracle_by_lane.get(lane)
     if not report:
         continue

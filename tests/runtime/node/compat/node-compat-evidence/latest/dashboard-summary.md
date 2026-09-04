@@ -4,7 +4,7 @@
 - Package/framework canary claims: 79
 - Package/framework canary checks: 101
 - Canary artifact bundles: 2
-- Oracle reports: 0
+- Oracle reports: 4
 - Inventory reports: 3
 
 ## Suite Status
@@ -46,7 +46,7 @@
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `core-semantics` | `assert-and-buffer-foundation` | Sequential | 26 | 0 | 2 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `loader-context` | `module-and-async-foundation` | Sequential | 30 | 0 | 0 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `networking` | `dns-net-foundation` | Sequential | 25 | 0 | 4 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `networking` | `dns-net-foundation` | Sequential | 26 | 0 | 3 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `process-and-timing` | `process-foundation` | Sequential | 17 | 0 | 12 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `streams-and-local-io` | `os-tty-readline-foundation` | Sequential | 30 | 0 | 0 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 
@@ -138,4 +138,10 @@
 - none
 
 ## Oracle Reports
-- none
+
+| Lane | Fixture | Runtime | Oracle | Drift | Node | Role |
+| --- | --- | --- | --- | --- | --- | --- |
+| `node20` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v20.20.2` | `legacy/legacy_contract` |
+| `node22` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v22.23.1` | `supported/supported_contract` |
+| `node24` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v24.16.0` | `default/default_contract` |
+| `node26` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v26.8.1` | `current/current_contract` |

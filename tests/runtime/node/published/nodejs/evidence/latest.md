@@ -5,7 +5,7 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 ## Snapshot
 
-- generated at: `2026-09-01T05:51:16.382442+00:00`
+- generated at: `2026-09-04T20:01:27.628894+00:00`
 - status source: `tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json`
 - dashboard source: `tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json`
 - trend source: `tests/runtime/node/compat/node-compat-evidence/latest/trend-summary.json`
@@ -129,6 +129,10 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 | Lane | Fixture | Runtime | Oracle | Drift | Node oracle |
 | --- | --- | --- | --- | --- | --- |
+| Node20 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v20.20.2` |
+| Node22 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v22.23.1` |
+| Node24 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v24.16.0` |
+| Node26 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v26.8.1` |
 
 ## Notes
 
