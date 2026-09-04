@@ -108,7 +108,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: cargo-deny@0.19.0
 
@@ -562,7 +562,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -633,7 +633,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -771,13 +771,13 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none
 
       - name: Install cargo-hakari
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: cargo-hakari@0.9.38
           fallback: cargo-install
@@ -1377,7 +1377,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -1527,7 +1527,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -1582,7 +1582,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -1637,7 +1637,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -2351,7 +2351,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: nextest@0.9.143
           fallback: none

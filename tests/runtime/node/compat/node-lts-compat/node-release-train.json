@@ -106,11 +106,11 @@
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
-      "sha256": "76340e1b0ec2a149cac9c930b8eefc41f20c4b580e9431b16603afb46c20b716"
+      "sha256": "0f5718e1dc442ed3b531b5e17feeb14d4991c2b3cb9c8b97a86a4ecf41666fe8"
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json",
-      "sha256": "0f909cfe6359f56747d709e351ad937c60924b61d267d05bc716bcf85ec0ef68"
+      "sha256": "1392913ac1900bd4b0d16d75f49c2bdd81a180d43ea6514e161b877bedf4eb23"
     }
   ],
   "source_urls": [
