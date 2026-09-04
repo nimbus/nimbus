@@ -184,7 +184,7 @@ fn invoke_program_wrapper_json(
         )
     };
 
-    if status == 314 {
+    if status == 314 || host_context.cancellation.is_cancelled() {
         return Err(NimbusRuntimeError::Cancelled);
     }
     if status == 307 {

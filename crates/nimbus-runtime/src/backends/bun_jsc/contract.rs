@@ -29,8 +29,8 @@ pub(crate) struct BunJscLinkedAdapterSourceContract {
 pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSourceContract =
     BunJscLinkedAdapterSourceContract {
         repository: "https://github.com/nimbus/bun",
-        source_ref: "bun-v1.4.0-nimbus.6",
-        git_revision: "1322dc50d7718dcf8ad6adc379921c0659e09886",
+        source_ref: "bun-v1.4.0-nimbus.7",
+        git_revision: "eb9d7eba81616b4008a595ce942f1b3ea71041a6",
         proof_target: "check-bun-embed-shared",
         simdutf_namespace: "nimbus_bun_simdutf",
         required_exports: &[
