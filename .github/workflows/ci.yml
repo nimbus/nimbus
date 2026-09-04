@@ -1820,6 +1820,8 @@ jobs:
             node-version: 22
           - lane: node24
             node-version: 24
+          - lane: node26
+            node-version: 26
     env:
       NEXTEST_BIN_EXE_nimbus: ${{ github.workspace }}/target/ci-archive/nimbus
 
@@ -1870,6 +1872,9 @@ jobs:
             node24)
               make node-compat-oracle LANE=node24 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
               ;;
+            node26)
+              make node-compat-oracle LANE=node26 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+              ;;
             *)
               echo "unsupported oracle lane: ${{ matrix.lane }}" >&2
               exit 2
@@ -1914,7 +1919,7 @@ jobs:
           test -f target/node-compat/canaries/preset-application-node26.json
           test -f target/node-compat/canaries/preset-tooling-node22.json
           test -f target/node-compat/canaries/preset-tooling-node24.json
-          test "$(find target/node-compat/oracle -type f -name 'oracle-*.json' | wc -l)" -ge 2
+          test "$(find target/node-compat/oracle -type f -name 'oracle-*.json' | wc -l)" -ge 3
 
       - name: Build Node compatibility dashboard for PR gates
         run: make node-compat-dashboard
