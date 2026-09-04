@@ -1,6 +1,6 @@
 # RRC8 Release Verdict
 
-Date: 2026-09-02
+Date: 2026-09-04
 
 ## Current Status Update
 
@@ -15,11 +15,14 @@ and local release gates pass. A fresh rusty_v8 download verifies all 44
 payloads and 44 checksum sidecars.
 
 The current Nimbus product-code candidate is
-`a5869adbbf36278f4a9b2bd193a8a399f91e38fc`. Its normal Cargo graph resolves
-41 Deno packages and rusty_v8 from immutable tags. It also pins the Bun/JSC
-adapter to immutable tag `bun-v1.4.0-nimbus.6`. The earlier full `make ci`
-replay passed without a local V8 override. The branch adds one test-toolchain
-correction on top of this product-code candidate.
+`66a82a5e9b51d6bcd7031c806ab5c739ccc968ab`. Its normal Cargo graph resolves
+41 Deno packages from `v2.9.6-nimbus.4` and rusty_v8 from
+`v150.4.0-nimbus.1`. It pins the Bun/JSC adapter to immutable tag
+`bun-v1.4.0-nimbus.7`. This candidate also contains the release test-toolchain,
+runtime admission, local Node grant, and target-specific dgram corrections.
+The earlier full `make ci` replay applies to the superseded
+`a5869adbbf36278f4a9b2bd193a8a399f91e38fc` graph. Full local and hosted proof
+for the exact current candidate is pending, so the result remains **NO-GO**.
 
 A source-free Linux arm64 package from the previous branch head passed health
 and application deployment. Its first WebStandard function invocation then
