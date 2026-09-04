@@ -8,12 +8,12 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: run full local `make ci` from the branch head that contains the
-Nextest correction. Push that head, then start new exact-head CI and shard
-replays. Runs from `a5869adbb` remain product-code evidence but cannot verify
-the corrected test profile. Finish the active Bun and Node runs. Bind the
-native, application, desktop, archive, OCI, and distribution proofs to the
-final head. Rerun the 46-condition verifier.
+Next action: finish Deno run `33925453875` and Bun run `33926366044`. If they
+pass, publish immutable fork tags and repin Nimbus to those exact commits.
+Then start the final nonpublishing exact-head CI, shard, Node, desktop,
+artifact, and host replays. Bind every accepted proof to that head. Rerun the
+46-condition verifier. Public-cloud lanes remain fail-closed until their
+release credentials and endpoints are available.
 
 ## Outcome
 
@@ -497,3 +497,8 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-04 | RRC6 | fail-before | The real Electron application connected to the exact local candidate and showed a server uptime above seven days after a process that had started about one minute earlier. `record_system_status_async` reused the persisted `system:server.startedAt` value, so the UI reported installation-record age as process uptime. |
 | 2026-09-04 | RRC6 | finding | `nimbus-system` now replaces `startedAt` whenever a server process records its status. An engine-backed regression seeds the old value and proves replacement. The focused test and incremental exact-binary build pass. A second real Electron session shows `UPTIME 0m` and a seconds-old start time; native Quit removes both Electron and the exact Nimbus child. The automated desktop suite also passes all five exact-binary tests. |
 | 2026-09-04 | RRC8 | investigation | Bun diagnostic run `33908594586` passed every native and linked-adapter probe on macOS, including construction, synchronous and asynchronous host calls, program bundles, timeout and cancellation, permissions, memory, package policy, lifecycle stress, wrapper invocation, 42 manifest and unit tests, and eight linked tests. Only the known branch-ref manifest comparison failed. Corrected run `33916617802` owns the explicit-source verifier proof; no new Bun tag exists yet. |
+| 2026-09-04 | RRC8 | finding | Hosted CI required a Node 26 oracle but its matrix ran only Node 22 and Node 24. Nimbus commit `02eae6ea1` adds the Node 26 setup and oracle, requires all three reports, and updates the workflow verifier. The local Node 26 oracle, 13-condition dashboard, action lint, ShellCheck, whitespace check, TruffleHog scan, and exact Sol xhigh review pass. No Opus 5 or Fable review ran. |
+| 2026-09-04 | RRC7 | evidence | Clean Debian 13 and Fedora 42 containers installed the complete locally built Nimbus 0.1.46, `nimbus-libkrun`, and `nimbus-crun` package tuples. Both hosts passed version, health, and graceful `SIGTERM` checks. No package or Nimbus product release was published. |
+| 2026-09-04 | RRC8 | finding | The deterministic Node 22 `stream.pipeline` fixture exposed a Deno regression. Public `OutgoingMessage.writableFinished` correctly stayed false until transport flush, but the internal finished helper no longer accepted a drained legacy response after parser close. Deno commit `980df52ddfd9b4d79535b4490ef0a786a34b14ba` restores only the internal completion signal and keeps the public transport-flush contract strict. The original Nimbus fixture, Deno formatting and JS lint, action lint, whitespace, TruffleHog, and the exact Sol xhigh review pass. Hosted Deno run `33925453875` owns final branch validation. |
+| 2026-09-04 | RRC8 | evidence | Bun run `33916617802` passes the complete Linux x86_64 adapter and package lane at Bun commit `38531f191dd11149d07bcc9fb0c5c7e2b40c89ba`. On macOS it passes the native probes, process-global concurrent initialization, 42 manifest and unit tests, and all eight linked integration tests. The later server diagnostics step failed while Cargo linked unrelated integration-test binaries: macOS returned `Resource temporarily unavailable` after the verified adapter work. |
+| 2026-09-04 | RRC8 | finding | Nimbus commit `036bc78fc` adds `--lib` to both Bun server-diagnostics proofs, so Cargo links only the library test that owns the assertion. The exact local test passes with 1 test and 705 filtered tests. Bash syntax, ShellCheck, whitespace, TruffleHog, and the exact Sol xhigh review pass. Replacement nonpublishing run `33926366044` tests macOS arm64 and Linux x86_64. |
