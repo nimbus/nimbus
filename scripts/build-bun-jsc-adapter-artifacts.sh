@@ -204,6 +204,9 @@ manifest_path="$(awk -F= '$1 == "manifest.path" { print $2; exit }' <<<"${packag
 bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
   --archive "${archive_path}" \
   --target-triple "${target_triple}" \
+  --bun-source-repository "${bun_source_repository}" \
+  --bun-source-ref "${bun_source_ref}" \
+  --bun-source-revision "${bun_source_revision}" \
   2>&1 | tee "${verify_log}"
 
 archive_sha256="$(bun_jsc_adapter_sha256_file "${archive_path}")"
