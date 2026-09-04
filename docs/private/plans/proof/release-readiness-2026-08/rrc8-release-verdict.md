@@ -21,8 +21,10 @@ The current Nimbus product-code candidate is
 `bun-v1.4.0-nimbus.7`. This candidate also contains the release test-toolchain,
 runtime admission, local Node grant, and target-specific dgram corrections.
 The earlier full `make ci` replay applies to the superseded
-`a5869adbbf36278f4a9b2bd193a8a399f91e38fc` graph. Full local and hosted proof
-for the exact current candidate is pending, so the result remains **NO-GO**.
+`a5869adbbf36278f4a9b2bd193a8a399f91e38fc` graph.
+
+RRC8 has not completed full local and hosted proof for the exact current
+candidate. The result remains **NO-GO**.
 
 A source-free Linux arm64 package from the previous branch head passed health
 and application deployment. Its first WebStandard function invocation then
