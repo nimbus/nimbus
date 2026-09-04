@@ -6,6 +6,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/bun-jsc-adapter-contract.sh
 source "${REPO_ROOT}/scripts/bun-jsc-adapter-contract.sh"
 BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
 EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-${BUN_JSC_ADAPTER_SOURCE_REF}}"
@@ -388,7 +389,8 @@ case "${host_triple}" in
       if [[ -x /opt/homebrew/opt/llvm@21/bin/clang++ ]]; then
         export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=/opt/homebrew/opt/llvm@21/bin/clang++
       else
-        export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
       fi
     fi
     ;;
@@ -397,7 +399,8 @@ case "${host_triple}" in
       if [[ -x /opt/homebrew/opt/llvm@21/bin/clang++ ]]; then
         export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/opt/homebrew/opt/llvm@21/bin/clang++
       else
-        export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER
       fi
     fi
     ;;
@@ -408,7 +411,8 @@ case "${host_triple}" in
       elif command -v clang++ >/dev/null 2>&1; then
         export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang++
       else
-        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$(command -v c++)"
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$(command -v c++)"
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
       fi
     fi
     if command -v ld.lld >/dev/null 2>&1; then
@@ -441,7 +445,7 @@ NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
 printf '\n[9/11] Server linked-lane diagnostics proof\n'
 NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
   CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
-  cargo test -p nimbus-server --features bun-jsc-linked-adapter \
+  cargo test -p nimbus-server --features bun-jsc-linked-adapter --lib \
     registry_and_license::registry::convex_registry_bun_jsc_lane_diagnostics_reflect_runtime_adapter_state \
     -- --nocapture
 
