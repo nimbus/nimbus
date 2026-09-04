@@ -87,7 +87,9 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   U6 records the exact Nimbus, Deno, and rusty_v8 commits plus the controlled
   replay-scaffolding A/B. It owns the permanent runtime-strategy lifecycle,
   product-versus-lab separation, experiment archive, benchmark truth, and
-  future fork cleanup. RRC8 keeps exclusive ownership until owner activation.
+  future fork cleanup. It consumes the completed Node trust baseline in
+  `docs/private/plans/archive/node-lts-runtime-trust-plan.md`. RRC8 keeps
+  exclusive ownership until owner activation.
 - `wasi-agent-capabilities-plan.md` - `deferred`. Starts only after the Wasmtime
   component linker, NimbusFS binder, and HTTP-client binder exist. Owns the
   process primitive and WIT projection layer; it must not re-own filesystem or

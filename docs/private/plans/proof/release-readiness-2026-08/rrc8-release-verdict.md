@@ -7,9 +7,9 @@ Date: 2026-09-02
 Result: **NO-GO**.
 
 RRC8 tracks upstream Deno 2.9.6 and V8 150.4. Public fork releases
-`v2.9.6-nimbus.2` and `v150.4.0-nimbus.1` are non-draft and non-prerelease.
+`v2.9.6-nimbus.4` and `v150.4.0-nimbus.1` are non-draft and non-prerelease.
 Their annotated tags peel to reviewed commits
-`625e4c259488dfa1c3c9d03fabde17758e1130d9` and
+`ded7d15771894d157b6369b8193d6e5bd055ce9e` and
 `961a76d0cee88efdecfa9224c519fd153c404b51`. Their branch and tag workflows
 and local release gates pass. A fresh rusty_v8 download verifies all 44
 payloads and 44 checksum sidecars.
@@ -18,7 +18,7 @@ The current Nimbus product-code candidate is
 `a5869adbbf36278f4a9b2bd193a8a399f91e38fc`. Its normal Cargo graph resolves
 41 Deno packages and rusty_v8 from immutable tags. It also pins the Bun/JSC
 adapter to immutable tag `bun-v1.4.0-nimbus.6`. The earlier full `make ci`
-replay passed without a local V8 override. The branch adds one test-runner
+replay passed without a local V8 override. The branch adds one test-toolchain
 correction on top of this product-code candidate.
 
 A source-free Linux arm64 package from the previous branch head passed health
@@ -235,16 +235,27 @@ The first local `make ci` at `a5869adbb` passed 510 runtime tests and declared
 skips. One CLI test failed because process scheduling consumed its one-second
 test deadline. One sandbox test passed but received a Nextest leak marker.
 
-Both tests pass alone. The sandbox test starts no child process and joins its
-two threads. A 500-millisecond hard leak window then marked a different
-no-child, joined-thread sandbox test under package load. These observations
-identify delayed test-process exit under load, not an open child output handle.
+The first repair gave every test a five-second leak timeout. Sol rejected that
+change because Nextest starts this timer after the test process exits. The
+global allowance could hide a short-lived descendant that retains a capture
+handle. RRC8 accepted this P2 finding.
 
-The repaired Nextest profile reserves the runner for the two wall-clock tests.
-It also fails any captured output handle that remains open for five seconds.
-The two exact tests pass 2 of 2. The affected package gate passes 2,307 of
-2,307 tests. It declares 51 skips and reports zero leaks. The final full
-`make ci` replay remains required.
+The next configuration made the default 100-millisecond leak result a hard
+failure. Cargo-nextest 0.9.138 then failed 3 of 100 concurrent stress
+iterations. Two reported tests start no child process. A separate subprocess
+oracle ran the three sandbox tests 300 times and observed immediate pipe
+closure after every process exit.
+
+This behavior matches open Nextest issue 1469. Cargo-nextest 0.9.143 passed the
+same 100-iteration focused stress case. A full package run still assigned a
+leak failure to a 0.00-second CLI unit. A one-second macOS override then
+assigned the same result to a server test that starts no child process.
+
+Nimbus now requires cargo-nextest 0.9.143 in every local and hosted consumer.
+Linux and Windows use a 100-millisecond hard leak failure. macOS uses the
+documented platform override and fails after five seconds. The CLI wall-clock
+test reserves the complete runner. Its one-second assertion remains unchanged.
+The final full `make ci` replay remains required.
 
 Runs `33594909729`, `33594912184`, `33594915367`, `33594917976`,
 `33594920291`, `33594923052`, `33594925657`, and `33594928725` pass at
