@@ -90,7 +90,7 @@ pub(crate) async fn record_system_status_async(
     listen_addr: Option<SocketAddr>,
 ) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
-    let started_at = existing_system_started_at_async(engine).await?;
+    let started_at = unix_time_millis()?;
     let mut details = Map::new();
     if let Some(listen_addr) = listen_addr {
         details.insert("listenAddress".to_owned(), json!(listen_addr.to_string()));
@@ -327,30 +327,6 @@ async fn delete_system_document_if_exists_async(
     }
 }
 
-async fn existing_system_started_at_async(engine: &Arc<Engine>) -> Result<u64> {
-    let system_tenant = system_tenant_id()?;
-    let table = SystemTable::SystemStatus.table_name()?;
-    let document_id = DocumentId::from_key("system:server")?;
-    match engine
-        .get_document_async(system_tenant, table, document_id)
-        .await
-    {
-        Ok(document) => started_at_or_else(&document.fields, unix_time_millis),
-        Err(Error::DocumentNotFound(_)) => unix_time_millis(),
-        Err(error) => Err(error),
-    }
-}
-
-fn started_at_or_else<F>(fields: &Map<String, Value>, fallback: F) -> Result<u64>
-where
-    F: FnOnce() -> Result<u64>,
-{
-    match fields.get("startedAt").and_then(Value::as_u64) {
-        Some(started_at) => Ok(started_at),
-        None => fallback(),
-    }
-}
-
 async fn query_system_documents_by_eq_async(
     engine: &Arc<Engine>,
     table: SystemTable,
@@ -498,27 +474,49 @@ pub fn endpoint_protocol(protocol: EndpointProtocol) -> &'static str {
 mod tests {
     use super::*;
 
-    #[test]
-    fn started_at_or_else_uses_persisted_value_without_calling_fallback() {
-        let fields = object_fields(json!({ "startedAt": 42 }));
+    #[tokio::test]
+    async fn recording_system_status_replaces_a_persisted_process_start_time() {
+        let fixture = nimbus_testing::EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        ensure_system_tenant_async(&engine)
+            .await
+            .expect("system tenant should prepare");
+        upsert_system_document_async(
+            &engine,
+            SystemTable::SystemStatus,
+            "system:server",
+            object_fields(json!({
+                "name": "server",
+                "version": "old",
+                "health": "ok",
+                "startedAt": 42,
+                "updatedAt": 42,
+                "details": {},
+            })),
+        )
+        .await
+        .expect("old process status should seed");
 
-        let started_at = started_at_or_else(&fields, || {
-            Err(Error::Internal(
-                "fallback should not run when startedAt is present".to_owned(),
-            ))
-        })
-        .expect("persisted startedAt should be used");
+        record_system_status_async(&engine, None)
+            .await
+            .expect("new process status should replace the old start time");
 
-        assert_eq!(started_at, 42);
-    }
-
-    #[test]
-    fn started_at_or_else_calls_fallback_when_started_at_is_missing_or_invalid() {
-        let missing = object_fields(json!({}));
-        let invalid = object_fields(json!({ "startedAt": "not-a-number" }));
-
-        assert_eq!(started_at_or_else(&missing, || Ok(7)).unwrap(), 7);
-        assert_eq!(started_at_or_else(&invalid, || Ok(9)).unwrap(), 9);
+        let status = engine
+            .get_document_async(
+                system_tenant_id().expect("system tenant id should validate"),
+                SystemTable::SystemStatus
+                    .table_name()
+                    .expect("system status table should validate"),
+                DocumentId::from_key("system:server").expect("status id should validate"),
+            )
+            .await
+            .expect("system status should exist");
+        assert!(
+            status.fields["startedAt"]
+                .as_u64()
+                .is_some_and(|value| value > 42),
+            "server uptime must begin with the current process: {status:?}"
+        );
     }
 
     #[test]
