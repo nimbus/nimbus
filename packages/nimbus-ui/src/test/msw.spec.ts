@@ -93,10 +93,10 @@ describe("msw handlers", () => {
       "build_feature_disabled",
     );
     expect(bunLane?.execution_adapter_artifact?.expected?.source_ref).toBe(
-      "bun-v1.4.0-nimbus.7",
+      "bun-v1.4.0-nimbus.8",
     );
     expect(
       bunLane?.execution_adapter_artifact?.expected?.source_revision,
-    ).toBe("eb9d7eba81616b4008a595ce942f1b3ea71041a6");
+    ).toBe("38531f191dd11149d07bcc9fb0c5c7e2b40c89ba");
   });
 });
