@@ -8,14 +8,13 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: wait for diagnostic Bun/JSC run `33980209212` at Nimbus
-`5011515bb` and Bun `eafe931fa4`. The first 1.4.2 macOS job linked and loaded
-the adapter, but its process exited during the concurrent first-VM proof. Use
-the new opt-in native phase trace to bind the failure to process
-initialization, VM construction, or teardown. Fix the confirmed lifecycle
-defect and require both native hosts to pass before tag
-`bun-v1.4.2-nimbus.1`, maintained branch `nimbus/bun-v1.4.2`, or the immutable
-Nimbus repin.
+Next action: wait for both native jobs in diagnostic Bun/JSC run `33980209212`
+at Nimbus `5011515bb` and Bun `eafe931fa4`. The exact candidate passes the
+runtime preflight and a clean Linux native rebuild on `minicloud.local`. Use
+the opt-in native phase trace if the hosted macOS job reproduces the earlier
+concurrent first-VM failure. Fix any confirmed lifecycle defect and require
+both native hosts to pass before tag `bun-v1.4.2-nimbus.1`, maintained branch
+`nimbus/bun-v1.4.2`, or the immutable Nimbus repin.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -560,3 +559,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | fail-before | The cached minicloud native build rejected `49107c6e98` before compilation because the new direct probe dependency was absent from `Cargo.lock` and the build correctly uses `--locked`. This is a candidate integration defect, not a runner failure. Bun commit `eafe931fa4a0b20a64fa8a9ecb30b790fea90cd1` records the existing workspace `libc` package in the probe dependency list. Locked metadata, formatting, and whitespace checks pass. |
 | 2026-09-05 | RRC8 | superseded | Run `33979915946` was cancelled during its prerequisite runtime test after the minicloud locked-build failure. No native job started. Replacement run `33980209212` owns the corrected exact candidate. |
 | 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33980209212` uses Nimbus `5011515bb6f3eca3c517542f3e691d0a071e1dd9`, Bun `eafe931fa4a0b20a64fa8a9ecb30b790fea90cd1`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. Its exact runtime preflight is active. The cached minicloud `debug-no-asan` native target is compiling the same Bun commit. Publication stays disabled. |
+| 2026-09-05 | RRC8 | evidence | Run `33980209212` passes its exact runtime preflight. The same Bun `eafe931fa4` candidate also completes a clean 1,166-edge Linux `debug-no-asan` rebuild and the full native embed probe on `minicloud.local`. The opt-in trace proves that all four concurrent first VMs complete process initialization, VM construction, and destruction. Cancellation recovery, permission inventory, memory behavior, package policy, and retained-lifecycle stress also pass. The two hosted native jobs are active. |
