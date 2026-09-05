@@ -280,6 +280,7 @@ if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}" && [[ -z "${BUN_WEBKIT_PATH:-}" 
     export BUN_WEBKIT_PATH="${HOME}/src/github.com/oven-sh/WebKit"
   fi
 fi
+WEBKIT_REPO="${BUN_WEBKIT_PATH:-${BUN_REPO}/vendor/WebKit}"
 
 if [[ -d /private/tmp ]] && ! is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}"; then
   BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-/private/tmp/nimbus-bun-shared-adapter-${BUN_PROFILE}}"
@@ -324,6 +325,7 @@ printf 'Bun ref:     %s\n' "${EXPECTED_BUN_REF}"
 printf 'Bun rev:     %s\n' "${EXPECTED_BUN_REV}"
 printf 'Bun CLI:     %s\n' "${BUN_EXECUTABLE}"
 printf 'Bun profile: %s\n' "${BUN_PROFILE}"
+printf 'WebKit repo: %s\n' "${WEBKIT_REPO}"
 printf 'Bun simdutf namespace enabled: %s\n' "${BUN_ENABLE_SIMDUTF_NAMESPACE}"
 printf 'Bun symbol audit required: %s\n\n' "${BUN_REQUIRE_SYMBOL_AUDIT}"
 printf 'Bun shared artifact audit required: %s\n' "${BUN_REQUIRE_SHARED_ARTIFACT_AUDIT}"
@@ -356,6 +358,10 @@ if [[ -n "${bun_status}" ]]; then
     "${bun_status}" >&2
   exit 1
 fi
+
+bash "${REPO_ROOT}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${BUN_REPO}" \
+  --webkit-repo "${WEBKIT_REPO}"
 
 if [[ -n "${RUNTIME_PREFLIGHT_ATTESTATION}" ]]; then
   verify_runtime_preflight_attestation "${RUNTIME_PREFLIGHT_ATTESTATION}"

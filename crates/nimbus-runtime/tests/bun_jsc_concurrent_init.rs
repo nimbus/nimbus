@@ -138,7 +138,7 @@ globalThis.__nimbusInvoke = async function(request) {
                     RuntimeEgressPosture::CoarsePermissions,
                 );
                 let request = InvocationRequest {
-                    kind: InvocationKind::Query,
+                    kind: InvocationKind::Mutation,
                     function_name: "messages:concurrentInit".to_string(),
                     args: json!({ "worker": worker }),
                     page_size: None,
