@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-bun-webkit-source-helper.XXXXXX")"
-tmp_root="$(cd "${tmp_root}" && pwd -L)"
+tmp_root="$(cd "${tmp_root}" && pwd -P)"
 trap 'rm -rf "${tmp_root}"' EXIT
 
 bun_repo="${tmp_root}/bun"
@@ -77,6 +77,33 @@ HOME="${tmp_root}" \
   >"${tmp_root}/make-empty.out"
 grep -F "is clean at Bun pin ${pinned_revision}" \
   "${tmp_root}/make-empty.out" >/dev/null
+
+mkdir -p "${webkit_repo}/ignored-copy"
+printf 'ignored-copy/\n' >"${webkit_repo}/.git/info/exclude"
+printf 'modified source\n' >"${webkit_repo}/ignored-copy/source.txt"
+if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "${webkit_repo}/ignored-copy" \
+  >"${tmp_root}/child.out" 2>"${tmp_root}/child.err"; then
+  printf 'ignored child source unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "WebKit source must be the Git worktree root" \
+  "${tmp_root}/child.err" >/dev/null
+
+redirected_source="${tmp_root}/redirected-source"
+mkdir -p "${redirected_source}"
+printf 'modified source\n' >"${redirected_source}/source.txt"
+if GIT_DIR="${webkit_repo}/.git" GIT_WORK_TREE="${webkit_repo}" \
+  bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+    --bun-repo "${bun_repo}" \
+    --webkit-repo "${redirected_source}" \
+    >"${tmp_root}/redirect.out" 2>"${tmp_root}/redirect.err"; then
+  printf 'environment-redirected source unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "WebKit source is not a Git worktree" \
+  "${tmp_root}/redirect.err" >/dev/null
 
 printf 'dirty\n' >"${webkit_repo}/dirty.txt"
 git -C "${webkit_repo}" config status.showUntrackedFiles no
@@ -183,4 +210,4 @@ if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
 fi
 grep -F "expected exactly one WEBKIT_VERSION" "${tmp_root}/malformed.err" >/dev/null
 
-printf 'verified: Bun WebKit source proof rejects dirty, stale, hidden, replaced, symbolic, missing, and malformed inputs\n'
+printf 'verified: Bun WebKit source proof rejects dirty, stale, nested, redirected, hidden, replaced, symbolic, missing, and malformed inputs\n'

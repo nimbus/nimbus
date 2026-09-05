@@ -47,7 +47,7 @@ case "${webkit_repo}" in
   *) webkit_repo="${bun_repo}/${webkit_repo}" ;;
 esac
 [[ -d "${webkit_repo}" ]] || die "WebKit source checkout not found: ${webkit_repo:-missing}"
-webkit_repo="$(cd "${webkit_repo}" && pwd -L)"
+webkit_repo="$(cd "${webkit_repo}" && pwd -P)"
 command -v git >/dev/null 2>&1 || die "git is required"
 
 pin_file="${bun_repo}/scripts/build/deps/webkit.ts"
@@ -68,8 +68,29 @@ fi
 expected_revision="${webkit_version}"
 
 git_webkit() {
-  GIT_NO_REPLACE_OBJECTS=1 git -C "${webkit_repo}" "$@"
+  env \
+    -u GIT_DIR \
+    -u GIT_WORK_TREE \
+    -u GIT_COMMON_DIR \
+    -u GIT_INDEX_FILE \
+    -u GIT_OBJECT_DIRECTORY \
+    -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    -u GIT_CONFIG_COUNT \
+    -u GIT_CONFIG_SYSTEM \
+    -u GIT_CONFIG_GLOBAL \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_REPLACE_OBJECTS=1 \
+    git -C "${webkit_repo}" "$@"
 }
+
+worktree_root="$(git_webkit rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "${worktree_root}" ]]; then
+  die "WebKit source is not a Git worktree: ${webkit_repo}"
+fi
+worktree_root="$(cd "${worktree_root}" && pwd -P)"
+if [[ "${worktree_root}" != "${webkit_repo}" ]]; then
+  die "WebKit source must be the Git worktree root: got ${webkit_repo}, root is ${worktree_root}"
+fi
 
 if ! git_webkit cat-file -e "${expected_revision}^{commit}" 2>/dev/null; then
   die "WebKit checkout does not contain Bun pin ${expected_revision}: ${webkit_repo}"
@@ -98,7 +119,7 @@ if [[ "${actual_revision}" != "${expected_revision}" ]]; then
 fi
 
 webkit_status="$(
-  GIT_NO_REPLACE_OBJECTS=1 git -c status.showUntrackedFiles=all -C "${webkit_repo}" \
+  git_webkit -c status.showUntrackedFiles=all \
     status --short --untracked-files=all --ignore-submodules=none
 )"
 if [[ -n "${webkit_status}" ]]; then
