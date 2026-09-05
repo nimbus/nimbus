@@ -8,13 +8,12 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: wait for both native jobs in diagnostic Bun/JSC run `33980209212`
-at Nimbus `5011515bb` and Bun `eafe931fa4`. The exact candidate passes the
-runtime preflight and a clean Linux native rebuild on `minicloud.local`. Use
-the opt-in native phase trace if the hosted macOS job reproduces the earlier
-concurrent first-VM failure. Fix any confirmed lifecycle defect and require
-both native hosts to pass before tag `bun-v1.4.2-nimbus.1`, maintained branch
-`nimbus/bun-v1.4.2`, or the immutable Nimbus repin.
+Next action: finish the Sol xhigh follow-up and retrieve both native results
+from diagnostic run `33980209212`. Corrected run `33982835308` waits
+behind it at Nimbus `3793ca1fe` and Bun `ba9f964f75`. Require the corrected
+candidate to pass both native hosts and repeat the macOS first-VM proof before
+tag `bun-v1.4.2-nimbus.1`, maintained branch `nimbus/bun-v1.4.2`, or the
+immutable Nimbus repin.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -560,3 +559,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | superseded | Run `33979915946` was cancelled during its prerequisite runtime test after the minicloud locked-build failure. No native job started. Replacement run `33980209212` owns the corrected exact candidate. |
 | 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33980209212` uses Nimbus `5011515bb6f3eca3c517542f3e691d0a071e1dd9`, Bun `eafe931fa4a0b20a64fa8a9ecb30b790fea90cd1`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. Its exact runtime preflight is active. The cached minicloud `debug-no-asan` native target is compiling the same Bun commit. Publication stays disabled. |
 | 2026-09-05 | RRC8 | evidence | Run `33980209212` passes its exact runtime preflight. The same Bun `eafe931fa4` candidate also completes a clean 1,166-edge Linux `debug-no-asan` rebuild and the full native embed probe on `minicloud.local`. The opt-in trace proves that all four concurrent first VMs complete process initialization, VM construction, and destruction. Cancellation recovery, permission inventory, memory behavior, package policy, and retained-lifecycle stress also pass. The two hosted native jobs are active. |
+| 2026-09-05 | RRC8 | review | A Sol xhigh review of the complete Bun 1.4.2 carry found three accepted availability defects. The tenant deny profile left synchronous JavaScript and WebAssembly atomic waits enabled, the opt-in trace used a constant absent on Windows MSVC, and ABI overflow lengths had no allocation ceiling. Source review confirms all three findings. No Opus 5 or Fable review ran. |
+| 2026-09-05 | RRC8 | finding | Bun commit `ba9f964f75d5b5f886366e879b742837e0fd4a0c` closes the JSC controller gate for blocking atomic waits under only the tenant deny profile, uses target-correct direct stderr writes, and rejects a second allocation above the 32 MiB ABI response ceiling. Nimbus commit `3793ca1fe2005c7632eca6031706bff60325d667` applies the same ceiling before host-response retention and adapter-response allocation. Formatting, locked metadata, whitespace, the 44-test Nimbus Bun runtime set, and a focused Windows MSVC trace type-check pass. |
+| 2026-09-05 | RRC8 | evidence | The corrected Bun `ba9f964f75` candidate completes its 87-edge incremental Linux native rebuild and the full embed probe on `minicloud.local`. The permission inventory now reports JavaScript and WebAssembly atomic waits denied by default. Concurrent first-VM construction and destruction, cancellation recovery, memory behavior, package policy, and retained-lifecycle stress remain green. |
+| 2026-09-05 | RRC8 | started | Corrected nonpublishing run `33982835308` is pending behind the older diagnostic run under the workflow concurrency contract. It binds Nimbus `3793ca1fe2005c7632eca6031706bff60325d667` and Bun `ba9f964f75d5b5f886366e879b742837e0fd4a0c`. The older run remains useful only for its macOS lifecycle trace and cannot certify the corrected candidate. |
