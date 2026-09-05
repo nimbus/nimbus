@@ -51,8 +51,53 @@ permissions:
   contents: read
 
 jobs:
+  verify-runtime-contract:
+    name: Verify Bun/JSC runtime contract (linux-x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out Nimbus repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust with cache
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: bun-jsc-adapter-x86_64-unknown-linux-gnu-v1
+          save-cache: always
+          consume-prebuilt-v8: release
+          github-token: ${{ github.token }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Verify runtime contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          make verify-bun-jsc-runtime-contract
+          env -u NIMBUS_BUN_EMBED_LINK_ARGS -u NIMBUS_BUN_EMBED_SHARED_LIBRARY \
+            cargo test -p nimbus-runtime --features bun-jsc-linked-adapter \
+              --lib backends::bun_jsc
+          mkdir -p dist/bun-jsc-runtime-preflight
+          {
+            echo "result=passed"
+            echo "nimbus.revision=$(git rev-parse HEAD)"
+          } > dist/bun-jsc-runtime-preflight/attestation.txt
+
+      - name: Upload runtime preflight attestation
+        uses: actions/upload-artifact@v7
+        with:
+          name: bun-jsc-runtime-preflight
+          path: dist/bun-jsc-runtime-preflight/attestation.txt
+          if-no-files-found: error
+
   build-adapter:
     name: Build Bun/JSC adapter (${{ matrix.platform_arch }})
+    needs: verify-runtime-contract
     runs-on: ${{ matrix.runner }}
     # 360 (max) not 240: the namespaced adapter builds WebKit/JSC from source
     # (--webkit=local). A cold JSC/WTF build dominates the first (cache-miss)
@@ -204,6 +249,13 @@ jobs:
             exit 65
           fi
 
+      - name: Download Linux runtime preflight attestation
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v8
+        with:
+          name: bun-jsc-runtime-preflight
+          path: dist/bun-jsc-runtime-preflight
+
       - name: Build, package, and verify adapter
         env:
           INPUT_NIMBUS_VERSION: ${{ inputs.nimbus_version }}
@@ -215,6 +267,9 @@ jobs:
           fi
           if [[ -z "${nimbus_version}" ]]; then
             nimbus_version="${GITHUB_REF_NAME:-manual}"
+          fi
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            export NIMBUS_BUN_RUNTIME_PREFLIGHT_ATTESTATION="${GITHUB_WORKSPACE}/dist/bun-jsc-runtime-preflight/attestation.txt"
           fi
           bash scripts/build-bun-jsc-adapter-artifacts.sh \
             --output-dir "dist/bun-jsc-adapter-${{ matrix.platform_arch }}" \

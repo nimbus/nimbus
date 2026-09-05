@@ -8,14 +8,16 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish Deno run `33933279302`. Then close the remaining Node gaps
-against the exact local fork graph. These gaps affect modules, WebCrypto,
-Diffie-Hellman, XOF, and zlib.
+Next action: finish Deno run `33961040072` at exact candidate `95413e012e`.
+After a pass, publish the next immutable Deno 2.9.6 fork release. Then repin
+Nimbus. The candidate includes the complete Node 26 crypto compatibility pass
+and the reviewed AES-GCM empty-IV repair. Hosted CI covers both crypto carry
+crates and their WebCrypto and Node integration files.
 
-Uplift the verified Bun 1.4.0 carries to the upstream 1.4.1 release before
-final validation.
-The tracks-latest gate does not accept interim tag `bun-v1.4.0-nimbus.8` as the
-final release graph.
+Resume the Bun 1.4.1 host replay at reviewed candidate `a7ad6a5aa5`. macOS
+passed run `33936367255`. Linux exhausted the 360-minute job limit. Repair the
+cold Linux build workflow without weakening its contract. Require both hosts
+before the immutable Bun tag and Nimbus repin.
 
 After both immutable fork tags pass and Nimbus pins them, start the final
 nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays.
@@ -516,3 +518,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-04 | RRC8 | finding | The broader Node corpus exposed three additional target-policy differences. Deno commits through `41a94c363e185511d68ac2e0be2d48c3bcead718` correct the URLSearchParams null-value contract, the completion sentinel, closed-readable target behavior, and the default count for `v8.queryObjects`. Exact-head hosted run `33934068674` passes workspace check, formatting, lint, `deno_core`, `serde_v8`, `deno_node`, fetch, WebSocket, Node integration, and runtime tests. This is post-tag fork evidence; no replacement Deno tag has been published. No Opus 5 or Fable review ran. |
 | 2026-09-04 | RRC8 | finding | Uplift branch `codex/bun-v1.4.1-release-readiness` ports the retained Nimbus adapter contracts onto exact upstream Bun 1.4.1. Commit `d896136c18` adapts the runtime process root, embed probe, resolver APIs, native profile and permission policy, namespaced SIMD symbols, and build graph without restoring removed upstream LTO machinery. Review found that a shared-library link could omit unreferenced Rust ABI roots. Commit `a7ad6a5aa5d0543dbb88d6ffa0d7c69592d1d3fa` makes the Rust archive a forced-load input on macOS and a whole-archive input on Linux. Eight generator tests, both Rust archive builds, formatting, whitespace, shared-link command inspection, TruffleHog, and the final Sol xhigh review pass. |
 | 2026-09-04 | RRC8 | started | Non-publishing hosted Bun run `33936367255` is building the exact Bun 1.4.1 candidate on macOS arm64 and Linux x86_64. Publication stays disabled. An immutable fork tag and Nimbus repin remain gated on both host jobs passing. |
+| 2026-09-05 | RRC8 | finding | The exact Node 26 crypto audit found missing raw asymmetric key import and export, KEM, modern digest, and ESM export behavior in the Deno fork. Eight concept-owned commits through `eff2c12eea` add the supported provider surface, retain the BoringSSL exclusions for EC/X KEM and ML-KEM-512, and pass the complete Node crypto-key file plus exact upstream Node 26 raw-key and KEM fixtures. |
+| 2026-09-05 | RRC8 | review | A fresh Sol xhigh whole-branch review produced four P2 claims. Exact Node 26 fixtures refuted EC/X KEM and ML-KEM-512 support on the selected BoringSSL provider. Current WebCrypto and Node 26 source refuted freezing the mutable public `CryptoKey.usages` view. NIST SP 800-38D and direct Node 26 behavior confirmed that an empty AES-GCM IV must fail. No Opus 5 or Fable review ran. |
+| 2026-09-05 | RRC8 | finding | Deno commit `ec8cc20887` rejects empty AES-GCM IVs for encryption and decryption as `OperationError` and moves an earlier crypto-key test module to its Clippy-compliant owner position. All 16 `deno_crypto` tests, 15 `deno_node_crypto` tests, the complete 132-test WebCrypto file, the Node crypto-key file, strict all-target crypto Clippy, formatting, and JS lint pass. A focused Sol xhigh review is clean. |
+| 2026-09-05 | RRC8 | finding | The Deno fork workflow did not test the two crypto carry crates or the changed WebCrypto and Node crypto-key integration files. Commit `95413e012e` adds them without reducing existing coverage. The workflow parses, both crate suites pass locally, and hosted run `33961040072` is active at that exact commit. |

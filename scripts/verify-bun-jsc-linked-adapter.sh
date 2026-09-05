@@ -43,12 +43,31 @@ BUN_PROFILE="${NIMBUS_BUN_PROFILE:-${DEFAULT_BUN_PROFILE}}"
 BUN_ENABLE_SIMDUTF_NAMESPACE="${NIMBUS_BUN_ENABLE_SIMDUTF_NAMESPACE:-${DEFAULT_ENABLE_SIMDUTF_NAMESPACE}}"
 BUN_REQUIRE_SYMBOL_AUDIT="${NIMBUS_BUN_REQUIRE_SYMBOL_AUDIT:-${DEFAULT_REQUIRE_SYMBOL_AUDIT}}"
 BUN_REQUIRE_SHARED_ARTIFACT_AUDIT="${NIMBUS_BUN_REQUIRE_SHARED_ARTIFACT_AUDIT:-${DEFAULT_SHARED_ARTIFACT_AUDIT}}"
+RUNTIME_PREFLIGHT_ATTESTATION="${NIMBUS_BUN_RUNTIME_PREFLIGHT_ATTESTATION:-}"
 
 is_enabled() {
   case "${1}" in
     1 | true | TRUE | yes | YES | on | ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+verify_runtime_preflight_attestation() {
+  local attestation="${1}"
+  if [[ ! -f "${attestation}" ]]; then
+    printf 'missing Bun/JSC runtime preflight attestation: %s\n' "${attestation}" >&2
+    exit 1
+  fi
+
+  local expected_revision result revision
+  expected_revision="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  result="$(awk -F= '$1 == "result" { print $2; exit }' "${attestation}")"
+  revision="$(awk -F= '$1 == "nimbus.revision" { print $2; exit }' "${attestation}")"
+  if [[ "${result}" != passed || "${revision}" != "${expected_revision}" ]]; then
+    printf 'invalid Bun/JSC runtime preflight attestation: expected passed at %s, got result=%s revision=%s\n' \
+      "${expected_revision}" "${result:-missing}" "${revision:-missing}" >&2
+    exit 1
+  fi
 }
 
 reject_unsafe_linker_policy() {
@@ -338,12 +357,20 @@ if [[ -n "${bun_status}" ]]; then
   exit 1
 fi
 
-printf '[1/11] Default no-link runtime contract\n'
-make verify-bun-jsc-runtime-contract
+if [[ -n "${RUNTIME_PREFLIGHT_ATTESTATION}" ]]; then
+  verify_runtime_preflight_attestation "${RUNTIME_PREFLIGHT_ATTESTATION}"
+  printf '[1/11] Default no-link runtime contract\n'
+  printf '  exact-revision preflight attestation: %s\n' "${RUNTIME_PREFLIGHT_ATTESTATION}"
+  printf '\n[2/11] Linked adapter feature compile and no-shared-library unit contract\n'
+  printf '  exact-revision preflight attestation: %s\n' "${RUNTIME_PREFLIGHT_ATTESTATION}"
+else
+  printf '[1/11] Default no-link runtime contract\n'
+  make verify-bun-jsc-runtime-contract
 
-printf '\n[2/11] Linked adapter feature compile and no-shared-library unit contract\n'
-env -u NIMBUS_BUN_EMBED_LINK_ARGS -u NIMBUS_BUN_EMBED_SHARED_LIBRARY \
-  cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc
+  printf '\n[2/11] Linked adapter feature compile and no-shared-library unit contract\n'
+  env -u NIMBUS_BUN_EMBED_LINK_ARGS -u NIMBUS_BUN_EMBED_SHARED_LIBRARY \
+    cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc
+fi
 
 printf '\n[3/11] Bun proof source exports\n'
 for export in "${REQUIRED_EXPORTS[@]}"; do
