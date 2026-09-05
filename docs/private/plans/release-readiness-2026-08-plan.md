@@ -8,16 +8,18 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish Deno run `33961040072` at exact candidate `95413e012e`.
-After a pass, publish the next immutable Deno 2.9.6 fork release. Then repin
-Nimbus. The candidate includes the complete Node 26 crypto compatibility pass
-and the reviewed AES-GCM empty-IV repair. Hosted CI covers both crypto carry
-crates and their WebCrypto and Node integration files.
+Next action: finish Deno annotated-tag run `33962239078` for
+`v2.9.6-nimbus.5`, which peels to exact candidate `95413e012e`. Exact branch
+run `33961040072` already passes. After the tag run passes, publish the
+immutable Deno fork release and repin Nimbus. The candidate includes the
+complete Node 26 crypto compatibility pass and the reviewed AES-GCM empty-IV
+repair. Hosted CI covers both crypto carry crates and their WebCrypto and Node
+integration files.
 
-Resume the Bun 1.4.1 host replay at reviewed candidate `a7ad6a5aa5`. macOS
-passed run `33936367255`. Linux exhausted the 360-minute job limit. Repair the
-cold Linux build workflow without weakening its contract. Require both hosts
-before the immutable Bun tag and Nimbus repin.
+Finish nonpublishing Bun 1.4.1 host run `33961635475` at reviewed candidate
+`a7ad6a5aa5`. Its exact-SHA runtime preflight passes, and the macOS arm64 and
+Linux x86_64 native builds are active. Require both hosts before the immutable
+Bun tag and Nimbus repin.
 
 After both immutable fork tags pass and Nimbus pins them, start the final
 nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays.
@@ -521,4 +523,8 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | finding | The exact Node 26 crypto audit found missing raw asymmetric key import and export, KEM, modern digest, and ESM export behavior in the Deno fork. Eight concept-owned commits through `eff2c12eea` add the supported provider surface, retain the BoringSSL exclusions for EC/X KEM and ML-KEM-512, and pass the complete Node crypto-key file plus exact upstream Node 26 raw-key and KEM fixtures. |
 | 2026-09-05 | RRC8 | review | A fresh Sol xhigh whole-branch review produced four P2 claims. Exact Node 26 fixtures refuted EC/X KEM and ML-KEM-512 support on the selected BoringSSL provider. Current WebCrypto and Node 26 source refuted freezing the mutable public `CryptoKey.usages` view. NIST SP 800-38D and direct Node 26 behavior confirmed that an empty AES-GCM IV must fail. No Opus 5 or Fable review ran. |
 | 2026-09-05 | RRC8 | finding | Deno commit `ec8cc20887` rejects empty AES-GCM IVs for encryption and decryption as `OperationError` and moves an earlier crypto-key test module to its Clippy-compliant owner position. All 16 `deno_crypto` tests, 15 `deno_node_crypto` tests, the complete 132-test WebCrypto file, the Node crypto-key file, strict all-target crypto Clippy, formatting, and JS lint pass. A focused Sol xhigh review is clean. |
-| 2026-09-05 | RRC8 | finding | The Deno fork workflow did not test the two crypto carry crates or the changed WebCrypto and Node crypto-key integration files. Commit `95413e012e` adds them without reducing existing coverage. The workflow parses, both crate suites pass locally, and hosted run `33961040072` is active at that exact commit. |
+| 2026-09-05 | RRC8 | finding | The Deno fork workflow did not test the two crypto carry crates or the changed WebCrypto and Node crypto-key integration files. Commit `95413e012e` adds them without reducing existing coverage. The workflow parses, both crate suites pass locally, and hosted run `33961040072` owns exact branch validation. |
+| 2026-09-05 | RRC8 | evidence | Exact Deno branch run `33961040072` passes workspace check, formatting, strict carry Clippy, all five carry crate suites, the complete Node integration lane, fetch, WebSocket, and runtime tests at `95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`. Annotated tag `v2.9.6-nimbus.5` has object `2df78164bc97a70ddf63d55fd9b294e2394d8043` and peels to that commit. Maintained branch `nimbus/v2.9.6` resolves to the same commit. Exact tag run `33962239078` owns the publication gate; no `.5` GitHub Release exists yet. |
+| 2026-09-05 | RRC8 | fail-before | Bun 1.4.1 run `33936367255` completed all 3,103 WebKit objects, linked and loaded the Linux shared adapter, and passed four native probes before the 360-minute job limit interrupted the fifth. About 20 minutes of duplicate Nimbus-only runtime checks ran inside each native job before the cold WebKit build. This was a workflow-budget defect, not a stalled compiler or adapter failure. |
+| 2026-09-05 | RRC8 | finding | Nimbus commit `69ff5b9b2` moves the exact Linux runtime contract and no-library linked tests into one prerequisite job. Native jobs accept only a same-run attestation whose result is `passed` and whose Nimbus revision matches the current workflow head; missing, malformed, failed, or stale evidence fails closed. The original integrated checks remain the default for local and macOS use. Bash syntax, ShellCheck, action lint, docs, whitespace, a negative attestation check, and the focused Sol xhigh review pass. No Opus 5 or Fable review ran. |
+| 2026-09-05 | RRC8 | started | Nonpublishing Bun run `33961635475` passes the new exact-revision runtime preflight at Nimbus `69ff5b9b245138c359da1664fe6fdef20ce00eb1`. Its macOS arm64 and Linux x86_64 native adapter jobs are active at Bun `a7ad6a5aa5d0543dbb88d6ffa0d7c69592d1d3fa`. Publication stays disabled. |
