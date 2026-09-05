@@ -43,6 +43,41 @@ HOME="${tmp_root}" bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
 grep -F "WebKit source ${webkit_repo} is clean at Bun pin ${pinned_revision}" \
   "${tmp_root}/tilde.out" >/dev/null
 
+# shellcheck disable=SC2088 # Exercise Bun's exact literal ~ rule.
+HOME="${webkit_repo}" bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "~" \
+  >"${tmp_root}/home.out"
+grep -F "WebKit source ${webkit_repo} is clean at Bun pin ${pinned_revision}" \
+  "${tmp_root}/home.out" >/dev/null
+
+ln -s "WebKit" "${tmp_root}/\\WebKit"
+# shellcheck disable=SC2088 # Exercise Bun's literal ~\ path rule.
+HOME="${tmp_root}" bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "~\\WebKit" \
+  >"${tmp_root}/backslash-home.out"
+grep -F "is clean at Bun pin ${pinned_revision}" \
+  "${tmp_root}/backslash-home.out" >/dev/null
+
+mkdir -p "${bun_repo}/vendor" "${tmp_root}/src/github.com/oven-sh/WebKit"
+ln -s "../../WebKit" "${bun_repo}/vendor/WebKit"
+env -u BUN_WEBKIT_PATH \
+  HOME="${tmp_root}" \
+  NIMBUS_BUN_REPO="${bun_repo}" \
+  make -s -C "${repo_root}" verify-bun-webkit-source \
+  >"${tmp_root}/make-unset.out"
+grep -F "is clean at Bun pin ${pinned_revision}" \
+  "${tmp_root}/make-unset.out" >/dev/null
+
+HOME="${tmp_root}" \
+  NIMBUS_BUN_REPO="${bun_repo}" \
+  BUN_WEBKIT_PATH="" \
+  make -s -C "${repo_root}" verify-bun-webkit-source \
+  >"${tmp_root}/make-empty.out"
+grep -F "is clean at Bun pin ${pinned_revision}" \
+  "${tmp_root}/make-empty.out" >/dev/null
+
 printf 'dirty\n' >"${webkit_repo}/dirty.txt"
 git -C "${webkit_repo}" config status.showUntrackedFiles no
 if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \

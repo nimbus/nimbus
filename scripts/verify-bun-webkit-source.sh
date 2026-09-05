@@ -40,7 +40,9 @@ done
 [[ -d "${bun_repo}" ]] || die "Bun source checkout not found: ${bun_repo:-missing}"
 # shellcheck disable=SC2088 # Match Bun's literal ~/ expansion rule.
 case "${webkit_repo}" in
+  "~") webkit_repo="${HOME}" ;;
   "~/"*) webkit_repo="${HOME}/${webkit_repo#\~/}" ;;
+  "~\\"*) webkit_repo="${HOME}/${webkit_repo#\~}" ;;
   /*) ;;
   *) webkit_repo="${bun_repo}/${webkit_repo}" ;;
 esac

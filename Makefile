@@ -527,13 +527,7 @@ verify-bun-jsc-runtime-contract:
 
 verify-bun-webkit-source:
 	@bun_repo="$${NIMBUS_BUN_REPO:-$${HOME}/src/github.com/nimbus/bun}"; \
-	if [ "$${BUN_WEBKIT_PATH+x}" = x ]; then \
-		webkit_repo="$${BUN_WEBKIT_PATH}"; \
-	elif [ -d "$${HOME}/src/github.com/oven-sh/WebKit" ]; then \
-		webkit_repo="$${HOME}/src/github.com/oven-sh/WebKit"; \
-	else \
-		webkit_repo="vendor/WebKit"; \
-	fi; \
+	webkit_repo="$${BUN_WEBKIT_PATH:-vendor/WebKit}"; \
 	bash scripts/verify-bun-webkit-source.sh \
 		--bun-repo "$${bun_repo}" \
 		--webkit-repo "$${webkit_repo}"
