@@ -117,4 +117,36 @@ mod tests {
             "error should name the unavailable fallback tier: {error}"
         );
     }
+
+    #[test]
+    fn runtime_execution_admission_fails_closed_for_production_bun_without_memory_boundary() {
+        let policy = RuntimePolicy::new(RuntimeLimits::application_bun_jsc());
+        let context = test_context();
+        let decision = admit_runtime_invocation_decision(
+            &context,
+            "runtime_execution",
+            None,
+            &policy,
+            RuntimeIsolationTier::InProcessUntrusted,
+            TenantIsolationMode::Production,
+            std::iter::empty::<String>(),
+        )
+        .expect("runtime admission decision should build");
+        let admission = RuntimeExecutionAdmission::for_decision(&decision);
+
+        assert!(matches!(
+            admission,
+            RuntimeExecutionAdmission::FallbackUnavailable {
+                tier: RuntimeIsolationTier::MicroVmService,
+                ..
+            }
+        ));
+        let error = admission
+            .ensure_in_process_available("Bun/JSC invocation")
+            .expect_err("production Bun/JSC must not enter the shared server process");
+        assert!(
+            error.to_string().contains("memory boundary"),
+            "error should name the missing outer memory boundary: {error}"
+        );
+    }
 }

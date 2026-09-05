@@ -381,6 +381,127 @@ globalThis.__nimbusInvoke = async function(request) {
 }
 
 #[test]
+fn bun_shared_adapter_uses_the_host_owned_invocation_kind_for_context_capabilities() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let bun_bundle_path = temp_dir.path().join("bun-query-write-wrapper.js");
+    std::fs::write(
+        &bun_bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function() {
+  const ctx = globalThis.__nimbusCreateContext({
+    request: { kind: "mutation" },
+    hostCallSessionId: "host-session",
+  });
+  try {
+    await ctx.db.insert("messages", { body: "must not commit" });
+    return { status: "error", error: "query write unexpectedly reached the host" };
+  } catch (error) {
+    return { status: "ok", value: String(error.message) };
+  }
+};
+"#,
+    )
+    .expect("Bun/JSC bundle should be written");
+
+    let host = Arc::new(RecordingHost::new(RecordingHostPolicy::AllowDocumentInsert));
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: json!({}),
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: BTreeMap::new(),
+    };
+
+    let response =
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect("query capability denial should remain guest-visible");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(
+        response["value"],
+        "Nimbus Bun/JSC ctx.db.insert is not available for query handlers"
+    );
+    assert!(
+        host.calls().is_empty(),
+        "a query write must be rejected before the host callback"
+    );
+}
+
+#[test]
+fn bun_shared_adapter_uses_a_cloned_host_owned_auth_identity() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let bun_bundle_path = temp_dir.path().join("bun-auth-wrapper.js");
+    std::fs::write(
+        &bun_bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function(request) {
+  request.auth.identity.subject = "forged";
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const first = await ctx.auth.getUserIdentity();
+  first.subject = "mutated-return";
+  return {
+    status: "ok",
+    value: {
+      user: await ctx.auth.getUserIdentity(),
+      verified: await ctx.auth.getVerifiedIdentity(),
+    },
+  };
+};
+"#,
+    )
+    .expect("Bun/JSC bundle should be written");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(NoopHost),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "auth:whoami".to_string(),
+        args: json!({}),
+        page_size: None,
+        cursor: None,
+        auth: Some(json!({
+            "identity": {
+                "tokenIdentifier": "issuer|user",
+                "subject": "user",
+            },
+            "verified_identity": {
+                "kind": "custom_jwt",
+                "tokenIdentifier": "issuer|user",
+            },
+            "throw_on_missing_identity": false,
+        })),
+        services: BTreeMap::new(),
+    };
+
+    assert_eq!(
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect("Bun/JSC auth context should use the trusted invocation request"),
+        json!({
+            "status": "ok",
+            "value": {
+                "user": {
+                    "tokenIdentifier": "issuer|user",
+                    "subject": "user",
+                },
+                "verified": {
+                    "kind": "custom_jwt",
+                    "tokenIdentifier": "issuer|user",
+                },
+            },
+        })
+    );
+}
+
+#[test]
 fn bun_shared_adapter_host_bridge_denials_are_guest_visible_without_tokens() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let bun_bundle_path = temp_dir.path().join("bun-host-denied-wrapper.js");
