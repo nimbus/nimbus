@@ -14,7 +14,7 @@ git -C "${webkit_repo}" config user.name "Nimbus Test"
 git -C "${webkit_repo}" config user.email "nimbus-test@example.invalid"
 printf 'first\n' >"${webkit_repo}/source.txt"
 git -C "${webkit_repo}" add source.txt
-git -C "${webkit_repo}" commit -q -m "first"
+git -C "${webkit_repo}" commit -q --no-gpg-sign -m "first"
 pinned_revision="$(git -C "${webkit_repo}" rev-parse HEAD)"
 
 printf 'export const WEBKIT_VERSION = "%s";\n' "${pinned_revision}" \
@@ -40,7 +40,7 @@ rm "${webkit_repo}/dirty.txt"
 
 printf 'second\n' >>"${webkit_repo}/source.txt"
 git -C "${webkit_repo}" add source.txt
-git -C "${webkit_repo}" commit -q -m "second"
+git -C "${webkit_repo}" commit -q --no-gpg-sign -m "second"
 if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
   --bun-repo "${bun_repo}" \
   --webkit-repo "${webkit_repo}" \

@@ -526,7 +526,14 @@ verify-bun-jsc-runtime-contract:
 	bash scripts/verify-bun-jsc-runtime-contract.sh
 
 verify-bun-webkit-source:
-	bash scripts/verify-bun-webkit-source-helper.sh
+	@bun_repo="$${NIMBUS_BUN_REPO:-$${HOME}/src/github.com/nimbus/bun}"; \
+	webkit_repo="$${BUN_WEBKIT_PATH:-$${bun_repo}/vendor/WebKit}"; \
+	if [ ! -d "$${webkit_repo}" ] && [ -d "$${HOME}/src/github.com/oven-sh/WebKit" ]; then \
+		webkit_repo="$${HOME}/src/github.com/oven-sh/WebKit"; \
+	fi; \
+	bash scripts/verify-bun-webkit-source.sh \
+		--bun-repo "$${bun_repo}" \
+		--webkit-repo "$${webkit_repo}"
 
 verify-bun-jsc-linked-adapter:
 	bash scripts/verify-bun-jsc-linked-adapter.sh

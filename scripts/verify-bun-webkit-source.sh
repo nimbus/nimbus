@@ -70,7 +70,10 @@ if [[ "${actual_revision}" != "${expected_revision}" ]]; then
   die "unexpected WebKit revision: Bun pins ${expected_revision}, got ${actual_revision:-missing} in ${webkit_repo}"
 fi
 
-webkit_status="$(git -C "${webkit_repo}" status --short)"
+webkit_status="$(
+  git -c status.showUntrackedFiles=all -C "${webkit_repo}" \
+    status --short --untracked-files=all --ignore-submodules=none
+)"
 if [[ -n "${webkit_status}" ]]; then
   printf 'WebKit proof worktree must be clean:\n%s\n' "${webkit_status}" >&2
   exit 1
