@@ -8,18 +8,19 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish the Sol xhigh follow-up and retrieve both native results
-from diagnostic run `33980209212`. Final-candidate run `33983889083` waits
-behind it at Nimbus `682e9e5bf` and Bun `cf40a9ebe3`. Require that candidate
-to pass both native hosts and repeat the macOS first-VM proof before tag
-`bun-v1.4.2-nimbus.1`, maintained branch `nimbus/bun-v1.4.2`, or the immutable
-Nimbus repin.
+Next action: finish the Sol-only review of the Nimbus WebKit-source verifier
+and push the reviewed Nimbus candidate. Start replacement hosted and minicloud
+proofs at exact Bun `d6d4c5e399`. Require both native hosts and the exact
+pinned WebKit source build to pass. Repeat the macOS first-VM proof 100 times.
+Do not create tag `bun-v1.4.2-nimbus.1`, maintained branch
+`nimbus/bun-v1.4.2`, or the immutable Nimbus repin before these proofs pass.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
 builds because the candidate could no longer satisfy tracks-latest.
-Candidate branch `codex/bun-v1.4.2-release-readiness` applies the two reviewed
-1.4.1 carry patches exactly on upstream `bun-v1.4.2` at `744846f844`.
+Candidate branch `codex/bun-v1.4.2-release-readiness` applies the retained and
+reviewed Nimbus contracts on upstream `bun-v1.4.2` at `744846f844`. The latest
+stable upstream release is still Bun 1.4.2.
 
 After both immutable fork tags pass and Nimbus pins them, start the final
 nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays.
@@ -578,3 +579,15 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | evidence | Diagnostic run `33980209212` is terminal. Its macOS arm64 native job passed the complete adapter proof. Its Linux x86_64 native job passed the Bun probe, all 43 runtime tests, and all eight linked tests before the missing UI artifact stopped the server diagnostic. Publication remained disabled. |
 | 2026-09-05 | RRC8 | finding | Bun commit `0c031fe5dcda916cdf534167cb7d4ece9595129f` binds the native-parsed invocation kind to the guest context and the native host callback, supplies cloned host-owned auth identities, and keeps the raw callback unavailable to guest code. The full Linux native probe passes on `minicloud.local`, including the query-write denial with zero callbacks and the exact auth result. |
 | 2026-09-05 | RRC8 | review | The final Sol xhigh Bun review found one P2 mismatch: the JavaScript gate omitted nested paginated queries that the native and Nimbus host gates allow. The repair passes the full native probe. The rerun's only P1 is refuted because `op_nimbus_ctx_query_start` is explicitly normalized to `query_builder_start` before the checked envelope reaches either lower gate. No Opus 5 or Fable review ran. |
+| 2026-09-05 | RRC8 | fail-before | The exact Node 24 minicloud gate at Nimbus `6b83a762f` passed 32 runtime-policy tests, 16 Bun backend tests, 17 server registry and diagnostics tests, and the UI build before the admission inventory required the removed production-allowance test name. The product tests passed; the verifier had not followed the accepted fail-closed memory policy. |
+| 2026-09-05 | RRC8 | finding | Nimbus commit `799a56bbfd8cc379e5f76c1ea9e6084da9acea6b` makes the runtime-contract verifier require both exact replacement tests: production Bun/JSC rejection without an outer memory boundary and local-development proof-lane admission. Shell syntax, ShellCheck, whitespace, and the Sol xhigh follow-up review pass. |
+| 2026-09-05 | RRC8 | started | Final nonpublishing run `33991072952` binds exact Nimbus `799a56bbfd8cc379e5f76c1ea9e6084da9acea6b` and Bun `0c031fe5dcda916cdf534167cb7d4ece9595129f`. Its preflight is active. The exact Node 24 minicloud gate is rebuilding the release-local shared adapter from the same clean revisions. Publication remains disabled. |
+| 2026-09-05 | RRC8 | fail-before | The exact minicloud build at Bun `0c031fe5dc` completed the 33-minute Rust link and 441 of 556 WebKit objects before JavaScriptCore failed to find `mimalloc/types.h`. The pinned WebKit source includes that private header directly, but its JavaScriptCore target does not inherit bmalloc's private mimalloc include directory on Linux. This is a source-build graph defect, not a stall or product-test failure. |
+| 2026-09-05 | RRC8 | finding | Bun commit `fbe1f0447bf5fb8a81ddca1fa21a5f4b1db1c646` adds the quoted private mimalloc include only to non-ASAN local WebKit C++ builds and preserves it in the Windows override. The fail-before regression, 8-test system-Bun and rebuilt-Bun runs, formatting, whitespace, TruffleHog, and the Sol xhigh follow-up pass. |
+| 2026-09-05 | RRC8 | superseded | Run `33991072952` proved the exact runtime preflight and both native jobs accepted the UI prerequisite, but Bun `0c031fe5dc` cannot certify the build-graph repair. It was cancelled and replaced by nonpublishing run `33993501403` at the same Nimbus commit and exact Bun `fbe1f0447b`. The minicloud gate is reusing the completed source-build cache at the same revisions. |
+| 2026-09-05 | RRC8 | evidence | Run `33993501403` passed the exact Linux runtime preflight at Nimbus `799a56bbfd8cc379e5f76c1ea9e6084da9acea6b` and Bun `fbe1f0447bf5fb8a81ddca1fa21a5f4b1db1c646` in 11 minutes 18 seconds. Both nonpublishing native jobs started from that gate. The independent minicloud build remains active at the same revisions. |
+| 2026-09-05 | RRC8 | fail-before | Run `33993501403` is terminal. Linux built and passed the native adapter before the concurrent-init test declared a query and tried `DocumentInsert`; the host correctly denied the mutation. macOS built and loaded all 1,224 edges, then exited after four concurrent first-VM constructions started and before one completed. The publish job stayed skipped. |
+| 2026-09-05 | RRC8 | finding | The Nimbus concurrent-init fixture now declares a mutation. Bun commit `d6d4c5e39938b6c5ac243490a9230c26d52d737f` serializes only JSC VM construction and releases the process lock before guest execution or VM destruction. Bun formatting, focused tests, whitespace checks, and the exact Sol xhigh review pass. The candidate branch is pushed and remote-verified. No Opus 5 or Fable review ran. |
+| 2026-09-05 | RRC8 | fail-before | The minicloud source build used a clean WebKit checkout at `c9ad...`, not Bun 1.4.2's exact `2e2aa2290fac856d6f451ceacb58f7f5b44dd057` pin. It rebuilt 404 edges and then failed to find `JavaScriptCore/StrongSet.h`. This was invalid source input, not evidence against the current Bun candidate. |
+| 2026-09-05 | RRC8 | finding | Nimbus now verifies the actual WebKit source before a linked-adapter build. It requires Bun's immutable 40-character pin, the exact clean source HEAD, and the physical Git worktree root. It clears inherited Git repository selection, ignores account-level Git configuration, and disables the checkout's filesystem monitor. It also rejects hidden changes and replacement refs. The helper covers absolute, relative, empty, and literal-home path forms. It rejects dirty, stale, nested, redirected, symbolic, missing, and malformed inputs. The exact minicloud checkout at `2e2aa229...` passes. Formatting, shell parsing, ShellCheck, 72 runtime and UI contract tests, and whitespace checks pass. |
+| 2026-09-05 | RRC8 | review | Sol xhigh found and RRC8 fixed mismatched source selection, incomplete literal-home handling, parent-worktree and inherited-environment redirects, account-level Git exclusions, and filesystem-monitor trust. The final exact rerun reports no P0 through P3 finding. No Opus 5 or Fable review ran. |
