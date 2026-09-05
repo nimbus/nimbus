@@ -44,6 +44,7 @@ grep -F "WebKit source ${webkit_repo} is clean at Bun pin ${pinned_revision}" \
   "${tmp_root}/tilde.out" >/dev/null
 
 printf 'dirty\n' >"${webkit_repo}/dirty.txt"
+git -C "${webkit_repo}" config status.showUntrackedFiles no
 if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
   --bun-repo "${bun_repo}" \
   --webkit-repo "${webkit_repo}" \
@@ -52,11 +53,13 @@ if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
   exit 1
 fi
 grep -F "WebKit proof worktree must be clean" "${tmp_root}/dirty.err" >/dev/null
+git -C "${webkit_repo}" config --unset status.showUntrackedFiles
 rm "${webkit_repo}/dirty.txt"
 
 printf 'second\n' >>"${webkit_repo}/source.txt"
 git -C "${webkit_repo}" add source.txt
 git -C "${webkit_repo}" commit -q --no-gpg-sign -m "second"
+second_revision="$(git -C "${webkit_repo}" rev-parse HEAD)"
 if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
   --bun-repo "${bun_repo}" \
   --webkit-repo "${webkit_repo}" \
@@ -66,6 +69,60 @@ if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
 fi
 grep -F "unexpected WebKit revision: Bun pins ${pinned_revision}" \
   "${tmp_root}/stale.err" >/dev/null
+
+git -C "${webkit_repo}" checkout -q "${pinned_revision}"
+git -C "${webkit_repo}" update-index --assume-unchanged source.txt
+printf 'hidden by assume-unchanged\n' >"${webkit_repo}/source.txt"
+if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "${webkit_repo}" \
+  >"${tmp_root}/assume.out" 2>"${tmp_root}/assume.err"; then
+  printf 'assume-unchanged WebKit source unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "must not use assume-unchanged or skip-worktree index flags" \
+  "${tmp_root}/assume.err" >/dev/null
+git -C "${webkit_repo}" update-index --no-assume-unchanged source.txt
+git -C "${webkit_repo}" checkout -q -- source.txt
+
+git -C "${webkit_repo}" update-index --skip-worktree source.txt
+printf 'hidden by skip-worktree\n' >"${webkit_repo}/source.txt"
+if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "${webkit_repo}" \
+  >"${tmp_root}/skip.out" 2>"${tmp_root}/skip.err"; then
+  printf 'skip-worktree WebKit source unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "must not use assume-unchanged or skip-worktree index flags" \
+  "${tmp_root}/skip.err" >/dev/null
+git -C "${webkit_repo}" update-index --no-skip-worktree source.txt
+git -C "${webkit_repo}" checkout -q -- source.txt
+
+git -C "${webkit_repo}" replace "${pinned_revision}" "${second_revision}"
+if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "${webkit_repo}" \
+  >"${tmp_root}/replace.out" 2>"${tmp_root}/replace.err"; then
+  printf 'replacement-ref WebKit source unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "WebKit proof worktree must not use replacement refs" \
+  "${tmp_root}/replace.err" >/dev/null
+git -C "${webkit_repo}" replace -d "${pinned_revision}" >/dev/null
+
+git -C "${webkit_repo}" tag autobuild-test "${pinned_revision}"
+printf 'export const WEBKIT_VERSION = "autobuild-test";\n' \
+  >"${bun_repo}/scripts/build/deps/webkit.ts"
+if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "${webkit_repo}" \
+  >"${tmp_root}/symbolic.out" 2>"${tmp_root}/symbolic.err"; then
+  printf 'symbolic WebKit pin unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "requires an immutable 40-character WEBKIT_VERSION" \
+  "${tmp_root}/symbolic.err" >/dev/null
 
 missing_revision="ffffffffffffffffffffffffffffffffffffffff"
 printf 'export const WEBKIT_VERSION = "%s";\n' "${missing_revision}" \
@@ -91,4 +148,4 @@ if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
 fi
 grep -F "expected exactly one WEBKIT_VERSION" "${tmp_root}/malformed.err" >/dev/null
 
-printf 'verified: Bun WebKit source revision helper rejects dirty, stale, missing, and malformed inputs\n'
+printf 'verified: Bun WebKit source proof rejects dirty, stale, hidden, replaced, symbolic, missing, and malformed inputs\n'
