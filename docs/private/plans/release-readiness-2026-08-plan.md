@@ -9,11 +9,11 @@ Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
 Next action: finish the Sol xhigh follow-up and retrieve both native results
-from diagnostic run `33980209212`. Corrected run `33982835308` waits
-behind it at Nimbus `3793ca1fe` and Bun `ba9f964f75`. Require the corrected
-candidate to pass both native hosts and repeat the macOS first-VM proof before
-tag `bun-v1.4.2-nimbus.1`, maintained branch `nimbus/bun-v1.4.2`, or the
-immutable Nimbus repin.
+from diagnostic run `33980209212`. Final-candidate run `33983889083` waits
+behind it at Nimbus `682e9e5bf` and Bun `cf40a9ebe3`. Require that candidate
+to pass both native hosts and repeat the macOS first-VM proof before tag
+`bun-v1.4.2-nimbus.1`, maintained branch `nimbus/bun-v1.4.2`, or the immutable
+Nimbus repin.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -563,3 +563,7 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | finding | Bun commit `ba9f964f75d5b5f886366e879b742837e0fd4a0c` closes the JSC controller gate for blocking atomic waits under only the tenant deny profile, uses target-correct direct stderr writes, and rejects a second allocation above the 32 MiB ABI response ceiling. Nimbus commit `3793ca1fe2005c7632eca6031706bff60325d667` applies the same ceiling before host-response retention and adapter-response allocation. Formatting, locked metadata, whitespace, the 44-test Nimbus Bun runtime set, and a focused Windows MSVC trace type-check pass. |
 | 2026-09-05 | RRC8 | evidence | The corrected Bun `ba9f964f75` candidate completes its 87-edge incremental Linux native rebuild and the full embed probe on `minicloud.local`. The permission inventory now reports JavaScript and WebAssembly atomic waits denied by default. Concurrent first-VM construction and destruction, cancellation recovery, memory behavior, package policy, and retained-lifecycle stress remain green. |
 | 2026-09-05 | RRC8 | started | Corrected nonpublishing run `33982835308` is pending behind the older diagnostic run under the workflow concurrency contract. It binds Nimbus `3793ca1fe2005c7632eca6031706bff60325d667` and Bun `ba9f964f75d5b5f886366e879b742837e0fd4a0c`. The older run remains useful only for its macOS lifecycle trace and cannot certify the corrected candidate. |
+| 2026-09-05 | RRC8 | review | The next Sol xhigh review found that a tenant-installed `Object.prototype.toJSON` hook could replace the final Bun/JSC ABI result envelope. The native smoke already installed that adversarial hook, but it asserted only that output was nonempty. Direct primordial behavior reproduces the forged envelope. No Opus 5 or Fable review ran. |
+| 2026-09-05 | RRC8 | superseded | RRC8 cancelled pending run `33982835308` before a job started because it did not include the verified result-envelope repair. No hosted build time or proof was discarded. |
+| 2026-09-05 | RRC8 | finding | Bun commit `cf40a9ebe355f27c84b5910ec32b004990ca3504` captures a protected result serializer before tenant evaluation and reconstructs only the own-property `status` and `value` or `error` ABI envelope on a null-prototype object. The native regression now requires the exact expected host result after the guest replaces `JSON.stringify` and installs the inherited hook. The repaired content passes the incremental `debug-no-asan` native target on `minicloud.local`, including every lifecycle, cancellation, permission, memory, module-policy, host-bridge, overflow, and exact-result assertion. Formatting, locked Cargo metadata, Prettier, whitespace, and remote source identity pass. |
+| 2026-09-05 | RRC8 | started | Final-candidate nonpublishing run `33983889083` is pending behind diagnostic run `33980209212` under the workflow concurrency contract. It binds Nimbus `682e9e5bf684263183f30152b49472c2a30958f2` and Bun `cf40a9ebe355f27c84b5910ec32b004990ca3504`. The final Sol xhigh branch review is active. |
