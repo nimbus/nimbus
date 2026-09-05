@@ -38,7 +38,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -d "${bun_repo}" ]] || die "Bun source checkout not found: ${bun_repo:-missing}"
+# shellcheck disable=SC2088 # Match Bun's literal ~/ expansion rule.
+case "${webkit_repo}" in
+  "~/"*) webkit_repo="${HOME}/${webkit_repo#\~/}" ;;
+  /*) ;;
+  *) webkit_repo="${bun_repo}/${webkit_repo}" ;;
+esac
 [[ -d "${webkit_repo}" ]] || die "WebKit source checkout not found: ${webkit_repo:-missing}"
+webkit_repo="$(cd "${webkit_repo}" && pwd -L)"
 command -v git >/dev/null 2>&1 || die "git is required"
 
 pin_file="${bun_repo}/scripts/build/deps/webkit.ts"
@@ -79,4 +86,5 @@ if [[ -n "${webkit_status}" ]]; then
   exit 1
 fi
 
-printf 'verified: WebKit source is clean at Bun pin %s\n' "${expected_revision}"
+printf 'verified: WebKit source %s is clean at Bun pin %s\n' \
+  "${webkit_repo}" "${expected_revision}"

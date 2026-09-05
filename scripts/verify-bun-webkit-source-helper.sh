@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-bun-webkit-source-helper.XXXXXX")"
+tmp_root="$(cd "${tmp_root}" && pwd -L)"
 trap 'rm -rf "${tmp_root}"' EXIT
 
 bun_repo="${tmp_root}/bun"
@@ -24,8 +25,23 @@ bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
   --bun-repo "${bun_repo}" \
   --webkit-repo "${webkit_repo}" \
   >"${tmp_root}/pass.out"
-grep -F "verified: WebKit source is clean at Bun pin ${pinned_revision}" \
+grep -F "verified: WebKit source ${webkit_repo} is clean at Bun pin ${pinned_revision}" \
   "${tmp_root}/pass.out" >/dev/null
+
+bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "../WebKit" \
+  >"${tmp_root}/relative.out"
+grep -F "WebKit source ${webkit_repo} is clean at Bun pin ${pinned_revision}" \
+  "${tmp_root}/relative.out" >/dev/null
+
+# shellcheck disable=SC2088 # Exercise a literal ~/ value from BUN_WEBKIT_PATH.
+HOME="${tmp_root}" bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "~/WebKit" \
+  >"${tmp_root}/tilde.out"
+grep -F "WebKit source ${webkit_repo} is clean at Bun pin ${pinned_revision}" \
+  "${tmp_root}/tilde.out" >/dev/null
 
 printf 'dirty\n' >"${webkit_repo}/dirty.txt"
 if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
