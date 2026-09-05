@@ -1,9 +1,10 @@
 # Runtime Strategy Lifecycle Draft Audit
 
 Date: 2026-08-30.
-Independent re-review: 2026-09-01.
+Independent re-review: 2026-09-05.
 Plan: `docs/private/plans/runtime-strategy-lifecycle-plan.md`.
 Draft baseline: `304a2e677293fec7d150e12ffc0ba98960917753`.
+Review head: `fca2d06d7ebaf55b9a27563f1fed509b6970c60b`.
 Verdict: independently reviewed and ready as `proposed`, but not ready for
 activation.
 
@@ -29,7 +30,7 @@ fork code and does not start an RSL task.
 | Web snapshot restriction | pass | `53ad5e25c9f845f6a555a3157011c76cc06cf8a1` added the current cross-profile cage repair on 2026-06-27. |
 | Post-anchor strategy delta | pass | The focused `git diff --quiet` from `f5f813366` through `304a2e677` exits 0 for pool policy, invocation, construction, and the main pool benchmark. |
 | Draft-baseline product type | pass | `RuntimePoolKind::WarmContextRecycle` is public and serialize-only at `304a2e677`. RRC8 U3 removes the value and its product branches in the paired candidate. |
-| Current U3 realm omission | pass | The paired Nimbus source has no `WarmContextRecycle`, realm-lease, realm-lifecycle, or replay-table product symbol. The Deno candidate has no Nimbus replay or in-realm API; generic upstream realm infrastructure remains. |
+| Current U3 realm omission | pass | Nimbus commit `d6636b980` removed `WarmContextRecycle`, realm-lease, realm-lifecycle, and replay-table product symbols. Deno `v2.9.6-nimbus.5` has no Nimbus replay or in-realm API. Generic upstream realm infrastructure remains. |
 | External selector search | pass with limit | Both facade crates re-export the type. Server and UI code report it. No CLI, package, server, or compute selector was found. RSL4 still requires a complete caller and serialization audit. |
 | Construction truth | pass | `V8RuntimeConstructionMode::for_compatibility_target` selects `StartupSnapshot` for Node targets and `Unsnapshotted` for other V8 targets. |
 | Web performance evidence | pass with qualification | PIR2 records 2.23 and 2.50 ratios against the row labelled `startup_snapshot_cache`. The label does not prove Web snapshot use. |
@@ -38,7 +39,8 @@ fork code and does not start an RSL task.
 | Replay scaffolding cost | closed after review | RRC8's exact old-graph A/B found no detected Web change, a small favorable Node replay-off result after counterbalancing, and 16 encoded replay-table bytes in the Node22 blob. RSL8 owns permanent-lab reproduction. |
 | Lazy-ESM termination | pass with independent audit required | Its error contract does not depend on realm pooling. RSL7 forbids automatic removal with realm-only carries. |
 | Fork ledger drift | pass | The current ledger names Deno 2.9.1 while `Cargo.toml` names `v2.9.3-nimbus.2`. RRC8 already owns the replacement. |
-| Uplift state | pass after re-review | RRC8 U1 through U6 are terminal for the runtime handoff. The immutable releases are Deno `625e4c259488dfa1c3c9d03fabde17758e1130d9` (`v2.9.6-nimbus.2`) and rusty_v8 `961a76d0cee88efdecfa9224c519fd153c404b51` (`v150.4.0-nimbus.1`). Nimbus records the substantive runtime graph at `76165b0b91da274ba0d70a2f4fbd6c7b81c1ee88`, the test checkpoint at `208c2e6f5b5507214ce5c8a75c1617ea9d0259c4`, and the Linux evidence checkpoint at `cb84dfec8ad61cabaf5b4d763e5c3ff8b9abbcf8`. |
+| Post-draft strategy delta | pass with RSL routing | The focused pre-draft diff remains empty. Commit `d6636b980` later removed V8 realm recycle. Current RRC8 source also implements Bun/JSC fresh-discard execution, while Wasmtime keeps its separate compiled-module and retained-store policy shapes. RSL0 and RSL4 must inventory this activated backend set. |
+| Uplift state | pass after re-review | RRC8 U1 through U6 are terminal for the runtime handoff. The immutable releases are Deno `95413e012ee9f73e7f652e1e7b1ad9e351b9a8df` (`v2.9.6-nimbus.5`) and rusty_v8 `961a76d0cee88efdecfa9224c519fd153c404b51` (`v150.4.0-nimbus.1`). Nimbus commit `b94063c3b` consumes those tags. The earlier U6 package anchors remain `76165b0b91da274ba0d70a2f4fbd6c7b81c1ee88`, `208c2e6f5b5507214ce5c8a75c1617ea9d0259c4`, and `cb84dfec8ad61cabaf5b4d763e5c3ff8b9abbcf8`. |
 
 ## Control-Plane Audit
 
@@ -46,7 +48,7 @@ fork code and does not start an RSL task.
 |---|---|---|
 | One outcome | pass | Product code keeps supported winners. The lab and archive preserve reproducible alternatives. |
 | Active-plan precedence | pass | RRC8 keeps exclusive ownership of the Deno 2.9.6 and V8 150.4 uplift. |
-| Safe plan state | pass | Status is `proposed`. Terminal U6 evidence is recorded. Owner approval of activation and the project skill remains required. |
+| Safe plan state | pass | Status is `proposed`. Terminal U6 evidence is recorded. RRC8 still owns the release verdict. Owner approval of activation and the project skill remains required. |
 | Source authority | pass | Current source and tests override historical labels. Historical measurements remain unchanged. |
 | Conditional cleanup | pass | RSL4 must prove callers and carry ownership before RSL5 through RSL7 remove code. |
 | Safety before speed | pass | Isolation, semantics, cancellation, memory, recovery, and crash gates precede scoring. |
@@ -100,6 +102,8 @@ Nimbus pull request unless execution finds a scope tripwire.
 | DPA19 | Several fail-before criteria assumed realm product code still existed after RRC8 removed it. | RSL5 through RSL7 now use the exact archived pre-cleanup graph and mutation fixtures as fail-before evidence. | closed |
 | DPA20 | The review workflow did not record the owner's temporary model-credit restriction. | Coordination and RSL9 require Sol-only review and prohibit Opus 5 and Fable until the owner lifts the restriction. | closed |
 | DPA21 | The draft audit still described an in-progress U2 and U3 after RRC8 made the runtime handoff terminal. | The source audit and activation gate now record the immutable fork releases and the three Nimbus evidence checkpoints. | closed |
+| DPA22 | The activation gate still named Deno `.2` after RRC8 published and repinned `.5`. | The plan now records `.5` as the current immutable Deno graph and keeps the three earlier package checkpoints as historical U6 evidence. | closed |
+| DPA23 | The audit did not route the post-draft Bun/JSC product strategy into the activation inventory. | RSF9 and RSL5 require backend-specific product strategies. RSL0 and RSL4 now inventory V8, Bun/JSC, and Wasmtime from the activation baseline. | closed |
 
 ## Remaining Activation Inputs
 
@@ -115,8 +119,8 @@ supply these approvals:
 | Command | Result |
 |---|---|
 | `git diff --quiet f5f813366..304a2e677 -- <four strategy paths>` | pass, exit 0 |
-| strict technical-writing lint on the plan and audit | pass, 2 files and 0 diagnostics |
-| no-index whitespace checks on both ignored files | pass, no diagnostics |
+| strict technical-writing lint on the plan and audit | pass, 2 files and 0 diagnostics after the 2026-09-05 re-review |
+| whitespace checks on both tracked files | pass, no diagnostics after the 2026-09-05 re-review |
 | `bash scripts/check-docs.sh` | pass, 109 pages link-clean |
 | ledger and task ID comparison | pass after DPA8 correction |
 
@@ -125,8 +129,7 @@ against the post-RRC8 baseline before any implementation task.
 
 ## Final Assessment
 
-The corrected plan is coherent, source-grounded, and safe to list as proposed
-after the active release plan. RRC8 keeps ownership through terminal U6 and the
-owner still controls activation. RRC8 U3 should omit the proven realm-only
-carries now, not schedule a second fork cleanup. Its single-host A/B remains a
-reproduction input, not a cross-host product performance claim.
+The corrected plan is coherent, source-grounded, and listed as proposed after
+the active release plan. RRC8 keeps release ownership, and the owner still
+controls activation. RRC8 U3 correctly omitted the realm-only carries. Its
+single-host A/B remains a reproduction input, not a cross-host product claim.

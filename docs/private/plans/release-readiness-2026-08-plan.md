@@ -8,12 +8,11 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish the Nimbus source-contract checks and Sol-only review for
-Bun commit `273d0e1b2e`. Then push the exact Nimbus candidate and run both
-hosted native adapter jobs with publication disabled. Require both hosts before
-the immutable Bun tag and Nimbus repin. The exact Linux consumer tests for
-Nimbus `b94063c3b` and public Deno release `v2.9.6-nimbus.5` at `95413e012e`
-pass.
+Next action: wait for nonpublishing Bun/JSC run `33974373111` at Nimbus
+`fca2d06d7` and Bun `273d0e1b2e`. Require both native hosts to pass. Then create
+annotated tag `bun-v1.4.2-nimbus.1` and maintained branch
+`nimbus/bun-v1.4.2`, verify both remote refs, and repin Nimbus to the immutable
+tag. Do not tag the candidate if either host fails.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -546,3 +545,6 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | review | The Sol-only rerun reported an unrestricted Bun host dispatcher. Independent review confirms that the dispatcher is transport, not authority: adapter, tenant, invocation-kind, session, storage, scheduler, and service checks remain host-owned. It also found one real cross-backend gap. The HTTP route operation accepted a guest-supplied plan after checking only its claimed name. No Opus 5 or Fable review ran. |
 | 2026-09-05 | RRC8 | finding | Bun commit `273d0e1b2e` stops the generated wrapper from sending route plans. Nimbus now rejects that field, requires the request to match the active host invocation, resolves method and path against the host registry, and executes only the registry-owned plan. Two security regressions, the runtime payload test, all three HTTP-route tests, codegen self-tests, the 44-test Bun runtime set, the seven-stage runtime contract, and 63 installer tests pass. |
 | 2026-09-05 | RRC8 | evidence | The exact Linux `debug-no-asan` target at Bun `273d0e1b2e781e4b79cfd67f0e56a2c844353fe6` passes the full native probe: request validation, host calls, no-replay overflow, cancellation recovery, permission inventory, memory behavior, package policy, and lifecycle stress. The remote source test passes all eight cases. |
+| 2026-09-05 | RRC8 | checkpoint | Nimbus commit `fca2d06d7ebaf55b9a27563f1fed509b6970c60b` records ABI 3, no-replay oversized responses, host-authoritative HTTP routes, installer and workflow wiring, diagnostics, and regressions. Formatting, whitespace, docs, shell syntax, workflow parsing, focused runtime and server tests, codegen tests, the seven-stage Bun runtime contract, and 63 installer-helper checks pass. The exact Sol xhigh manual review reports no P0 through P3 finding. The branch-wide pre-PR scanner reports four known synthetic Node URL fixtures and no verified secret. No Opus 5 or Fable review ran. |
+| 2026-09-05 | RRC8 | started | Nonpublishing Bun/JSC run `33974373111` uses exact Nimbus `fca2d06d7ebaf55b9a27563f1fed509b6970c60b`, Bun `273d0e1b2e781e4b79cfd67f0e56a2c844353fe6`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. The Linux runtime preflight passes. The Linux x86_64 and macOS arm64 native jobs are active inside their bounded build, package, and verification step. |
+| 2026-09-05 | RRC8 | review | Revalidated `runtime-strategy-lifecycle-plan.md` against the current graph. It now records Deno `.5`, distinguishes the earlier U6 package anchors, and routes the post-draft Bun/JSC strategy delta to RSL0 and RSL4. The plans index already places it after RRC8 as `proposed`. Activation remains deferred until RRC8 records its final verdict and the owner approves the plan and project skill. No RSL implementation started. |

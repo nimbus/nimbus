@@ -3,11 +3,13 @@
 Status: `proposed`.
 Owner: this plan.
 Created: 2026-08-29.
-Baseline: `codex/release-readiness-2026-08` @ `304a2e677293fec7d150e12ffc0ba98960917753`.
+Draft baseline: `codex/release-readiness-2026-08` @ `304a2e677293fec7d150e12ffc0ba98960917753`.
+Review head: `fca2d06d7ebaf55b9a27563f1fed509b6970c60b`.
+
 Proof root: `proof/runtime-strategy-lifecycle/`.
-Next action: keep the plan proposed until the owner approves activation and the
-project skill. At activation, RSL0 binds the execution baseline to the current
-release branch while retaining the recorded RRC8 handoff anchors.
+Next action: keep the plan proposed until RRC8 reaches its final verdict and the
+owner approves activation and the project skill. At activation, RSL0 binds the
+execution baseline to the current release branch and immutable fork tags.
 
 ## Outcome
 
@@ -84,12 +86,14 @@ After:
 ## Activation Gate
 
 This plan passed its independent scope, source, ordering, and acceptance review.
-RRC8 completed the fork handoff, omitted the realm-only carries, recorded the
-controlled A/B, and preserved one owner for each affected boundary. Its handoff
-anchors are Nimbus `76165b0b9`, test checkpoint `208c2e6f5`, Linux evidence
-checkpoint `cb84dfec8`, Deno `625e4c259`, and rusty_v8 `961a76d0c`. The plan
-remains `proposed`. Activate it only when the owner approves activation and the
-proposed project skill.
+RRC8 completed the runtime fork handoff, omitted the realm-only carries, and
+recorded the controlled A/B. The current immutable runtime graph uses Deno
+`v2.9.6-nimbus.5` at `95413e012e` and rusty_v8 `v150.4.0-nimbus.1` at
+`961a76d0c`. Nimbus commit `b94063c3b` consumes those tags. The earlier U6
+package anchors remain `76165b0b9`, `208c2e6f5`, and `cb84dfec8`.
+
+The plan remains `proposed`. Activate it only after RRC8 records its final
+verdict and the owner approves activation and the proposed project skill.
 
 At activation, RSL0 replaces the draft baseline and initializes task proofs. An
 unrelated release blocker does not prevent the handoff after terminal U6.
@@ -177,6 +181,7 @@ fixtures map these concepts without copying V8-only API names.
 | RSF6 | Realm replay affects Nimbus snapshot companion data and Deno runtime construction. | RRC8's exact old-graph A/B found no detected Web construction change, a small favorable Node replay-off result after counterbalancing, and 16 encoded replay-table bytes in the Node22 blob. RSL8 must reproduce this study through the permanent lab before it treats the result as a cross-host performance claim. |
 | RSF7 | The generic lazy-ESM termination repair can outlive realm recycle. | The Deno carry `core: avoid lazy esm abort on termination` has a separate failure contract. RSL7 must audit it independently and must not remove it with realm-only carries. |
 | RSF8 | The Deno bump ledger is stale relative to this draft baseline. | The ledger names Deno 2.9.1 while `Cargo.toml` names `v2.9.3-nimbus.2`. RRC8 is already replacing both. This plan must consume RRC8's final ledger instead of repairing the active uplift in parallel. |
+| RSF9 | RRC8 changed runtime strategy code after the draft baseline. | Commit `d6636b980` removed the V8 realm-recycle path. Later RRC8 work added the Bun/JSC fresh-discard product lane. RSL0 and RSL4 must inventory the activated V8, Bun/JSC, and Wasmtime strategy sets without treating V8 API shapes as backend-neutral policy. |
 
 ## Decisions To Ratify At Activation
 
@@ -342,6 +347,8 @@ and completes the A/B before U5. A supported caller reopens this decision.
   4. Reject diagnostic strategy names in product configuration and diagnostics.
 - Acceptance: product policy cannot select a lab-only candidate. The lab can
   still locate and reproduce its exact historical implementation.
+- Acceptance: each supported backend keeps its measured product strategy.
+  V8 policy names do not define Bun/JSC or Wasmtime lifecycle shapes.
 - Fail-before: an old-graph fixture proves the public Rust policy selected or
   serialized the rejected candidate before RRC8 removed it.
 - Verification: run `cargo test -p nimbus-runtime limits`,
@@ -507,3 +514,4 @@ Append rows at the end. This section stays last.
 | 2026-08-29 | meta | Completed an independent review and promoted the corrected plan to proposed. | `proof/runtime-strategy-lifecycle/draft-plan-audit.md`; RRC8 keeps fork ownership and no RSL implementation started. |
 | 2026-08-30 | meta | Corrected the post-U6 fork ownership and verification workflow. | RRC8 owns realm omission, publication, and repin. RSL7 and RSL8 only audit and reproduce the immutable result. Sol-only review restriction recorded; no RSL implementation started. |
 | 2026-09-01 | meta | Revalidated the draft after the RRC8 runtime handoff became terminal. | Recorded the exact Nimbus, Deno, and rusty_v8 anchors. Kept the plan proposed pending owner approval of activation and the project skill; no RSL implementation started. |
+| 2026-09-05 | meta | Revalidated the proposed plan against the current release graph. | Updated Deno to immutable `.5`, distinguished the earlier U6 package anchors from the current graph, and routed the post-draft Bun/JSC strategy delta to RSL0 and RSL4. The plan remains proposed; no RSL implementation started. |
