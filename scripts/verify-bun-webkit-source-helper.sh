@@ -122,6 +122,24 @@ grep -F "WebKit proof worktree must be clean" \
   "${tmp_root}/global.err" >/dev/null
 rm "${webkit_repo}/global-hidden.txt"
 
+fsmonitor_hook="${tmp_root}/fsmonitor.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "next-token\\0"' >"${fsmonitor_hook}"
+chmod +x "${fsmonitor_hook}"
+git -C "${webkit_repo}" config core.fsmonitor "${fsmonitor_hook}"
+git -C "${webkit_repo}" status --short >/dev/null
+printf 'hidden by fsmonitor\n' >"${webkit_repo}/source.txt"
+if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "${webkit_repo}" \
+  >"${tmp_root}/fsmonitor.out" 2>"${tmp_root}/fsmonitor.err"; then
+  printf 'fsmonitor-hidden tracked edit unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "WebKit proof worktree must be clean" \
+  "${tmp_root}/fsmonitor.err" >/dev/null
+git -C "${webkit_repo}" config --unset core.fsmonitor
+git -C "${webkit_repo}" checkout -q -- source.txt
+
 printf 'dirty\n' >"${webkit_repo}/dirty.txt"
 git -C "${webkit_repo}" config status.showUntrackedFiles no
 if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \

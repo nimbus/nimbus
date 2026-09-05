@@ -80,7 +80,7 @@ git_webkit() {
     GIT_CONFIG_GLOBAL=/dev/null \
     GIT_CONFIG_NOSYSTEM=1 \
     GIT_NO_REPLACE_OBJECTS=1 \
-    git -C "${webkit_repo}" "$@"
+    git -c core.fsmonitor=false -C "${webkit_repo}" "$@"
 }
 
 worktree_root="$(git_webkit rev-parse --show-toplevel 2>/dev/null || true)"
