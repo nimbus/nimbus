@@ -8,12 +8,20 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish Deno run `33925453875` and Bun run `33926366044`. If they
-pass, publish immutable fork tags and repin Nimbus to those exact commits.
-Then start the final nonpublishing exact-head CI, shard, Node, desktop,
-artifact, and host replays. Bind every accepted proof to that head. Rerun the
-46-condition verifier. Public-cloud lanes remain fail-closed until their
-release credentials and endpoints are available.
+Next action: finish Deno run `33933279302`. Then close the remaining Node gaps
+against the exact local fork graph. These gaps affect modules, WebCrypto,
+Diffie-Hellman, XOF, and zlib.
+
+Uplift the verified Bun 1.4.0 carries to the upstream 1.4.1 release before
+final validation.
+The tracks-latest gate does not accept interim tag `bun-v1.4.0-nimbus.8` as the
+final release graph.
+
+After both immutable fork tags pass and Nimbus pins them, start the final
+nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays.
+Bind every accepted proof to that head. Rerun the 46-condition verifier.
+Public-cloud lanes remain fail-closed until their release credentials and
+endpoints are available.
 
 ## Outcome
 
@@ -502,3 +510,6 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-04 | RRC8 | finding | The deterministic Node 22 `stream.pipeline` fixture exposed a Deno regression. Public `OutgoingMessage.writableFinished` correctly stayed false until transport flush, but the internal finished helper no longer accepted a drained legacy response after parser close. Deno commit `980df52ddfd9b4d79535b4490ef0a786a34b14ba` restores only the internal completion signal and keeps the public transport-flush contract strict. The original Nimbus fixture, Deno formatting and JS lint, action lint, whitespace, TruffleHog, and the exact Sol xhigh review pass. Hosted Deno run `33925453875` owns final branch validation. |
 | 2026-09-04 | RRC8 | evidence | Bun run `33916617802` passes the complete Linux x86_64 adapter and package lane at Bun commit `38531f191dd11149d07bcc9fb0c5c7e2b40c89ba`. On macOS it passes the native probes, process-global concurrent initialization, 42 manifest and unit tests, and all eight linked integration tests. The later server diagnostics step failed while Cargo linked unrelated integration-test binaries: macOS returned `Resource temporarily unavailable` after the verified adapter work. |
 | 2026-09-04 | RRC8 | finding | Nimbus commit `036bc78fc` adds `--lib` to both Bun server-diagnostics proofs, so Cargo links only the library test that owns the assertion. The exact local test passes with 1 test and 705 filtered tests. Bash syntax, ShellCheck, whitespace, TruffleHog, and the exact Sol xhigh review pass. Replacement nonpublishing run `33926366044` tests macOS arm64 and Linux x86_64. |
+| 2026-09-04 | RRC8 | evidence | Bun run `33926366044` passes the complete adapter build, package, and verification lane on macOS arm64 and Linux x86_64. Annotated fork tag `bun-v1.4.0-nimbus.8` has tag object `5c9fc02b723cce0efd2673efe64e1cf9a62ce499`, which peels to reviewed commit `38531f191dd11149d07bcc9fb0c5c7e2b40c89ba`; maintained branch `nimbus/bun-v1.4.0` resolves to the same commit. Nimbus commit `eed137ed7` pins that exact tag and revision. The 63 installer-helper checks, 5 focused UI tests, syntax and whitespace checks, TruffleHog, and the Sol xhigh review pass. No Opus 5 or Fable review ran. |
+| 2026-09-04 | RRC8 | blocked | The fork-standardization gate now detects upstream `bun-v1.4.1`. Interim tag `bun-v1.4.0-nimbus.8` is verified but cannot satisfy the final tracks-latest release rule. RRC8 must uplift the retained Bun carries, rerun both adapter hosts, publish a new immutable fork tag, and repin Nimbus before final candidate replay. |
+| 2026-09-04 | RRC8 | finding | Exact Node 22 and Node 24 fixtures showed different already-destroyed readable contracts. Deno commit `853f81792a` adds an embedder-owned closed-readable adapter policy: Node 20 and 22 retain legacy close behavior, while Node 24 and 26 propagate close errors. The adapter also preserves byte-stream mode and resolves a pending BYOB read when its Node stream ends. The Deno stream suite, exact official Node 24 fixture, Node 22 batch with 33 of 33 fixtures, Node 24 batch with 34 of 34 fixtures, formatting, lint, whitespace, TruffleHog, and the Sol xhigh review pass. Hosted run `33933279302` owns final fork validation. No Opus 5 or Fable review ran. |

@@ -14,17 +14,30 @@ Their annotated tags peel to reviewed commits
 and local release gates pass. A fresh rusty_v8 download verifies all 44
 payloads and 44 checksum sidecars.
 
-The current Nimbus product-code candidate is
-`66a82a5e9b51d6bcd7031c806ab5c739ccc968ab`. Its normal Cargo graph resolves
+The current committed Nimbus product-code candidate is
+`eed137ed7`. Its normal Cargo graph resolves
 41 Deno packages from `v2.9.6-nimbus.4` and rusty_v8 from
 `v150.4.0-nimbus.1`. It pins the Bun/JSC adapter to immutable tag
-`bun-v1.4.0-nimbus.7`. This candidate also contains the release test-toolchain,
+`bun-v1.4.0-nimbus.8` at
+`38531f191dd11149d07bcc9fb0c5c7e2b40c89ba`. This candidate also contains the release test-toolchain,
 runtime admission, local Node grant, and target-specific dgram corrections.
 The earlier full `make ci` replay applies to the superseded
 `a5869adbbf36278f4a9b2bd193a8a399f91e38fc` graph.
 
 RRC8 has not completed full local and hosted proof for the exact current
 candidate. The result remains **NO-GO**.
+
+Bun run `33926366044` passed the complete adapter build, package, and
+verification lane on macOS arm64 and Linux x86_64. Annotated tag object
+`5c9fc02b723cce0efd2673efe64e1cf9a62ce499` peels to the pinned commit.
+However, the fork-standardization gate now detects upstream `bun-v1.4.1`.
+Tag `bun-v1.4.0-nimbus.8` is an exact tested checkpoint, not the final
+tracks-latest release candidate.
+
+The active Deno branch now ends at `853f81792a`. Local Deno stream tests and
+the exact Nimbus Node 22 and Node 24 WHATWG batches pass 33 of 33 and 34 of 34
+fixtures. Hosted fork run `33933279302` is in progress. Nimbus has not yet
+published or pinned a Deno tag containing this correction.
 
 A source-free Linux arm64 package from the previous branch head passed health
 and application deployment. Its first WebStandard function invocation then
@@ -452,6 +465,8 @@ closed clean after all P3 hardening fixes.
    their credentials are not configured in the repository secrets.
 4. Public apt and COPR install proofs remain owned by the distribution plan and
    require separate publication authority.
+5. Upstream Bun 1.4.1 supersedes the verified 1.4.0 fork checkpoint. The Bun
+   carries need an uplift, dual-host proof, immutable tag, and Nimbus repin.
 
 ## Matrix Decision
 
@@ -470,12 +485,15 @@ changes, proof files, and desktop release artifacts.
 
 ## Required Next Action
 
-1. Commit and push the reviewed proof update after code candidate
-   `9b9123efacb217b922947b9d7374c9fb8f3095a7`.
-2. Build the exact v0.1.46 candidate from the resulting branch head. Use a
-   Linux runner with enough memory for full LTO.
-3. Repeat all critical macOS, Linux, application, desktop,
-   archive, and OCI lanes on that clean candidate.
-4. Complete the authorized notarization, apt, and COPR proofs.
+1. Finish hosted Deno run `33933279302` and close the remaining supported Node
+   compatibility failures before a new immutable Deno fork tag.
+2. Uplift the retained Bun carries to the current upstream release. The
+   required version is 1.4.1. Repeat both host proofs before a new immutable
+   Bun tag.
+3. Repin Nimbus to both exact fork releases. Build the resulting v0.1.46
+   candidate on a Linux runner with enough memory for full LTO.
+4. Repeat all critical macOS, Linux, application, desktop, archive, and OCI
+   lanes on that clean candidate.
+5. Complete the authorized notarization, apt, and COPR proofs.
 
 The release can become GO only after the matrix reports 46 passes.
