@@ -8,14 +8,14 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: preserve the active Linux job in Bun/JSC run `33974373111`, and
-wait for diagnostic run `33978835935` at Nimbus `0469a2f50` and Bun
-`4e86f82959`. The first 1.4.2 macOS job linked and loaded the adapter, but its
-process exited during the concurrent first-VM proof. Use the new opt-in native
-phase trace to bind the failure to process initialization, VM construction, or
-teardown. Fix the confirmed lifecycle defect and require both native hosts to
-pass before tag `bun-v1.4.2-nimbus.1`, maintained branch
-`nimbus/bun-v1.4.2`, or the immutable Nimbus repin.
+Next action: wait for diagnostic Bun/JSC run `33978835935` at Nimbus
+`0469a2f50` and Bun `4e86f82959`. The first 1.4.2 macOS job linked and loaded
+the adapter, but its process exited during the concurrent first-VM proof. Use
+the new opt-in native phase trace to bind the failure to process
+initialization, VM construction, or teardown. Fix the confirmed lifecycle
+defect and require both native hosts to pass before tag
+`bun-v1.4.2-nimbus.1`, maintained branch `nimbus/bun-v1.4.2`, or the immutable
+Nimbus repin.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -553,4 +553,5 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | review | Revalidated `runtime-strategy-lifecycle-plan.md` against the current graph. It now records Deno `.5`, distinguishes the earlier U6 package anchors, and routes the post-draft Bun/JSC strategy delta to RSL0 and RSL4. The plans index already places it after RRC8 as `proposed`. Activation remains deferred until RRC8 records its final verdict and the owner approves the plan and project skill. No RSL implementation started. |
 | 2026-09-05 | RRC8 | fail-before | Bun 1.4.2 run `33974373111` completed all 1,224 macOS build edges, linked and loaded the shared adapter, and then exited inside `nimbus_bun_embed_probe_construct_and_destroy_vm` before Python received a native status. The failure is after build and dynamic loading, not a machine, disk, or compiler stall. The independent Linux native job remains active and was not cancelled. |
 | 2026-09-05 | RRC8 | evidence | The macOS artifact from passing Bun 1.4.0 run `33926366044` completed 100 fresh-process repetitions of the same four-way concurrent first-VM probe on the local release host. This rejects a permanently invalid or ordinarily flaky proof. Bun commit `4e86f8295936994cc88ebd1137bdc1fdedb9a6ef` adds an opt-in, flushed lifecycle trace around thread setup, the initialization gate, process initialization, VM initialization, and destruction. Product execution stays silent. Formatting and whitespace checks pass. The focused Cargo check cannot resolve the intentionally absent `vendor/lolhtml` checkout in the clean uplift worktree. |
-| 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33978835935` uses Nimbus `0469a2f50ef0e0311840d7b772ebb62e99456dbb`, Bun `4e86f8295936994cc88ebd1137bdc1fdedb9a6ef`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. It is queued behind the preserved Linux job from run `33974373111`. No tag, maintained branch, release, or product publication occurred. |
+| 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33978835935` uses Nimbus `0469a2f50ef0e0311840d7b772ebb62e99456dbb`, Bun `4e86f8295936994cc88ebd1137bdc1fdedb9a6ef`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. Its exact runtime preflight is active. No tag, maintained branch, release, or product publication occurred. |
+| 2026-09-05 | RRC8 | superseded | Run `33974373111` was cancelled after the macOS failure because its Linux job used Bun `273d0e1b2e` and could not certify the new exact candidate at `4e86f82959`. The cancellation completed its cache-save cleanup before replacement run `33978835935` started. The replacement owns both native hosts, so no final host evidence was discarded. |
