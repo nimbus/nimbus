@@ -8,8 +8,8 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: wait for diagnostic Bun/JSC run `33979915946` at Nimbus
-`cf1aae68b` and Bun `49107c6e98`. The first 1.4.2 macOS job linked and loaded
+Next action: wait for diagnostic Bun/JSC run `33980209212` at Nimbus
+`5011515bb` and Bun `eafe931fa4`. The first 1.4.2 macOS job linked and loaded
 the adapter, but its process exited during the concurrent first-VM proof. Use
 the new opt-in native phase trace to bind the failure to process
 initialization, VM construction, or teardown. Fix the confirmed lifecycle
@@ -557,3 +557,6 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | superseded | Run `33974373111` was cancelled after the macOS failure because its Linux job used Bun `273d0e1b2e` and could not certify the new exact candidate at `4e86f82959`. The cancellation completed its cache-save cleanup before replacement run `33978835935` started. The replacement owns both native hosts, so no final host evidence was discarded. |
 | 2026-09-05 | RRC8 | superseded | Run `33978835935` was cancelled during its prerequisite runtime test. Review found that the first diagnostic used Bun's shared formatted-output buffer from all four probe threads and could perturb the concurrency defect. No native job started. Bun commit `49107c6e989710c2a316be80dc6ba3c3100eae2a` replaces it with one opt-in direct stderr write per phase. Formatting, manifest parsing, and whitespace checks pass. |
 | 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33979915946` uses Nimbus `cf1aae68b2c6d588c48ee820cc20f5cbd40d72e2`, Bun `49107c6e989710c2a316be80dc6ba3c3100eae2a`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. Its exact runtime preflight is active. Publication stays disabled. |
+| 2026-09-05 | RRC8 | fail-before | The cached minicloud native build rejected `49107c6e98` before compilation because the new direct probe dependency was absent from `Cargo.lock` and the build correctly uses `--locked`. This is a candidate integration defect, not a runner failure. Bun commit `eafe931fa4a0b20a64fa8a9ecb30b790fea90cd1` records the existing workspace `libc` package in the probe dependency list. Locked metadata, formatting, and whitespace checks pass. |
+| 2026-09-05 | RRC8 | superseded | Run `33979915946` was cancelled during its prerequisite runtime test after the minicloud locked-build failure. No native job started. Replacement run `33980209212` owns the corrected exact candidate. |
+| 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33980209212` uses Nimbus `5011515bb6f3eca3c517542f3e691d0a071e1dd9`, Bun `eafe931fa4a0b20a64fa8a9ecb30b790fea90cd1`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. Its exact runtime preflight is active. The cached minicloud `debug-no-asan` native target is compiling the same Bun commit. Publication stays disabled. |
