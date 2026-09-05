@@ -95,6 +95,14 @@ jobs:
           path: dist/bun-jsc-runtime-preflight/attestation.txt
           if-no-files-found: error
 
+      - name: Upload runtime UI prerequisite
+        uses: actions/upload-artifact@v7
+        with:
+          name: bun-jsc-runtime-ui
+          path: packages/nimbus-ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
   build-adapter:
     name: Build Bun/JSC adapter (${{ matrix.platform_arch }})
     needs: verify-runtime-contract
@@ -255,6 +263,12 @@ jobs:
         with:
           name: bun-jsc-runtime-preflight
           path: dist/bun-jsc-runtime-preflight
+
+      - name: Download runtime UI prerequisite
+        uses: actions/download-artifact@v8
+        with:
+          name: bun-jsc-runtime-ui
+          path: packages/nimbus-ui/dist
 
       - name: Build, package, and verify adapter
         env:
