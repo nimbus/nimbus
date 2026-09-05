@@ -18,11 +18,11 @@ on:
       bun_source_ref:
         description: "Bun source ref or tag"
         required: true
-        default: "bun-v1.4.0-nimbus.8"
+        default: "codex/bun-v1.4.2-release-readiness"
       bun_source_revision:
         description: "Expected Bun source commit"
         required: true
-        default: "38531f191dd11149d07bcc9fb0c5c7e2b40c89ba"
+        default: "273d0e1b2e781e4b79cfd67f0e56a2c844353fe6"
       install_bun_with_npm:
         description: "Install a pinned Bun CLI with npm before building; keep enabled for self-sufficient hosted runner dispatches"
         required: true
@@ -31,7 +31,7 @@ on:
       bun_bootstrap_version:
         description: "Bun npm package version used only when install_bun_with_npm is true"
         required: true
-        default: "1.4.0"
+        default: "1.4.2"
       publish_release_assets:
         description: "Upload verified adapter archives and adapter checksum file to the GitHub Release"
         required: true

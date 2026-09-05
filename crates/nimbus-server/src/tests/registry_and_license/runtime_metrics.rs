@@ -254,7 +254,7 @@ async fn runtime_metrics_route_returns_limits_and_metrics_when_convex_support_is
     );
     assert_eq!(
         bun_lane["execution_adapter_artifact"]["expected"]["source_ref"],
-        json!("bun-v1.4.0-nimbus.8")
+        json!("codex/bun-v1.4.2-release-readiness")
     );
     assert!(bun_lane["execution_adapter_artifact"]["manifest"].is_null());
 }

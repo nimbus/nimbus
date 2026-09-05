@@ -7,15 +7,13 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeHttpRouteInvokePayload = serde_json::from_value(payload)?;
-        validate_runtime_http_route(&payload.request, &payload.route)?;
+        let (request_context, route) = self.resolve_runtime_http_route(&payload)?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let request_context: ConvexHttpRequestContext =
-            serde_json::from_value(payload.request.args.clone())?;
         let response = prepare_http_action_response_async(
             self.engine(),
             self.registry(),
             self.tenant_id(),
-            &payload.route.plan,
+            &route.plan,
             &request_context,
             self.auth(),
             Some(cancellation.clone()),
@@ -44,15 +42,13 @@ impl ConvexHostBridge {
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: ConvexRuntimeHttpRouteInvokePayload = serde_json::from_value(payload)?;
-        validate_runtime_http_route(&payload.request, &payload.route)?;
+        let (request_context, route) = self.resolve_runtime_http_route(&payload)?;
         ensure_runtime_host_not_cancelled(cancellation)?;
-        let request_context: ConvexHttpRequestContext =
-            serde_json::from_value(payload.request.args.clone())?;
         let response = prepare_http_action_response_cancellable(
             self.engine(),
             self.registry(),
             self.tenant_id(),
-            &payload.route.plan,
+            &route.plan,
             &request_context,
             self.auth(),
             cancellation,
@@ -64,5 +60,45 @@ impl ConvexHostBridge {
         .unwrap_or_else(ConvexRuntimeResponseEnvelope::from_core_error);
 
         serde_json::to_value(response).map_err(NimbusRuntimeError::from)
+    }
+
+    fn resolve_runtime_http_route<'a>(
+        &'a self,
+        payload: &ConvexRuntimeHttpRouteInvokePayload,
+    ) -> std::result::Result<
+        (ConvexHttpRequestContext, &'a ConvexHttpRouteDefinition),
+        NimbusRuntimeError,
+    > {
+        if &payload.request.kind != self.invocation_kind()
+            || payload.request.function_name != self.current_function_name()
+        {
+            return Err(NimbusRuntimeError::Contract(format!(
+                "runtime http route request {} ({:?}) does not match active host invocation {} ({:?})",
+                payload.request.function_name,
+                payload.request.kind,
+                self.current_function_name(),
+                self.invocation_kind()
+            )));
+        }
+
+        let request_context: ConvexHttpRequestContext =
+            serde_json::from_value(payload.request.args.clone())?;
+        let method = Method::from_bytes(request_context.method.as_bytes()).map_err(|error| {
+            NimbusRuntimeError::Contract(format!(
+                "runtime http route request has invalid method {}: {error}",
+                request_context.method
+            ))
+        })?;
+        let route = self
+            .registry()
+            .resolve_http_route(&method, &request_context.pathname)
+            .ok_or_else(|| {
+                NimbusRuntimeError::Contract(format!(
+                    "runtime http route is not registered for {} {}",
+                    request_context.method, request_context.pathname
+                ))
+            })?;
+        validate_runtime_http_route(&payload.request, route)?;
+        Ok((request_context, route))
     }
 }

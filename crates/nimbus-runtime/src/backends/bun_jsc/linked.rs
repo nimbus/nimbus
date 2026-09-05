@@ -3,7 +3,7 @@ use std::ffi::c_void;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -64,11 +64,14 @@ type BunJscInvokeProgramWrapperJsonWithHostBridgeFn = unsafe extern "C" fn(
     cancellation_context: *mut c_void,
     is_cancelled: Option<BunJscIsCancelledFn>,
 ) -> i32;
+type BunJscTakePendingResponseFn =
+    unsafe extern "C" fn(output_ptr: *mut u8, output_cap: usize, output_len: *mut usize) -> i32;
 
 #[derive(Debug)]
 struct BunJscSharedAdapterLibrary {
     _library: libloading::Library,
     invoke_program_wrapper_json_with_host_bridge: BunJscInvokeProgramWrapperJsonWithHostBridgeFn,
+    take_pending_response: BunJscTakePendingResponseFn,
 }
 
 static BUN_JSC_SHARED_ADAPTER_LIBRARY: OnceLock<BunJscSharedAdapterLibrary> = OnceLock::new();
@@ -163,6 +166,7 @@ fn invoke_program_wrapper_json(
     let host_context = BunJscHostBridgeCallContext {
         host: host.bridge(),
         cancellation,
+        pending_response: Mutex::new(None),
     };
     let cancellation_context = &host_context as *const BunJscHostBridgeCallContext as *mut c_void;
 
@@ -188,13 +192,17 @@ fn invoke_program_wrapper_json(
         return Err(NimbusRuntimeError::Cancelled);
     }
     if status == 307 {
-        return Err(NimbusRuntimeError::Contract(format!(
-            "Bun/JSC linked execution response exceeded {} bytes; embedder reported {} bytes",
-            output.len(),
-            output_len
-        )));
-    }
-    if status != 0 {
+        if output_len <= output.len() {
+            return Err(NimbusRuntimeError::Contract(format!(
+                "Bun/JSC linked execution reported overflow for invalid response length {} and {} byte buffer",
+                output_len,
+                output.len()
+            )));
+        }
+        output =
+            take_completed_invocation_response(shared_library.take_pending_response, output_len)?;
+        output_len = output.len();
+    } else if status != 0 {
         return Err(NimbusRuntimeError::Contract(format!(
             "Bun/JSC linked execution failed with embedder status {status} ({})",
             embedder_status_name(status)
@@ -211,9 +219,38 @@ fn invoke_program_wrapper_json(
     serde_json::from_slice(&output[..output_len]).map_err(NimbusRuntimeError::from)
 }
 
+fn take_completed_invocation_response(
+    take_pending_response: BunJscTakePendingResponseFn,
+    required_len: usize,
+) -> Result<Vec<u8>> {
+    let mut output = Vec::new();
+    output.try_reserve_exact(required_len).map_err(|error| {
+        NimbusRuntimeError::Contract(format!(
+            "Bun/JSC linked execution could not reserve {required_len} bytes for its completed response: {error}"
+        ))
+    })?;
+    output.resize(required_len, 0);
+    let mut output_len = 0_usize;
+    let status =
+        unsafe { take_pending_response(output.as_mut_ptr(), output.len(), &mut output_len) };
+    if status != 0 {
+        return Err(NimbusRuntimeError::Contract(format!(
+            "Bun/JSC linked execution could not retrieve its completed response: embedder status {status} ({})",
+            embedder_status_name(status)
+        )));
+    }
+    if output_len != required_len {
+        return Err(NimbusRuntimeError::Contract(format!(
+            "Bun/JSC linked execution changed its completed response length from {required_len} to {output_len} bytes"
+        )));
+    }
+    Ok(output)
+}
+
 struct BunJscHostBridgeCallContext {
     host: Arc<dyn HostBridge>,
     cancellation: HostCallCancellation,
+    pending_response: Mutex<Option<Vec<u8>>>,
 }
 
 unsafe extern "C" fn bun_jsc_is_cancelled(context: *mut c_void) -> bool {
@@ -235,13 +272,41 @@ unsafe extern "C" fn bun_jsc_host_bridge_call_json(
     output_cap: usize,
     output_len: *mut usize,
 ) -> i32 {
-    if context.is_null() || request_ptr.is_null() || output_ptr.is_null() || output_len.is_null() {
+    if context.is_null() || output_ptr.is_null() || output_len.is_null() {
         return 300;
     }
 
     // SAFETY: Bun calls this callback synchronously while the Nimbus invocation
     // owns the context stack frame. The callback never stores the reference.
     let context = unsafe { &*(context as *const BunJscHostBridgeCallContext) };
+    if request_ptr.is_null() {
+        if request_len != 0 {
+            return 300;
+        }
+        let mut pending = context
+            .pending_response
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(response) = pending.as_ref() else {
+            return 320;
+        };
+        unsafe {
+            *output_len = response.len();
+        }
+        if response.len() > output_cap {
+            return 307;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(response.as_ptr(), output_ptr, response.len());
+        }
+        pending.take();
+        return 0;
+    }
+    context
+        .pending_response
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
     // SAFETY: Bun passes an immutable request buffer for the duration of this
     // callback. The slice is deserialized before the function returns.
     let request = unsafe { std::slice::from_raw_parts(request_ptr, request_len) };
@@ -285,6 +350,11 @@ unsafe extern "C" fn bun_jsc_host_bridge_call_json(
         unsafe {
             *output_len = response.len();
         }
+        context
+            .pending_response
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .replace(response);
         return 307;
     }
     // SAFETY: `output_len` was validated non-null above and the capacity check
@@ -304,7 +374,7 @@ fn embedder_status_name(status: i32) -> &'static str {
     match status {
         1 => "vm_init_failed",
         300 => "invalid_abi_pointer",
-        301 => "request_json_not_utf8",
+        301 => "invalid_request_json",
         302 => "bundle_evaluation_failed",
         303 => "invocation_evaluation_failed",
         304 => "invocation_promise_rejected",
@@ -320,6 +390,7 @@ fn embedder_status_name(status: i32) -> &'static str {
         314 => "invocation_cancelled",
         315 => "native_permission_profile_failed",
         316 => "cancellation_watcher_failed",
+        320 => "missing_pending_response",
         _ => "unknown",
     }
 }
@@ -359,10 +430,16 @@ fn load_shared_adapter_library() -> SharedAdapterLoadResult {
         )
     }
     .map_err(|error| shared_adapter_load_error(&resolved, "missing_required_export", error))?;
+    let take_pending_response =
+        unsafe { load_required_symbol(&library, "nimbus_bun_embed_take_pending_response") }
+            .map_err(|error| {
+                shared_adapter_load_error(&resolved, "missing_required_export", error)
+            })?;
 
     Ok(BunJscSharedAdapterLibrary {
         _library: library,
         invoke_program_wrapper_json_with_host_bridge,
+        take_pending_response,
     })
 }
 
@@ -418,6 +495,7 @@ mod tests {
         BunJscHostBridgeCallContext {
             host: Arc::new(FixedResponseHost(value)),
             cancellation: HostCallCancellation::default(),
+            pending_response: Mutex::new(None),
         }
     }
 
@@ -427,6 +505,41 @@ mod tests {
             json!({}),
         ))
         .expect("host call request should serialize")
+    }
+
+    unsafe extern "C" fn take_fixed_completed_response(
+        output_ptr: *mut u8,
+        output_cap: usize,
+        output_len: *mut usize,
+    ) -> i32 {
+        const RESPONSE: &[u8] = br#"{"status":"ok","value":{"completed":true}}"#;
+        if output_ptr.is_null() || output_len.is_null() {
+            return 300;
+        }
+        unsafe {
+            *output_len = RESPONSE.len();
+        }
+        if output_cap < RESPONSE.len() {
+            return 307;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(RESPONSE.as_ptr(), output_ptr, RESPONSE.len());
+        }
+        0
+    }
+
+    #[test]
+    fn completed_response_is_retrieved_without_invocation_replay() {
+        const RESPONSE_LEN: usize = br#"{"status":"ok","value":{"completed":true}}"#.len();
+
+        let response =
+            take_completed_invocation_response(take_fixed_completed_response, RESPONSE_LEN)
+                .expect("completed response should be retrieved");
+
+        assert_eq!(
+            serde_json::from_slice::<Value>(&response).expect("response should remain valid JSON"),
+            json!({ "status": "ok", "value": { "completed": true } })
+        );
     }
 
     #[test]
@@ -455,6 +568,34 @@ mod tests {
         assert_eq!(status, 307);
         assert_eq!(output_len, expected_response.len());
         assert_eq!(output, [0xA5_u8; 8]);
+
+        let mut recovered = vec![0_u8; output_len];
+        let mut recovered_len = 0;
+        let status = unsafe {
+            bun_jsc_host_bridge_call_json(
+                &context as *const BunJscHostBridgeCallContext as *mut c_void,
+                std::ptr::null(),
+                0,
+                recovered.as_mut_ptr(),
+                recovered.len(),
+                &mut recovered_len,
+            )
+        };
+        assert_eq!(status, 0);
+        assert_eq!(recovered_len, expected_response.len());
+        assert_eq!(&recovered[..recovered_len], expected_response.as_slice());
+
+        let status = unsafe {
+            bun_jsc_host_bridge_call_json(
+                &context as *const BunJscHostBridgeCallContext as *mut c_void,
+                std::ptr::null(),
+                0,
+                recovered.as_mut_ptr(),
+                recovered.len(),
+                &mut recovered_len,
+            )
+        };
+        assert_eq!(status, 320);
     }
 
     #[test]
@@ -503,5 +644,6 @@ mod tests {
             "native_permission_profile_failed"
         );
         assert_eq!(embedder_status_name(316), "cancellation_watcher_failed");
+        assert_eq!(embedder_status_name(320), "missing_pending_response");
     }
 }

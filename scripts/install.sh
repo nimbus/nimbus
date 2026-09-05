@@ -46,15 +46,15 @@ NIMBUS_WORKDIR=""
 BUN_JSC_ADAPTER_SCHEMA_VERSION=1
 BUN_JSC_ADAPTER_KIND="nimbus.bun_jsc.adapter"
 BUN_JSC_ADAPTER_ABI_NAME="nimbus-bun-jsc-embedder"
-BUN_JSC_ADAPTER_ABI_VERSION=2
+BUN_JSC_ADAPTER_ABI_VERSION=3
 BUN_JSC_ADAPTER_MEMORY_ENFORCEMENT="outer_quota_required"
 BUN_JSC_ADAPTER_LIFECYCLE="fresh_discard"
 BUN_JSC_ADAPTER_MANIFEST_FILE="nimbus-bun-jsc-adapter.json"
 BUN_JSC_ADAPTER_CHECKSUMS_FILE="checksums-sha256.txt"
 BUN_JSC_ADAPTER_README_FILE="README.md"
 BUN_JSC_ADAPTER_SOURCE_REPOSITORY="https://github.com/nimbus/bun"
-BUN_JSC_ADAPTER_SOURCE_REF="bun-v1.4.0-nimbus.8"
-BUN_JSC_ADAPTER_SOURCE_REVISION="38531f191dd11149d07bcc9fb0c5c7e2b40c89ba"
+BUN_JSC_ADAPTER_SOURCE_REF="codex/bun-v1.4.2-release-readiness"
+BUN_JSC_ADAPTER_SOURCE_REVISION="273d0e1b2e781e4b79cfd67f0e56a2c844353fe6"
 BUN_JSC_ADAPTER_SBOM_FILE="nimbus-bun-jsc-adapter.sbom.cdx.json"
 BUN_JSC_ADAPTER_SLSA_FILE="nimbus-bun-jsc-adapter.intoto.jsonl"
 
@@ -71,6 +71,7 @@ nimbus_bun_embed_probe_package_module_policy
 nimbus_bun_embed_probe_lifecycle_reuse_stress
 nimbus_bun_embed_invoke_program_wrapper_json
 nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge
+nimbus_bun_embed_take_pending_response
 EOF
 }
 

@@ -23,7 +23,6 @@ Object.defineProperty(globalThis, "__nimbusInvoke", {
     if (route) {
       return await globalThis.__nimbusAsyncHostValue("op_nimbus_http_route", {
         request,
-        route,
       });
     }
 

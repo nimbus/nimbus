@@ -459,7 +459,6 @@ globalThis.__nimbusInvoke = async function (request) {
     if (route) {
       return await globalThis.__nimbusAsyncHostValue("op_nimbus_http_route", {
         request,
-        route,
       });
     }
 

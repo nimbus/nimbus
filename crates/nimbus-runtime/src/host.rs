@@ -176,9 +176,9 @@ pub struct RuntimeAsyncActionPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeAsyncHttpRoutePayload {
     pub request: Value,
-    pub route: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1013,7 +1013,6 @@ mod tests {
             (
                 HostCallPayload::HttpRoute(RuntimeAsyncHttpRoutePayload {
                     request: json!({ "method": "GET" }),
-                    route: json!({ "path": "/health" }),
                 }),
                 None,
             ),
