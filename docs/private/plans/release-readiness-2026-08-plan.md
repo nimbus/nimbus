@@ -8,8 +8,8 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: wait for diagnostic Bun/JSC run `33978835935` at Nimbus
-`0469a2f50` and Bun `4e86f82959`. The first 1.4.2 macOS job linked and loaded
+Next action: wait for diagnostic Bun/JSC run `33979915946` at Nimbus
+`cf1aae68b` and Bun `49107c6e98`. The first 1.4.2 macOS job linked and loaded
 the adapter, but its process exited during the concurrent first-VM proof. Use
 the new opt-in native phase trace to bind the failure to process
 initialization, VM construction, or teardown. Fix the confirmed lifecycle
@@ -555,3 +555,5 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | evidence | The macOS artifact from passing Bun 1.4.0 run `33926366044` completed 100 fresh-process repetitions of the same four-way concurrent first-VM probe on the local release host. This rejects a permanently invalid or ordinarily flaky proof. Bun commit `4e86f8295936994cc88ebd1137bdc1fdedb9a6ef` adds an opt-in, flushed lifecycle trace around thread setup, the initialization gate, process initialization, VM initialization, and destruction. Product execution stays silent. Formatting and whitespace checks pass. The focused Cargo check cannot resolve the intentionally absent `vendor/lolhtml` checkout in the clean uplift worktree. |
 | 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33978835935` uses Nimbus `0469a2f50ef0e0311840d7b772ebb62e99456dbb`, Bun `4e86f8295936994cc88ebd1137bdc1fdedb9a6ef`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. Its exact runtime preflight is active. No tag, maintained branch, release, or product publication occurred. |
 | 2026-09-05 | RRC8 | superseded | Run `33974373111` was cancelled after the macOS failure because its Linux job used Bun `273d0e1b2e` and could not certify the new exact candidate at `4e86f82959`. The cancellation completed its cache-save cleanup before replacement run `33978835935` started. The replacement owns both native hosts, so no final host evidence was discarded. |
+| 2026-09-05 | RRC8 | superseded | Run `33978835935` was cancelled during its prerequisite runtime test. Review found that the first diagnostic used Bun's shared formatted-output buffer from all four probe threads and could perturb the concurrency defect. No native job started. Bun commit `49107c6e989710c2a316be80dc6ba3c3100eae2a` replaces it with one opt-in direct stderr write per phase. Formatting, manifest parsing, and whitespace checks pass. |
+| 2026-09-05 | RRC8 | started | Nonpublishing diagnostic run `33979915946` uses Nimbus `cf1aae68b2c6d588c48ee820cc20f5cbd40d72e2`, Bun `49107c6e989710c2a316be80dc6ba3c3100eae2a`, upstream Bun 1.4.2, and bootstrap Bun 1.4.2. Its exact runtime preflight is active. Publication stays disabled. |
