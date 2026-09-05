@@ -19,6 +19,8 @@ use super::manifest;
 use super::pool::BunJscPoolPolicy;
 
 const BUN_JSC_LINKED_ADAPTER_OUTPUT_CAP: usize = 4 * 1024 * 1024;
+const BUN_JSC_LINKED_ADAPTER_MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+const BUN_JSC_HOST_RESPONSE_TOO_LARGE: &[u8] = br#"{"status":"error","error":{"code":"host_bridge_response_too_large","message":"host bridge response exceeded the 32 MiB ABI limit"}}"#;
 
 type BunJscArtifactDiagnostics = RuntimeExecutionAdapterArtifactDiagnostics;
 type SharedAdapterLibraryResult =
@@ -223,6 +225,12 @@ fn take_completed_invocation_response(
     take_pending_response: BunJscTakePendingResponseFn,
     required_len: usize,
 ) -> Result<Vec<u8>> {
+    if bun_jsc_response_too_large(required_len) {
+        return Err(NimbusRuntimeError::Contract(format!(
+            "Bun/JSC linked execution response exceeded the {} byte ABI limit: {required_len}",
+            BUN_JSC_LINKED_ADAPTER_MAX_OUTPUT_BYTES
+        )));
+    }
     let mut output = Vec::new();
     output.try_reserve_exact(required_len).map_err(|error| {
         NimbusRuntimeError::Contract(format!(
@@ -344,6 +352,11 @@ unsafe extern "C" fn bun_jsc_host_bridge_call_json(
         Ok(response) => response,
         Err(_) => return 312,
     };
+    let response = if bun_jsc_response_too_large(response.len()) {
+        BUN_JSC_HOST_RESPONSE_TOO_LARGE.to_vec()
+    } else {
+        response
+    };
     if response.len() > output_cap {
         // SAFETY: `output_len` was validated non-null above. On overflow the
         // ABI reports the required capacity and performs no buffer write.
@@ -391,8 +404,13 @@ fn embedder_status_name(status: i32) -> &'static str {
         315 => "native_permission_profile_failed",
         316 => "cancellation_watcher_failed",
         320 => "missing_pending_response",
+        321 => "response_too_large",
         _ => "unknown",
     }
+}
+
+fn bun_jsc_response_too_large(response_len: usize) -> bool {
+    response_len > BUN_JSC_LINKED_ADAPTER_MAX_OUTPUT_BYTES
 }
 
 fn shared_adapter_library() -> SharedAdapterLibraryResult {
@@ -543,6 +561,26 @@ mod tests {
     }
 
     #[test]
+    fn completed_response_rejects_lengths_above_the_abi_limit_before_allocation() {
+        let error = take_completed_invocation_response(
+            take_fixed_completed_response,
+            BUN_JSC_LINKED_ADAPTER_MAX_OUTPUT_BYTES + 1,
+        )
+        .expect_err("oversized completed response should fail closed");
+
+        assert!(
+            error.to_string().contains("response exceeded"),
+            "unexpected oversized response error: {error}"
+        );
+        assert!(!bun_jsc_response_too_large(
+            BUN_JSC_LINKED_ADAPTER_MAX_OUTPUT_BYTES
+        ));
+        assert!(bun_jsc_response_too_large(
+            BUN_JSC_LINKED_ADAPTER_MAX_OUTPUT_BYTES + 1
+        ));
+    }
+
+    #[test]
     fn host_bridge_callback_reports_required_length_without_copy_on_overflow() {
         let context = host_bridge_context(json!("response larger than the output buffer"));
         let request = serialized_host_call_request();
@@ -645,5 +683,6 @@ mod tests {
         );
         assert_eq!(embedder_status_name(316), "cancellation_watcher_failed");
         assert_eq!(embedder_status_name(320), "missing_pending_response");
+        assert_eq!(embedder_status_name(321), "response_too_large");
     }
 }
