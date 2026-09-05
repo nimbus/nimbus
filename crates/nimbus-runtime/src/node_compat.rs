@@ -271,6 +271,19 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
             }
         })
     }
+
+    fn resolve_require_node_module_paths(&self, from: &Path) -> Vec<String> {
+        resolution_search_directories(from, self.path_policy.resolution_roots())
+            .into_iter()
+            .filter(|directory| !directory.ends_with("node_modules"))
+            .map(|directory| {
+                directory
+                    .join("node_modules")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -954,6 +967,53 @@ mod tests {
             .find(|(key, _)| key == "permission")
             .map(|(_, value)| value.to_string());
         assert_eq!(permission.as_deref(), Some("FileSystemRead"));
+    }
+
+    #[test]
+    fn require_loader_search_paths_stay_inside_runtime_roots() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_root = tempdir.path().join("app/.nimbus/convex");
+        let nested_root = bundle_root.join("test/fixtures");
+        std::fs::create_dir_all(&nested_root).expect("nested root should build");
+        let bundle_path = bundle_root.join("bundle.cjs");
+        std::fs::write(&bundle_path, "module.exports = 1;\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("policy should build");
+        let resolution_roots = policy.resolution_roots().to_vec();
+        let loader = ScopedNodeRequireLoader::new(policy, build_package_json_resolver());
+
+        let search_paths = loader.resolve_require_node_module_paths(&nested_root);
+
+        assert!(search_paths.iter().all(|path| {
+            Path::new(path).parent().is_some_and(|directory| {
+                resolution_roots
+                    .iter()
+                    .any(|root| directory.starts_with(root))
+            })
+        }));
+        assert!(resolution_roots.iter().all(|root| {
+            search_paths.contains(&root.join("node_modules").to_string_lossy().into_owned())
+        }));
+        let nimbus_root = std::fs::canonicalize(bundle_root.parent().expect("nimbus root"))
+            .expect("nimbus root should canonicalize");
+        assert!(
+            !search_paths.contains(
+                &nimbus_root
+                    .join("node_modules")
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+
+        let outside_search_paths =
+            loader.resolve_require_node_module_paths(&tempdir.path().join("outside"));
+        let expected_root_paths = resolution_roots
+            .iter()
+            .filter(|root| !root.ends_with("node_modules"))
+            .map(|root| root.join("node_modules").to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(outside_search_paths, expected_root_paths);
     }
 
     #[test]

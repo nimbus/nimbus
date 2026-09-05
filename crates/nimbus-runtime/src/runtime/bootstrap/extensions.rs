@@ -256,8 +256,12 @@ impl NodeBootstrapExtensionSlot {
                 Default::default(),
                 false,
                 InMemoryBroadcastChannel::default(),
+                url_search_params_null_policy(context.limits.compatibility_target),
             ),
-            Self::Crypto => deno_crypto::deno_crypto::init(None),
+            Self::Crypto => deno_crypto::deno_crypto::init(
+                None,
+                web_crypto_error_policy(context.limits.compatibility_target),
+            ),
             Self::Fetch => deno_fetch::deno_fetch::init(egress_fetch_options()),
             Self::WebSocket => deno_websocket::deno_websocket::init(),
             Self::Net => deno_net::deno_net::init(None, None),
@@ -283,6 +287,7 @@ impl NodeBootstrapExtensionSlot {
                 deno_node::HeapSnapshotNearHeapLimitPolicy::Deny,
                 aes_gcm_implicit_short_tag_policy(context.limits.compatibility_target),
                 dgram_default_lookup_policy(context.limits.compatibility_target),
+                closed_readable_adapter_policy(context.limits.compatibility_target),
             ),
             Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
         }
@@ -358,6 +363,41 @@ fn aes_gcm_implicit_short_tag_policy(
     }
 }
 
+fn web_crypto_error_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_crypto::WebCryptoErrorPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            deno_crypto::WebCryptoErrorPolicy::Node22
+        }
+        RuntimeCompatibilityTarget::Node24 | RuntimeCompatibilityTarget::Node26 => {
+            deno_crypto::WebCryptoErrorPolicy::Node24
+        }
+        RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_crypto::WebCryptoErrorPolicy::WebStandard
+        }
+    }
+}
+
+fn url_search_params_null_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_web::UrlSearchParamsNullPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            deno_web::UrlSearchParamsNullPolicy::TreatAsMissing
+        }
+        RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_web::UrlSearchParamsNullPolicy::Stringify
+        }
+    }
+}
+
 fn dgram_default_lookup_policy(
     target: RuntimeCompatibilityTarget,
 ) -> deno_node::DgramDefaultLookupPolicy {
@@ -371,6 +411,23 @@ fn dgram_default_lookup_policy(
         | RuntimeCompatibilityTarget::BunJsc
         | RuntimeCompatibilityTarget::WasmComponent => {
             deno_node::DgramDefaultLookupPolicy::BypassIpLiterals
+        }
+    }
+}
+
+fn closed_readable_adapter_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_node::ClosedReadableAdapterPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            deno_node::ClosedReadableAdapterPolicy::LegacyClose
+        }
+        RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::ClosedReadableAdapterPolicy::PropagateError
         }
     }
 }
@@ -736,10 +793,74 @@ mod tests {
             aes_gcm_implicit_short_tag_policy(RuntimeCompatibilityTarget::Node24),
             deno_node::AesGcmImplicitShortTagPolicy::WarnDeprecated
         );
-        assert_eq!(
-            aes_gcm_implicit_short_tag_policy(RuntimeCompatibilityTarget::Node26),
-            deno_node::AesGcmImplicitShortTagPolicy::Deny
-        );
+        for target in [
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                aes_gcm_implicit_short_tag_policy(target),
+                deno_node::AesGcmImplicitShortTagPolicy::Deny
+            );
+        }
+    }
+
+    #[test]
+    fn web_crypto_error_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+        ] {
+            assert_eq!(
+                web_crypto_error_policy(target),
+                deno_crypto::WebCryptoErrorPolicy::Node22
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+        ] {
+            assert_eq!(
+                web_crypto_error_policy(target),
+                deno_crypto::WebCryptoErrorPolicy::Node24
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                web_crypto_error_policy(target),
+                deno_crypto::WebCryptoErrorPolicy::WebStandard
+            );
+        }
+    }
+
+    #[test]
+    fn url_search_params_null_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+        ] {
+            assert_eq!(
+                url_search_params_null_policy(target),
+                deno_web::UrlSearchParamsNullPolicy::TreatAsMissing
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                url_search_params_null_policy(target),
+                deno_web::UrlSearchParamsNullPolicy::Stringify
+            );
+        }
     }
 
     #[test]
@@ -756,10 +877,38 @@ mod tests {
         for target in [
             RuntimeCompatibilityTarget::Node24,
             RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
         ] {
             assert_eq!(
                 dgram_default_lookup_policy(target),
                 deno_node::DgramDefaultLookupPolicy::BypassIpLiterals
+            );
+        }
+    }
+
+    #[test]
+    fn node_closed_readable_adapter_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+        ] {
+            assert_eq!(
+                closed_readable_adapter_policy(target),
+                deno_node::ClosedReadableAdapterPolicy::LegacyClose
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                closed_readable_adapter_policy(target),
+                deno_node::ClosedReadableAdapterPolicy::PropagateError
             );
         }
     }
