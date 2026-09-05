@@ -359,6 +359,8 @@ if [[ -n "${bun_status}" ]]; then
   exit 1
 fi
 
+# Every shared-adapter build below selects --webkit=local. Bun rejects
+# --embedder-shared with prebuilt WebKit because those archives are not PIC.
 bash "${REPO_ROOT}/scripts/verify-bun-webkit-source.sh" \
   --bun-repo "${BUN_REPO}" \
   --webkit-repo "${WEBKIT_SOURCE}"
