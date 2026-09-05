@@ -105,6 +105,23 @@ fi
 grep -F "WebKit source is not a Git worktree" \
   "${tmp_root}/redirect.err" >/dev/null
 
+global_home="${tmp_root}/global-home"
+global_excludes="${tmp_root}/global-excludes"
+mkdir -p "${global_home}"
+printf 'global-hidden.txt\n' >"${global_excludes}"
+git config --file "${global_home}/.gitconfig" core.excludesFile "${global_excludes}"
+printf 'hidden by global excludes\n' >"${webkit_repo}/global-hidden.txt"
+if HOME="${global_home}" bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${bun_repo}" \
+  --webkit-repo "${webkit_repo}" \
+  >"${tmp_root}/global.out" 2>"${tmp_root}/global.err"; then
+  printf 'globally ignored source unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -F "WebKit proof worktree must be clean" \
+  "${tmp_root}/global.err" >/dev/null
+rm "${webkit_repo}/global-hidden.txt"
+
 printf 'dirty\n' >"${webkit_repo}/dirty.txt"
 git -C "${webkit_repo}" config status.showUntrackedFiles no
 if bash "${repo_root}/scripts/verify-bun-webkit-source.sh" \
