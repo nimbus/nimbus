@@ -1,8 +1,37 @@
 # RRC8 Release Verdict
 
-Date: 2026-09-04
+Date: 2026-09-06
 
-## Current Status Update
+## Current Candidate
+
+Result: **NO-GO**.
+
+The exact candidate uses Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Desktop
+`50bf6ca41f1b4d6bb5d5594136de760079fbc2e0`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
+
+The fixed release matrix reports 45 passes and one blocked condition. Product,
+application, adapter, storage, workload-host, desktop, archive, OCI, package,
+security, and CI proofs pass. GPT-5.6 Sol xhigh reports no actionable P0
+through P3 finding.
+
+Exact CI run `34031004029` has 50 successful jobs and no failure. The two
+nightly-only jobs stay skipped by the nonnightly workflow contract. The run
+produced the full-LTO Linux release archive. That archive passes native
+lifecycle, restart, OCI, DEB, and RPM tests on `minicloud.local`.
+
+Shard-scaling run `34030233537` passes its archive and K=1 through K=4 jobs.
+Bun/JSC run `34025632498` passes on Linux x86_64 and macOS arm64. Its
+publication job stayed skipped. Exact desktop UI run `34030233538` passes.
+
+The release remains NO-GO because the public apt and COPR install proofs do
+not exist. Four live public dual-target comparisons also remain blocked by
+missing provider endpoint variables. Nimbus has not published a product tag,
+release, package, or OCI image.
+
+## Campaign History Before Final Candidate
 
 Result: **NO-GO**.
 
@@ -407,11 +436,13 @@ effects. It also records the vendored `lazy_static` lint repair accurately.
 ## Documentation Gates
 
 Candidate binding: Nimbus
-`ae63f18798b2d020c029a4d65443c45c0acf347f`, Desktop
-`bbc103f84b2a88e2baa4b522e45447bed31e04c7`, Deno
-`1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Desktop
+`50bf6ca41f1b4d6bb5d5594136de760079fbc2e0`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
 `b57a2d680891de852d5576e65ccaea787b005431`.
 
+- Exact-head docs run `34025640808` passed the public site install, build, and
+  verification gates.
 - `bash scripts/check-docs.sh`: 109 pages checked with no error.
 - `bash scripts/verify-nimbus-docs-site.sh`: 17 of 17 checks passed.
 - The current-capabilities contract, private proof files, and release matrix
@@ -420,9 +451,9 @@ Candidate binding: Nimbus
 ## Security and Dependency Gates
 
 Candidate binding: Nimbus
-`ae63f18798b2d020c029a4d65443c45c0acf347f`, Desktop
-`bbc103f84b2a88e2baa4b522e45447bed31e04c7`, Deno
-`1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Desktop
+`50bf6ca41f1b4d6bb5d5594136de760079fbc2e0`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
 `b57a2d680891de852d5576e65ccaea787b005431`.
 
 - `make deny`: passed.
@@ -435,10 +466,16 @@ Candidate binding: Nimbus
 ## Independent Reviews
 
 Candidate binding: Nimbus
-`ae63f18798b2d020c029a4d65443c45c0acf347f`, Desktop
-`bbc103f84b2a88e2baa4b522e45447bed31e04c7`, Deno
-`1c17e86b296af380f67c48f3b9a89876db154604`, and upstream baseline
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Desktop
+`50bf6ca41f1b4d6bb5d5594136de760079fbc2e0`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
 `b57a2d680891de852d5576e65ccaea787b005431`.
+
+The GPT-5.6 Sol xhigh review of the main product patch accepted no P0 through
+P3 finding. The final review of server stack repair `7d0ca18a7` also accepted
+no P0 through P3 finding, with correctness confidence `0.91`. It confirmed
+that the awaited child task preserves cancellation and error propagation. No
+Opus 5 or Fable review ran after the owner prohibited those models.
 
 The earlier v2.9.3 integration received two independent structured reviews
 after its last accepted correction:
@@ -456,44 +493,56 @@ closed clean after all P3 hardening fixes.
 
 ## Remaining Release Blockers
 
-1. The corrected full local and hosted CI gates have not passed on the final
-   branch head.
-2. Release-critical Linux x86_64, archive, OCI, and remaining application and
-   distribution lanes have not replayed from the final branch head. The
-   source-free macOS and Linux arm64 runtime package oracles pass.
-3. Live dual-target cloud proofs remain blocked because four provider URLs and
-   their credentials are not configured in the repository secrets.
-4. Public apt and COPR install proofs remain owned by the distribution plan and
-   require separate publication authority.
-5. Upstream Bun 1.4.1 supersedes the verified 1.4.0 fork checkpoint. The Bun
-   carries need an uplift, dual-host proof, immutable tag, and Nimbus repin.
+Candidate binding: Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
+
+1. Public apt and COPR install proofs remain owned by the distribution plan.
+   They require publication authority, public channel state, and fresh installs
+   through those channels. The local DEB and RPM packages pass.
+2. Live dual-target cloud proofs remain blocked because these four provider
+   endpoints are absent from repository configuration:
+   `CONVEX_CLOUD_DUAL_TARGET_URL`,
+   `CLOUD_FUNCTIONS_CLOUD_DUAL_TARGET_URL`,
+   `MONGODB_CLOUD_DUAL_TARGET_URI`, and
+   `FIREBASE_CLOUD_DUAL_TARGET_URL`. The same workflow passes all four Nimbus
+   targets before it reaches the absent public targets.
+
+No open blocker has another safe local repair or test. Both need external
+state outside this plan's nonpublication scope.
 
 ## Matrix Decision
 
-The fixed 46-condition matrix ends with 3 passes, 43 blocked conditions, zero
-unverified conditions, zero failures, and zero structural errors. Documentation,
-dependency security, and independent review are direct passes. Every product or
-artifact condition stays blocked because its evidence is provisional or belongs
-to an authorized publication lane. A skip or provisional result is not green.
+The fixed 46-condition matrix ends with 45 passes, one blocked condition, zero
+unverified conditions, zero failures, and zero structural errors. The blocked
+condition is `install_channels`, for public apt and COPR evidence. The four
+missing public dual-target comparisons remain explicit release evidence debt
+outside the fixed matrix. A skip or local package build is not public channel
+evidence.
 
 ## Cleanup
 
-The cleanup removed the exact-test worktree and 13 GiB rebuildable Nimbus Cargo
-target after both reviews. Free macOS filesystem space increased from 86 GiB
-to 100 GiB. The cleanup preserved the 663 MiB candidate artifact, source
-changes, proof files, and desktop release artifacts.
+RRC8 removed only its disposable local and remote artifacts after it recorded
+their identities and hashes. The final cleanup removed about 1.4 GiB of remote
+archive, package, OCI-context, and smoke roots. It also removed 718 MiB of
+temporary worktree dependencies and both run-owned OCI images. The unrelated
+`nimbus-libsql-local` container remains active. Older U3 worktrees remain
+unchanged.
+
+The local cleanup removed 336 MiB of downloaded and extracted candidate inputs.
+The Mac has 67 GiB free. `minicloud.local` has 50 GiB free and 7.0 GiB of
+available memory. Source changes, durable proof files, immutable hosted
+artifacts, and repository commits remain available.
 
 ## Required Next Action
 
-1. Finish hosted Deno run `33933279302` and close the remaining supported Node
-   compatibility failures before a new immutable Deno fork tag.
-2. Uplift the retained Bun carries to the current upstream release. The
-   required version is 1.4.1. Repeat both host proofs before a new immutable
-   Bun tag.
-3. Repin Nimbus to both exact fork releases. Build the resulting v0.1.46
-   candidate on a Linux runner with enough memory for full LTO.
-4. Repeat all critical macOS, Linux, application, desktop, archive, and OCI
-   lanes on that clean candidate.
-5. Complete the authorized notarization, apt, and COPR proofs.
+1. Publish the authorized apt and COPR candidate channels, then run fresh
+   public installs through both channels.
+2. Configure the four public dual-target endpoints and rerun the exact
+   comparison workflow.
+3. Bind those results to this candidate or repeat the candidate replay if the
+   source graph changes.
 
-The release can become GO only after the matrix reports 46 passes.
+The release can become GO only after the matrix reports 46 passes and the four
+public dual-target comparisons have direct evidence.

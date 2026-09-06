@@ -1,221 +1,189 @@
 # RRC7 Distribution Evidence
 
-Date: 2026-08-28
+Date: 2026-09-06
 
-Result: provisional pass for every locally testable release artifact. RRC7
-remains blocked because the clean v0.1.46 candidate cannot build until the
-RRC1 Deno WebSocket egress commits have reachable immutable references. The
-public apt and COPR install proofs also remain open in the distribution plan.
-No tag, release, package channel, or other public artifact was published.
+Result: `RRC7_DISTRIBUTION_BLOCKED`.
 
-## Inputs and Boundaries
+The exact v0.1.46 candidate passes every distribution check that does not
+publish Nimbus product state. The release archives, native Linux lifecycle,
+OCI image, DEB packages, and RPM packages pass. Public apt and COPR channels
+remain blocked because they need product publication and fresh public install
+proofs. RRC7 did not publish a Nimbus tag, release, package, or OCI image.
 
-- Nimbus campaign branch: `codex/release-readiness-2026-08` at
-  `0c8bdd363` after the RRC7 repairs.
-- Intended next release: v0.1.46. The source, Rust workspace packages,
-  JavaScript packages, checked-in application locks, and changelog use
-  version 0.1.46.
-- Latest public stable release: v0.1.45, published 2026-07-06. No v0.1.46
-  tag or release exists.
-- Provisional integrated macOS binary:
-  `/private/tmp/nimbus-release-candidate-875c1dc65b4d/nimbus`, version
-  0.1.45, SHA-256
-  `875c1dc65b4dec6a72fda5518628b0c417bb9c3416bf0ed7ab93f6c57cf0df0f`.
-- Linux distribution comparison: real packages built from public v0.1.44
-  and v0.1.45 assets, then installed and upgraded in fresh Debian 13 and
-  Fedora 42 containers on `nimbus@minicloud`.
-- Current supported release matrix: Linux x86_64 and arm64 archives plus
-  macOS arm64. Windows is intentionally absent until its runtime path returns
-  to the supported release matrix.
+## Candidate and Boundaries
 
-The v0.1.44-to-v0.1.45 comparison proves the current published distribution
-machinery and upgrade contracts. It does not substitute for an exact v0.1.46
-candidate replay.
+- Nimbus commit:
+  `7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`.
+- Deno commit: `95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`.
+- Deno immutable release: `v2.9.6-nimbus.5`.
+- rusty_v8 immutable release: `v150.4.0-nimbus.1`.
+- Runtime features: `v8-pointer-compression`.
+- Release version: v0.1.46.
+- Target: `x86_64-unknown-linux-gnu`.
+- Exact hosted CI run: `34031004029`.
+- Exact hosted artifact ID: `9989541287`.
+- Exact hosted artifact name:
+  `linux-release-candidate-7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`.
 
-## Fail-Before and Repairs
+The hosted artifact identity file records the exact Nimbus SHA, fork tags,
+target, runtime feature, release profile, disabled publication, and Nimbus
+version. The archive came from the full-LTO release-candidate job. Local
+package and OCI checks used only that extracted archive and the immutable
+crun and libkrun release inputs.
 
-1. The published-release verifier required a Windows ZIP even though the
-   supported release matrix intentionally removed Windows. Commits
-   `dfea25523` and `52b8fc93b` add an explicit `--skip-windows` contract,
-   require the obsolete asset to be absent in that mode, and cover the
-   supported and stale-asset cases.
-2. Direct `curl | sh` installs discarded the archive `LICENSE` and
-   `README.md`. The installer now owns both files under
-   `${NIMBUS_PREFIX}/share/doc/nimbus`, validates them after install, heals
-   older same-version installs that lack them, and removes only its owned
-   document directory during uninstall.
-3. The installer used any `nimbus` on `PATH` for its same-version check. A
-   separate package channel could therefore suppress installation into the
-   requested prefix. The check now uses only
-   `${NIMBUS_PREFIX}/bin/nimbus`.
-4. The macOS install verifier ignored a valid custom-prefix binary. Both the
-   standalone and embedded verifier now prefer the requested prefix.
-5. Document verification could borrow license files from another package
-   channel after it had selected a prefix-owned binary. Commit `e771e5fac`
-   makes that mixed-ownership state fail closed. Package and Homebrew document
-   fallbacks remain available only when the requested prefix does not own the
-   binary.
-6. The repository still identified itself as v0.1.45 although that release
-   already exists. The release inputs now use the unused v0.1.46 version. The
-   version contract checks all Git-tracked `.nimbus/packages` scaffold locks,
-   ignores unrelated nested dependencies, ignores untracked files, and emits
-   a named mismatch for a malformed tracked lock. Commits `7e9a48ad6` and
-   `0c8bdd363` contain the final scope rules.
-7. An initial changelog regeneration collapsed historical release headings.
-   The repair preserves every older heading and adds only the cumulative
-   v0.1.46 section.
-8. Dead release verifier helpers and stale API constants obscured the active
-   contract. They were removed. All affected shell scripts pass Bash, Dash
-   where applicable, and ShellCheck parsing.
+## Exact Release Archive
 
-## Deterministic Verification
+The `nimbus_linux_x86_64.tar.gz` archive is 89,755,826 bytes. Its SHA-256 is
+`fe8707c29a6f6a9dc41c645342175db449f4871f055ec23d7bc5e2fc84f967cc`.
+It contains exactly these files:
 
-| Check | Result |
-|---|---|
-| `make verify-install-helper` | pass, 57 of 57 tests |
-| `make verify-release-version-contract VERSION=v0.1.46` | pass |
-| `make verify-release-archive-layout-helper` | pass |
-| `make verify-release-oci-image-helper` | pass |
-| `make verify-release-oci-image-live-helper` | pass; supported no-Windows bundle has 12 attestations and a stale Windows asset is rejected |
-| `make verify-release-oci-image-build-helper` | pass with the real container build path |
-| `make verify-build-linux-release-packages-helper` | pass with `nfpm` 2.47.0 |
-| Homebrew cask proof helper | pass |
-| Bash syntax for changed scripts | pass |
-| Dash syntax for `scripts/install.sh` | pass |
-| ShellCheck for changed scripts | pass with no diagnostics |
-| `git diff --check` | pass |
+- `nimbus`
+- `README.md`
+- `LICENSE`
 
-Adversarial version-contract probes also passed. An untracked malformed lock
-was ignored. A malformed Git-tracked scaffold lock failed with a named
-`mismatch:` instead of a Python stack trace. An upstream
-`.nimbus/packages/convex/node_modules/esbuild` version did not cause a false
-Nimbus-version failure.
+The executable is 243,093,280 bytes. Its SHA-256 is
+`156f97f1f6fac96f85c091cdd5dfe582456a18b0094576d134ae0c696aa310fd`.
+It reports `nimbus 0.1.46`. The archive README and license match the candidate
+repository files byte for byte.
 
-## Published Release and OCI Evidence
+## Native Linux Lifecycle
 
-The complete live verifier ran against public v0.1.45 without a skip:
+A fresh state root on `nimbus@minicloud.local` used the extracted full-LTO
+binary. The following checks pass:
+
+1. Server start and health.
+2. Reject unauthenticated access.
+3. Tenant creation.
+4. Schema and index creation.
+5. Create, read, update, delete, and pagination operations.
+6. WebSocket operation.
+7. Scheduler operation.
+8. Diagnostic output.
+9. Graceful shutdown.
+10. Restart durability from the same state root.
+11. Tenant deletion and process cleanup.
+
+The test used Node v24.16.0, which is in the supported Node 24 line. The
+binary hash after transfer matched the archive hash.
+
+## Exact OCI Image
+
+Candidate binding: Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
+
+The final local image used the exact archive with the repository Dockerfile.
+Podman image ID
+`a78dd6052a6382290412e7502652baf805d8bc3e5f673c7554ce5801ac8d990b`
+uses Docker manifest media type
+`application/vnd.docker.distribution.manifest.v2+json`. Its metadata records
+v0.1.46 and the exact Nimbus SHA. Its health check is:
 
 ```text
-make verify-release-oci-image-live \
-  TAG=v0.1.45 \
-  OUTPUT_DIR=/private/tmp/nimbus-release-readiness-v0.1.45-oci-live-skip-windows \
-  RUNTIME=docker \
-  SKIP_WINDOWS=1
+["CMD","curl","-fsS","http://127.0.0.1:8080/health"]
 ```
 
-It verified release metadata, checksums, archive and license layouts, absent
-optional Bun/JSC assets by policy, release-asset attestations, OCI attestation,
-SBOM evidence, vulnerability evidence, image pull, and the runtime health
-smoke. The published multi-architecture digest was
-`sha256:6ac752708fb67ca817264f8686f945e95770c70355c475695d892096e22724ac`.
-The published Linux x86_64 Nimbus binary SHA-256 was
-`0b693f9fb00b6f6e4991bf870337ab2aa3d80c25fd9733fe58f08d32c3243cae`.
+The repository OCI smoke verifies the version. It also verifies non-root UID
+and GID 10001.
+It also verifies the README, license, writable state, and absence of host
+development tools. Token rotation, bind, start, and health behavior pass.
 
-The current runtime tuple was also downloaded and checksum-verified for both
-architectures:
+A first Podman build used OCI manifest format and passed its live product
+smoke. Podman correctly reported that this format cannot carry the Dockerfile
+health check. The final Docker-format build closes that packaging difference.
+No image push occurred.
 
-- `nimbus/nimbus-crun` v1.27.1-nimbus.2; amd64 SHA-256
-  `401ff1076ff0f34d7c0d367bbe7269b0df937a904be5102707838e0a0deca43`.
-- `nimbus/nimbus-libkrun` v1.18.1-nimbus.1; amd64 archive SHA-256
-  `a277ac30676cb32812f574dc91e598a2594bdb400173458afaa48d63e8854e11`.
+## Exact DEB and RPM Packages
 
-The final release-tuple replay supersedes those earlier fork versions for the
-candidate. Commit `fb56b7816bc29e67b1973370feefdbfae03d860a` binds crun
-`v1.29.1-nimbus.2`, libkrun `v1.19.4-nimbus.3`, and libkrunfw 5.5.0.
+The repository package builder used nFPM v2.45.0, the same version as the
+release workflow. It combined the exact Nimbus archive with checksum-verified
+crun v1.29.1-nimbus.2 and libkrun v1.19.4-nimbus.3 inputs.
 
-The repository helpers passed for all release-tuple surfaces. These surfaces
-include the Krun bundle, both drills, the Linux validation bundle, both package
-formats, the apt repository, Fedora SRPMs, and the installer. The installer
-helper passed 63 tests. The package helpers built, rebuilt, installed, and
-queried x86_64 and aarch64 artifacts. The online fork gate verified both
-release tags and the current libkrunfw companion release.
+| Package | Bytes | SHA-256 |
+|---|---:|---|
+| `nimbus_0.1.46_amd64.deb` | 92,083,630 | `5b30f750fe9cfdd19ef5757f87801abf70a63ab91284f3e38f75b49b4c2029d4` |
+| `nimbus-libkrun_1.19.4~nimbus.3_amd64.deb` | 10,481,250 | `e269cf7e9db7bf5d398b1fb7f52ef91dfe172ac35015ad8b36fa19200523cfc1` |
+| `nimbus-crun_1.29.1~nimbus.2_amd64.deb` | 1,402,458 | `dbec5ed73fa3ca905b792e9c39970c6ec8aa77b4878cf53b0ed42c58b241c5fc` |
+| `nimbus-0.1.46-1.x86_64.rpm` | 95,297,245 | `4fc473822dc25ddf137532fa7e0c91bfb7a4601ec9d9709ea9a3e9214501195f` |
+| `nimbus-libkrun-1.19.4~nimbus.3-1.x86_64.rpm` | 10,963,694 | `8b487c0a905a0e8e8009f29888d09b95d560dc8560b311bf1acb9568dc090569` |
+| `nimbus-crun-1.29.1~nimbus.2-1.x86_64.rpm` | 1,442,808 | `ed5732d9a6b98745560827ea48fef770d11c2c5709c5c508bf1da02674859e86` |
 
-## Linux Packages and Upgrade Evidence
+All six checksum entries pass after transfer to `minicloud.local`.
 
-The repository builder produced real Nimbus, nimbus-crun, and
-nimbus-libkrun DEB and RPM packages for v0.1.44 and v0.1.45. Their checksum
-manifests passed locally and after transfer to `nimbus@minicloud`.
+A fresh Debian 13 slim container installed the three DEB packages. It reported
+Nimbus 0.1.46, nimbus-crun 1.29.1-nimbus.2, and nimbus-libkrun
+1.19.4-nimbus.3. Debian slim excludes most `/usr/share/doc` files by base-image
+policy. Package inspection proved that the DEB contains the README, license,
+and copyright files. The complete check passed after removal of only that
+container policy. Marker: `RRC8_DEBIAN_PACKAGE_INSTALL_PASS`.
 
-In a disposable Debian 13 container, the raw package payload had the required
-license, README, and copyright files. The official slim image had a general
-dpkg documentation exclusion; removing that container-only policy restored
-the payload during install. The complete v0.1.44 tuple installed, reported
-`+LIBKRUN`, upgraded Nimbus to v0.1.45, and passed version, help, and package
-queries. Marker: `RRC7_DEBIAN_UPGRADE_PASS`.
+A fresh Fedora 42 container installed the three RPM packages and reported the
+same product and runtime tuple. The README and license were present. Marker:
+`RRC8_FEDORA_PACKAGE_INSTALL_PASS`.
 
-In a disposable Fedora 42 container, license metadata and payload checks
-passed. The v0.1.44 tuple installed, reported `+LIBKRUN`, and upgraded to
-v0.1.45. Marker: `RRC7_FEDORA_UPGRADE_PASS`.
+Both tests used disposable containers. The Linux host package database did
+not change.
 
-Both test containers were removed. The Linux host package database was not
-changed.
+## Upgrade and Installer Comparison
 
-## Direct Installer Evidence
+Earlier RRC7 work tested the currently published channel without changing it:
 
-The repaired install and verification scripts ran in a disposable Debian 13
-container on `nimbus@minicloud`:
+- Fresh Debian 13 and Fedora 42 containers installed the public v0.1.44 tuple.
+  Both containers upgraded it to public v0.1.45.
+- A fresh Debian 13 container installed, verified, upgraded, and uninstalled
+  the direct-install tuple.
+- The live public v0.1.45 verifier passed release metadata, checksums, and
+  archive and license layout. Attestations, SBOM evidence, vulnerability
+  evidence, image pull, and runtime health also passed.
+- Installer, version-contract, archive-layout, OCI, package, and Homebrew
+  helpers pass. The installer helper contains 63 tests after its final repair.
 
-1. Install the public v0.1.44 Nimbus, nimbus-libkrun, and nimbus-crun tuple.
-2. Verify the prefix-owned binary and both documents.
-3. Run `verify-install.sh` with zero failures. Its three warnings were
-   environmental: no KVM, NetworkManager, or `readelf` in the minimal
-   container.
-4. Upgrade to v0.1.45 and verify the version and documents again.
-5. Uninstall and prove removal of the binary, runtime tuple, and installer
-   document directory.
+These comparisons prove the existing public upgrade and installer contracts.
+The exact v0.1.46 checks above prove the new local candidate artifacts.
 
-Marker: `RRC7_DIRECT_INSTALL_UPGRADE_UNINSTALL_PASS`.
+## Fail-Before Repairs
 
-The minimal container did not include GitHub CLI, so the direct installer
-could only warn about release attestation there. The independent live OCI
-verifier checked the same public release attestations. This environmental
-warning is not promoted to a pass for an untested path.
+RRC7 repaired verified distribution defects before the exact replay:
 
-## Independent Review
+- The release verifier now supports the intentional no-Windows release matrix
+  and rejects a stale Windows asset in that mode.
+- Direct installs preserve and own the README and license.
+- Same-version checks use only the requested installation prefix.
+- Document verification does not borrow files from another installation
+  channel.
+- The release version is v0.1.46 across tracked source and scaffold locks.
+- The version scan rejects malformed tracked locks without scanning unrelated
+  nested dependencies.
+- Changelog generation preserves older release sections.
+- RRC7 removed dead verifier code and stale API constants.
 
-Opus 5 reviewed the full RRC7 branch slice from `2a7279e19` through
-`0c8bdd363` in repeated repair loops.
-
-- The first review found five P2/P3 issues: collapsed changelog history,
-  overbroad parent-directory removal, version-scan scope, dead verifier code,
-  and package fixture coverage. Verified findings were repaired.
-- Later reviews found prefix document borrowing, missing negative verifier
-  coverage, untracked/malformed lock handling, and nested dependency false
-  positives. Each verified finding received a regression and repair.
-- The final review accepted no actionable finding. It explicitly checked
-  version coherence, Git-tracked scaffold lock semantics, prefix and document
-  ownership, DEB/RPM and Homebrew contracts, the supported no-Windows release
-  path, and the concrete tests.
-- Secret scanning was clean on every review pass.
+The repairs include focused regressions. Bash, Dash where applicable,
+ShellCheck, version, archive, package, OCI, installer, and Homebrew checks pass.
 
 ## Routed Public Work
 
-The distribution plan remains the owner of public channel actions:
+The distribution plan owns two remaining public operations:
 
-- D1 direct install and D6 OCI are complete for the current published release.
-- D2 apt is in progress. Package and signed-repository builders exist, but
-  public Pages/custom-domain cutover and a fresh public `apt install` proof
-  remain.
+- D2 apt is in progress. Builders exist, but public Pages or custom-domain
+  cutover and a fresh public `apt install` proof do not exist.
 - D3 COPR is in progress. SRPM and package builders exist, but live COPR
-  publication and a fresh public `dnf copr enable` install proof remain.
-- D4 Homebrew and machine distribution are complete for the current published
-  release.
-- D5 cloud images remain todo.
+  publication and a fresh public `dnf copr enable` proof do not exist.
 
-RRC7 did not publish, tag, push, change credentials, or alter a public package
-channel.
+Those proofs require a Nimbus product publication. The active release plan
+explicitly excludes product publication. RRC7 did not change credentials or a
+public package channel.
 
 ## RRC7 Decision
 
-Every locally testable RRC7 artifact and upgrade path has a provisional pass.
-The release is still blocked for two independent reasons:
+Candidate binding: Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
 
-1. The exact v0.1.46 candidate cannot build until the RRC1 Deno commits have
-   reachable immutable references. All current live candidate work therefore
-   uses either the preserved provisional binary or public v0.1.44/v0.1.45
-   release assets.
-2. Public apt and COPR channel installation has no evidence yet. Those actions
-   require publication authority and remain routed to the distribution plan.
+`release_archives` is `pass`. `oci_image` is `pass`. `install_channels`
+remains `blocked` only on the public apt and COPR proofs.
 
-The final RRC8 verdict must remain NO-GO unless these blocked conditions and
-every other red matrix condition gain direct evidence.
+The exact candidate has no verified local archive, OCI, DEB, RPM, installer,
+or upgrade defect. RRC7 is terminal and blocked on external publication state,
+not on more local implementation or testing.

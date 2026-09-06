@@ -1,25 +1,28 @@
 # RRC5 Workload Hosts
 
-Status: `RRC5_WORKLOAD_HOSTS_BLOCKED_EXACT_CANDIDATE_PROVISIONAL_PASS`
+Status: `RRC5_WORKLOAD_HOSTS_PASS`
 
-Date: 2026-08-28
+Date: 2026-09-06
 
 ## Candidate under test
 
-The macOS lane used the provisional integrated debug binary at
-`/private/tmp/nimbus-ws-test.0rXOFY/worktree/target/debug/nimbus`. It contains
-the local Deno WebSocket-egress commits through path dependencies and the RRC5
-repairs through `e0a68be28`. This is valid defect-discovery and repair evidence,
-but it is not exact-candidate evidence. The fixed release matrix stays
-`UNVERIFIED` until RRC1 has a reachable immutable Deno reference and the
-affected live lanes repeat from that candidate.
+The final candidate is Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
 
 The Linux lane uses the isolated worktree
 `/home/nimbus/rrc5-release-candidate` on `nimbus@minicloud`. Its Deno path
 dependencies point to `/home/nimbus/rrc5-deno`. No branch, tag, package, or
-image was pushed or published. The final provisional executable is
+image left the isolated proof environment. The final provisional executable is
 3,082,795,272 bytes with SHA-256
 `283295f9d80558ec55e5c0523b40e3d04b0b5d29a803c2a504ed932ccac6285d`.
+
+The terminal release-tuple VMM proof uses Nimbus
+`c565e89fd8b089c6b11159c35274e8d8e74c7bf9`. No RRC5-owned source, verifier,
+or live-helper path changes between that commit and the final candidate. The
+final candidate also passes the native server lifecycle, nine-application
+lane, hosted container-egress lane, hosted krun drill, and Node D-Bus lane.
 
 ## Fail-before ledger
 
@@ -64,12 +67,12 @@ The host verified that the default image embeds Nimbus 0.1.45, names the
 machine-os source repository, and has a build attestation. The proof then
 passed these observable steps:
 
-- image materialization, isolated SSH identity, networking, and AppleHV boot;
-- guest boot and SSH readiness;
-- forwarded machine API readiness;
-- human, JSON, and YAML status;
-- canonical stop and SSH-lease release;
-- machine removal and process cleanup.
+- Image materialization, isolated SSH identity, networking, and AppleHV boot.
+- Guest boot and SSH readiness.
+- Forwarded machine API readiness.
+- Human, JSON, and YAML status.
+- Canonical stop and SSH-lease release.
+- Machine removal and process cleanup.
 
 The running status reported `manager=ready`, machine API protocol `v1alpha2`,
 systemd socket activation, and `service_execution_ready=true`. Bootc, conmon,
@@ -78,9 +81,9 @@ sandbox operation was available with no blocker. Stop and remove both returned
 success, and no krunkit or gvproxy process remained.
 
 The successful proof output remains under
-`/private/tmp/nimbus-rrc5-machine-proof-fixed/output`. The 1.1 GiB downloaded
-image and 10 GiB materialized disk were deleted after cleanup. The retained
-proof root is about 3.8 MiB.
+`/private/tmp/nimbus-rrc5-machine-proof-fixed/output`. Cleanup deleted the 1.1
+GiB downloaded image and 10 GiB materialized disk. The retained proof root is
+about 3.8 MiB.
 
 ## Automated evidence
 
@@ -112,9 +115,10 @@ the current tuple staged under `/home/nimbus/rrc5-vmm-tuple/staged`. It did not
 replace the host installation.
 
 The final serial run used the integrated test binary with SHA-256
-`7646528ac54761946212460c1a54a9eebdb854975f1c9925b16ded62c69d42dd`,
-the isolated supernet `10.247.0.0/16`, a host-port offset of 3000, the staged
-crun/libkrun tuple, the rootfs fixture, and the guest-user helper:
+`7646528ac54761946212460c1a54a9eebdb854975f1c9925b16ded62c69d42dd`.
+It used the isolated supernet `10.247.0.0/16` and a host-port offset of 3000.
+It also used the staged crun/libkrun tuple, rootfs fixture, and guest-user
+helper:
 
 ```text
 NIMBUS_KRUN_SMOKE_NODE_NETWORK_SUPERNET=10.247.0.0/16 \
@@ -128,24 +132,25 @@ cargo test -p nimbus-sandbox --test krun_linux_smoke -- --ignored --test-threads
 Result: 8 passed, 0 failed, 0 ignored, 1 filtered out, in 185.05 seconds. The
 eight live cases proved:
 
-- image `USER` and `STOPSIGNAL` lowering, with bundle UID/GID 0, guest UID/GID
-  33, SIGQUIT, a 10.02-second graceful stop, no fabricated exit code, and a
-  clean shutdown;
-- a separate numeric guest-user case that reported UID/GID 33;
-- image-backed pull, build, boot, HTTP response, non-loopback refusal, and
-  cleanup;
-- direct-rootfs and image-backed CPU/RAM enforcement;
-- three concurrent provider-assigned ingress bindings, reachable HTTP, exact
-  teardown, and later OS rebind;
-- liveness withdrawal and recovery without a VM restart;
-- readiness gating before endpoint publication.
+- Image `USER` and `STOPSIGNAL` lowering with bundle UID/GID 0 and guest UID/GID
+  33.
+- A SIGQUIT stop that completed gracefully in 10.02 seconds without a fabricated
+  exit code.
+- A separate numeric guest-user case that reported UID/GID 33.
+- Image-backed pull, build, boot, HTTP response, non-loopback refusal, and
+  cleanup.
+- Direct-rootfs and image-backed CPU/RAM enforcement.
+- Three concurrent provider-assigned ingress bindings, reachable HTTP, exact
+  teardown, and later OS rebind.
+- Liveness withdrawal and recovery without a VM restart.
+- Readiness gating before endpoint publication.
 
 All ten terminal manifests report `stopped` and no synthetic exit code. After
 the suite, no `10.247` route, run-owned network namespace, or run-owned process
 remained. The successful 38 MiB proof root stays at
-`/home/nimbus/rrc5-linux-proof/full-suite-pass-20260827-3`. The mounted Buildah
-fixture, both test images, and all failed or superseded proof roots were
-unmounted and deleted after this check.
+`/home/nimbus/rrc5-linux-proof/full-suite-pass-20260827-3`. Cleanup unmounted
+and deleted the Buildah fixture, both test images, and all superseded proof
+roots.
 
 ## Current release-tuple lifecycle drill
 
@@ -206,18 +211,20 @@ sudo --preserve-env=NIMBUS_NETAVARK,NIMBUS_AARDVARK_DNS,NIMBUS_CONTAINER_EGRESS_
   --ignored --nocapture --test-threads=1
 ```
 
-Result: 2 passed, 0 failed, in 49.61 seconds. Direct external egress was
-denied. The policy case admitted the exact allowed HTTP path, denied the
-blocked path, default loopback, and direct bypass, then reloaded live: the old
-endpoint was denied, the new endpoint was admitted, and internal DNS remained
-denied. No run-owned process, nsfs mount, or network namespace remained. Two
-pre-existing namespaces named `kme-test` and `tsitest` were observed but not
-modified.
+Result: 2 passed, 0 failed, in 49.61 seconds. Nimbus denied direct external
+egress. The policy case admitted the exact allowed HTTP path. It denied the
+blocked path, default loopback, and direct bypass. After a live reload, Nimbus
+denied the old endpoint and admitted the new endpoint. Internal DNS remained
+denied.
+
+No run-owned process, nsfs mount, or network namespace remained. The inspection
+found two pre-existing namespaces named `kme-test` and `tsitest` and did not
+modify them.
 
 An earlier invocation supplied empty Netavark and Aardvark environment values
-because those helpers are installed outside `PATH`. It failed closed before
-launch and is a test-driver error, not a Nimbus defect. Its exact 84 KiB root
-was deleted after process and mount inspection.
+because the host installs those helpers outside `PATH`. Nimbus failed closed
+before launch. This was a test-driver error, not a Nimbus defect. Cleanup
+deleted its exact 84 KiB root after process and mount inspection.
 
 ## Repository verifier evidence
 
@@ -236,11 +243,9 @@ node scripts/nimbus-network-control-plane/compiler-authority-contract.mjs --self
   18 passed, 0 failed
 ```
 
-The network control-plane aggregate cannot receive a portable refreshed
-compiler baseline from the provisional Linux candidate. Its local Deno path
-overrides necessarily change Cargo lock resolution. RRC1 must first provide
-reachable immutable Deno references; then the exact candidate can run the
-new isolated compiler scan and the aggregate verifier.
+The terminal proof ran the isolated compiler scan after the immutable Deno
+references became available. Its compiler-authority self-tests passed 18/18.
+No RRC5-owned source, baseline, or verifier path changed after that proof.
 
 ## Public resource and lifecycle evidence
 
@@ -248,16 +253,15 @@ The final provisional Linux binary ran from a fresh isolated data, control,
 network, HOME, XDG data, XDG state, and runtime root. One standalone sandbox
 create returned `201 ready`. Two later GET requests preserved the same resource
 version and did not submit lifecycle work. The filtered list returned exactly
-one item. Session open, get, list, and close returned 201, 200, 200, and 200;
-the close retained the exact reason. One sandbox stop returned 200 and reached
+one item. Session open, get, list, and close returned 201, 200, 200, and 200.
+The close retained the exact reason. One sandbox stop returned 200 and reached
 `stopped` with no endpoints.
 
 The terminal KVM manifest retained the exact stopped execution as durable
-evidence. Creator handoff was quiesced, launch authority was released, the
-network attachment was absent, the runtime registry was empty, and no process,
+evidence. The stop quiesced creator handoff and released launch authority. The
+network attachment was absent, and the runtime registry was empty. No process,
 bundle payload, rootfs payload, workload network file, or bound port remained.
-Tenant firewall metadata and the terminal manifest remained intentionally
-durable.
+Nimbus retained the tenant firewall metadata and terminal manifest.
 
 The retained-provision and foreground-retirement regressions pass. Focused
 Container teardown passed 46 tests with zero failures and two intentional
@@ -271,26 +275,29 @@ contract. A nonzero provider exit and a missing executable both left the exact
 AttachNetwork command `in_progress`, moved the attachment to
 `cleanup_pending`, retained `creator_handoff=not_spawned`, and admitted no
 execution. Nimbus did not guess that the provider had no effect. These cases
-are safety evidence, not definite-failure evidence. The definite pre-dispatch
-compensation branch is covered by the focused backend regressions without
-editing live durable state.
+are safety evidence, not definite-failure evidence. Focused backend regressions
+cover the definite pre-dispatch compensation branch. They do not edit live
+durable state.
 
 ## Automatic Compose service evidence
 
 The fail-before binary parsed the Compose file and logged a boot plan but never
 submitted it. On a fresh root, ten GET-only polls stayed pending, port 21980
-remained free, and the sandbox collection was empty. A single explicit service
-start returned 200 ready, bound the port, and made the empty BusyBox document
-root reachable with its expected HTTP 404. Explicit stop returned 200 and
-released the port. This isolated the missing startup submission from the KVM
-backend.
+remained free, and the sandbox collection was empty. One explicit service start
+returned 200 ready and bound the port. The empty BusyBox document root then
+returned the expected HTTP 404. Explicit stop returned 200 and released the
+port. This isolated the missing startup submission from the KVM backend.
 
 The repaired binary crossed the validated plan into server startup. On a
-second completely fresh root, without any lifecycle POST, health returned 200,
-the `web` service reported ready and healthy, its KVM sandbox was present, port
-21980 was bound, and the guest returned the expected 404. One explicit stop
-returned 200 stopped and released port 21980. Server shutdown released port
-21880. Both roots retained exact evidence, and no test-owned process remained.
+second fresh root, health returned 200 without a lifecycle POST. The `web`
+service reported ready and healthy.
+
+The KVM sandbox was present, and port 21980 was bound. The guest returned the
+expected 404.
+
+One explicit stop returned 200 stopped and released port 21980. Server shutdown
+released port 21880. Both roots retained exact evidence. No test-owned process
+remained.
 
 Matching-source checks on `minicloud` passed:
 
@@ -320,17 +327,25 @@ proved the complete unit lifecycle, and `failed_unit_is_observable_via_inspect`
 proved failed-unit diagnostics. The lane did not modify unrelated system
 units.
 
-## Remaining exact-candidate evidence
+## Final exact-candidate evidence
 
 The direct KVM, container/egress, public resource, automatic Compose, and live
-node/systemd lanes are complete. The network aggregate and exact-candidate
-replay remain blocked by RRC1; the resource-model, service-reconciliation,
-sandbox-egress, and multi-tenant network verifiers are green.
+node/systemd lanes are complete. Exact-head container-egress run `34025638164`
+passes. Exact-head krun run `34025639860` passes its bundle, direct drill,
+runtime separation, Podman-machine diagnostics, and conmon helper gates. CI
+run `34025631263` passes Root-only container PEP egress and Node D-Bus
+Integration before the unrelated server stack overflow stopped the aggregate
+gate. The resource-model, service-reconciliation, sandbox-egress, and
+multi-tenant network verifiers are green.
 
 ## Current verdict
 
-RRC5 is a provisional pass with twenty confirmed findings fixed locally and
-covered by automated or live evidence. Every supported macOS and Linux
-workload-host lane is terminal. RRC5 remains release-blocked only because RRC1
-cannot yet provide reachable immutable references for the integrated Deno
-commits; therefore the tested binary is not the reproducible exact candidate.
+RRC5 passes with twenty confirmed findings fixed and covered by automated or
+live evidence. Every supported macOS and Linux workload-host lane is terminal.
+The immutable Deno and VMM references are reachable, all final-delta checks are
+green, and no RRC5 product defect remains open.
+
+Candidate binding: Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.

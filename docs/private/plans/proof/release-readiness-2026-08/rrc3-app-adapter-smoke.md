@@ -1,34 +1,33 @@
 # RRC3 Application and Adapter Smoke
 
-Status: `RRC3_APP_ADAPTER_SMOKE_PROVISIONAL_PASS`
+Status: `RRC3_APP_ADAPTER_SMOKE_PASS`
 
-Date: 2026-08-27
+Date: 2026-09-06
 
 ## Candidate under test
 
-The final macOS browser and protocol replay used the provisional integrated
-optimized binary at
-`/tmp/nimbus-ws-test.0rXOFY/worktree/target/release/nimbus`:
+The terminal application replay used the committed debug binary at
+`target/debug/nimbus`:
 
 ```text
-nimbus 0.1.45
-sha256 dfdefaa409661baccd0f98ae824e97de5d34a2df10a6389b1abd9f78e17a9ec3
+nimbus 0.1.46
+sha256 f176c17add56648db5ed644808b5913250133b8cb2760843f58241faf6b6b075
 ```
 
-This binary includes the local Deno WebSocket-egress work through path
-dependencies and the RRC3 repairs. It is valid defect-discovery evidence, but
-it is not the exact release candidate. RRC3 therefore remains blocked after a
-provisional pass until RRC1 supplies a reachable immutable Deno reference and
-the clean candidate repeats these lanes.
+Its source is Nimbus `7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df` from immutable tag
+`v2.9.6-nimbus.5`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
 
 ## Nine-case application lane
 
-The repository-owned lane passed all nine selected cases in 15.489 seconds
-with Node 24.19.0. Every expected anchor and every cleanup check passed. The
+The repository-owned lane passed all nine selected cases in 15.264 seconds
+with Node 24.20.0 and five workers. Every expected anchor and every cleanup
+check passed. The
 source manifest matched before and after the run.
 
 Evidence:
-`rrc3-examples-results/nimbus-examples-verify.cokvom-dc4a6651a033/report.json`
+`target/examples-verify-results/nimbus-examples-verify.vmjwjz-221eac9a80c1/report.json`
 
 | Case | Direct surfaces | Result |
 |---|---|---|
@@ -42,8 +41,7 @@ Evidence:
 | `dynamodb/tasks` | DynamoDB wire protocol | All five task anchors passed. |
 | `cloud-functions/tasks` | Cloud Functions HTTP and trigger execution | All expected anchors passed. |
 
-The run used an earlier provisional binary hash recorded in its report. The
-later optimized replay added only the verified RRC3 repairs described below.
+The report records the exact binary hash and the terminal pass for each case.
 
 ## Direct protocol clients
 
@@ -59,7 +57,7 @@ later optimized replay added only the verified RRC3 repairs described below.
 | RESP KV | `redis-rs` harness against pinned Valkey `c9e800...` | RESP2 1/1 and RESP3 1/1 passed. |
 | Cloudflare KV | Direct authenticated REST contract against default SQLite | Auth rejection, metadata, pagination, delete, and same-root restart durability passed. |
 
-The S3 client source and lock are retained under `rrc3-s3-client/`. The
+The proof retains the S3 client source and lock under `rrc3-s3-client/`. The
 Cloudflare replay script is `rrc3-cloudflare-kv-smoke.sh`.
 
 ## Browser Playwright evidence
@@ -74,17 +72,16 @@ http://127.0.0.1:18480/examples/convex/tasks/dist/
 http://127.0.0.1:18480/examples/firebase/tasks/dist/
 ```
 
-Each page reached `Live on demo` without a `?server=` override and reported
-zero console errors and zero warnings. The complete earlier lifecycle replay
-for each page created a task, observed the pushed list update, toggled the
-task, deleted it, and returned to the empty state. The native page used a
+Each page reached `Live on demo` without a `?server=` override. Each page
+reported zero console errors and zero warnings. The complete earlier lifecycle
+replay created a task, observed the pushed list update, toggled the task,
+deleted it, and returned to the empty state. The native page used a
 single-use local UI launch ticket and the operator session cookie. The Convex
 page used anonymous local-development tenancy and made no local-admin request.
 The Firebase page used the loopback-only emulator verifier.
 
-The production-isolation Firebase replay returned `no application auth
-providers are configured for the active deployment`. This is the required
-fail-closed result, not a defect.
+The production-isolation Firebase replay returned the expected missing-provider
+error. Nimbus requires this fail-closed result. It is not a defect.
 
 ## Fail-before ledger and repairs
 
@@ -120,13 +117,44 @@ loopback development port and a configured HTTPS origin. It returned 403 for
 an unconfigured HTTPS origin.
 
 npm 10 reports `GHSA-3wf4-68gx-mph8` against the private Nimbus compatibility
-package named `firebase` because its Nimbus version is below upstream Firebase
-10.9.0. This is a package-name false positive: the package does not contain
-the affected upstream implementation, `fixAvailable` is false, and npm 11
-reports zero vulnerabilities for the same lock.
+package named `firebase`. Its Nimbus version is below upstream Firebase 10.9.0.
+This is a package-name false positive. The package does not contain the affected
+upstream implementation, and `fixAvailable` is false. npm 11 reports zero
+vulnerabilities for the same lock.
+
+## Node Compatibility Evidence
+
+The Node Compatibility Evidence job passed in exact release-graph run
+`34025642620`. That job verifies the release train, current fixture corpora, and
+upstream fixture identity. It also verifies watchpoints, supported application
+and tooling canaries, and Node 20, 22, 24, and 26 oracle samples. The job rebuilt
+the published status evidence.
+
+The six broad full-corpus jobs remain red on diagnostic, non-isolate, optional,
+and Current-line fixtures outside the advertised V8-isolate-required support
+denominator. This is pre-existing visible compatibility debt, not an uplift
+regression. Comparison with `main` run `33962214430` found no new failed or
+timed-out test name in any partition. The release graph ran 531 tests: 234
+passed, 260 failed, and 37 timed out. The baseline ran 529 tests: 221 passed,
+271 failed, and 37 timed out. The uplift therefore adds 13 passes while adding
+two tests and removing 11 failures.
+
+Final Nimbus commit `7d0ca18a7` changes only server router preparation. It does
+not change the runtime or Node compatibility graph.
 
 ## Terminal RRC3 verdict
 
-The provisional integrated candidate passes every RRC3 application, adapter,
-protocol, and browser behavior on macOS. Exact-candidate replay remains
-blocked only by the RRC1 Deno reference. No RRC3 product defect remains open.
+The exact candidate passes every RRC3 application and adapter behavior on
+macOS. The direct Cloudflare KV and official S3 client replays pass against the
+same release graph. Exact-head KV run `34025639058` passes RESP2 and RESP3.
+The supported Node compatibility evidence job passes with no broad-corpus
+regression.
+The earlier complete browser lifecycle proof remains valid because the final
+candidate changes only server startup stack ownership after that proof. The
+exact embedded UI and desktop UI walks also pass. No RRC3 product defect
+remains open.
+
+Candidate binding: Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.

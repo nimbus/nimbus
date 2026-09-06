@@ -1,18 +1,28 @@
 # RRC4 Storage and Recovery
 
-Status: `RRC4_STORAGE_RECOVERY_PROVISIONAL_PASS`
+Status: `RRC4_STORAGE_RECOVERY_PASS`
 
-Date: 2026-08-27
+Date: 2026-09-06
 
 ## Candidate under test
 
-The storage campaign used the provisional integrated debug binary at
-`/tmp/nimbus-ws-test.0rXOFY/worktree/target/debug/nimbus`. It contains the
-local Deno WebSocket-egress commits through path dependencies and all RRC4
-repairs. These tests are valid defect-discovery evidence, but they are not
-exact-candidate evidence. The fixed release matrix stays `UNVERIFIED` until
-RRC1 has a reachable immutable Deno reference and a clean candidate repeats
-the affected live lanes.
+The terminal provider replay used Nimbus
+`68855f172fc8e5c2fdc333e85b6dae351491d532`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`. The rebuilt debug binary reports
+Nimbus 0.1.46 and has SHA-256
+`e087377289de29df70dae9d1253b74b7ab2f8b0ecafe7cf77e15d98c89c53c72`.
+
+The final candidate, Nimbus
+`7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, changes only the server router
+preparation task boundary after that replay. Its complete 770-test server
+suite, native restart smoke, nine-application lane, and direct S3 application
+path pass. No storage implementation or provider dependency changed.
+
+The earlier integrated candidate supplied the live encryption, backup,
+restore, redb, and object-recovery defect-discovery evidence below. The exact
+candidate repeats those contracts through the terminal storage and CLI test
+sets. It also repeats the live SQLite restart and direct S3 protocol paths.
 
 No accepted RRC4 product defect remains open.
 
@@ -25,7 +35,7 @@ No accepted RRC4 product defect remains open.
 | RRC4-003 | P1 | redb backup with separate data and control roots opened a new control database under the data root. Export of `_nimbus` failed because the real durable incarnation was not there. | Fixed in `464e30596`. Backup create and restore accept `--control-data-dir`, use the selected control root, and quiesce on error. A regression covers `_nimbus` and an application tenant with separate roots. |
 | RRC4-004 | P1 | Object-storage administration ignored a separate control root. This could misplace placement metadata, fail backup incarnation lookup, create restored incarnations in the wrong database, or remove byte-plane data while leaving the actual tenant metadata. | Fixed in `652fb93b6`. Placement, backup, restore, and tenant removal all accept and use `--control-data-dir`. Parse, split-root placement, and ciphertext backup/restore regressions pass. |
 
-An early restore attempt used `--input`; the command requires `--in`. That was
+An early restore attempt used `--input`. The command requires `--in`. That was
 a test-driver error and not a Nimbus defect.
 
 ## Provider and durability matrix
@@ -40,12 +50,23 @@ NIMBUS_PROVIDER_FIXTURE_LIBSQL_ADMIN_PORT=28081 \
 make test-external-providers
 ```
 
-The fixtures used PostgreSQL 16, MySQL 8.4, and libSQL server 0.24.33. All
-provider tests passed, and the fixture containers and volumes were removed.
-The default PostgreSQL port was already in use by a user process, so the lane
-used an isolated port and did not alter that process.
+Fixture versions:
 
-The complete focused storage selection passed:
+- PostgreSQL: `16`.
+- MySQL: `8.4`.
+- libSQL server: `0.24.33`.
+
+The exact candidate passed 84 PostgreSQL tests, 54 MySQL tests, and 59 libSQL
+tests. The fixture manager removed its containers and volumes. A user process
+already used the default PostgreSQL port. The lane used an isolated port and
+did not alter that process.
+
+An initial aggregate run failed after compilation while the host was under
+storage pressure. The isolated libSQL replay passed 59 of 59 tests. A complete
+cached rerun then passed all 197 tests. The failure did not reproduce, and no
+accepted product defect came from it.
+
+The exact candidate passed the complete focused storage selection:
 
 ```text
 NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 \
@@ -53,10 +74,15 @@ cargo nextest run --profile ci-pr --no-tests fail \
   -E 'package(nimbus-storage) or package(nimbus-blob) or package(nimbus-object-storage)'
 ```
 
-Nextest metadata selected 90 suites and 854 tests. The focused SQLite physical
-durability test also passed. The storage selection includes the erasure-code
-contract tests. This run did not require external cloud credentials or live
-erasure hardware.
+Nextest ran 850 tests with four declared skips. The selection covers SQLite
+physical durability, encryption, redb, backup data structures, object storage,
+garbage collection, erasure coding, retention, and restart recovery. It did not
+require external cloud credentials or live erasure hardware.
+
+The exact candidate also passed 40 focused `nimbus-cli` tests. They cover
+plaintext and redb backup/restore, encrypted-backup rejection, redb DEK
+rotation, object backup/restore, master-key validation, separate control roots,
+and CLI option validation.
 
 ## SQLite encryption and recovery
 
@@ -95,8 +121,8 @@ Encrypted redb passed the complete native workload with separate data and
 control roots. DEK rotation re-encrypted 900 pages. The same roots then passed
 restart durability, diagnostics, tenant deletion, and graceful shutdown.
 
-Plaintext redb passed the same native workload. After RRC4-003 was repaired,
-offline backup exported two tenants and 182176 bytes. Restore imported both
+Plaintext redb passed the same native workload. The RRC4-003 repair let the
+offline backup export two tenants and 182176 bytes. Restore imported both
 tenants. The restored server retained the survivor and passed diagnostics and
 tenant deletion.
 
@@ -147,8 +173,13 @@ existing non-fatal markdown-option and missing `docs` entry warnings.
 
 ## Terminal RRC4 verdict
 
-SQLite, PostgreSQL, MySQL, libSQL, redb, encryption, backup/restore, object
-storage, consistency, physical durability, restart, and process fencing have
-direct provisional evidence. All four confirmed defects are fixed and have
-regressions. Exact-candidate replay remains blocked only by RRC1's unreachable
-Deno commit. The release matrix therefore remains red by design.
+The exact candidate passes the SQLite, PostgreSQL, MySQL, libSQL, and redb
+storage contracts. It passes encryption, backup/restore, object storage,
+consistency, physical durability, restart, and process-fence checks. The live
+replays cover SQLite restart and direct S3 behavior. The 850-test storage set
+and 40-test CLI set cover the deeper failure, recovery, and administration
+contracts. Regressions cover all four confirmed fixes.
+
+Candidate binding: Nimbus `7d0ca18a709d1b78e087bc4a69c8a96bee6f32b9`, Deno
+`95413e012ee9f73e7f652e1e7b1ad9e351b9a8df`, and upstream baseline
+`b57a2d680891de852d5576e65ccaea787b005431`.
