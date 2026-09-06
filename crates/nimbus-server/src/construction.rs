@@ -403,9 +403,16 @@ async fn serve_with_router_config(
     let config = config
         .with_listen_addr(listen_addr)
         .with_server_shutdown(shutdown_tx);
-    let prepared = Box::pin(config.prepare_for_serving())
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    // Router preparation enters several deep engine mutation futures. Poll it
+    // as a cancellable child task so it has a complete worker stack instead of
+    // sharing the caller's remaining stack with the server lifecycle.
+    let prepared =
+        tokio_util::task::AbortOnDropHandle::new(tokio::spawn(config.prepare_for_serving()))
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("router preparation task failed: {error}"))
+            })?
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
     match rustls_config {
         Some(rustls_config) => {
             crate::tls::serve_tls(
