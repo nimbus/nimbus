@@ -14,6 +14,7 @@ mod credentials;
 mod deploy;
 mod dev;
 mod dirs;
+mod embedded_control_plane;
 mod encryption;
 mod explain;
 mod function_scaling;
@@ -57,7 +58,9 @@ use crate::explain::{ExplainCommand, run_explain_command};
 use crate::init::{InitCommand, run_init_command};
 use crate::kv::{KvCommand, run_kv_command};
 use crate::list::{ListCommand, run_list_command};
-use crate::machine::{MachineCommand, run_machine_command};
+use crate::machine::{
+    MachineCommand, machine_command_requires_canonical_engine_authority, run_machine_command,
+};
 use crate::node_service::{NodeCommand, run_node_command};
 use crate::object_storage::{ObjectStorageCommand, run_object_storage_command};
 use crate::policy::{PolicyCommand, run_policy_command};
@@ -175,10 +178,22 @@ async fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::ObjectStorage(command) => run_object_storage_command(command).await?,
         Command::Token(command) => run_token_command(command).await?,
         Command::Auth(command) => run_auth_command(command).await?,
-        Command::Backup(command) => run_backup_command(command).await?,
+        Command::Backup(command) => {
+            let persistence_config =
+                persistence_config_from_start_command(&StartCommand::default())?;
+            run_backup_command(command, &persistence_config).await?;
+        }
         Command::Ui(command) => run_ui_command(command).await?,
         Command::Machine(command) => {
-            run_machine_command(command).await?;
+            let persistence_config =
+                if machine_command_requires_canonical_engine_authority(&command) {
+                    Some(persistence_config_from_start_command(
+                        &StartCommand::default(),
+                    )?)
+                } else {
+                    None
+                };
+            run_machine_command(command, persistence_config.as_ref()).await?;
         }
         Command::Node(command) => run_node_command(command).await?,
         Command::ContainerRunner(command) => run_container_runner_command(command).await?,

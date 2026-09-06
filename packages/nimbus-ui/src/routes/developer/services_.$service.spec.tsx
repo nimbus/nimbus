@@ -33,14 +33,11 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
+import { ServiceDetailLoaderError } from "../../components/service-loader-errors";
 import type { ServiceDoc } from "../../lib/types/service";
 import { useUiStore } from "../../store/ui-store";
 import { routeLoader, routeLoaderDeps } from "../../test/route-internals";
-import {
-  BundleTab,
-  Route,
-  ServiceDetailLoaderError,
-} from "./services_.$service";
+import { BundleTab, Route } from "./services_.$service";
 
 type LoaderArgs = {
   params: { service: string };

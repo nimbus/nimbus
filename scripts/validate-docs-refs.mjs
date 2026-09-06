@@ -11,6 +11,7 @@ const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 const excludedPrefixes = [
   "docs/private/",
   "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/",
+  "third_party/",
   "target/",
   "node_modules/",
   "dist/",

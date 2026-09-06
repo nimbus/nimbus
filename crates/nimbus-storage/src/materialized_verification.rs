@@ -9,20 +9,22 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 use nimbus_core::{
-    Error, Result, SchemaChangeEvent, SequenceNumber, TableId, TenantEventKind, TenantEventRecord,
-    WriteOp,
+    DocumentLocator, Error, Result, SchemaChangeEvent, SequenceNumber, TableId, TenantEventKind,
+    TenantEventRecord, TriggerDeliveryCursor, WriteOp,
 };
 use sha2::{Digest, Sha256};
 
 use crate::materialized_position::{
-    canonical_document_identity, canonical_document_value, canonical_scheduled_execution_identity,
-    canonical_scheduled_execution_value, canonical_schema_identity,
-    canonical_schema_identity_for_name, canonical_schema_value, canonical_table_identity_identity,
-    canonical_table_identity_value,
+    canonical_document_identity, canonical_document_value,
+    canonical_resource_path_binding_identity, canonical_resource_path_binding_value,
+    canonical_scheduled_execution_identity, canonical_scheduled_execution_value,
+    canonical_schema_identity, canonical_schema_identity_for_name, canonical_schema_value,
+    canonical_table_identity_identity, canonical_table_identity_value,
+    canonical_trigger_delivery_cursor_identity, canonical_trigger_delivery_cursor_value,
 };
 use crate::{MaterializedJournalSnapshot, TableIdentitySnapshotEntry};
 
-pub const MATERIALIZED_VERIFICATION_ROOT_VERSION: u16 = 1;
+pub const MATERIALIZED_VERIFICATION_ROOT_VERSION: u16 = 2;
 pub const VERIFICATION_INDEX_MAX_DEPTH: usize = 128;
 
 /// The approved million-leaf resident-memory budget is 192 bytes per logical
@@ -80,6 +82,8 @@ pub enum LogicalLeafKind {
     Schema,
     Document,
     ScheduledExecution,
+    ResourcePathBinding,
+    TriggerDeliveryCursor,
 }
 
 impl LogicalLeafKind {
@@ -89,6 +93,8 @@ impl LogicalLeafKind {
             Self::Schema => 2,
             Self::Document => 3,
             Self::ScheduledExecution => 4,
+            Self::ResourcePathBinding => 5,
+            Self::TriggerDeliveryCursor => 6,
         }
     }
 }
@@ -835,9 +841,10 @@ fn deltas_for_validated_record(
             TenantEventKind::ScheduledExecution { execution_id } => {
                 append_scheduled_execution_delta(execution_id, &mut deltas)?;
             }
-            TenantEventKind::IndexLifecycle { .. }
-            | TenantEventKind::TriggerDelivery { .. }
-            | TenantEventKind::Barrier { .. } => {}
+            TenantEventKind::TriggerDelivery { cursor } => {
+                append_trigger_delivery_cursor_delta(*cursor, &mut deltas)?;
+            }
+            TenantEventKind::IndexLifecycle { .. } | TenantEventKind::Barrier { .. } => {}
         }
     }
     Ok(deltas)
@@ -874,7 +881,31 @@ fn append_document_deltas(
                 write.doc_id
             )));
         }
+        append_resource_path_binding_delta(write, deltas)?;
     }
+    Ok(())
+}
+
+fn append_resource_path_binding_delta(
+    write: &WriteOp,
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
+    if write.current.is_some() {
+        if let Some(binding) = write.resource_path_binding.as_ref() {
+            deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+                LogicalLeafKind::ResourcePathBinding,
+                canonical_resource_path_binding_identity(&binding.locator)?,
+                canonical_resource_path_binding_value(binding)?,
+            )?));
+        }
+        return Ok(());
+    }
+
+    let locator = DocumentLocator::new(write.table.clone(), write.doc_id.clone());
+    deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+        LogicalLeafKind::ResourcePathBinding,
+        &canonical_resource_path_binding_identity(&locator)?,
+    )?));
     Ok(())
 }
 
@@ -965,6 +996,26 @@ fn append_scheduled_execution_delta(
     Ok(())
 }
 
+fn append_trigger_delivery_cursor_delta(
+    cursor: TriggerDeliveryCursor,
+    deltas: &mut Vec<MaterializedStateDelta>,
+) -> Result<()> {
+    let identity = canonical_trigger_delivery_cursor_identity()?;
+    if cursor == TriggerDeliveryCursor::default() {
+        deltas.push(MaterializedStateDelta::Remove(LogicalLeafKey::new(
+            LogicalLeafKind::TriggerDeliveryCursor,
+            &identity,
+        )?));
+    } else {
+        deltas.push(MaterializedStateDelta::Upsert(MaterializedStateLeaf::new(
+            LogicalLeafKind::TriggerDeliveryCursor,
+            identity,
+            canonical_trigger_delivery_cursor_value(cursor)?,
+        )?));
+    }
+    Ok(())
+}
+
 fn canonical_snapshot_seed(
     snapshot: &MaterializedJournalSnapshot,
 ) -> Result<MaterializedVerificationSeed> {
@@ -973,6 +1024,7 @@ fn canonical_snapshot_seed(
         state.table_identities().len()
             + state.schema_tables().len()
             + state.documents().len()
+            + state.resource_path_bindings().len()
             + state.scheduled_execution_ids().len(),
     );
     let mut table_identities = HashMap::with_capacity(state.table_identities().len());
@@ -1001,6 +1053,15 @@ fn canonical_snapshot_seed(
             canonical_document_value(document)?,
         ));
     }
+    for binding in state.resource_path_bindings() {
+        leaves.push((
+            LogicalLeafKey::new(
+                LogicalLeafKind::ResourcePathBinding,
+                &canonical_resource_path_binding_identity(&binding.locator)?,
+            )?,
+            canonical_resource_path_binding_value(binding)?,
+        ));
+    }
     for execution_id in state.scheduled_execution_ids() {
         leaves.push((
             LogicalLeafKey::new(
@@ -1008,6 +1069,15 @@ fn canonical_snapshot_seed(
                 &canonical_scheduled_execution_identity(execution_id)?,
             )?,
             canonical_scheduled_execution_value(execution_id)?,
+        ));
+    }
+    if state.trigger_delivery_cursor() != TriggerDeliveryCursor::default() {
+        leaves.push((
+            LogicalLeafKey::new(
+                LogicalLeafKind::TriggerDeliveryCursor,
+                &canonical_trigger_delivery_cursor_identity()?,
+            )?,
+            canonical_trigger_delivery_cursor_value(state.trigger_delivery_cursor())?,
         ));
     }
     Ok(MaterializedVerificationSeed {
@@ -1387,6 +1457,90 @@ mod tests {
     }
 
     #[test]
+    fn resource_binding_and_trigger_cursor_deltas_match_full_rebuilds() {
+        let store = crate::MemoryTenantStore::new();
+        let mut tracker = MaterializedVerificationTracker::from_snapshot(
+            &store
+                .export_materialized_journal_snapshot()
+                .expect("baseline snapshot should export"),
+        )
+        .expect("baseline tracker should build");
+        let table = TableName::new("tasks").expect("table should be valid");
+        let table_id = TableId::from_str("tasks-table").expect("table id should be valid");
+        let document = Document::with_id_at(
+            DocumentId::from_key("task-1").expect("document id should be valid"),
+            table.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("one"))]),
+            Timestamp(10),
+        );
+        let binding = nimbus_core::ResourcePathBinding::new(
+            nimbus_core::DocumentLocator::new(table.clone(), document.id.clone()),
+            nimbus_core::DocumentPath::from_segments(["tasks", document.id.as_str()])
+                .expect("resource path should be valid"),
+        );
+        let insert = TenantEventRecord::new(
+            SequenceNumber(1),
+            Timestamp(11),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: document.id.clone(),
+                resource_path_binding: Some(binding.clone()),
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(document.clone()),
+            }],
+            None,
+        )
+        .expect("insert record should build");
+        let trigger = TenantEventRecord::from_events(
+            SequenceNumber(2),
+            Timestamp(12),
+            vec![TenantEventKind::TriggerDelivery {
+                cursor: TriggerDeliveryCursor::new(SequenceNumber(1)),
+            }],
+        )
+        .expect("trigger record should build");
+        let delete = TenantEventRecord::new(
+            SequenceNumber(3),
+            Timestamp(13),
+            vec![WriteOp {
+                table,
+                table_id,
+                op_type: WriteOpType::Delete,
+                doc_id: document.id.clone(),
+                resource_path_binding: Some(binding),
+                trigger_write_origin: None,
+                previous: Some(document),
+                current: None,
+            }],
+            None,
+        )
+        .expect("delete record should build");
+
+        for record in [insert, trigger, delete] {
+            store
+                .append_durable_records_batch(std::slice::from_ref(&record))
+                .expect("record should append");
+            store
+                .apply_durable_records_batch(std::slice::from_ref(&record))
+                .expect("record should apply");
+            assert!(matches!(
+                tracker.apply_applied_record(&record),
+                MaterializedDeltaApplyOutcome::Advanced(_)
+            ));
+            let rebuilt = MaterializedVerificationTracker::from_snapshot(
+                &store
+                    .export_materialized_journal_snapshot()
+                    .expect("snapshot should export"),
+            )
+            .expect("snapshot tracker should rebuild");
+            assert_eq!(tracker.position(), rebuilt.position());
+        }
+    }
+
+    #[test]
     fn hidden_lineage_document_write_matches_provider_activation() {
         let store = crate::TenantStore::create_in_memory().expect("store should open");
         let (initial_record, initial_table_id, _) = inserted_document_record(1);
@@ -1570,6 +1724,44 @@ mod tests {
 
         assert_eq!(actual.applied_sequence(), expected.applied_sequence());
         assert_ne!(actual.root_hash(), expected.root_hash());
+    }
+
+    #[test]
+    fn full_verification_root_covers_bindings_and_trigger_cursor() {
+        let baseline = empty_snapshot();
+        let baseline_position = MaterializedVerificationTracker::from_snapshot(&baseline)
+            .expect("baseline tracker should build")
+            .position()
+            .expect("baseline tracker should have a position");
+
+        let table = TableName::new("tasks").expect("table should be valid");
+        let id = DocumentId::from_key("task-1").expect("document id should be valid");
+        let mut with_binding = baseline.clone();
+        with_binding.resource_path_bindings = vec![nimbus_core::ResourcePathBinding::new(
+            nimbus_core::DocumentLocator::new(table, id.clone()),
+            nimbus_core::DocumentPath::from_segments(["tasks", id.as_str()])
+                .expect("resource path should be valid"),
+        )];
+        assert_ne!(
+            MaterializedVerificationTracker::from_snapshot(&with_binding)
+                .expect("binding tracker should build")
+                .position()
+                .expect("binding tracker should have a position"),
+            baseline_position,
+            "resource bindings must contribute verification leaves"
+        );
+
+        let mut with_cursor = baseline;
+        with_cursor.trigger_delivery_cursor =
+            nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(1));
+        assert_ne!(
+            MaterializedVerificationTracker::from_snapshot(&with_cursor)
+                .expect("cursor tracker should build")
+                .position()
+                .expect("cursor tracker should have a position"),
+            baseline_position,
+            "the trigger cursor must contribute a verification leaf"
+        );
     }
 
     #[test]

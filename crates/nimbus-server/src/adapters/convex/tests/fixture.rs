@@ -3,6 +3,13 @@ use nimbus_services::ServiceInstanceBindingRegistry;
 
 pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
 -> (TempDir, Arc<Engine>, TenantId, ConvexHostBridge) {
+    host_bridge_fixture_for_invocation(InvocationKind::Query, "convex_fixture_test")
+}
+
+pub(in crate::adapters::convex::tests) fn host_bridge_fixture_for_invocation(
+    invocation_kind: InvocationKind,
+    function_name: impl Into<String>,
+) -> (TempDir, Arc<Engine>, TenantId, ConvexHostBridge) {
     let tempdir = tempdir().expect("runtime action tempdir should build");
     let engine = Arc::new(Engine::new(tempdir.path()).expect("engine should build"));
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
@@ -50,8 +57,8 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
             Default::default(),
             nimbus_core::PrincipalContext::anonymous(),
             None,
-            InvocationKind::Query,
-            "convex_fixture_test",
+            invocation_kind,
+            function_name,
         ),
     );
     (tempdir, engine, tenant_id, bridge)

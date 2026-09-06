@@ -62,20 +62,26 @@ impl OciPortLeaseCoordinator {
             .zip(leases)
             .zip(records)
             .map(|((binding, request), record)| {
-                let expected_port =
-                    NonZeroU16::new(binding.host_port).ok_or_else(|| SandboxError::InvalidSpec {
-                        message: format!(
-                            "sandbox port binding {:?} must use a non-zero host port",
-                            binding.name
-                        ),
-                    })?;
+                let expected_port = NonZeroU16::new(binding.host_port);
                 let (target, publication, exposure) = self.published_binding_scope(binding)?;
-                let requested_port_matches = match request.binding().port() {
-                    PortRequestMode::Exact(port) => *port == expected_port,
-                    PortRequestMode::Range(range) => {
-                        range.start() <= expected_port && expected_port <= range.end()
+                let selected_port_matches = match (
+                    request.binding().port(),
+                    expected_port,
+                    record.reserved_port(),
+                ) {
+                    (PortRequestMode::Exact(requested), Some(expected), Some(selected)) => {
+                        requested == &expected && selected == expected
                     }
-                    PortRequestMode::ProviderAssigned => true,
+                    (PortRequestMode::Range(range), Some(expected), Some(selected)) => {
+                        range.start() <= expected
+                            && expected <= range.end()
+                            && selected == expected
+                    }
+                    (PortRequestMode::ProviderAssigned, None, _) => true,
+                    (PortRequestMode::ProviderAssigned, Some(expected), Some(selected)) => {
+                        selected == expected
+                    }
+                    _ => false,
                 };
                 if request.tenant_id() != Some(tenant_id)
                     || request.accounting() != PortLeaseAccounting::TenantPublished
@@ -84,19 +90,11 @@ impl OciPortLeaseCoordinator {
                     || request.binding().realm() != &PortBindRealm::Host
                     || request.binding().target() != &target
                     || request.binding().exposure() != exposure
-                    || !requested_port_matches
+                    || !selected_port_matches
                 {
                     return Err(SandboxError::OperationFailed {
                         message: format!(
-                            "compiled published listener {:?} crossed its tenant, accounting, publication, or binding intent",
-                            binding.name
-                        ),
-                    });
-                }
-                if record.reserved_port() != Some(expected_port) {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "compiled published listener {:?} does not own port {expected_port}",
+                            "compiled published listener {:?} crossed its tenant, accounting, publication, or binding intent and selected-port evidence",
                             binding.name
                         ),
                     });

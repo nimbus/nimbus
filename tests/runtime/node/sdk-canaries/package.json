@@ -10,7 +10,7 @@
     "@upstash/redis": "1.38.0",
     "ai": "6.0.192",
     "jose": "6.2.3",
-    "nanoid": "5.1.11",
+    "nanoid": "5.1.16",
     "octokit": "5.0.5",
     "openai": "6.39.1",
     "resend": "6.12.4",

@@ -8,11 +8,10 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit 1
 
 PLAN="docs/private/plans/archive/nimbus-sdk-resource-model-plan.md"
 MODEL_DOC="docs/private/architecture/sandbox/service-sandbox-session-model.md"
-SDK_PACKAGE="packages/nimbus/package.json"
 # packages/nimbus/src/index.ts is now a thin re-export shell (the SDK package
 # reorg moved the Nimbus class/methods into control-plane/client.ts and the
 # request/response types into control-plane/types.ts). Root-surface checks
@@ -34,9 +33,13 @@ DOCS_README="docs/README.md"
 SDK_README="packages/nimbus/README.md"
 SERVICES_MANAGER="crates/nimbus-services/src/manager.rs"
 SERVICES_MANAGER_DEFINITION_TESTS="crates/nimbus-services/src/manager/tests/definition_lifecycle.rs"
+SERVICES_MANAGER_SOURCE_RETIREMENT="crates/nimbus-services/src/manager/source_retirement.rs"
+SERVICES_MANAGER_SOURCE_RETIREMENT_TESTS="crates/nimbus-services/src/manager/tests/source_retirement.rs"
 SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS="crates/nimbus-services/src/manager/tests/sandbox_resources.rs"
+SERVICES_MANAGER_SOURCE_PROJECTION_TESTS="crates/nimbus-services/src/manager/tests/source_projection.rs"
 SERVICES_MANAGER_SESSION_TESTS="crates/nimbus-services/src/manager/tests/sessions.rs"
-SERVICES_MANAGER_TENANT_TEARDOWN_TESTS="crates/nimbus-services/src/manager/tests/tenant_teardown.rs"
+SERVICES_MANAGER_TENANT_RETIREMENT="crates/nimbus-services/src/manager/tenant_retirement.rs"
+SERVICES_MANAGER_TENANT_RETIREMENT_TESTS="crates/nimbus-services/src/manager/tenant_retirement/tests.rs"
 SERVER_ROUTER="crates/nimbus-server/src/router.rs"
 SERVER_SERVICE_GRANTS="crates/nimbus-server/src/http/service_grants.rs"
 SERVER_SERVICES="crates/nimbus-server/src/http/services.rs"
@@ -48,9 +51,9 @@ SERVER_RESOURCE_CONTROL_SESSIONS="crates/nimbus-server/src/http/resource_control
 SERVER_SANDBOXES="crates/nimbus-server/src/http/sandboxes.rs"
 SERVER_SANDBOX_SPEC="crates/nimbus-compute/src/sandbox_spec.rs"
 SERVER_SESSIONS="crates/nimbus-server/src/http/sessions.rs"
-SERVER_SERVICE_MANAGER="crates/nimbus-compute/src/service_manager.rs"
 SERVER_TESTS_ROOT="crates/nimbus-server/src/tests.rs"
 SERVER_SERVICE_MANAGER_TESTS="crates/nimbus-server/src/tests/service_manager.rs"
+SERVER_SERVICE_MANAGER_DEFINITION_RETIREMENT_TESTS="crates/nimbus-server/src/tests/service_manager/definition_retirement.rs"
 SERVER_SERVICE_MANAGER_DEFINITION_TESTS="crates/nimbus-server/src/tests/service_manager/definitions.rs"
 SERVER_SERVICE_MANAGER_REDACTION_TESTS="crates/nimbus-server/src/tests/service_manager/redaction.rs"
 SERVER_SERVICE_MANAGER_SANDBOX_TESTS="crates/nimbus-server/src/tests/service_manager/sandboxes.rs"
@@ -171,18 +174,22 @@ const hasCanonicalManifest =
   !pkg.exports?.["./rest"] &&
   !pkg.exports?.["./transports/host"];
 
-const hasCanonicalMethods = [
-  "export class Nimbus",
-  "readonly services: NimbusServices",
-  "start(input",
-  "stop(input",
-  "restart(input",
-  "get(selector",
-  "wait(input",
-  "controlPlaneRoutePath",
-  "controlPlaneRouteVerb",
-  "createDefaultRestClient",
-].every((fragment) => sdk.includes(fragment));
+const canonicalMethods = [
+  ["Nimbus class", /export class Nimbus/],
+  ["services namespace", /readonly services: NimbusServices/],
+  ["service start", /start\(input: NimbusServiceStartRequest/],
+  ["service stop", /stop\(input: NimbusServiceStopRequest/],
+  ["service restart", /restart\(\s*input: NimbusServiceRestartRequest/],
+  ["service get", /get\(selector: NimbusServiceSelector/],
+  ["service wait", /wait\(input: NimbusServiceWaitRequest/],
+  ["route path", /controlPlaneRoutePath/],
+  ["route verb", /controlPlaneRouteVerb/],
+  ["default REST client", /createDefaultRestClient/],
+];
+const missingCanonicalMethods = canonicalMethods
+  .filter(([, pattern]) => !pattern.test(sdk))
+  .map(([label]) => label);
+const hasCanonicalMethods = missingCanonicalMethods.length === 0;
 
 const hasCanonicalControlPlaneRoutes = [
   "NIMBUS_CONTROL_PLANE_ROUTES",
@@ -214,6 +221,20 @@ const lacksFutureOrStaleRootSurface = [
   "async request(path",
   "async resolveRestClient",
 ].every((fragment) => !sdk.includes(fragment));
+
+const failedContracts = [
+  ["canonical package manifest", hasCanonicalManifest],
+  ["canonical methods", hasCanonicalMethods],
+  ["canonical control-plane routes", hasCanonicalControlPlaneRoutes],
+  ["root avoids embedded routes", rootAvoidsEmbeddedControlPlaneRoutes],
+  ["root lacks future or stale surface", lacksFutureOrStaleRootSurface],
+].filter(([, passed]) => !passed).map(([label]) => label);
+if (failedContracts.length > 0) {
+  console.error(`failed SDK root contracts: ${failedContracts.join(", ")}`);
+}
+if (missingCanonicalMethods.length > 0) {
+  console.error(`missing SDK methods: ${missingCanonicalMethods.join(", ")}`);
+}
 
 process.exit(
   hasCanonicalManifest &&
@@ -272,11 +293,33 @@ condition_srm1_adapter_surfaces_stay_clean() {
     packages/convex/src packages/firebase/src packages/mongodb/src packages/dynamodb/src
 }
 
+sdk_has_service_definition_list_signature() {
+  awk '
+    /^[[:space:]]+list[[:space:]]*\(/ {
+      signature = $0
+      capture = 1
+      next
+    }
+    capture {
+      signature = signature $0
+      if (/\): Promise<NimbusServiceDefinitionCollection>/) {
+        compact = signature
+        gsub(/[[:space:]]/, "", compact)
+        if (compact ~ /^list\(input:NimbusServiceListRequest=\{\},?\):Promise<NimbusServiceDefinitionCollection>\{$/) {
+          found = 1
+        }
+        capture = 0
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "${SDK_ROOT_FILES[@]}"
+}
+
 condition_srm2_sdk_definition_surface() {
   grep -q 'create(input: NimbusServiceCreateRequest)' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'update(input: NimbusServiceUpdateRequest)' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'delete(input: NimbusServiceDeleteRequest)' "${SDK_ROOT_FILES[@]}" &&
-    grep -q 'list(input: NimbusServiceListRequest' "${SDK_ROOT_FILES[@]}" &&
+    sdk_has_service_definition_list_signature &&
     grep -q 'kind: "builtIn"' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'kind: "external"' "${SDK_ROOT_FILES[@]}" &&
     grep -q 'ifMatchGeneration' "${SDK_ROOT_FILES[@]}" &&
@@ -341,15 +384,18 @@ condition_srm2_manager_definition_state() {
     grep -q 'definitions: BTreeMap<TenantServiceKey, ServiceDefinition>' crates/nimbus-services/src/manager/types.rs &&
     grep -q 'create_service_definition' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'update_service_definition' crates/nimbus-services/src/manager/definitions.rs &&
-    grep -q 'delete_service_definition_async' crates/nimbus-services/src/manager/definitions.rs &&
+    grep -q 'finalize_unmanaged_service_definition_deletion' "${SERVICES_MANAGER_SOURCE_RETIREMENT}" &&
+    grep -q 'claim_service_definition_retirement' "${SERVICES_MANAGER_SOURCE_RETIREMENT}" &&
+    grep -q 'finalize_service_definition_after_recorded' "${SERVICES_MANAGER_SOURCE_RETIREMENT}" &&
     grep -q 'service_volume_policy_for_tenant' crates/nimbus-services/src/catalog.rs &&
-    grep -q 'service_activation_for_tenant' crates/nimbus-services/src/manager/definitions.rs &&
-    grep -q 'volume_policy' crates/nimbus-services/src/manager/service_start.rs &&
-    grep -q 'ensure_sandbox_mounts_match' crates/nimbus-services/src/manager/service_start.rs &&
+    grep -q 'prepare_sandbox_service_provision_source' crates/nimbus-services/src/manager/source.rs &&
+    grep -q 'validate_sandbox_service_provision_decision' crates/nimbus-services/src/manager/source.rs &&
+    grep -q 'volume_policy' crates/nimbus-services/src/manager/source.rs &&
+    grep -q 'ensure_sandbox_mounts_match' crates/nimbus-services/src/manager/source.rs &&
     grep -q 'Url::parse' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'SUPPORTED_BUILT_IN_PROVIDERS' crates/nimbus-services/src/manager/definitions.rs &&
     grep -q 'endpoint must not embed credentials' crates/nimbus-services/src/manager/definitions.rs &&
-    grep -q 'health.path must start with `/`' crates/nimbus-services/src/manager/definitions.rs
+    grep -q "health.path must start with \`/\`" crates/nimbus-services/src/manager/definitions.rs
 }
 
 condition_srm2_authorization_split_tests() {
@@ -357,18 +403,20 @@ condition_srm2_authorization_split_tests() {
     grep -q 'service_definition_force_delete_requires_separate_policy_and_exact_service_grant' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'service_definition_list_only_permission_redacts_inspect_details' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'service_definition_update_rejects_active_backend_until_stopped' "${SERVER_SERVICE_MANAGER_TESTS}" &&
-    grep -q 'delete_service_definition_serializes_with_in_flight_activation' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
-    grep -q 'force delete must record a stopped handle with endpoints cleared' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
-    grep -q 'start_service_for_decision_rejects_service_volume_without_catalog_policy' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
-    grep -q 'start_service_for_decision_accepts_declared_service_tenant_volume' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
+    grep -q 'definition_delete_fences_and_joins_inflight_provision_before_removing_source' "${SERVER_SERVICE_MANAGER_DEFINITION_RETIREMENT_TESTS}" &&
+    grep -q 'definition_delete_keeps_source_and_sessions_until_recorded_teardown' "${SERVER_SERVICE_MANAGER_DEFINITION_RETIREMENT_TESTS}" &&
+    grep -q 'force_delete_unresolved_submission_keeps_definition_and_makes_zero_stop_effects' "${SERVER_SERVICE_MANAGER_DEFINITION_RETIREMENT_TESTS}" &&
+    grep -q 'service_source_validation_rejects_volume_without_catalog_policy_before_provider_io' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
+    grep -q 'service_source_validation_accepts_declared_volume_without_starting_provider' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
     grep -q 'create_service_definition_rejects_malformed_external_endpoint' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
-    grep -q 'open_service_session_rejects_in_flight_definition_delete' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
-    ! grep -q 'yield_now' "${SERVICES_MANAGER_DEFINITION_TESTS}" &&
+    grep -q 'retirement_claim_fences_source_update_and_start_reservation' "${SERVICES_MANAGER_SOURCE_RETIREMENT_TESTS}" &&
+    grep -q 'source_retirement_claim_exists' crates/nimbus-services/src/manager/sessions.rs &&
+    ! grep -q 'yield_now' "${SERVICES_MANAGER_SOURCE_RETIREMENT_TESTS}" &&
     grep -q 'ServiceDefinitionAction::ForceDelete' "${SERVER_RESOURCE_CONTROL_SERVICES}" &&
     grep -q 'ServiceDefinitionAction::Inspect' "${SERVER_SERVICES}" &&
     grep -q 'has an active backend; stop the service before updating its definition' crates/nimbus-services/src/manager/definitions.rs &&
-    grep -q 'activation in progress' crates/nimbus-services/src/manager/definitions.rs &&
-    grep -q 'claim_service_definition_delete' crates/nimbus-services/src/manager/definitions.rs &&
+    grep -q 'retirement claim in progress' "${SERVICES_MANAGER_SOURCE_RETIREMENT}" &&
+    grep -q 'claim_service_definition_retirement' "${SERVICES_MANAGER_SOURCE_RETIREMENT}" &&
     grep -q 'public service definitions must reject host rootfs paths' "${SERVER_SERVICE_MANAGER_DEFINITION_TESTS}" &&
     grep -q 'public service definitions must reject local build context paths' "${SERVER_SERVICE_MANAGER_DEFINITION_TESTS}" &&
     grep -q 'operator_service_definition_routes_are_resource_shaped_and_preconditioned' "${SERVER_SERVICE_MANAGER_TESTS}" &&
@@ -417,23 +465,23 @@ condition_srm3_server_sandbox_routes() {
 }
 
 condition_srm3_manager_sandbox_state() {
-  # PR #144 (CO2/SR3/SR4) deleted the create_sandbox_resource_async system-
-  # context convenience wrapper once every call site started passing an
-  # explicit TenantIsolationContext; creation is still evidenced by the two
-  # functions below (context-facing entry point + decision-based impl).
+  # Native workload cutover split immutable desired source from provider
+  # observation. The manager must key both by tenant plus opaque resource id,
+  # reserve source before effects, and accept only exact execution projection.
   grep -q 'pub struct SandboxResource' crates/nimbus-services/src/catalog.rs &&
-    grep -q 'sandbox_resources: BTreeMap<String, SandboxResource>' crates/nimbus-services/src/manager/types.rs &&
-    grep -q 'create_sandbox_resource_for_decision_async' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'create_sandbox_resource_for_context_async' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'WorkloadAttributes::sandbox' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'ensure_sandbox_spec_matches' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'ensure_sandbox_mounts_match' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'stop_started_sandbox_resource_after_create_error' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'create_sandbox_resource_stops_backend_after_post_start_validation_errors' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
-    grep -q 'create_sandbox_resource_preserves_existing_backend_after_duplicate_started_id' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
-    grep -q 'duplicate-id failure must not stop a tracked sandbox through the create path' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
-    grep -q 'get_sandbox_resource_async' crates/nimbus-services/src/manager/sandboxes.rs &&
-    grep -q 'stop_sandbox_resource_async' crates/nimbus-services/src/manager/sandboxes.rs &&
+    grep -q 'pub(super) struct TenantSandboxResourceKey' crates/nimbus-services/src/manager/types.rs &&
+    grep -q 'sandbox_resource_sources: BTreeMap<TenantSandboxResourceKey, SandboxResourceSource>' crates/nimbus-services/src/manager/types.rs &&
+    grep -q 'BTreeMap<TenantSandboxResourceKey, SandboxResourceObservation>' crates/nimbus-services/src/manager/types.rs &&
+    grep -q 'prepare_standalone_sandbox_provision_source' crates/nimbus-services/src/manager/source.rs &&
+    grep -q 'reserve_standalone_sandbox_provision_source' crates/nimbus-services/src/manager/source.rs &&
+    grep -q 'validate_standalone_sandbox_provision_decision' crates/nimbus-services/src/manager/source.rs &&
+    grep -q 'project_sandbox_resource_execution_observation' crates/nimbus-services/src/manager/sandboxes.rs &&
+    grep -q 'sandbox_resource_snapshot_for_tenant' crates/nimbus-services/src/manager/sandboxes.rs &&
+    grep -q 'list_sandbox_resource_snapshots_for_tenant' crates/nimbus-services/src/manager/sandboxes.rs &&
+    grep -q 'standalone_source_owns_initial_generation_and_exact_replay_version' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
+    grep -q 'crossed_standalone_decision_rejects_before_source_mutation' "${SERVICES_MANAGER_SANDBOX_RESOURCE_TESTS}" &&
+    grep -q 'source_only_sandbox_reads_are_truthful_repeatable_and_effect_free' "${SERVICES_MANAGER_SOURCE_PROJECTION_TESTS}" &&
+    grep -q 'compute_projection_authenticates_source_version_and_execution_id_before_first_write' "${SERVICES_MANAGER_SOURCE_PROJECTION_TESTS}" &&
     grep -q 'requires standalone sandbox owner metadata' crates/nimbus-services/src/manager/sandboxes.rs &&
     ! grep -q 'belongs to tenant' crates/nimbus-services/src/manager/sandboxes.rs
 }
@@ -481,7 +529,7 @@ condition_srm4_server_session_routes() {
     grep -q 'principal_has_session_permission' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
     grep -q 'principal_has_session_list_permission' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
     grep -q 'session_permission_scope_is_listable' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
-    grep -q 'session open target requires exactly one of `service` or `sandbox`' "${SERVER_SESSIONS}" &&
+    grep -q "session open target requires exactly one of \`service\` or \`sandbox\`" "${SERVER_SESSIONS}" &&
     grep -q 'principal_has_exact_service_grant' "${SERVER_SERVICE_GRANTS}" &&
     grep -q 'super::super::service_grants::principal_has_exact_service_grant' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
     grep -q 'principal_has_sandbox_reach' "${SERVER_RESOURCE_CONTROL_SESSIONS}" &&
@@ -565,31 +613,36 @@ condition_srm5_type_fixtures_cover_examples() {
 }
 
 condition_srm6_closeout_recorded() {
-    grep -q '| SRM6 | `done`' "${PLAN}" &&
+    grep -q "| SRM6 | \`done\`" "${PLAN}" &&
     grep -q 'SRM6 final closeout' "${PLAN}" &&
     grep -q 'mod definitions;' "${SERVICES_MANAGER}" &&
     [ "$(wc -l < "${SERVICES_MANAGER}")" -lt 1500 ] &&
     [ "$(wc -l < "${SERVICES_MANAGER_DEFINITION_TESTS}")" -lt 2000 ] &&
-    # CP1 moved the service_manager.rs body into nimbus-compute (33 lines,
-    # no tests of its own) and kept its test tree server-side, wired in via
-    # `tests.rs`'s `mod service_manager;` -- that wiring point is the
-    # successor of the old file's own `mod tests;` declaration.
+    # The service manager remains concept-owned in nimbus-services. Durable
+    # definition retirement now spans its source-retirement seam and the
+    # server composition test seam; both must stay below their documented
+    # decomposition thresholds.
     grep -q 'mod service_manager;' "${SERVER_TESTS_ROOT}" &&
-    [ "$(wc -l < "${SERVER_SERVICE_MANAGER}")" -lt 2000 ] &&
+    [ "$(wc -l < "${SERVICES_MANAGER_SOURCE_RETIREMENT}")" -lt 1500 ] &&
+    [ "$(wc -l < "${SERVICES_MANAGER_SOURCE_RETIREMENT_TESTS}")" -lt 2000 ] &&
     grep -q 'mod definitions;' "${SERVER_SERVICE_MANAGER_TESTS}" &&
+    grep -q 'mod definition_retirement;' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'mod redaction;' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'mod sandboxes;' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'mod sessions;' "${SERVER_SERVICE_MANAGER_TESTS}" &&
     grep -q 'service-manager route fixture root' "${PLAN}" &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_TESTS}")" -lt 2000 ] &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_DEFINITION_TESTS}")" -lt 2000 ] &&
+    [ "$(wc -l < "${SERVER_SERVICE_MANAGER_DEFINITION_RETIREMENT_TESTS}")" -lt 2000 ] &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_REDACTION_TESTS}")" -lt 2000 ] &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_SANDBOX_TESTS}")" -lt 2000 ] &&
     [ "$(wc -l < "${SERVER_SERVICE_MANAGER_SESSION_TESTS}")" -lt 2000 ] &&
-    grep -q 'teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources' "${SERVICES_MANAGER_TENANT_TEARDOWN_TESTS}" &&
-    grep -q 'retain(|key, _| &key.tenant_id != tenant_id)' crates/nimbus-services/src/manager/registry.rs &&
-    grep -q 'retain(|_, resource| &resource.tenant_id != tenant_id)' crates/nimbus-services/src/manager/registry.rs &&
-    grep -q 'retain(|_, session| &session.tenant_id != tenant_id)' crates/nimbus-services/src/manager/registry.rs &&
+    grep -q 'finalize_tenant_sources_after_recorded' "${SERVICES_MANAGER_TENANT_RETIREMENT}" &&
+    grep -q 'tenant_retirement_finalizer_removes_complete_sources_and_sessions_without_effects' "${SERVICES_MANAGER_TENANT_RETIREMENT_TESTS}" &&
+    grep -q 'service_definition_observations' "${SERVICES_MANAGER_TENANT_RETIREMENT}" &&
+    grep -q 'sandbox_resource_sources' "${SERVICES_MANAGER_TENANT_RETIREMENT}" &&
+    grep -q 'sandbox_resource_observations' "${SERVICES_MANAGER_TENANT_RETIREMENT}" &&
+    grep -q 'retain(|_, session| &session.tenant_id != tenant_id)' "${SERVICES_MANAGER_TENANT_RETIREMENT}" &&
     grep -q 'bash scripts/verify-nimbus-sdk-resource-model.sh` pass' "${PLAN}" &&
     grep -q 'bash scripts/verify-nimbus-capability-segregation.sh` pass' "${PLAN}" &&
     grep -q 'git diff --check` pass' "${PLAN}"

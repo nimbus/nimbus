@@ -147,15 +147,28 @@ export default defineSchema({
     .index("by_path", ["path"]),
 
   listeners: defineTable({
+    listenerId: v.string(),
+    portLeaseId: v.optional(v.string()),
+    serviceId: v.optional(v.string()),
+    machineId: v.optional(v.string()),
+    tenantId: v.optional(v.string()),
     adapter: v.string(),
     protocol: v.string(),
-    address: v.string(),
-    state: v.string(),
+    generation: v.string(),
+    leaseEpoch: v.optional(v.string()),
+    providerId: v.optional(v.string()),
+    actualAddress: v.string(),
+    observedPhase: v.string(),
+    conditions: v.array(v.any()),
+    cleanupState: v.string(),
     version: v.optional(v.string()),
     error: v.optional(v.string()),
   })
+    .index("by_listenerId", ["listenerId"])
     .index("by_adapter", ["adapter"])
-    .index("by_state", ["state"]),
+    .index("by_serviceId", ["serviceId"])
+    .index("by_machineId", ["machineId"])
+    .index("by_observedPhase", ["observedPhase"]),
 
   subscriptions: defineTable({
     tenantId: v.optional(v.string()),
@@ -169,16 +182,27 @@ export default defineSchema({
     .index("by_adapter", ["adapter"]),
 
   ports: defineTable({
+    portLeaseId: v.string(),
+    listenerId: v.string(),
     machineId: v.optional(v.string()),
     serviceId: v.optional(v.string()),
+    tenantId: v.optional(v.string()),
+    generation: v.string(),
+    leaseEpoch: v.string(),
+    providerId: v.string(),
+    actualAddress: v.string(),
     hostPort: v.number(),
     guestPort: v.optional(v.number()),
     protocol: v.string(),
-    state: v.string(),
+    observedPhase: v.string(),
+    conditions: v.array(v.any()),
+    cleanupState: v.string(),
   })
+    .index("by_portLeaseId", ["portLeaseId"])
+    .index("by_listenerId", ["listenerId"])
     .index("by_machineId", ["machineId"])
     .index("by_serviceId", ["serviceId"])
-    .index("by_state", ["state"]),
+    .index("by_observedPhase", ["observedPhase"]),
 
   adapter_capabilities: defineTable({
     adapter: v.string(),

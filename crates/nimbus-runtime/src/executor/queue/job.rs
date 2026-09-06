@@ -49,6 +49,18 @@ pub(crate) struct RuntimeWorkerJob {
     pub(crate) _retirement_guard: Option<crate::executor::retirement::RuntimeRetirementGuard>,
 }
 
+impl RuntimeWorkerJob {
+    pub(crate) fn send_result(self, result: Result<Value>) {
+        // Drop invocation-owned bindings before the completion signal can wake the caller.
+        let result_tx = self.into_result_sender();
+        result_tx.send(result);
+    }
+
+    fn into_result_sender(self) -> RuntimeWorkerResultSender {
+        self.result_tx
+    }
+}
+
 pub(crate) enum RuntimeWorkerResultSender {
     Async(oneshot::Sender<Result<Value>>),
     Blocking(std::sync::mpsc::SyncSender<Result<Value>>),

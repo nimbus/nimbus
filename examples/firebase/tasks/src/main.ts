@@ -24,7 +24,7 @@ interface Task {
 
 const projectId = "demo";
 const baseUrl = new URL(
-  new URLSearchParams(window.location.search).get("server") ?? "http://localhost:8080",
+  new URLSearchParams(window.location.search).get("server") ?? window.location.origin,
 );
 const app = initializeApp({ apiKey: "nimbus-tasks", projectId });
 const firestore = initializeFirestore(app, { experimentalUnaryTransport: "rest" });

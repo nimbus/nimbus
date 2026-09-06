@@ -64,6 +64,12 @@ name = "ring"
 expression = "MIT AND ISC AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
+[[licenses.clarify]]
+name = "libuv-sys-lite"
+version = "1.48.3"
+expression = "MIT AND BSD-2-Clause AND ISC"
+license-files = [{ path = "LICENSE", hash = 0xc2efc575 }]
+
 [bans]
 # Keep duplicate detection active for enterprise-trust visibility. The current
 # workspace still contains a handful of intentional parallel upstream stacks,
@@ -84,6 +90,7 @@ deny = [
 skip = [
     { crate = "addr2line@0.25.1", reason = "Pingora 0.8.1's optional tracing/cache lane carries cf-rustracing/backtrace on addr2line 0.25 alongside Wasmtime's newer addr2line lane." },
     { crate = "base16ct@1.0.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "bindgen@0.70.1", reason = "Deno N-API's libuv binding build uses bindgen 0.70 while the Deno Node nghttp2 build uses bindgen 0.71." },
     { crate = "blake2@0.10.6", reason = "The pinned Deno Node crypto stack still carries blake2 0.10 while Deno argon2 has moved to the RustCrypto 0.11 prerelease lane." },
     { crate = "blake2@0.11.0-rc.6", reason = "Deno crypto carries the Argon2 prerelease blake2 lane alongside deno_node_crypto's stable blake2 lane." },
     { crate = "brotli@3.5.0", reason = "Pingora 0.8.1's HTTP compression support carries brotli 3 alongside the existing Deno brotli 6 and async-compression brotli 8 lanes." },
@@ -132,7 +139,7 @@ skip-tree = [
     { crate = "mysql_async@0.36.2", reason = "The MySQL provider stack carries distinct protocol and crypto support crates." },
     { crate = "tokio-postgres@0.7.18", reason = "The Postgres provider stack carries a distinct protocol and crypto support lane." },
     { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
-    { crate = "deno_core@0.408.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+    { crate = "deno_core@0.411.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
 ]
 
 [sources]

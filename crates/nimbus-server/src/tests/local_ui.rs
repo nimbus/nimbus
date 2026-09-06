@@ -6,7 +6,7 @@ use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 use super::*;
 use crate::local_server::{
-    LOCAL_SESSION_COOKIE_NAME, LocalServerPaths, LocalServerSecurityState,
+    LOCAL_SESSION_COOKIE_NAME, LocalServerPaths, LocalServerSecurityState, SessionValidationResult,
     load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
@@ -410,19 +410,70 @@ async fn invalid_token_post_fails_and_rotated_cookie_is_revoked() {
         .expect("rotate request should send");
     assert_eq!(rotate.status(), StatusCode::OK);
 
-    let revoked = server
-        .client()
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("redirect-disabled client should build");
+    let revoked = client
         .get(server.http_url("/ui/"))
         .header(header::COOKIE, &cookie)
         .send()
         .await
         .expect("revoked cookie request should send");
-    assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
-    let body = revoked
-        .json::<serde_json::Value>()
+    assert_eq!(revoked.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(
+        revoked
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/ui/auth")
+    );
+}
+
+#[tokio::test]
+async fn stale_session_cookie_redirects_to_auth_after_server_restart() {
+    let temp = tempdir().expect("tempdir should build");
+    let (previous_security, token) = local_server_security(temp.path());
+    let issued = previous_security
+        .create_session_for_local_admin_token(&token.token)
+        .expect("session should issue before restart");
+    assert!(matches!(
+        previous_security.authorize_session_cookie(Some(&issued.value)),
+        SessionValidationResult::Authorized(_)
+    ));
+
+    let (restarted_security, restarted_token) = local_server_security(temp.path());
+    assert_eq!(restarted_token.generation, token.generation);
+
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(fixture.engine())
+            .with_local_server_security(restarted_security)
+            .build(),
+    )
+    .await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("redirect-disabled client should build");
+    let response = client
+        .get(server.http_url("/ui/"))
+        .header(
+            header::COOKIE,
+            format!("{LOCAL_SESSION_COOKIE_NAME}={}", issued.value),
+        )
+        .send()
         .await
-        .expect("revoked response should be json");
-    assert_eq!(body["error"]["message"], json!("auth.token_revoked"));
+        .expect("stale cookie request should send");
+
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/ui/auth")
+    );
 }
 
 #[tokio::test]

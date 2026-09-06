@@ -8,18 +8,18 @@
   "runtime_limits_preset": "application_node26",
   "upstream": {
     "repo": "nodejs/node",
-    "tag": "v26.2.0",
-    "commit": "cfd7920d5a2d84905c4292362d01d07870047e93",
-    "tag_object": "30ffe3cfc2fda3684c38ec43aa79c381d398bf14",
+    "tag": "v26.8.1",
+    "commit": "7be6d3af31a65adea57c94c41e50c2b071ed0b3a",
+    "tag_object": "03c764c3c9fc07333d5fa4fc58c56ee946f56b2f",
     "fixture_subtree": "test",
     "source_kind": "vendored_official_fixture_corpus"
   },
   "fixture_provenance": {
-    "synced_at": "2026-05-28T20:32:23Z",
-    "selection_command": "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.2.0 --apply",
-    "nimbus_sync_commit": "e7e8b9d6d7c21af04e31a72d9d419863834ecc21",
-    "recorded_at": "2026-05-28",
-    "recorded_from": "local nodejs/node checkout via git rev-list -n 1 v26.2.0 and git rev-parse v26.2.0"
+    "synced_at": "2026-09-01T05:15:00Z",
+    "selection_command": "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.8.1 --apply",
+    "nimbus_sync_commit": "af5bf1455bb9fddaa8bc05bb22fd8e89f08e859b",
+    "recorded_at": "2026-09-01",
+    "recorded_from": "nodejs/node annotated tag resolved with git ls-remote and fixture subtree fetched from GitHub"
   },
   "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node26/test",
   "manifest_docs": [

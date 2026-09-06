@@ -12,6 +12,7 @@ Options:
   --image <ref>            OCI image package (default: ghcr.io/nimbus/nimbus)
   --output-dir <dir>       Empty directory for downloaded release evidence
   --runtime docker|podman  Container runtime for smoke test (default: docker)
+  --skip-windows           Require the Windows archive to be absent
   --skip-smoke             Skip the container runtime smoke test
 
 The verifier checks:
@@ -73,6 +74,7 @@ tag=""
 output_dir=""
 runtime="docker"
 skip_smoke=0
+skip_windows=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -98,6 +100,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-smoke)
       skip_smoke=1
+      shift
+      ;;
+    --skip-windows)
+      skip_windows=1
       shift
       ;;
     -h|--help)
@@ -147,12 +153,19 @@ expected_assets=(
   nimbus_darwin_arm64.tar.gz
   nimbus_linux_arm64.tar.gz
   nimbus_linux_x86_64.tar.gz
-  nimbus_windows_x86_64.zip
   nimbus_oci_image.txt
   nimbus_oci_attestation.json
   nimbus_oci_sbom.json
   nimbus_oci_vulns.sarif.json
 )
+
+if [[ "${skip_windows}" -eq 0 ]]; then
+  expected_assets+=(nimbus_windows_x86_64.zip)
+else
+  windows_count="$(release_asset_count "${release_json}" nimbus_windows_x86_64.zip)"
+  [[ "${windows_count}" == "0" ]] ||
+    die "expected no nimbus_windows_x86_64.zip release asset under --skip-windows, found ${windows_count}"
+fi
 
 for asset in "${expected_assets[@]}"; do
   count="$(release_asset_count "${release_json}" "${asset}")"
@@ -202,8 +215,11 @@ else
   (cd "${output_dir}" && shasum -a 256 -c checksums-sha256.txt >/dev/null)
 fi
 
-bash "${script_dir}/verify-release-archive-layout.sh" \
-  --artifacts-dir "${output_dir}"
+archive_layout_args=(--artifacts-dir "${output_dir}")
+if [[ "${skip_windows}" -eq 1 ]]; then
+  archive_layout_args+=(--skip-windows)
+fi
+bash "${script_dir}/verify-release-archive-layout.sh" "${archive_layout_args[@]}"
 
 bash "${script_dir}/verify-bun-jsc-release-assets.sh" \
   --artifacts-dir "${output_dir}" \

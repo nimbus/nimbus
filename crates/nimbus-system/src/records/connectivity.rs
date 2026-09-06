@@ -31,7 +31,13 @@ use crate::keys::{
 };
 use crate::schema::SystemTable;
 
-use super::{ensure_system_tenant_async, object_fields, upsert_system_document_async};
+use super::{
+    ensure_system_tenant_async, object_fields, unix_time_millis, upsert_system_document_async,
+};
+
+const SERVER_LISTENER_PROJECTION_FENCE_ID: &str = "system:server-listener-projection";
+const SERVER_LISTENER_PROJECTION_NAME: &str = "server_listener_projection";
+const SERVER_LISTENER_INCARNATION_FIELD: &str = "serverIncarnation";
 
 /// Rejected crossed or incomplete observed connectivity evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -564,6 +570,88 @@ pub async fn record_port_listener_observation_async(
     publish_port_listener_fenced_async(engine, input.clone()).await
 }
 
+/// Claim the durable listener-inventory projection for one server activation.
+///
+/// A later activation replaces this marker before it submits its inventory.
+/// Retried work from an earlier activation must verify the marker inside its
+/// mutation transaction and retire without changing the newer inventory.
+pub async fn claim_server_listener_projection_async(
+    engine: &Arc<Engine>,
+    server_incarnation: &str,
+) -> Result<()> {
+    if server_incarnation.trim().is_empty() || server_incarnation.chars().any(char::is_control) {
+        return Err(Error::InvalidInput(
+            "server listener projection incarnation cannot be empty or contain control characters"
+                .to_owned(),
+        ));
+    }
+    ensure_system_tenant_async(engine).await?;
+    let claimed_at = unix_time_millis()?;
+    upsert_system_document_async(
+        engine,
+        SystemTable::SystemStatus,
+        SERVER_LISTENER_PROJECTION_FENCE_ID,
+        object_fields(json!({
+            "name": SERVER_LISTENER_PROJECTION_NAME,
+            "version": env!("CARGO_PKG_VERSION"),
+            "health": "ok",
+            "startedAt": claimed_at,
+            "updatedAt": claimed_at,
+            "details": {
+                "serverIncarnation": server_incarnation,
+            },
+        })),
+    )
+    .await
+}
+
+/// Replace the process-owned server listener inventory as one projection.
+///
+/// A server incarnation uses new authority-bound listener IDs. Replacing the
+/// complete ownerless set removes observations from an earlier incarnation
+/// without touching machine- or service-owned listener evidence.
+pub(crate) async fn replace_server_port_listener_observations_async(
+    engine: &Arc<Engine>,
+    server_incarnation: &str,
+    inputs: &[SystemPortListenerObservation],
+) -> Result<()> {
+    if inputs.is_empty() {
+        return Err(Error::InvalidInput(
+            "server listener projection cannot replace its inventory with an empty set".to_owned(),
+        ));
+    }
+    let mut listener_ids = BTreeSet::new();
+    let mut port_lease_ids = BTreeSet::new();
+    for input in inputs {
+        if input.machine_id.is_some() || input.tenant_id.is_some() {
+            return Err(Error::InvalidInput(
+                "server listener projection cannot consume a machine- or tenant-owned observation"
+                    .to_owned(),
+            ));
+        }
+        if !listener_ids.insert(input.listener_id.clone()) {
+            return Err(Error::InvalidInput(
+                "server listener projection repeats a listener identity".to_owned(),
+            ));
+        }
+        if !port_lease_ids.insert(input.port_lease_id.clone()) {
+            return Err(Error::InvalidInput(
+                "server listener projection repeats a port lease identity".to_owned(),
+            ));
+        }
+    }
+
+    ensure_system_tenant_async(engine).await?;
+    let engine = Arc::clone(engine);
+    let server_incarnation = server_incarnation.to_owned();
+    let inputs = inputs.to_vec();
+    tokio::task::spawn_blocking(move || {
+        replace_server_port_listener_observations_once(&engine, &server_incarnation, &inputs)
+    })
+    .await
+    .map_err(|error| Error::Internal(format!("server listener projection task failed: {error}")))?
+}
+
 /// Write one observed Unix listener without fabricating a host-port lease.
 pub async fn record_unix_listener_observation_async(
     engine: &Arc<Engine>,
@@ -664,6 +752,100 @@ fn publish_port_listener_once(
         overwrite(port_table, port_id, port),
     ])?)?;
     Ok(())
+}
+
+fn replace_server_port_listener_observations_once(
+    engine: &Arc<Engine>,
+    server_incarnation: &str,
+    inputs: &[SystemPortListenerObservation],
+) -> Result<()> {
+    let unit =
+        engine.begin_mutation_execution_unit(system_tenant_id()?, PrincipalContext::system())?;
+    let status_table = SystemTable::SystemStatus.table_name()?;
+    let fence = unit
+        .get_document(
+            &status_table,
+            DocumentId::from_key(SERVER_LISTENER_PROJECTION_FENCE_ID)?,
+        )?
+        .ok_or_else(|| {
+            Error::InvalidInput(
+                "server listener projection has no active incarnation claim".to_owned(),
+            )
+        })?;
+    let claimed_incarnation = fence
+        .fields
+        .get("details")
+        .and_then(Value::as_object)
+        .and_then(|details| details.get(SERVER_LISTENER_INCARNATION_FIELD))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Serialization(
+                "server listener projection claim has no valid server incarnation".to_owned(),
+            )
+        })?;
+    if claimed_incarnation != server_incarnation {
+        return Ok(());
+    }
+    let listener_table = SystemTable::Listeners.table_name()?;
+    let port_table = SystemTable::Ports.table_name()?;
+    let desired_listener_documents = inputs
+        .iter()
+        .map(|input| listener_document_id(&input.listener_id))
+        .collect::<BTreeSet<_>>();
+    let desired_port_documents = inputs
+        .iter()
+        .map(|input| port_document_id(&input.port_lease_id))
+        .collect::<BTreeSet<_>>();
+    let mut writes = Vec::new();
+
+    for (table, desired_documents) in [
+        (&listener_table, &desired_listener_documents),
+        (&port_table, &desired_port_documents),
+    ] {
+        let documents = unit.query_documents_cancellable(
+            &Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+            &mut || Ok(()),
+        )?;
+        for document in documents {
+            if is_process_owned_server_listener_document(&document)
+                && !desired_documents.contains(document.id.as_str())
+            {
+                writes.push(AtomicWrite::Delete {
+                    key: write_key(table.clone(), document.id),
+                    precondition: WritePrecondition::default(),
+                    missing_ok: true,
+                });
+            }
+        }
+    }
+
+    for input in inputs {
+        let (listener, port) = port_listener_documents(input, None, None, None);
+        writes.push(overwrite(
+            listener_table.clone(),
+            DocumentId::from_key(listener_document_id(&input.listener_id))?,
+            listener,
+        ));
+        writes.push(overwrite(
+            port_table.clone(),
+            DocumentId::from_key(port_document_id(&input.port_lease_id))?,
+            port,
+        ));
+    }
+    unit.execute_atomic_write_batch(AtomicWriteBatch::new(writes)?)?;
+    Ok(())
+}
+
+fn is_process_owned_server_listener_document(document: &Document) -> bool {
+    document.fields.get("serviceId").is_none()
+        && document.fields.get("machineId").is_none()
+        && document.fields.get("tenantId").is_none()
+        && document.fields.contains_key("portLeaseId")
 }
 
 async fn publish_service_connectivity_fenced_async(

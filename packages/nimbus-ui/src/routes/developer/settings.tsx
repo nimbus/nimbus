@@ -44,10 +44,7 @@ const TENANT_SETTINGS_SUB_DRAWER: SubDrawerSpec = {
 function TenantSettingsPage() {
   useContributeSubDrawer(TENANT_SETTINGS_SUB_DRAWER);
   return (
-    <section
-      className="flex h-full flex-col"
-      data-testid="page-settings"
-    >
+    <section className="flex h-full flex-col" data-testid="page-settings">
       <EmptyState
         title="Tenant settings"
         body="Members, API keys, environment variables, deploy keys, and appearance preferences will live here. Server-wide configuration lives under the operator console."

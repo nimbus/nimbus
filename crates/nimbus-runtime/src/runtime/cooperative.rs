@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use crate::RuntimeInvocationContext;
-use crate::backends::v8::embedder::{JsError, JsRealm, PollEventLoopOptions, v8};
+use crate::backends::v8::embedder::{JsError, PollEventLoopOptions, v8};
 use crate::backends::v8::{ReusableV8Runtime, V8WorkerRuntimePool};
 use crate::error::Result;
 use crate::execution_plan::RuntimeExecutionPlan;
@@ -21,10 +21,9 @@ use super::bootstrap::{clear_runtime_wait_until_pending, take_runtime_wait_until
 use super::classify::{
     deserialize_json_value, ensure_wait_until_drain_succeeded, runtime_js_error,
 };
-use super::realm_lifecycle::destroy_fresh_realm;
 use super::{
-    FreshRealmInvocationTrace, InvocationRequest, NimbusRuntime, RuntimeBundle,
-    RuntimeInvocationDriver, RuntimeInvocationDriverPrepare,
+    InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeInvocationDriver,
+    RuntimeInvocationDriverPrepare,
 };
 
 pub(crate) struct RuntimeInvocationExecution {
@@ -91,24 +90,14 @@ impl Wake for CooperativeRuntimeWakeFlag {
 pub(crate) struct CooperativeLockerRuntimeSlot {
     driver: Option<RuntimeInvocationDriver>,
     resolve: Option<CooperativePromiseFuture>,
-    resolve_started_at: Option<Instant>,
     wait_until: Option<(CooperativePromiseFuture, Result<Value>)>,
     response_ready: Option<(RuntimeInvocationDriver, Result<Value>)>,
     response_ready_tx: Option<oneshot::Sender<Value>>,
-    fresh_realm: Option<JsRealm>,
     wake_flag: Arc<CooperativeRuntimeWakeFlag>,
     completed: Option<(RuntimeInvocationDriver, Result<Value>)>,
 }
 
 impl CooperativeLockerRuntimeSlot {
-    fn destroy_fresh_realm(&mut self, driver: &mut RuntimeInvocationDriver) {
-        if let Some(realm) = self.fresh_realm.take() {
-            let destroy_started_at = Instant::now();
-            destroy_fresh_realm(&mut driver.runtime, realm);
-            driver.record_fresh_realm_destroy(destroy_started_at.elapsed());
-        }
-    }
-
     fn poll_once_now(&mut self) -> Result<CooperativeRuntimeSlotPoll> {
         let mut driver = self
             .driver
@@ -136,30 +125,16 @@ impl CooperativeLockerRuntimeSlot {
                         .map_or(response, Err),
                     Err(error) => Err(driver.classify_wait_until_phase_error(error)),
                 };
-                self.destroy_fresh_realm(&mut driver);
                 self.completed = Some((driver, result));
                 return Ok(CooperativeRuntimeSlotPoll::Completed);
             }
         } else if let Some(resolve) = self.resolve.as_mut() {
             if let Poll::Ready(result) = resolve.as_mut().poll(&mut cx) {
-                let promise_resolve_elapsed = self
-                    .resolve_started_at
-                    .take()
-                    .expect("response phase should have a start time")
-                    .elapsed();
                 self.resolve.take();
-                let mut deserialization_elapsed = None;
-                let result: Result<Value> = result.map_err(runtime_js_error).and_then(|value| {
-                    let deserialize_started_at = Instant::now();
-                    let result = deserialize_json_value(&mut locked, value);
-                    deserialization_elapsed = Some(deserialize_started_at.elapsed());
-                    result
-                });
+                let result: Result<Value> = result
+                    .map_err(runtime_js_error)
+                    .and_then(|value| deserialize_json_value(&mut locked, value));
                 drop(locked);
-                driver.record_fresh_realm_promise_resolve(promise_resolve_elapsed);
-                if let Some(elapsed) = deserialization_elapsed {
-                    driver.record_fresh_realm_deserialization(elapsed);
-                }
                 if result.is_ok() {
                     if let (Some(response), Some(response_ready_tx)) =
                         (result.as_ref().ok(), self.response_ready_tx.take())
@@ -169,7 +144,6 @@ impl CooperativeLockerRuntimeSlot {
                     self.response_ready = Some((driver, result));
                     return Ok(CooperativeRuntimeSlotPoll::ResponseReady);
                 }
-                self.destroy_fresh_realm(&mut driver);
                 self.completed = Some((driver, result));
                 return Ok(CooperativeRuntimeSlotPoll::Completed);
             }
@@ -181,11 +155,7 @@ impl CooperativeLockerRuntimeSlot {
             ));
         }
 
-        let event_loop_poll = if let Some(realm) = self.fresh_realm.as_ref() {
-            locked.poll_event_loop_in_realm(realm, &mut cx, PollEventLoopOptions::default())
-        } else {
-            locked.poll_event_loop(&mut cx, PollEventLoopOptions::default())
-        };
+        let event_loop_poll = locked.poll_event_loop(&mut cx, PollEventLoopOptions::default());
         match event_loop_poll {
             Poll::Ready(Ok(())) => {
                 if let Some((wait_until, _response)) = self.wait_until.as_mut() {
@@ -206,7 +176,6 @@ impl CooperativeLockerRuntimeSlot {
                                 Ok(()) => response,
                                 Err(error) => Err(error),
                             };
-                            self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
                             return Ok(CooperativeRuntimeSlotPoll::Completed);
                         }
@@ -214,31 +183,19 @@ impl CooperativeLockerRuntimeSlot {
                             drop(locked);
                             let result = Err(driver.wait_until_phase_stalled_error());
                             clear_runtime_wait_until_pending(&mut driver.runtime);
-                            self.destroy_fresh_realm(&mut driver);
                             self.completed = Some((driver, result));
                             return Ok(CooperativeRuntimeSlotPoll::Completed);
                         }
                     }
                 }
 
-                let mut promise_resolve_elapsed = None;
-                let mut deserialization_elapsed = None;
                 let result: Result<Value> = match self.resolve.as_mut() {
                     Some(resolve) => match resolve.as_mut().poll(&mut cx) {
                         Poll::Ready(result) => {
-                            promise_resolve_elapsed = Some(
-                                self.resolve_started_at
-                                    .take()
-                                    .expect("response phase should have a start time")
-                                    .elapsed(),
-                            );
                             self.resolve.take();
-                            result.map_err(runtime_js_error).and_then(|value| {
-                                let deserialize_started_at = Instant::now();
-                                let result = deserialize_json_value(&mut locked, value);
-                                deserialization_elapsed = Some(deserialize_started_at.elapsed());
-                                result
-                            })
+                            result
+                                .map_err(runtime_js_error)
+                                .and_then(|value| deserialize_json_value(&mut locked, value))
                         }
                         Poll::Pending => Err(runtime_js_error(
                             "Promise resolution is still pending but the event loop has already resolved",
@@ -249,12 +206,6 @@ impl CooperativeLockerRuntimeSlot {
                     )),
                 };
                 drop(locked);
-                if let Some(elapsed) = promise_resolve_elapsed {
-                    driver.record_fresh_realm_promise_resolve(elapsed);
-                }
-                if let Some(elapsed) = deserialization_elapsed {
-                    driver.record_fresh_realm_deserialization(elapsed);
-                }
                 if result.is_ok() {
                     if let (Some(response), Some(response_ready_tx)) =
                         (result.as_ref().ok(), self.response_ready_tx.take())
@@ -264,7 +215,6 @@ impl CooperativeLockerRuntimeSlot {
                     self.response_ready = Some((driver, result));
                     Ok(CooperativeRuntimeSlotPoll::ResponseReady)
                 } else {
-                    self.destroy_fresh_realm(&mut driver);
                     self.completed = Some((driver, result));
                     Ok(CooperativeRuntimeSlotPoll::Completed)
                 }
@@ -277,7 +227,6 @@ impl CooperativeLockerRuntimeSlot {
                 } else {
                     error
                 };
-                self.destroy_fresh_realm(&mut driver);
                 self.completed = Some((driver, Err(error)));
                 Ok(CooperativeRuntimeSlotPoll::Completed)
             }
@@ -304,31 +253,22 @@ impl CooperativeLockerRuntimeSlot {
             return Ok(());
         }
         driver.begin_wait_until_phase().await?;
-        let value = match self.fresh_realm.as_ref() {
-            Some(realm) => realm.execute_script(
-                driver.runtime.v8_isolate(),
+        let value = driver
+            .runtime
+            .execute_script(
                 "<nimbus-runtime:wait-until>",
                 "globalThis.__nimbusDrainWaitUntil()",
-            ),
-            None => driver.runtime.execute_script(
-                "<nimbus-runtime:wait-until>",
-                "globalThis.__nimbusDrainWaitUntil()",
-            ),
-        }
-        .map_err(runtime_js_error);
+            )
+            .map_err(runtime_js_error);
         let value = match value {
             Ok(value) => value,
             Err(error) => {
                 clear_runtime_wait_until_pending(&mut driver.runtime);
-                self.destroy_fresh_realm(&mut driver);
                 self.completed = Some((driver, Err(error)));
                 return Ok(());
             }
         };
-        let wait_until: CooperativePromiseFuture = match self.fresh_realm.as_ref() {
-            Some(realm) => Box::pin(driver.runtime.resolve_in_realm(realm, value)),
-            None => Box::pin(driver.runtime.resolve(value)),
-        };
+        let wait_until: CooperativePromiseFuture = Box::pin(driver.runtime.resolve(value));
         driver.runtime.release_v8_lock();
         self.wait_until = Some((wait_until, response));
         self.driver = Some(driver);
@@ -389,15 +329,13 @@ impl CooperativeLockerRuntimeSlot {
             wait_until,
             response_ready,
             response_ready_tx,
-            resolve_started_at: _,
-            fresh_realm,
             wake_flag: _,
             completed,
         } = self;
         drop(resolve);
         drop(wait_until);
         drop(response_ready_tx);
-        let mut driver = match completed {
+        let driver = match completed {
             Some((driver, _)) => driver,
             None if response_ready.is_some() => {
                 response_ready
@@ -416,11 +354,6 @@ impl CooperativeLockerRuntimeSlot {
                 }
             },
         };
-        if let Some(realm) = fresh_realm {
-            let destroy_started_at = Instant::now();
-            destroy_fresh_realm(&mut driver.runtime, realm);
-            driver.record_fresh_realm_destroy(destroy_started_at.elapsed());
-        }
         driver.finalize_with_runtime(result).await
     }
 
@@ -474,16 +407,11 @@ impl NimbusRuntime {
                 record_replacement_on_error: true,
                 activity_signal: Some(activity_signal.clone()),
             })?;
-        let context_recycling = matches!(
-            self.policy.limits().runtime_pool_kind,
-            crate::limits::RuntimePoolKind::WarmContextRecycle,
-        );
         let is_warm_hit = matches!(
             self.policy.limits().runtime_pool_kind,
             crate::limits::RuntimePoolKind::WarmPool,
         ) && driver.warm_reuse_count > 0;
-        if !context_recycling
-            && !is_warm_hit
+        if !is_warm_hit
             && let Err(error) = self
                 .load_bundle_with_trace(
                     &mut driver.runtime,
@@ -500,38 +428,15 @@ impl NimbusRuntime {
             return Err(error);
         }
 
-        let (value, fresh_realm) = if context_recycling {
-            let (value, realm) = self
-                .start_fresh_realm_bundle_invocation_with_trace(
-                    &mut driver.runtime,
-                    FreshRealmInvocationTrace {
-                        bundle: &bundle,
-                        request: &request,
-                        construction_mode: driver.construction_mode,
-                        context: Some(&context),
-                    },
-                )
-                .await?;
-            (Ok(value), Some(realm))
-        } else {
-            let request_json = serde_json::to_string(&request)?;
-            // Dispatch through the entrypoint captured off the guest-reachable
-            // graph at bundle load (HG0), never globalThis.__nimbusInvoke by
-            // name. This non-recycling branch is the Host-semantics main-realm
-            // path (ConvexDefault determinism runs via the context-recycling
-            // branch above), and the captured begin-guest-invocation prelude is
-            // a no-op on Host lanes.
-            (
-                crate::runtime::captured_dispatch::call_captured_invocation(
-                    &mut driver.runtime,
-                    None,
-                    &request_json,
-                    self.policy.limits().guest_semantics,
-                    None,
-                ),
-                None,
-            )
-        };
+        let request_json = serde_json::to_string(&request)?;
+        // Dispatch through the entrypoint captured off the guest-reachable
+        // graph at bundle load (HG0), never globalThis.__nimbusInvoke by name.
+        let value = crate::runtime::captured_dispatch::call_captured_invocation(
+            &mut driver.runtime,
+            &request_json,
+            self.policy.limits().guest_semantics,
+            None,
+        );
         let value = match value {
             Ok(value) => value,
             Err(error) => {
@@ -541,21 +446,15 @@ impl NimbusRuntime {
                 return Err(error);
             }
         };
-        let resolve: CooperativePromiseFuture = if let Some(realm) = fresh_realm.as_ref() {
-            Box::pin(driver.runtime.resolve_in_realm(realm, value))
-        } else {
-            Box::pin(driver.runtime.resolve(value))
-        };
+        let resolve: CooperativePromiseFuture = Box::pin(driver.runtime.resolve(value));
         let wake_flag = Arc::new(CooperativeRuntimeWakeFlag::new(activity_signal));
         driver.runtime.release_v8_lock();
         Ok(CooperativeLockerRuntimeSlot {
             driver: Some(driver),
             resolve: Some(resolve),
-            resolve_started_at: Some(Instant::now()),
             wait_until: None,
             response_ready: None,
             response_ready_tx,
-            fresh_realm,
             wake_flag,
             completed: None,
         })

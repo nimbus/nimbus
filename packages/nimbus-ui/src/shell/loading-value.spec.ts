@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type ConnectionSnapshot,
   isLoading,
   isOffline,
-  type ConnectionSnapshot,
   type LoadingValue,
   toLoadingValue,
 } from "./loading-value";

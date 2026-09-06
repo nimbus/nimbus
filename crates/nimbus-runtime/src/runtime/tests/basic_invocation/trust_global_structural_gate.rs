@@ -364,46 +364,6 @@ async fn structural_gate_node22_lane_trust_globals_are_hardened_or_classified() 
     assert_structural_gate("node22", &inventory);
 }
 
-/// Fresh-realm-recycle variant: the same lane, but on `WarmContextRecycle` +
-/// `CooperativeLocker` instead of the default startup-snapshot pool, so the
-/// gate also covers a realm that gets torn down and rebuilt between
-/// invocations rather than only the warm-reused main context.
-#[tokio::test]
-async fn structural_gate_node22_lane_survives_fresh_realm_recycle() {
-    let _guard = acquire_basic_invocation_suite_lock().await;
-    let tempdir = tempdir().expect("tempdir should build");
-    let bundle_path = tempdir.path().join("bundle.mjs");
-    std::fs::write(&bundle_path, default_lane_bundle_source()).expect("bundle should write");
-
-    let limits = RuntimeLimits {
-        runtime_pool_kind: crate::limits::RuntimePoolKind::WarmContextRecycle,
-        execution_model: crate::limits::RuntimeExecutionModel::CooperativeLocker,
-        // WarmContextRecycle on a Node target requires an explicit proof that
-        // the recycled realm is same-owner/exact-authority (limits/axes.rs);
-        // otherwise RuntimePolicy::new rejects the combination outright.
-        node_full_realm_reuse_policy:
-            crate::limits::RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority,
-        ..RuntimeLimits::application_node22()
-    };
-    let runtime = NimbusRuntime::with_policy(
-        Arc::new(RecordingHost::default()),
-        Arc::new(RuntimePolicy::new(limits)),
-        crate::RuntimeEgressPosture::CoarsePermissions,
-    );
-    let result = runtime
-        .invoke_bundle_for_tenant_for_test(
-            &RuntimeBundle::new(&bundle_path),
-            &default_lane_request(),
-            "tenant-a",
-        )
-        .await
-        .expect("bundle should execute");
-
-    let inventory = parse_inventory(&result);
-    assert_present("node22", &inventory, &["__nimbusInvoke", "Deno"]);
-    assert_structural_gate("node22", &inventory);
-}
-
 // ---------------------------------------------------------------------
 // cloudflare lane
 // ---------------------------------------------------------------------
@@ -466,26 +426,6 @@ async fn invoke_cloudflare_gate(policy: Arc<RuntimePolicy>) -> BTreeMap<String, 
 async fn structural_gate_cloudflare_lane_trust_globals_are_hardened_or_classified() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let inventory = invoke_cloudflare_gate(run_to_completion_snapshot_runtime_test_policy()).await;
-
-    assert_absent("cloudflare", &inventory, &["Deno"]);
-    assert_present(
-        "cloudflare",
-        &inventory,
-        &["__nimbusInvokeCloudflareWorkerFetch"],
-    );
-    assert_structural_gate("cloudflare", &inventory);
-}
-
-/// Fresh-realm-recycle variant, matching `capture_ordering.rs`'s Cloudflare
-/// fresh-realm coverage: the gate must hold for a recycled realm, not only
-/// the warm-reused main context.
-#[tokio::test]
-async fn structural_gate_cloudflare_lane_survives_fresh_realm_recycle() {
-    let _guard = acquire_basic_invocation_suite_lock().await;
-    let inventory = invoke_cloudflare_gate(Arc::new(RuntimePolicy::new(
-        cooperative_context_recycle_runtime_test_limits(),
-    )))
-    .await;
 
     assert_absent("cloudflare", &inventory, &["Deno"]);
     assert_present(

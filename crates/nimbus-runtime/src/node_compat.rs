@@ -33,6 +33,36 @@ use crate::backends::v8::embedder::{JsErrorBox, ModuleSpecifier};
 use crate::limits::RuntimeCompatibilityTarget;
 use crate::runtime_capabilities::{RuntimePathPolicy, build_module_read_permissions_container};
 
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error(
+    "native addon module `{}` requires a service/microVM route; production in-process Node profiles do not grant ffi/native-addon authority",
+    path.display()
+)]
+#[class(generic)]
+#[property("code" = "ERR_DLOPEN_DISABLED")]
+#[property("path" = self.path.display().to_string())]
+struct NativeAddonDisabledError {
+    path: PathBuf,
+}
+
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error("{message}")]
+#[class(generic)]
+#[property("code" = "ERR_ACCESS_DENIED")]
+#[property("permission" = "FileSystemRead")]
+#[property("path" = self.path.display().to_string())]
+struct ModuleReadDeniedError {
+    message: String,
+    path: PathBuf,
+}
+
+fn module_read_denied_error(path: &Path, error: impl std::fmt::Display) -> JsErrorBox {
+    JsErrorBox::from_err(ModuleReadDeniedError {
+        message: error.to_string(),
+        path: path.to_path_buf(),
+    })
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ScopedInNpmPackageChecker;
 
@@ -157,19 +187,20 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
         _permissions: &mut PermissionsContainer,
         path: Cow<'a, Path>,
     ) -> Result<Cow<'a, Path>, JsErrorBox> {
+        let requested_path = path.as_ref().to_path_buf();
         let canonical_path = self
             .path_policy
             .ensure_module_read_path(path.as_ref())
-            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+            .map_err(|error| module_read_denied_error(&requested_path, error))?;
         let path = self
             .module_read_permissions
             .borrow_mut()
             .check_open(
-                Cow::Owned(canonical_path),
+                Cow::Borrowed(canonical_path.as_path()),
                 OpenAccessKind::ReadNoFollow,
                 Some("require()"),
             )
-            .map_err(|error| JsErrorBox::generic(error.to_string()))?;
+            .map_err(|error| module_read_denied_error(&canonical_path, error))?;
         Ok(Cow::Owned(path.to_path_buf()))
     }
 
@@ -239,6 +270,19 @@ impl NodeRequireLoader for ScopedNodeRequireLoader {
                     && path.extension().is_some())
             }
         })
+    }
+
+    fn resolve_require_node_module_paths(&self, from: &Path) -> Vec<String> {
+        resolution_search_directories(from, self.path_policy.resolution_roots())
+            .into_iter()
+            .filter(|directory| !directory.ends_with("node_modules"))
+            .map(|directory| {
+                directory
+                    .join("node_modules")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
     }
 }
 
@@ -457,7 +501,6 @@ pub(crate) async fn translate_commonjs_to_esm(
         Arc::new(NullNodeAnalysisCache),
         cjs_tracker,
         module_export_analyzer,
-        RealSys,
     );
     let translator = LocalCjsTranslator::new(
         Arc::new(CjsModuleExportAnalyzer::new(
@@ -579,10 +622,9 @@ pub(crate) fn classify_resolved_module_kind(
                 Ok(ResolvedNodeModuleKind::CommonJs)
             }
         }
-        Some("node") => Err(JsErrorBox::generic(format!(
-            "native addon module `{}` requires a service/microVM route; production in-process Node profiles do not grant ffi/native-addon authority",
-            path.display()
-        ))),
+        Some("node") => Err(JsErrorBox::from_err(NativeAddonDisabledError {
+            path: path.to_path_buf(),
+        })),
         Some(other) => Err(JsErrorBox::generic(format!(
             "unsupported runtime module extension `.{other}` for {}",
             path.display()
@@ -727,6 +769,27 @@ mod tests {
             node_code_translator_mode_for_target(RuntimeCompatibilityTarget::Node24),
             NodeCodeTranslatorMode::ModuleLoader
         ));
+    }
+
+    #[test]
+    fn native_addon_denial_carries_a_stable_error_code_and_path() {
+        let path = PathBuf::from("/runtime/node_modules/addon/build/Release/addon.node");
+        let error = classify_resolved_module_kind(&path, build_package_json_resolver().as_ref())
+            .expect_err("native addon should require a service or microVM route");
+
+        assert_error_code(&error, "ERR_DLOPEN_DISABLED");
+        let denied_path = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "path")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(
+            denied_path.as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
+        assert!(
+            error.to_string().contains("service/microVM route"),
+            "unexpected native addon denial: {error}"
+        );
     }
 
     fn assert_error_code(error: &JsErrorBox, expected: &str) {
@@ -898,6 +961,59 @@ mod tests {
             error.to_string().contains("Requires read access"),
             "unexpected require permission denial: {error}"
         );
+        assert_error_code(&error, "ERR_ACCESS_DENIED");
+        let permission = error
+            .get_additional_properties()
+            .find(|(key, _)| key == "permission")
+            .map(|(_, value)| value.to_string());
+        assert_eq!(permission.as_deref(), Some("FileSystemRead"));
+    }
+
+    #[test]
+    fn require_loader_search_paths_stay_inside_runtime_roots() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let bundle_root = tempdir.path().join("app/.nimbus/convex");
+        let nested_root = bundle_root.join("test/fixtures");
+        std::fs::create_dir_all(&nested_root).expect("nested root should build");
+        let bundle_path = bundle_root.join("bundle.cjs");
+        std::fs::write(&bundle_path, "module.exports = 1;\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("policy should build");
+        let resolution_roots = policy.resolution_roots().to_vec();
+        let loader = ScopedNodeRequireLoader::new(policy, build_package_json_resolver());
+
+        let search_paths = loader.resolve_require_node_module_paths(&nested_root);
+
+        assert!(search_paths.iter().all(|path| {
+            Path::new(path).parent().is_some_and(|directory| {
+                resolution_roots
+                    .iter()
+                    .any(|root| directory.starts_with(root))
+            })
+        }));
+        assert!(resolution_roots.iter().all(|root| {
+            search_paths.contains(&root.join("node_modules").to_string_lossy().into_owned())
+        }));
+        let nimbus_root = std::fs::canonicalize(bundle_root.parent().expect("nimbus root"))
+            .expect("nimbus root should canonicalize");
+        assert!(
+            !search_paths.contains(
+                &nimbus_root
+                    .join("node_modules")
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+
+        let outside_search_paths =
+            loader.resolve_require_node_module_paths(&tempdir.path().join("outside"));
+        let expected_root_paths = resolution_roots
+            .iter()
+            .filter(|root| !root.ends_with("node_modules"))
+            .map(|root| root.join("node_modules").to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(outside_search_paths, expected_root_paths);
     }
 
     #[test]

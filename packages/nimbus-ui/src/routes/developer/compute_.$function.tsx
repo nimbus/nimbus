@@ -211,7 +211,7 @@ function FunctionDetailPage() {
         )}
       </div>
 
-      {fn ? <FunctionRunner fn={fn} /> : null}
+      {fn ? <FunctionRunner key={fn._id} fn={fn} /> : null}
     </section>
   );
 }
@@ -339,7 +339,6 @@ function SourceTab({
 
   const fetched = useApiRead<SourceValue, RawSource>(
     `/api/console/source?module=${encodeURIComponent(modulePath)}`,
-    [modulePath],
     (result) => {
       if (result.ok) {
         return {

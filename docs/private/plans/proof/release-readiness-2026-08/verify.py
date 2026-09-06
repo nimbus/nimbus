@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+import json
+import re
+import sys
+from pathlib import Path
+
+EXPECTED_IDS = (
+    "tenant_lifecycle", "document_crud", "query_pagination",
+    "schema_validation", "indexes", "subscriptions", "scheduler_cron",
+    "user_auth", "ts_functions", "bundle_integrity",
+    "runtime_subscriptions", "node_compat", "runtime_permissions",
+    "diagnostics", "adapter_convex", "adapter_cloud_functions",
+    "adapter_firestore", "adapter_mongodb", "adapter_dynamodb",
+    "adapter_s3", "adapter_cloudflare_kv", "adapter_resp_kv",
+    "adapter_native", "javascript_sdk", "storage_sqlite",
+    "storage_postgres", "storage_mysql", "storage_libsql", "storage_redb",
+    "encryption", "backup_restore", "object_plane", "server_deployment",
+    "network_control", "resource_apis", "sandbox_backends", "machines",
+    "compose_services", "desktop_app", "release_archives",
+    "install_channels", "oci_image", "docs_contract",
+    "security_dependencies", "full_ci", "independent_reviews",
+)
+STATES = ("pass", "unverified", "fail", "blocked")
+CANDIDATE_KEYS = ("nimbus", "desktop", "deno", "main")
+PASS_CANDIDATE_KEYS = ("nimbus", "deno", "main")
+PASS_CANDIDATE_EXTRAS = {
+    "desktop_app": ("desktop",),
+    "security_dependencies": ("desktop",),
+    "independent_reviews": ("desktop",),
+}
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+\S.*$")
+MARKDOWN_FENCE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+MARKDOWN_LIST_MARKER = re.compile(r"^(?:[*+-]|[0-9]{1,9}[.)])([ \t]+)(.*)$")
+MARKDOWN_HTML_RAW_TAG = re.compile(
+    r"^<(script|pre|style|textarea)(?:[ \t]|>|$)", re.IGNORECASE
+)
+MARKDOWN_HTML_BLOCK_TAG = re.compile(
+    r"^</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|/?>|$)",
+    re.IGNORECASE,
+)
+MARKDOWN_HTML_COMPLETE_TAG = re.compile(
+    r"^</?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ \t\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*[ \t]*/?>[ \t]*$"
+)
+
+
+class UnterminatedMarkdownFence(ValueError):
+    pass
+
+
+def reject_duplicate_object_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate object key {key!r}")
+        result[key] = value
+    return result
+
+
+def markdown_indentation(line: str) -> tuple[int, int]:
+    columns = 0
+    offset = 0
+    for character in line:
+        if character == " ":
+            columns += 1
+        elif character == "\t":
+            columns += 4 - (columns % 4)
+        else:
+            break
+        offset += 1
+    return columns, offset
+
+
+def markdown_fence_after_list_markers(content: str, indentation: int) -> re.Match[str] | None:
+    if indentation > 3:
+        return None
+    candidate = content
+    while True:
+        list_marker = MARKDOWN_LIST_MARKER.fullmatch(candidate)
+        if list_marker is None:
+            break
+        separator_columns, _ = markdown_indentation(list_marker.group(1))
+        if separator_columns > 4:
+            return None
+        candidate = list_marker.group(2)
+    return MARKDOWN_FENCE.fullmatch(candidate)
+
+
+def markdown_html_block_start(content: str) -> tuple[re.Pattern[str] | None, bool] | None:
+    raw_tag = MARKDOWN_HTML_RAW_TAG.match(content)
+    if raw_tag is not None:
+        return re.compile(rf"</{raw_tag.group(1)}[ \t]*>", re.IGNORECASE), False
+    if content.startswith("<!--"):
+        return re.compile(r"-->"), False
+    if content.startswith("<?"):
+        return re.compile(r"\?>"), False
+    if content.startswith("<![CDATA["):
+        return re.compile(r"\]\]>"), False
+    if re.match(r"^<![A-Z]", content) is not None:
+        return re.compile(r">"), False
+    if MARKDOWN_HTML_BLOCK_TAG.match(content) is not None:
+        return None, True
+    if MARKDOWN_HTML_COMPLETE_TAG.fullmatch(content) is not None:
+        return None, True
+    return None
+
+
+def markdown_without_html_comments(markdown: str) -> str:
+    visible_lines: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    inside_comment = False
+    for line in markdown.splitlines():
+        indentation, content_offset = markdown_indentation(line)
+        content = line[content_offset:]
+        if fence_character is not None:
+            visible_lines.append(line)
+            marker = content.rstrip(" \t")
+            if (
+                indentation <= 3
+                and marker
+                and set(marker) == {fence_character}
+                and len(marker) >= fence_length
+            ):
+                fence_character = None
+                fence_length = 0
+            continue
+        if not inside_comment:
+            fence = markdown_fence_after_list_markers(content, indentation)
+            if fence is not None and not (
+                fence.group(1).startswith("`") and "`" in fence.group(2)
+            ):
+                marker = fence.group(1)
+                fence_character = marker[0]
+                fence_length = len(marker)
+                visible_lines.append(line)
+                continue
+
+        visible = ""
+        cursor = 0
+        while cursor < len(line):
+            if inside_comment:
+                comment_end = line.find("-->", cursor)
+                if comment_end < 0:
+                    cursor = len(line)
+                else:
+                    inside_comment = False
+                    cursor = comment_end + 3
+            else:
+                comment_start = line.find("<!--", cursor)
+                if comment_start < 0:
+                    visible += line[cursor:]
+                    cursor = len(line)
+                else:
+                    visible += line[cursor:comment_start]
+                    inside_comment = True
+                    cursor = comment_start + 4
+        visible_lines.append(visible)
+    return "\n".join(visible_lines)
+
+
+def markdown_structure(
+    lines: list[str],
+) -> tuple[list[tuple[int, int, str]], set[int]]:
+    headings: list[tuple[int, int, str]] = []
+    html_lines: set[int] = set()
+    fence_character: str | None = None
+    fence_length = 0
+    html_end: re.Pattern[str] | None = None
+    html_until_blank = False
+    for index, line in enumerate(lines):
+        indentation, content_offset = markdown_indentation(line)
+        content = line[content_offset:]
+        if fence_character is not None:
+            marker = content.rstrip(" \t")
+            if (
+                indentation <= 3
+                and marker
+                and set(marker) == {fence_character}
+                and len(marker) >= fence_length
+            ):
+                fence_character = None
+                fence_length = 0
+            continue
+        if html_end is not None:
+            html_lines.add(index)
+            if html_end.search(content) is not None:
+                html_end = None
+            continue
+        if html_until_blank:
+            if not content.strip():
+                html_until_blank = False
+            else:
+                html_lines.add(index)
+                continue
+        fence = markdown_fence_after_list_markers(content, indentation)
+        if fence is not None and not (
+            fence.group(1).startswith("`") and "`" in fence.group(2)
+        ):
+            marker = fence.group(1)
+            fence_character = marker[0]
+            fence_length = len(marker)
+            continue
+        if indentation >= 4:
+            continue
+        stripped = content.strip()
+        html_block = markdown_html_block_start(stripped)
+        if html_block is not None:
+            html_lines.add(index)
+            end, until_blank = html_block
+            if end is not None and end.search(stripped) is None:
+                html_end = end
+            html_until_blank = until_blank
+            continue
+        heading = MARKDOWN_HEADING.fullmatch(stripped)
+        if heading is not None:
+            headings.append((index, len(heading.group(1)), stripped))
+    if fence_character is not None:
+        raise UnterminatedMarkdownFence
+    return headings, html_lines
+
+
+def markdown_headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    headings, _html_lines = markdown_structure(lines)
+    return headings
+
+
+def anchored_evidence_section(proof: str, anchor: str) -> str | None:
+    anchor = anchor.strip()
+    heading = MARKDOWN_HEADING.fullmatch(anchor)
+    if heading is None:
+        return None
+    lines = markdown_without_html_comments(proof).splitlines()
+    headings, html_lines = markdown_structure(lines)
+    matches = [index for index, _level, text in headings if text == anchor]
+    if len(matches) != 1:
+        return None
+    start = matches[0]
+    level = len(heading.group(1))
+    end = len(lines)
+    for index, candidate_level, _text in headings:
+        if index > start and candidate_level <= level:
+            end = index
+            break
+    return "\n".join(line for index, line in enumerate(lines[start:end], start) if index not in html_lines)
+
+
+def main() -> int:
+    matrix_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).with_name("matrix.json")
+    root = matrix_path.resolve().parent
+    errors: list[str] = []
+    try:
+        data = json.loads(
+            matrix_path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_object_keys,
+        )
+    except (OSError, ValueError) as error:
+        print(f"matrix error: {error}")
+        return 1
+
+    if not isinstance(data, dict):
+        print("matrix error: root must be an object")
+        return 1
+
+    schema_version = data.get("schemaVersion")
+    if type(schema_version) is not int or schema_version != 1:
+        errors.append("schemaVersion must equal 1")
+    candidate = data.get("candidate")
+    if not isinstance(candidate, dict):
+        errors.append("candidate must be an object")
+        candidate = {}
+    elif set(candidate) != set(CANDIDATE_KEYS):
+        errors.append("candidate keys must be exactly nimbus, desktop, deno, and main")
+    for key in CANDIDATE_KEYS:
+        revision = candidate.get(key)
+        if not isinstance(revision, str) or FULL_SHA.fullmatch(revision) is None:
+            errors.append(f"candidate.{key} must be a full lowercase commit SHA")
+    conditions = data.get("conditions")
+    if not isinstance(conditions, list):
+        print("matrix error: conditions must be an array")
+        return 1
+    ids = tuple(row.get("id") for row in conditions if isinstance(row, dict))
+    if ids != EXPECTED_IDS:
+        errors.append("condition IDs or order differ from the fixed 46-condition contract")
+
+    counts = {state: 0 for state in STATES}
+    for row in conditions:
+        if not isinstance(row, dict):
+            errors.append("each condition must be an object")
+            continue
+        condition_id = row.get("id")
+        condition_label = condition_id if isinstance(condition_id, str) else repr(condition_id)
+        if not isinstance(condition_id, str):
+            errors.append(f"{condition_label}: condition ID must be a string")
+        state = row.get("state")
+        if state not in STATES:
+            errors.append(f"{condition_label}: invalid state {state!r}")
+            continue
+        counts[state] += 1
+        if not isinstance(condition_id, str):
+            continue
+        if state != "pass":
+            print(f"{condition_id}: {state}")
+            continue
+        evidence = row.get("evidence")
+        if not isinstance(evidence, dict):
+            errors.append(f"{condition_id}: pass requires evidence")
+            continue
+        relative_path = evidence.get("path")
+        anchor = evidence.get("anchor")
+        if not isinstance(relative_path, str) or not relative_path:
+            errors.append(f"{condition_id}: evidence path is required")
+            continue
+        if not isinstance(anchor, str) or not anchor:
+            errors.append(f"{condition_id}: evidence anchor is required")
+            continue
+        proof_path = (root / relative_path).resolve()
+        if root not in proof_path.parents:
+            errors.append(f"{condition_id}: evidence path escapes the proof root")
+            continue
+        try:
+            proof = proof_path.read_text(encoding="utf-8")
+        except OSError as error:
+            errors.append(f"{condition_id}: cannot read evidence: {error}")
+            continue
+        try:
+            evidence_section = anchored_evidence_section(proof, anchor)
+        except UnterminatedMarkdownFence:
+            errors.append(f"{condition_id}: evidence proof has an unterminated Markdown fence")
+            continue
+        if evidence_section is None:
+            errors.append(
+                f"{condition_id}: evidence anchor must identify exactly one Markdown section"
+            )
+            continue
+        required_candidate_keys = PASS_CANDIDATE_KEYS + PASS_CANDIDATE_EXTRAS.get(
+            condition_id, ()
+        )
+        for key in required_candidate_keys:
+            revision = candidate.get(key)
+            if isinstance(revision, str) and revision not in evidence_section:
+                errors.append(
+                    f"{condition_id}: evidence is not bound to the {key} candidate {revision}"
+                )
+
+    for error in errors:
+        print(f"ERROR: {error}")
+    print(
+        "Summary: "
+        f"{counts['pass']} passed, {counts['unverified']} unverified, "
+        f"{counts['fail']} failed, {counts['blocked']} blocked, "
+        f"{len(errors)} structural errors"
+    )
+    return 0 if counts["pass"] == len(EXPECTED_IDS) and not errors else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

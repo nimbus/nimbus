@@ -9,14 +9,12 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::RuntimeInvocationContext;
-use crate::backends::v8::V8RuntimeConstructionMode;
 use crate::limits::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGrants, RuntimeHostWorkClass, RuntimeJavaScriptEvaluationFormat,
-    RuntimeLanguage, RuntimeMemoryEnforcement, RuntimeMode, RuntimeNodeFullRealmReusePolicy,
-    RuntimePolicy, RuntimePoolKind, RuntimePreset, RuntimeProfile, RuntimeRoutingAffinity,
-    RuntimeTenantBudget,
+    RuntimeLanguage, RuntimeMemoryEnforcement, RuntimeMode, RuntimePolicy, RuntimePoolKind,
+    RuntimePreset, RuntimeProfile, RuntimeRoutingAffinity, RuntimeTenantBudget,
 };
 use crate::runtime::{InvocationKind, InvocationRequest, RuntimeBundle, RuntimeComponentWorld};
 
@@ -120,15 +118,6 @@ impl RuntimePoolAuthorityFacts {
         }
     }
 
-    pub(crate) fn for_realm_reuse(
-        runtime_profile: RuntimeProfile,
-        policy: &RuntimePolicy,
-        bundle: &RuntimeBundle,
-        construction_mode: V8RuntimeConstructionMode,
-    ) -> crate::Result<Self> {
-        Self::for_retained_state(runtime_profile, policy, bundle, construction_mode.as_str())
-    }
-
     pub(crate) fn for_retained_state(
         runtime_profile: RuntimeProfile,
         policy: &RuntimePolicy,
@@ -187,7 +176,6 @@ pub(crate) struct RuntimePoolStrictAuthorityFacts {
     grants: RuntimeGrantsAuthorityFacts,
     service_capability_enabled: bool,
     runtime_pool_kind: RuntimePoolKind,
-    node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy,
     memory_enforcement: RuntimeMemoryEnforcement,
     routing_affinity: RuntimeRoutingAffinity,
     max_heap_mb: usize,
@@ -222,7 +210,6 @@ impl RuntimePoolStrictAuthorityFacts {
             grants: RuntimeGrantsAuthorityFacts::from_grants(&limits.grants),
             service_capability_enabled: limits.service_capability_enabled,
             runtime_pool_kind: limits.runtime_pool_kind,
-            node_full_realm_reuse_policy: limits.node_full_realm_reuse_policy,
             memory_enforcement: limits.memory_enforcement,
             routing_affinity: limits.routing_affinity,
             max_heap_mb: limits.max_heap_mb,
@@ -429,46 +416,12 @@ impl RuntimeExecutionPlan {
                 runtime_profile,
             ),
             pool_authority_key: pool_authority_key_for_invocation(policy, runtime_profile, context),
-            node_full_realm_reuse_policy: policy.limits().node_full_realm_reuse_policy,
             scheduling_class: scheduling_class_for_invocation_kind(&request.kind),
             tenant_budget: policy.tenant_budget(),
             host_work_class: host_work_class_for_context(context),
             operator_enabled: true,
         };
         Self::classify(input)
-    }
-
-    pub(crate) fn for_realm_lease_invocation(
-        policy: &RuntimePolicy,
-        bundle: &RuntimeBundle,
-        request: &InvocationRequest,
-        context: &RuntimeInvocationContext,
-        construction_mode: V8RuntimeConstructionMode,
-    ) -> crate::Result<Self> {
-        let runtime_profile = policy.runtime_profile();
-        let input = RuntimeExecutionPlanInput {
-            function_kind: request.kind.clone(),
-            runtime_profile,
-            effect_class: effect_class_for_invocation_kind(&request.kind),
-            side_channel_posture: side_channel_posture_for_invocation(
-                policy,
-                request,
-                runtime_profile,
-            ),
-            pool_authority_key: pool_authority_key_for_realm_reuse(
-                policy,
-                runtime_profile,
-                context,
-                bundle,
-                construction_mode,
-            )?,
-            node_full_realm_reuse_policy: policy.limits().node_full_realm_reuse_policy,
-            scheduling_class: scheduling_class_for_invocation_kind(&request.kind),
-            tenant_budget: policy.tenant_budget(),
-            host_work_class: host_work_class_for_context(context),
-            operator_enabled: true,
-        };
-        Ok(Self::classify(input))
     }
 
     pub(crate) const fn permits_cooperative_scheduler_admission(&self) -> bool {
@@ -520,7 +473,6 @@ pub(crate) struct RuntimeExecutionPlanInput {
     pub(crate) effect_class: RuntimeEffectClass,
     pub(crate) side_channel_posture: RuntimeSideChannelPosture,
     pub(crate) pool_authority_key: RuntimePoolAuthorityKey,
-    pub(crate) node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy,
     pub(crate) scheduling_class: RuntimeSchedulingClass,
     pub(crate) tenant_budget: RuntimeTenantBudget,
     pub(crate) host_work_class: RuntimeHostWorkClass,
@@ -541,12 +493,7 @@ fn cooperative_eligibility_for(input: &RuntimeExecutionPlanInput) -> Cooperative
             CooperativeIneligibilityReason::UnsupportedRuntimeSurface,
         );
     };
-    if matches!(runtime_profile, RuntimeProfile::NodeFull)
-        && !matches!(
-            input.node_full_realm_reuse_policy,
-            RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority
-        )
-    {
+    if matches!(runtime_profile, RuntimeProfile::NodeFull) {
         return CooperativeEligibility::Ineligible(
             CooperativeIneligibilityReason::NodeFullUnproven,
         );
@@ -629,18 +576,7 @@ fn side_channel_posture_for_invocation(
     let web_lean_reuse_safe = matches!(runtime_profile, Some(RuntimeProfile::WebLean))
         && !policy.limits().grants.has_service_grants()
         && request.services.is_empty();
-    let node_full_reuse_safe = matches!(runtime_profile, Some(RuntimeProfile::NodeFull))
-        && matches!(
-            policy.limits().runtime_pool_kind,
-            RuntimePoolKind::WarmContextRecycle
-        )
-        && matches!(
-            policy.limits().node_full_realm_reuse_policy,
-            RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority
-        )
-        && policy.limits().grants.permits_same_process_realm_reuse()
-        && request.services.is_empty();
-    if web_lean_reuse_safe || node_full_reuse_safe {
+    if web_lean_reuse_safe {
         RuntimeSideChannelPosture::ProvenSafeForCooperativeReuse
     } else {
         RuntimeSideChannelPosture::Unknown
@@ -663,33 +599,6 @@ fn pool_authority_key_for_invocation(
     RuntimePoolAuthorityKey::exact(RuntimePoolAuthorityFacts::new(
         runtime_profile,
         policy.limits().grants.sorted_service_grants(),
-    ))
-}
-
-fn pool_authority_key_for_realm_reuse(
-    policy: &RuntimePolicy,
-    runtime_profile: Option<RuntimeProfile>,
-    context: &RuntimeInvocationContext,
-    bundle: &RuntimeBundle,
-    construction_mode: V8RuntimeConstructionMode,
-) -> crate::Result<RuntimePoolAuthorityKey> {
-    let Some(runtime_profile) = runtime_profile else {
-        return Ok(RuntimePoolAuthorityKey::Missing(
-            RuntimePoolAuthorityMissingReason::RuntimeProfile,
-        ));
-    };
-    if context.tenant_label.is_none() {
-        return Ok(RuntimePoolAuthorityKey::Missing(
-            RuntimePoolAuthorityMissingReason::TenantOrPrincipal,
-        ));
-    }
-    Ok(RuntimePoolAuthorityKey::exact(
-        RuntimePoolAuthorityFacts::for_realm_reuse(
-            runtime_profile,
-            policy,
-            bundle,
-            construction_mode,
-        )?,
     ))
 }
 
@@ -719,11 +628,10 @@ mod tests {
     use serde_json::Value;
 
     use crate::RuntimeInvocationContext;
-    use crate::backends::v8::V8RuntimeConstructionMode;
     use crate::limits::{
         RuntimeLimits, RuntimeMemoryEnforcement, RuntimePolicy, RuntimeTenantBudget,
     };
-    use crate::runtime::{InvocationRequest, RuntimeBundle};
+    use crate::runtime::InvocationRequest;
 
     use super::*;
 
@@ -754,7 +662,6 @@ mod tests {
                 RuntimeProfile::WebLean,
                 Vec::new(),
             )),
-            node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy::Unproven,
             scheduling_class: RuntimeSchedulingClass::LatencySensitiveRead,
             tenant_budget: budget(),
             host_work_class: RuntimeHostWorkClass::Burstable,
@@ -907,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_execution_plan_keeps_node_full_ineligible_until_realm_proof() {
+    fn runtime_execution_plan_keeps_node_full_cooperative_admission_fail_closed() {
         let mut input = web_read_input();
         input.runtime_profile = Some(RuntimeProfile::NodeFull);
         input.pool_authority_key = RuntimePoolAuthorityKey::exact(RuntimePoolAuthorityFacts::new(
@@ -995,121 +902,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_execution_plan_for_invocation_admits_node_full_with_same_owner_realm_proof() {
-        let mut limits = RuntimeLimits::application_node24();
-        limits.execution_model = RuntimeExecutionModel::CooperativeLocker;
-        limits.runtime_pool_kind = RuntimePoolKind::WarmContextRecycle;
-        limits.node_full_realm_reuse_policy =
-            RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority;
-        let policy = RuntimePolicy::new(limits);
-        let request = request(InvocationKind::Query);
-        let context = tenant_context(&request);
-
-        let plan = RuntimeExecutionPlan::for_invocation(&policy, &request, &context);
-
-        assert_eq!(plan.runtime_profile(), Some(RuntimeProfile::NodeFull));
-        assert_eq!(
-            plan.cooperative_eligibility(),
-            CooperativeEligibility::Eligible
-        );
-        assert!(plan.permits_cooperative_scheduler_admission());
-    }
-
-    #[test]
-    fn runtime_execution_plan_keeps_node_full_ineligible_for_uv_handle_grants() {
-        let cases: &[RuntimeLimitsCase] = &[
-            ("net_connect", |limits| {
-                limits.grants.net_connect = vec!["127.0.0.1".to_string()];
-            }),
-            ("net_listen", |limits| {
-                limits.grants.net_listen = vec!["127.0.0.1".to_string()];
-            }),
-            ("run", |limits| {
-                limits.grants.run = vec!["$runtime_self_exec".to_string()];
-            }),
-            ("ffi", |limits| {
-                limits.mode = RuntimeMode::Privileged;
-                limits.grants.ffi = vec!["/usr/lib/libexample.dylib".to_string()];
-            }),
-            ("worker", |limits| {
-                limits.grants.worker = vec!["thread".to_string()];
-            }),
-            ("tool", |limits| {
-                limits.grants.tool = vec!["shell".to_string()];
-            }),
-            ("inspector", |limits| {
-                limits.grants.sys.push("inspector".to_string());
-            }),
-        ];
-
-        for (name, configure) in cases {
-            let mut limits = RuntimeLimits::application_node24();
-            limits.execution_model = RuntimeExecutionModel::CooperativeLocker;
-            limits.runtime_pool_kind = RuntimePoolKind::WarmContextRecycle;
-            limits.node_full_realm_reuse_policy =
-                RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority;
-            configure(&mut limits);
-            let policy = RuntimePolicy::new(limits);
-            let request = request(InvocationKind::Query);
-            let context = tenant_context(&request);
-
-            let plan = RuntimeExecutionPlan::for_invocation(&policy, &request, &context);
-
-            assert_eq!(
-                plan.cooperative_eligibility(),
-                CooperativeEligibility::Ineligible(
-                    CooperativeIneligibilityReason::SideChannelPostureMissing
-                ),
-                "NodeFull same-process realm reuse must reject {name} grants that can create uv/native host handles"
-            );
-            assert!(!plan.permits_cooperative_scheduler_admission());
-        }
-    }
-
-    #[test]
-    fn runtime_execution_plan_for_realm_lease_admits_node_full_with_strict_authority() {
-        let tempdir = tempfile::tempdir().expect("tempdir should build");
-        let bundle_path = tempdir.path().join("bundle.mjs");
-        std::fs::write(&bundle_path, "export {};").expect("bundle should write");
-        let bundle = RuntimeBundle::new(&bundle_path);
-        let mut limits = RuntimeLimits::application_node24();
-        limits.execution_model = RuntimeExecutionModel::CooperativeLocker;
-        limits.runtime_pool_kind = RuntimePoolKind::WarmContextRecycle;
-        limits.node_full_realm_reuse_policy =
-            RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority;
-        let policy = RuntimePolicy::new(limits);
-        let request = request(InvocationKind::Query);
-        let context = tenant_context(&request);
-
-        let plan = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &policy,
-            &bundle,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("realm lease plan should classify");
-
-        assert_eq!(plan.runtime_profile(), Some(RuntimeProfile::NodeFull));
-        assert_eq!(
-            plan.cooperative_eligibility(),
-            CooperativeEligibility::Eligible
-        );
-        assert!(plan.permits_cooperative_scheduler_admission());
-        match plan.pool_authority_key() {
-            RuntimePoolAuthorityKey::Exact(facts) => {
-                assert!(
-                    facts.strict_reuse.is_some(),
-                    "realm lease admission must carry strict bundle/authority facts"
-                );
-            }
-            RuntimePoolAuthorityKey::Missing(reason) => {
-                panic!("realm lease admission should have exact authority, got {reason:?}");
-            }
-        }
-    }
-
-    #[test]
     fn runtime_execution_plan_for_invocation_requires_safe_side_channel_posture() {
         let mut limits = RuntimeLimits::application_web_standard();
         limits.grants.service.push("search".to_string());
@@ -1137,171 +929,5 @@ mod tests {
         let plan = RuntimeExecutionPlan::for_invocation(&policy, &request, &context);
 
         assert_eq!(plan.host_work_class(), RuntimeHostWorkClass::Guaranteed);
-    }
-
-    #[test]
-    fn realm_lease_authority_key_partitions_target_bundle_and_construction_mode() {
-        let tempdir = tempfile::tempdir().expect("tempdir should build");
-        let bundle_a_path = tempdir.path().join("bundle-a.mjs");
-        let bundle_b_path = tempdir.path().join("bundle-b.mjs");
-        std::fs::write(&bundle_a_path, "export {};").expect("bundle A should write");
-        std::fs::write(&bundle_b_path, "export {};").expect("bundle B should write");
-        let bundle_a = RuntimeBundle::new(&bundle_a_path);
-        let bundle_b = RuntimeBundle::new(&bundle_b_path);
-        let request = request(InvocationKind::Query);
-        let context = tenant_context(&request);
-
-        let mut node22_db_cache = RuntimeLimits::application_node22();
-        node22_db_cache.service_capability_enabled = true;
-        node22_db_cache.grants.service = vec!["db".to_string(), "cache".to_string()];
-        let node22_db_cache_policy = RuntimePolicy::new(node22_db_cache);
-        let mut node22_cache_db = RuntimeLimits::application_node22();
-        node22_cache_db.service_capability_enabled = true;
-        node22_cache_db.grants.service = vec!["cache".to_string(), "db".to_string()];
-        let node22_cache_db_policy = RuntimePolicy::new(node22_cache_db);
-        let node24_db_cache_policy = {
-            let mut limits = RuntimeLimits::application_node24();
-            limits.service_capability_enabled = true;
-            limits.grants.service = vec!["db".to_string(), "cache".to_string()];
-            RuntimePolicy::new(limits)
-        };
-
-        let node22_bundle_a = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &node22_db_cache_policy,
-            &bundle_a,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("node22 bundle A plan should classify");
-        let node22_bundle_a_reordered_grants = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &node22_cache_db_policy,
-            &bundle_a,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("node22 bundle A plan with reordered grants should classify");
-        let node22_bundle_b = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &node22_db_cache_policy,
-            &bundle_b,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("node22 bundle B plan should classify");
-        let node24_bundle_a = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &node24_db_cache_policy,
-            &bundle_a,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("node24 bundle A plan should classify");
-        let node22_unsnapshotted = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &node22_db_cache_policy,
-            &bundle_a,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::Unsnapshotted,
-        )
-        .expect("node22 unsnapshotted plan should classify");
-
-        assert_eq!(
-            node22_bundle_a.pool_authority_key(),
-            node22_bundle_a_reordered_grants.pool_authority_key(),
-            "service grant order should not fragment authority"
-        );
-        assert_ne!(
-            node22_bundle_a.pool_authority_key(),
-            node22_bundle_b.pool_authority_key(),
-            "bundle identity should partition realm reuse"
-        );
-        assert_ne!(
-            node22_bundle_a.pool_authority_key(),
-            node24_bundle_a.pool_authority_key(),
-            "Node target should partition realm reuse"
-        );
-        assert_ne!(
-            node22_bundle_a.pool_authority_key(),
-            node22_unsnapshotted.pool_authority_key(),
-            "construction mode should partition realm reuse"
-        );
-    }
-
-    #[test]
-    fn realm_lease_authority_key_partitions_permission_grants_and_node_conditions() {
-        let tempdir = tempfile::tempdir().expect("tempdir should build");
-        let bundle_path = tempdir.path().join("bundle.mjs");
-        std::fs::write(&bundle_path, "export {};").expect("bundle should write");
-        let bundle = RuntimeBundle::new(&bundle_path);
-        let request = request(InvocationKind::Query);
-        let context = tenant_context(&request);
-
-        let base_policy = RuntimePolicy::new(RuntimeLimits::application_node22());
-        let read_policy = {
-            let mut limits = RuntimeLimits::application_node22();
-            limits.grants.read = vec!["./data-a".to_string()];
-            RuntimePolicy::new(limits)
-        };
-        let env_policy = {
-            let mut limits = RuntimeLimits::application_node22();
-            limits.grants.env_read = vec!["NIMBUS_TOKEN_A".to_string()];
-            RuntimePolicy::new(limits)
-        };
-        let conditions_policy = {
-            let mut limits = RuntimeLimits::application_node22();
-            limits.node_conditions.push("nimbus-custom".to_string());
-            RuntimePolicy::new(limits)
-        };
-
-        let base = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &base_policy,
-            &bundle,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("base plan should classify");
-        let read = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &read_policy,
-            &bundle,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("read-grant plan should classify");
-        let env = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &env_policy,
-            &bundle,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("env-grant plan should classify");
-        let conditions = RuntimeExecutionPlan::for_realm_lease_invocation(
-            &conditions_policy,
-            &bundle,
-            &request,
-            &context,
-            V8RuntimeConstructionMode::StartupSnapshot,
-        )
-        .expect("condition plan should classify");
-
-        assert_ne!(
-            base.pool_authority_key(),
-            read.pool_authority_key(),
-            "read grants should partition realm reuse authority"
-        );
-        assert_ne!(
-            base.pool_authority_key(),
-            env.pool_authority_key(),
-            "env grants should partition realm reuse authority"
-        );
-        assert_ne!(
-            base.pool_authority_key(),
-            conditions.pool_authority_key(),
-            "Node conditions should partition realm reuse authority"
-        );
     }
 }

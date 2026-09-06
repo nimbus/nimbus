@@ -279,7 +279,6 @@ const __nimbusRunNamedFunction = async function __nimbusRunNamedFunction(
     ...normalized,
     args,
     host_call_session_id: hostCallSessionId,
-    ...(nestedAuthContext ? { auth: nestedAuthContext } : {}),
   });
 };
 

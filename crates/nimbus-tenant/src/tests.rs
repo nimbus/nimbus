@@ -1164,7 +1164,28 @@ fn production_untrusted_runtime_admission_allows_web_standard_application_policy
 }
 
 #[test]
-fn production_untrusted_runtime_admission_allows_bun_jsc_fresh_discard_policy() {
+fn production_untrusted_runtime_admission_routes_bun_jsc_without_outer_memory_boundary() {
+    let policy = RuntimePolicy::new(RuntimeLimits::application_bun_jsc());
+
+    let route = production_untrusted_route(&policy);
+    assert_eq!(
+        route.recommended_tier(),
+        RuntimeIsolationTier::MicroVmService
+    );
+    assert!(
+        route.reason().contains("memory boundary"),
+        "route should name the missing outer memory boundary: {}",
+        route.reason()
+    );
+    assert!(
+        route.reason().contains("out-of-memory termination"),
+        "route should name the shared-process failure mode: {}",
+        route.reason()
+    );
+}
+
+#[test]
+fn local_development_runtime_admission_allows_bun_jsc_proof_lane() {
     let context = test_application_context();
     let policy = RuntimePolicy::new(RuntimeLimits::application_bun_jsc());
 
@@ -1172,10 +1193,10 @@ fn production_untrusted_runtime_admission_allows_bun_jsc_fresh_discard_policy() 
         context.admit_runtime_policy(
             &policy,
             RuntimeIsolationTier::InProcessUntrusted,
-            TenantIsolationMode::Production,
+            TenantIsolationMode::LocalDevelopment,
         ),
         RuntimePolicyAdmission::AdmitInProcess,
-        "Bun/JSC fresh/discard policy is the proven in-process admission profile"
+        "local development keeps the explicit Bun/JSC proof lane available"
     );
 }
 

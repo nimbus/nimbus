@@ -17,6 +17,26 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const protoRoot = path.join(repoRoot, "crates", "nimbus-firebase", "proto");
 const defaultOutputRoot = path.join(packageRoot, "src", "gen");
+const disableExperimentalWebStorage = "--no-experimental-webstorage";
+
+export function nodeToolEnvironment(
+  environment = process.env,
+  allowedFlags = process.allowedNodeEnvironmentFlags,
+) {
+  const nodeOptions = environment.NODE_OPTIONS?.trim() ?? "";
+  if (
+    !allowedFlags.has(disableExperimentalWebStorage) ||
+    nodeOptions.split(/\s+/u).includes(disableExperimentalWebStorage)
+  ) {
+    return { ...environment };
+  }
+  return {
+    ...environment,
+    NODE_OPTIONS: [nodeOptions, disableExperimentalWebStorage]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
 
 // Generates the buf/protoc-gen-es output into `outputRoot`, wiping it first.
 // Exported (not just invoked as a CLI script) so the DE16 determinism check
@@ -52,7 +72,11 @@ export async function generateProtos(outputRoot) {
     execFileSync(
       process.execPath,
       [bufBinary, "generate", protoRoot, "--template", templatePath],
-      { cwd: packageRoot, stdio: "inherit" },
+      {
+        cwd: packageRoot,
+        env: nodeToolEnvironment(),
+        stdio: "inherit",
+      },
     );
   } finally {
     await fsp.rm(templateDir, { recursive: true, force: true });

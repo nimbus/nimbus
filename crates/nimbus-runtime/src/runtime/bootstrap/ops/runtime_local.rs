@@ -7,7 +7,8 @@ mod types;
 
 pub(super) use bootstrap::{
     op_bootstrap_color_depth, op_bootstrap_unstable_args, op_http_start, op_nimbus_runtime_cwd,
-    op_nimbus_runtime_exec_path, op_nimbus_runtime_target_triple, op_set_raw,
+    op_nimbus_runtime_exec_path, op_nimbus_runtime_target_triple, op_nimbus_runtime_versions,
+    op_set_raw,
 };
 pub(super) use env::{
     op_nimbus_runtime_env_get, op_nimbus_runtime_env_snapshot, op_nimbus_runtime_shared_env_delete,

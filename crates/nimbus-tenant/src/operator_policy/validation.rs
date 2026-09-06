@@ -13,7 +13,7 @@ use super::{
     OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
 };
 use crate::policy_input::{NetworkEndpointValidationInput, validate_network_endpoints};
-use crate::{TenantIsolationMode, WorkloadKind};
+use crate::{RuntimeIsolationTier, TenantIsolationMode, WorkloadKind};
 
 impl OperatorPolicyDocument {
     pub fn validate(&self) -> Result<()> {
@@ -61,7 +61,14 @@ impl OperatorPolicyWorkload {
         }
         self.sandbox.validate(&self.key(), self.kind)?;
         self.services.validate(&self.key())?;
-        self.network.validate(&self.key(), &self.services)?;
+        let observes_websocket_protocol = matches!(self.kind, WorkloadKind::RuntimeFunction)
+            && matches!(
+                self.runtime.tier,
+                RuntimeIsolationTier::InProcessUntrusted
+                    | RuntimeIsolationTier::InProcessTrustedOnly
+            );
+        self.network
+            .validate(&self.key(), &self.services, observes_websocket_protocol)?;
         self.storage.validate(&self.key())?;
         self.volumes.validate(&self.key())?;
         self.image.validate(
@@ -99,7 +106,12 @@ impl OperatorServicePolicy {
 }
 
 impl OperatorNetworkPolicy {
-    fn validate(&self, workload_key: &str, services: &OperatorServicePolicy) -> Result<()> {
+    fn validate(
+        &self,
+        workload_key: &str,
+        services: &OperatorServicePolicy,
+        observes_websocket_protocol: bool,
+    ) -> Result<()> {
         validate_network_endpoints(
             self.endpoints.iter().map(|endpoint| {
                 NetworkEndpointValidationInput::new(
@@ -117,7 +129,8 @@ impl OperatorNetworkPolicy {
                 "operator policy invalid: workload `{workload_key}` {message}"
             ))
         })?;
-        self.egress.validate(workload_key)?;
+        self.egress
+            .validate(workload_key, observes_websocket_protocol)?;
         Ok(())
     }
 }

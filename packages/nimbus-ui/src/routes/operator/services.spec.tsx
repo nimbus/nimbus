@@ -33,8 +33,9 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
-import { AdminServicesLoaderError, Route } from "./services";
+import { AdminServicesLoaderError } from "../../components/service-loader-errors";
 import { routeLoader } from "../../test/route-internals";
+import { Route } from "./services";
 
 type LoaderArgs = Record<string, unknown>;
 

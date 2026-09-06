@@ -1,5 +1,6 @@
+#[cfg(any(feature = "async", feature = "select"))]
+use std::any::Any;
 use std::{
-    any::Any,
     thread::{self, Thread},
     time::Duration,
 };
@@ -10,6 +11,7 @@ pub trait Signal: Send + Sync + 'static {
     /// is fired, otherwise a wakeup could be missed, leading to a lost message until one is eagerly
     /// grabbed by a receiver.
     fn fire(&self) -> bool;
+    #[cfg(any(feature = "async", feature = "select"))]
     fn as_any(&self) -> &(dyn Any + 'static);
     fn as_ptr(&self) -> *const ();
 }
@@ -27,6 +29,7 @@ impl Signal for SyncSignal {
         self.0.unpark();
         false
     }
+    #[cfg(any(feature = "async", feature = "select"))]
     fn as_any(&self) -> &(dyn Any + 'static) {
         self
     }

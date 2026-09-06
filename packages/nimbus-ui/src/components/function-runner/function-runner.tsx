@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { useTenantList } from "../../hooks/use-tenant-list";
 import { cn } from "../../lib/cn";
@@ -50,12 +50,6 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
   const tenantIds =
     tenantList.kind === "loaded" ? tenantList.tenants.map((t) => t.id) : [];
   const tenant = tenantOverride ?? activeTenant ?? null;
-
-  useEffect(() => {
-    setArgsText("{}");
-    setResult({ kind: "idle" });
-    setParseError(null);
-  }, [fn._id]);
 
   const inferredKind = (fn.kind ?? "").toLowerCase();
   const isQuery = inferredKind === "query";

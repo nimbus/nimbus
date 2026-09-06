@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use nimbus_engine::Engine;
-use nimbus_process_harness::PortWindow;
-use nimbus_server::{MongoDbAuthConfig, MongoDbConfig, ServeOptions, serve};
+use nimbus_server::{
+    MongoDbAuthConfig, MongoDbConfig, PreboundServerListeners, ServeOptions, serve,
+};
 use nimbus_testing::EngineFixture;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tokio::time::{Duration, Instant, sleep};
+use tokio::time::{Duration, Instant, sleep, timeout};
 
 use super::runner::{self, SpecTest, SpecTestFile, TestResult};
 use super::wire_client::WireClient;
@@ -18,38 +19,46 @@ pub(crate) const TEST_PASSWORD: &str = "spec-password";
 pub struct SpecTestFixture {
     _fixture: EngineFixture<Engine>,
     _server: JoinHandle<std::io::Result<()>>,
-    /// Holds the claimed host-port window for as long as the adapter serves on
-    /// it. Dropping the window would release the claim while the listener is
-    /// still bound.
-    _ports: PortWindow,
     pub addr: SocketAddr,
 }
 
 impl SpecTestFixture {
     pub async fn new() -> Self {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        // The adapter performs the real bind inside the spawned `serve` task,
-        // so the port has to belong to this process from here until the
-        // fixture drops rather than merely be free at this instant.
-        let ports = PortWindow::claim();
-        let adapter_port = ports.port(0);
-        let addr = SocketAddr::from(([127, 0, 0, 1], adapter_port));
+        let mut prebound = PreboundServerListeners::reconstruct_direct(fixture.data_dir())
+            .expect("MongoDB listener authority should reconstruct once");
+        let requested_addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let prepared = prebound
+            .prepare("mongodb-spec-provider-assigned", requested_addr)
+            .expect("MongoDB listener should reserve before bind");
+        let raw_listener = std::net::TcpListener::bind(requested_addr)
+            .expect("MongoDB listener should bind while reserved");
+        let listener = prepared
+            .adopt_std(raw_listener)
+            .expect("MongoDB listener should activate its lease");
+        let addr = listener
+            .local_addr()
+            .expect("MongoDB listener address should resolve");
+        prebound
+            .insert("mongodb", listener)
+            .expect("MongoDB listener should enter the server bundle");
         let http_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let server = tokio::spawn(serve(
-            http_listener,
-            ServeOptions::reconstruct_direct(fixture.engine())
-                .expect("test server network authority should reconstruct once")
-                .with_mongodb(MongoDbConfig::localhost(
-                    adapter_port,
-                    MongoDbAuthConfig::new(TEST_USERNAME.into(), TEST_PASSWORD.into()),
-                )),
-        ));
-        wait_for_tcp_port(addr, &server).await;
+        let options = ServeOptions::reconstruct_direct(fixture.engine())
+            .expect("test server network authority should reconstruct once")
+            .with_prebound_listener_authority(&prebound)
+            .expect("test server should authenticate the pre-bound listener authority")
+            .with_mongodb(MongoDbConfig::localhost(
+                addr.port(),
+                MongoDbAuthConfig::new(TEST_USERNAME.into(), TEST_PASSWORD.into()),
+            ))
+            .with_prebound_wire_listeners(prebound)
+            .expect("test server should adopt the pre-bound MongoDB listener");
+        let mut server = tokio::spawn(serve(http_listener, options));
+        wait_for_mongodb_ready(addr, &mut server).await;
 
         Self {
             _fixture: fixture,
             _server: server,
-            _ports: ports,
             addr,
         }
     }
@@ -61,21 +70,44 @@ impl Drop for SpecTestFixture {
     }
 }
 
-async fn wait_for_tcp_port(addr: SocketAddr, server: &JoinHandle<std::io::Result<()>>) {
+async fn wait_for_mongodb_ready(addr: SocketAddr, server: &mut JoinHandle<std::io::Result<()>>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        assert!(
-            !server.is_finished(),
-            "Nimbus server exited before MongoDB listener accepted connections"
-        );
-        match TcpStream::connect(addr).await {
-            Ok(_) => return,
-            Err(error) if Instant::now() < deadline => {
-                sleep(Duration::from_millis(25)).await;
-                drop(error);
-            }
-            Err(error) => panic!("MongoDB listener at {addr} did not become ready: {error}"),
+        if server.is_finished() {
+            let result = server.await;
+            panic!("Nimbus server exited before MongoDB became ready: {result:?}");
         }
+
+        let attempt_error = match WireClient::try_connect(addr).await {
+            Ok(mut client) => {
+                let hello = timeout(
+                    Duration::from_millis(250),
+                    client.try_command(&bson::doc! {
+                        "hello": 1,
+                        "helloOk": true,
+                        "$db": "admin",
+                    }),
+                )
+                .await;
+                match hello {
+                    Ok(Ok(response))
+                        if response.get_f64("ok").unwrap_or(0.0) == 1.0
+                            && response.get_bool("isWritablePrimary").unwrap_or(false) =>
+                    {
+                        return;
+                    }
+                    Ok(Ok(response)) => format!("MongoDB hello returned {response:?}"),
+                    Ok(Err(error)) => error,
+                    Err(_) => "MongoDB hello timed out".to_string(),
+                }
+            }
+            Err(error) => error.to_string(),
+        };
+
+        if Instant::now() >= deadline {
+            panic!("MongoDB listener at {addr} did not become ready: {attempt_error}");
+        }
+        sleep(Duration::from_millis(25)).await;
     }
 }
 

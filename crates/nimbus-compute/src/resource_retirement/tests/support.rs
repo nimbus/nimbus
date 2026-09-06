@@ -38,7 +38,7 @@ use nimbus_workloads::{
 };
 use tokio::sync::Semaphore;
 
-use super::super::ComputeResourceRetirer;
+use super::super::{ComputeResourceRetirer, ResourceRetirementSupervisor};
 use crate::embedded_local_node_identity;
 use crate::resource_provision::ComputeResourceProvisioner;
 use crate::workload_projection::{
@@ -1427,6 +1427,7 @@ impl RetirementHarness {
             coordinator,
             restart_runtime.clone(),
             teardown_runtime,
+            Arc::new(ResourceRetirementSupervisor::default()),
         );
         Self {
             context: TenantIsolationContext::system(tenant(), "resource-retirement-test"),

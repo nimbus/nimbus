@@ -123,12 +123,7 @@ impl CloudflareHostBridge {
         self.validate_tenant(&payload.tenant_id)?;
         let namespace = self.namespace(&payload.namespace)?;
         let limit = payload.limit.unwrap_or(kv::DEFAULT_LIST_LIMIT);
-        if limit > kv::MAX_LIST_LIMIT {
-            return Err(kv_runtime_error(kv::KvRestError::bad_request(format!(
-                "Workers KV list limit must be at most {}",
-                kv::MAX_LIST_LIMIT
-            ))));
-        }
+        kv::validate_list_limit(limit).map_err(kv_runtime_error)?;
         let prefix = kv::storage_prefix(&namespace, payload.prefix.as_deref().unwrap_or_default())
             .map_err(kv_runtime_error)?;
         let cursor = payload
@@ -144,12 +139,12 @@ impl CloudflareHostBridge {
                 &self.tenant_id,
                 &prefix,
                 cursor.as_deref(),
-                limit,
+                limit + 1,
                 kv::now_ms(),
             )
             .map_err(core_runtime_error)?;
-        let keys = page
-            .entries
+        let (entries, cursor) = kv::finalize_list_page(page, limit);
+        let keys = entries
             .into_iter()
             .map(|entry| {
                 let metadata = kv::decode_metadata(&entry.metadata);
@@ -163,9 +158,7 @@ impl CloudflareHostBridge {
             })
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(kv_runtime_error)?;
-        let cursor = page
-            .next_cursor
-            .map(|cursor| URL_SAFE_NO_PAD.encode(cursor));
+        let cursor = cursor.map(|cursor| URL_SAFE_NO_PAD.encode(cursor));
         Ok(json!({
             "keys": keys,
             "list_complete": cursor.is_none(),

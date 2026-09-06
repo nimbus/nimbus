@@ -14,8 +14,8 @@
 //! dispatch must still resolve to the ORIGINAL entrypoint. This is the same
 //! off-graph capture mechanism `captured_dispatch.rs`'s identity-stability
 //! test exercises for a plain reassignment; these tests additionally prove
-//! the SLOT ITSELF resists redirection, on both the main context and a fresh
-//! realm, across all three lanes that install a trusted entrypoint.
+//! the SLOT ITSELF resists redirection on the product main context across all
+//! three lanes that install a trusted entrypoint.
 //!
 //! `execute_script` evaluates as a classic (non-module) script, which is
 //! sloppy-mode by default — assigning to a non-writable global property would
@@ -25,7 +25,7 @@
 //! lanes) or is itself an ES module (Cloudflare lane, which is always
 //! strict) to match real bundles' actual evaluation mode.
 
-use super::captured_dispatch::{create_bare_realm, with_captured_dispatch_test_runtime};
+use super::captured_dispatch::with_captured_dispatch_test_runtime;
 use super::*;
 use crate::runtime::captured_dispatch::{call_captured_invocation, capture_invocation_targets};
 
@@ -67,8 +67,8 @@ struct ReassignmentProbeResult {
     microtask_threw: bool,
 }
 
-/// Run the reassignment probe against `realm` (or the main context when
-/// `None`) and read back its flags. A second `execute_script` call forces a
+/// Run the reassignment probe against the main context and read back its
+/// flags. A second `execute_script` call forces a
 /// fresh embedder/V8 boundary after the probe script's own top-level
 /// completes, so the `Auto` microtasks policy has already drained the queued
 /// callback by the time these reads happen.
@@ -79,15 +79,9 @@ struct ReassignmentProbeResult {
 /// callback queued by one `execute_script` call is NOT guaranteed to have run
 /// by the time a later, separate `execute_script` call reads its effects.
 /// Force the checkpoint explicitly rather than relying on incidental timing.
-fn drain_microtasks(
-    locked: &mut crate::backends::v8::embedder::JsRuntime,
-    realm: Option<&crate::backends::v8::embedder::JsRealm>,
-) {
+fn drain_microtasks(locked: &mut crate::backends::v8::embedder::JsRuntime) {
     use crate::backends::v8::embedder::v8;
-    let context = match realm {
-        Some(realm) => realm.context().clone(),
-        None => locked.main_context(),
-    };
+    let context = locked.main_context();
     let isolate = locked.v8_isolate();
     v8::scope_with_context!(let scope, isolate, &context);
     scope.perform_microtask_checkpoint();
@@ -95,37 +89,18 @@ fn drain_microtasks(
 
 fn run_reassignment_probe(
     locked: &mut crate::backends::v8::embedder::JsRuntime,
-    realm: Option<&crate::backends::v8::embedder::JsRealm>,
     global_name: &str,
 ) -> ReassignmentProbeResult {
     let probe_script = reassignment_probe_script(global_name);
-    match realm {
-        Some(realm) => {
-            realm
-                .execute_script(
-                    locked.v8_isolate(),
-                    "guest_reassignment_probe.js",
-                    probe_script,
-                )
-                .expect("reassignment probe should evaluate");
-        }
-        None => {
-            locked
-                .execute_script("guest_reassignment_probe.js", probe_script)
-                .expect("reassignment probe should evaluate");
-        }
-    }
-    drain_microtasks(locked, realm);
+    locked
+        .execute_script("guest_reassignment_probe.js", probe_script)
+        .expect("reassignment probe should evaluate");
+    drain_microtasks(locked);
 
     let read = |locked: &mut crate::backends::v8::embedder::JsRuntime, expr: &str| {
-        let value = match realm {
-            Some(realm) => realm
-                .execute_script(locked.v8_isolate(), "read_probe_flag.js", expr.to_string())
-                .expect("reading probe flag should evaluate"),
-            None => locked
-                .execute_script("read_probe_flag.js", expr.to_string())
-                .expect("reading probe flag should evaluate"),
-        };
+        let value = locked
+            .execute_script("read_probe_flag.js", expr.to_string())
+            .expect("reading probe flag should evaluate");
         deserialize_json_value(locked, value).expect("probe flag should deserialize")
     };
 
@@ -200,17 +175,16 @@ fn node_lane_main_context_reassignment_fails_subprocess() {
             .execute_script("install_node_lane_invoke.js", NODE_LANE_INSTALL)
             .expect("installing the node-lane entrypoint should succeed");
 
-        let probe = run_reassignment_probe(locked, None, "__nimbusInvoke");
+        let probe = run_reassignment_probe(locked, "__nimbusInvoke");
         assert_probe_survived(&probe, "__nimbusInvoke");
 
-        capture_invocation_targets(locked, None, crate::RuntimeGuestSemantics::Host)
+        capture_invocation_targets(locked, crate::RuntimeGuestSemantics::Host)
             .expect("capture should succeed despite the reassignment attempts");
         let request_json =
             r#"{"kind":"action","function_name":"messages:list","args":null}"#.to_string();
         let result = {
             let value = call_captured_invocation(
                 locked,
-                None,
                 &request_json,
                 crate::RuntimeGuestSemantics::Host,
                 None,
@@ -223,62 +197,6 @@ fn node_lane_main_context_reassignment_fails_subprocess() {
             "captured dispatch must resolve to the original entrypoint, not either impostor: \
              {result}"
         );
-    });
-}
-
-pub(super) const CAPTURE_ORDERING_NODE_LANE_FRESH_REALM_CASE: IsolatedRuntimeTestCase =
-    IsolatedRuntimeTestCase::new(
-        "runtime-capture-ordering-node-lane-fresh-realm",
-        "cooperative-startup-snapshot",
-        "Band B-FIX CAPTURE-ORDERING (1): the same guarantee holds on a fresh realm, not just \
-         the main context",
-        "runtime::tests::capture_ordering::node_lane_fresh_realm_reassignment_fails_subprocess",
-    );
-
-#[test]
-fn node_lane_fresh_realm_reassignment_fails() {
-    run_v8_sensitive_runtime_test_in_subprocess(CAPTURE_ORDERING_NODE_LANE_FRESH_REALM_CASE);
-}
-
-#[test]
-#[ignore = "runs in a subprocess to isolate V8 isolate state"]
-fn node_lane_fresh_realm_reassignment_fails_subprocess() {
-    with_captured_dispatch_test_runtime(|locked| {
-        let realm = create_bare_realm(locked);
-
-        realm
-            .execute_script(
-                locked.v8_isolate(),
-                "install_node_lane_invoke.js",
-                NODE_LANE_INSTALL,
-            )
-            .expect("installing the node-lane entrypoint should succeed");
-
-        let probe = run_reassignment_probe(locked, Some(&realm), "__nimbusInvoke");
-        assert_probe_survived(&probe, "__nimbusInvoke");
-
-        capture_invocation_targets(locked, Some(&realm), crate::RuntimeGuestSemantics::Host)
-            .expect("capture should succeed despite the reassignment attempts");
-        let request_json =
-            r#"{"kind":"action","function_name":"messages:list","args":null}"#.to_string();
-        let result = {
-            let value = call_captured_invocation(
-                locked,
-                Some(&realm),
-                &request_json,
-                crate::RuntimeGuestSemantics::Host,
-                None,
-            )
-            .expect("captured dispatch should still run the original entrypoint");
-            deserialize_json_value(locked, value).expect("result should deserialize")
-        };
-        assert_eq!(
-            result["source"], "REAL_NODE_LANE",
-            "captured dispatch must resolve to the original entrypoint on a fresh realm too: \
-             {result}"
-        );
-
-        crate::runtime::realm_lifecycle::destroy_fresh_realm(locked, realm);
     });
 }
 
@@ -327,17 +245,16 @@ fn cloud_functions_lane_main_context_reassignment_fails_subprocess() {
             )
             .expect("installing the Cloud Functions-lane entrypoint should succeed");
 
-        let probe = run_reassignment_probe(locked, None, "__nimbusInvoke");
+        let probe = run_reassignment_probe(locked, "__nimbusInvoke");
         assert_probe_survived(&probe, "__nimbusInvoke");
 
-        capture_invocation_targets(locked, None, crate::RuntimeGuestSemantics::Host)
+        capture_invocation_targets(locked, crate::RuntimeGuestSemantics::Host)
             .expect("capture should succeed despite the reassignment attempts");
         let request_json =
             r#"{"kind":"action","function_name":"messages:list","args":null}"#.to_string();
         let result = {
             let value = call_captured_invocation(
                 locked,
-                None,
                 &request_json,
                 crate::RuntimeGuestSemantics::Host,
                 None,
@@ -350,64 +267,6 @@ fn cloud_functions_lane_main_context_reassignment_fails_subprocess() {
             "captured dispatch must resolve to the original entrypoint, not either impostor: \
              {result}"
         );
-    });
-}
-
-pub(super) const CAPTURE_ORDERING_CLOUD_FUNCTIONS_LANE_FRESH_REALM_CASE: IsolatedRuntimeTestCase =
-    IsolatedRuntimeTestCase::new(
-        "runtime-capture-ordering-cloud-functions-lane-fresh-realm",
-        "cooperative-startup-snapshot",
-        "Band B-FIX CAPTURE-ORDERING (1): the same guarantee holds on a fresh realm, not just \
-         the main context",
-        "runtime::tests::capture_ordering::cloud_functions_lane_fresh_realm_reassignment_fails_subprocess",
-    );
-
-#[test]
-fn cloud_functions_lane_fresh_realm_reassignment_fails() {
-    run_v8_sensitive_runtime_test_in_subprocess(
-        CAPTURE_ORDERING_CLOUD_FUNCTIONS_LANE_FRESH_REALM_CASE,
-    );
-}
-
-#[test]
-#[ignore = "runs in a subprocess to isolate V8 isolate state"]
-fn cloud_functions_lane_fresh_realm_reassignment_fails_subprocess() {
-    with_captured_dispatch_test_runtime(|locked| {
-        let realm = create_bare_realm(locked);
-
-        realm
-            .execute_script(
-                locked.v8_isolate(),
-                "install_cloud_functions_lane_invoke.js",
-                CLOUD_FUNCTIONS_LANE_INSTALL,
-            )
-            .expect("installing the Cloud Functions-lane entrypoint should succeed");
-
-        let probe = run_reassignment_probe(locked, Some(&realm), "__nimbusInvoke");
-        assert_probe_survived(&probe, "__nimbusInvoke");
-
-        capture_invocation_targets(locked, Some(&realm), crate::RuntimeGuestSemantics::Host)
-            .expect("capture should succeed despite the reassignment attempts");
-        let request_json =
-            r#"{"kind":"action","function_name":"messages:list","args":null}"#.to_string();
-        let result = {
-            let value = call_captured_invocation(
-                locked,
-                Some(&realm),
-                &request_json,
-                crate::RuntimeGuestSemantics::Host,
-                None,
-            )
-            .expect("captured dispatch should still run the original entrypoint");
-            deserialize_json_value(locked, value).expect("result should deserialize")
-        };
-        assert_eq!(
-            result["source"], "REAL_CLOUD_FUNCTIONS_LANE",
-            "captured dispatch must resolve to the original entrypoint on a fresh realm too: \
-             {result}"
-        );
-
-        crate::runtime::realm_lifecycle::destroy_fresh_realm(locked, realm);
     });
 }
 
@@ -523,58 +382,6 @@ async fn cloudflare_lane_main_context_reassignment_fails() {
         .await
         .expect(
             "the worker's fetch handler must still run through the real, unreplaced trampoline",
-        );
-
-    let body: Value = serde_json::from_str(
-        result["body"]
-            .as_str()
-            .expect("serialized response body should be text"),
-    )
-    .expect("response body should be JSON");
-    assert_cloudflare_probe_survived(&body);
-}
-
-// This test also doubles as the RED/GREEN oracle for Band B-FIX CLOUDFLARE
-// REALM ISOLATION (finding 2): `call_captured_invocation`'s dynamic
-// `import(specifier)` must evaluate via `realm.execute_script` (scoped to
-// THIS fresh/recycled realm) rather than `runtime.execute_script` (always
-// the main realm) once a realm is present. Reverting that branch to
-// unconditionally use `runtime.execute_script` was confirmed to break this
-// exact test — the module namespace import resolves against the wrong
-// realm's registry, so the worker's fetch handler promise never settles
-// ("Promise resolution is still pending but the event loop has already
-// resolved") — while `cloudflare_lane_main_context_reassignment_fails`
-// above (no realm, so no realm/main distinction) correctly keeps passing as
-// a non-regression control.
-#[tokio::test]
-async fn cloudflare_lane_fresh_realm_reassignment_fails() {
-    let _guard = acquire_runtime_suite_lock().await;
-    let tempdir = tempdir().expect("tempdir should build");
-    let bundle_path = tempdir.path().join("worker.mjs");
-    std::fs::write(&bundle_path, cloudflare_reassignment_probe_worker_source())
-        .expect("worker bundle should write");
-
-    // WarmContextRecycle: each invocation runs in a recycled realm rather
-    // than the runtime's main realm, exercising driver/loading.rs's
-    // fresh-realm path (capture + dispatch against `Some(realm)`) instead of
-    // the main-context path the test above exercises.
-    let runtime = NimbusRuntime::with_policy(
-        Arc::new(RecordingHost::default()),
-        Arc::new(crate::limits::RuntimePolicy::new(
-            cooperative_context_recycle_runtime_test_limits(),
-        )),
-        crate::RuntimeEgressPosture::CoarsePermissions,
-    );
-    let result = runtime
-        .invoke_bundle_for_tenant_for_test(
-            &RuntimeBundle::new(&bundle_path),
-            &cloudflare_worker_fetch_request(),
-            "tenant-a",
-        )
-        .await
-        .expect(
-            "the worker's fetch handler must still run through the real, unreplaced trampoline \
-             on a fresh realm too",
         );
 
     let body: Value = serde_json::from_str(

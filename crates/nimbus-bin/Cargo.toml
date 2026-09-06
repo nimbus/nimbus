@@ -22,11 +22,6 @@ default = ["libsql", "mysql", "postgres"]
 libsql = ["nimbus-cli/libsql"]
 mysql = ["nimbus-cli/mysql"]
 postgres = ["nimbus-cli/postgres"]
-# LR12: opt-in lane for the live hidden node workload executor integration
-# test against session systemd (mirrors nimbus-node's systemd-dbus-integration-tests).
-node-workload-executor-integration-tests = [
-    "nimbus-cli/node-workload-executor-integration-tests",
-]
 bun-jsc-linked-adapter = ["nimbus-cli/bun-jsc-linked-adapter"]
 v8-pointer-compression = ["nimbus-cli/v8-pointer-compression"]
 
@@ -39,3 +34,6 @@ nimbus-cli = { path = "../nimbus-cli", default-features = false }
 tokio.workspace = true
 tracing-subscriber.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+libc.workspace = true

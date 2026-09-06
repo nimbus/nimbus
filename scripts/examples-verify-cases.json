@@ -6,6 +6,7 @@
     "compose.yaml"
   ],
   "ignoredAppPaths": [
+    ".env.local",
     ".nimbus",
     "node_modules",
     "dist",

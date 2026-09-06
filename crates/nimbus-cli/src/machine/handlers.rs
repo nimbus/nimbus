@@ -65,9 +65,18 @@ use transfer::{resolve_machine_cp_target_name, resolve_machine_ssh_target_name};
 #[cfg(not(test))]
 use transfer::{resolve_machine_cp_transfer, resolve_machine_ssh_target};
 
-pub(crate) async fn run_machine_command(command: MachineCommand) -> Result<(), Error> {
+pub(crate) async fn run_machine_command(
+    command: MachineCommand,
+    persistence_config: Option<&EnginePersistenceConfig>,
+) -> Result<(), Error> {
     let roots = resolve_roots_for_command(&command)?;
-    run_machine_command_with_layout(command, &roots, None).await
+    run_machine_command_with_layout(command, &roots, persistence_config).await
+}
+
+pub(crate) fn machine_command_requires_canonical_engine_authority(
+    command: &MachineCommand,
+) -> bool {
+    command_requires_canonical_engine_authority(&command.command)
 }
 
 pub(super) fn resolve_roots_for_command(

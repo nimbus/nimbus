@@ -3,8 +3,8 @@ function runtimeBundleDispatchGlobalInvoke({ module = true } = {}) {
   return `// HG0 (Band B-FIX, CAPTURE-ORDERING): installed via Object.defineProperty
 // with configurable:false, writable:false rather than a plain assignment, and
 // as the FIRST statement this dispatch segment of the bundle runs — before any
-// guest handler body has a chance to execute (handler bodies compile lazily
-// via the Function constructor on first invocation; see runtime_bundle_preamble.mjs).
+// guest handler body has a chance to execute (handler bodies initialize lazily
+// on first invocation; see runtime_bundle_preamble.mjs).
 // The host still captures this entrypoint off-graph (captured_dispatch.rs)
 // after evaluation and event-loop drain, but a guest reassignment attempt —
 // whether a direct top-level write or one queued via queueMicrotask — now
@@ -23,7 +23,6 @@ Object.defineProperty(globalThis, "__nimbusInvoke", {
     if (route) {
       return await globalThis.__nimbusAsyncHostValue("op_nimbus_http_route", {
         request,
-        route,
       });
     }
 

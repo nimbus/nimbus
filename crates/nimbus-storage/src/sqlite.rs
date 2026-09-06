@@ -39,6 +39,7 @@ mod document_versions;
 pub mod encryption;
 mod index_versions;
 mod journal;
+mod kv;
 mod read;
 // The libsql replica cache is the only reason these SQLite operations exist;
 // `test` keeps the reconciliation path compiled for the SQLite-foundation
@@ -205,6 +206,17 @@ CREATE TABLE IF NOT EXISTS metadata (
     key TEXT NOT NULL PRIMARY KEY,
     value_blob BLOB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tenant_kv_values (
+    key BLOB NOT NULL PRIMARY KEY,
+    value BLOB NOT NULL,
+    metadata_blob BLOB NOT NULL,
+    expire_at_ms INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_kv_values_expiry
+    ON tenant_kv_values (expire_at_ms)
+    WHERE expire_at_ms IS NOT NULL;
 "#;
 
 // Floor for the read pool. The engine legitimately holds several read
@@ -568,48 +580,35 @@ impl SqliteTenantStore {
         )?;
         Ok((checkpoint, read_floors, checkpoint_blob))
     }
+}
 
-    pub(crate) fn install_imported_retention_checkpoint(
-        &self,
-        checkpoint: &MaterializedRetentionCheckpoint,
-    ) -> Result<()> {
-        checkpoint.validate()?;
-        let applied_head = self.journal_progress()?.applied_head;
-        if checkpoint.sequence().0 > applied_head.0 {
-            return Err(Error::InvalidInput(format!(
-                "imported retention checkpoint {} exceeds restored applied head {}",
-                checkpoint.sequence().0,
-                applied_head.0
-            )));
-        }
-        let checkpoint_blob = crate::retention::serialize_retention_checkpoint(checkpoint)?;
-        let mut transaction = self.begin_write_transaction()?;
-        transaction.put_metadata(
-            crate::retention::RETENTION_CHECKPOINT_METADATA_KEY,
-            checkpoint_blob.as_slice(),
-        )?;
-        transaction.put_metadata(
-            crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
-            checkpoint.sequence().0.to_be_bytes().as_slice(),
-        )?;
-        transaction.put_metadata(
-            crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
-            checkpoint.sequence().0.to_be_bytes().as_slice(),
-        )?;
-        transaction.put_metadata(
-            crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
-            checkpoint.sequence().0.to_be_bytes().as_slice(),
-        )?;
-        let commit = transaction.commit()?;
-        debug_assert!(commit.is_none());
-        self.retention_floor
-            .observe_published_read_floors(crate::RetentionReadFloors::new(
-                checkpoint.sequence(),
-                checkpoint.sequence(),
-                checkpoint.sequence(),
-            ));
-        Ok(())
-    }
+pub(crate) fn stage_imported_retention_checkpoint_in_conn(
+    conn: &Connection,
+    checkpoint: &MaterializedRetentionCheckpoint,
+) -> Result<()> {
+    checkpoint.validate()?;
+    let checkpoint_blob = crate::retention::serialize_retention_checkpoint(checkpoint)?;
+    journal::put_metadata_in_conn(
+        conn,
+        crate::retention::RETENTION_CHECKPOINT_METADATA_KEY,
+        checkpoint_blob.as_slice(),
+    )?;
+    journal::put_metadata_in_conn(
+        conn,
+        crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+        checkpoint.sequence().0.to_be_bytes().as_slice(),
+    )?;
+    journal::put_metadata_in_conn(
+        conn,
+        crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+        checkpoint.sequence().0.to_be_bytes().as_slice(),
+    )?;
+    journal::put_metadata_in_conn(
+        conn,
+        crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+        checkpoint.sequence().0.to_be_bytes().as_slice(),
+    )?;
+    Ok(())
 }
 
 /// SQLite-backed tenant store split into concept-owned provider modules.

@@ -322,10 +322,6 @@ impl SharedInvocationPermit {
             )
         };
 
-        if let Some(timeout_controller) = timeout_controller {
-            timeout_controller.pause().await;
-        }
-
         if let Some((
             policy,
             tenant_label,
@@ -340,8 +336,15 @@ impl SharedInvocationPermit {
             policy
                 .metrics()
                 .decrement_active_runtime_instances_for_tenant(tenant_label.as_deref());
+            // Release admission capacity before waiting for the watchdog
+            // acknowledgement. A parked cooperative slot cannot be the only
+            // owner of capacity while a pending admission waits for activity.
             drop(dropped_runtime_permit);
             drop(dropped_active_permit);
+        }
+
+        if let Some(timeout_controller) = timeout_controller {
+            timeout_controller.pause().await;
         }
     }
 

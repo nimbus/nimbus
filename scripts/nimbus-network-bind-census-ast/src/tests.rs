@@ -12,6 +12,19 @@ fn scan_fixture_with_exemptions(source: &str, exempt_paths: &BTreeSet<String>) -
     output
 }
 
+#[test]
+fn convention_exempts_only_the_shared_test_support_crates() {
+    for path in [
+        "crates/nimbus-testing",
+        "crates/nimbus-testing/src/server_fixture.rs",
+        "crates/nimbus-process-harness",
+        "crates/nimbus-process-harness/src/ports.rs",
+    ] {
+        assert!(is_convention_exempt(path), "{path} should be test-support-only");
+    }
+    assert!(!is_convention_exempt("crates/nimbus-server/src/listener.rs"));
+}
+
 fn boundary_kinds(output: &ScanOutput) -> Vec<&str> {
     output
         .boundaries

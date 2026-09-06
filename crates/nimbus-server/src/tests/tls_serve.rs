@@ -88,3 +88,27 @@ async fn invalid_tls_identity_fails_the_boot_with_the_offending_path() {
         "boot failure should name the offending path, got: {error}"
     );
 }
+
+#[tokio::test]
+async fn shutdown_requested_before_tls_serve_is_not_lost() {
+    let engine_fixture = EngineFixture::new(|path| Engine::new(path));
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("listener should bind");
+    let options = crate::ServeOptions::reconstruct_direct(engine_fixture.engine())
+        .expect("test server network authority should reconstruct once")
+        .with_tls(TlsConfig::new(
+            fixture("tests/fixtures/tls/localhost-cert.pem"),
+            fixture("tests/fixtures/tls/localhost-key.pem"),
+        ));
+    let shutdown = options.shutdown_handle();
+    shutdown.request_shutdown();
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::serve(listener, options),
+    )
+    .await
+    .expect("pre-requested TLS shutdown should not wait for another signal")
+    .expect("pre-requested TLS shutdown should be graceful");
+}

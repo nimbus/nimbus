@@ -35,10 +35,14 @@ unchanged. Remove this patch after flume publishes a non-yanked dependency.
 
 ## lazy_static
 
-The `lazy_static-1.5.0` patch copies its crates.io release. Nimbus updates only
-its optional `spin` dependency from version `0.9.8` to `0.12.3`. The no-std
-implementation uses the unchanged `spin::Once` API. Remove this patch after
-lazy_static publishes a non-yanked dependency.
+The `lazy_static-1.5.0` patch copies its crates.io release. Nimbus updates its
+optional `spin` dependency from version `0.9.8` to `0.12.3`. The vendored copy
+also makes the return lifetimes explicit in both `Lazy::get` implementations to
+remain clean under the current Rust `mismatched_lifetime_syntaxes` lint. Nimbus
+patched the no-std implementation earlier; the current patch completes the
+std-backed implementation. The no-std implementation uses the unchanged
+`spin::Once` API. Remove this patch after lazy_static publishes a non-yanked
+dependency.
 
 ## brotli
 

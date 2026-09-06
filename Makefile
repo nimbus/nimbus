@@ -1,9 +1,10 @@
 -include .env
 export
 
-.PHONY: test-node-workload-executor-live all build build-ui build-packages release check fmt fmt-check clippy test test-js typecheck-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-release-oci-image-helper verify-release-oci-image-build-helper verify-release-oci-image-live verify-release-oci-image-live-helper verify-desktop-ui verify-tenant-isolation-conformance verify-enterprise-policy-egress verify-artifact-provenance verify-bun-jsc-runtime-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-inventory node-compat-classifications node-compat-sync node-compat-refresh node-compat-validate-fixtures node-compat-verify-fixture-upstream node-compat-publish-evidence node-compat-publish-docs node-compat-release-train node-compat-trends node-compat-required-surface-blockers node-compat-sync-watchpoints node-compat-validate-watchpoints node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-nimbus-machine-diagnostics collect-nimbus-machine-cli-proof collect-nimbus-machine-guest-proof collect-nimbus-machine-service-proof collect-nimbus-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-nimbus-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-nimbus-machine prepare-linux-vmm-validation-bundle verify-build-nimbus-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-nimbus-machine-diagnostics-helper verify-nimbus-machine-recreate-helper verify-nimbus-machine-cli-proof-helper verify-nimbus-machine-guest-proof-helper verify-nimbus-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
+.PHONY: all build build-ui build-packages release check fmt fmt-check clippy test test-js typecheck-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-release-oci-image-helper verify-release-oci-image-build-helper verify-release-oci-image-live verify-release-oci-image-live-helper verify-desktop-ui verify-tenant-isolation-conformance verify-enterprise-policy-egress verify-artifact-provenance verify-bun-jsc-runtime-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-inventory node-compat-classifications node-compat-sync node-compat-refresh node-compat-validate-fixtures node-compat-verify-fixture-upstream node-compat-publish-evidence node-compat-publish-docs node-compat-release-train node-compat-trends node-compat-required-surface-blockers node-compat-sync-watchpoints node-compat-validate-watchpoints node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-nimbus-machine-diagnostics collect-nimbus-machine-cli-proof collect-nimbus-machine-guest-proof collect-nimbus-machine-service-proof collect-nimbus-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-nimbus-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-nimbus-machine prepare-linux-vmm-validation-bundle verify-build-nimbus-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-nimbus-machine-diagnostics-helper verify-nimbus-machine-recreate-helper verify-nimbus-machine-cli-proof-helper verify-nimbus-machine-guest-proof-helper verify-nimbus-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
 .PHONY: verify-network-sovereignty-tripwire verify-network-sovereignty-tripwire-helper
 .PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-provider test-external-providers provider-fixture-up provider-fixture-down verify-external-provider-fixture-helper verify-tenant-lifecycle-callers verify-ppsc-seed-farm verify-ppsc-seed-farm-helper verify-elle-serializability verify-elle-serializability-helper proof-helpers ci-required prove-linux-cgroup-memory-limit verify-bun-jsc-linked-adapter verify-bun-jsc-adapter-package verify-bun-jsc-release-assets verify-bun-jsc-installed-package-proof verify-profile-aware-runtime-crossover verify-runtime-tenant-isolation examples-verify examples-verify-run
+.PHONY: verify-bun-webkit-source
 .PHONY: verify-loom-handoff
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
@@ -181,10 +182,10 @@ test-rust-runtime-cage:
 # config (a V8 startup snapshot is platform-specific) and are NOT committed (gitignored). The serving
 # path DESERIALIZES the generated blob (~19ms) instead of building it lazily (~4.18s, which blows
 # per-request timeouts). Each CI lane / a release build regenerates the blob for ITS target+config
-# BEFORE building the consuming binary; the runtime provenance guard (arch+OS+V8+pc+extensions+ops+JS)
-# falls back to a runtime build if a blob is missing or built for the wrong target/config, so a fresh
-# `cargo build` without this step is slow-but-correct, never wrong. Each target also `--check`s that
-# the just-generated blob is live (a self-test of the generator). `-off`/`-on` do ONE config (the
+# BEFORE building the consuming binary. The runtime provenance guard rejects a missing, stale, or
+# foreign blob. The blob also packages the build-only extension sources that unsnapshotted and
+# service-bearing runtimes need after deployment. Release packaging must run this target and its
+# post-generation `--check`. `-off`/`-on` do ONE config (the
 # single-config CI lanes); the bare target does both for local dev (the `-on` half in a separate
 # CARGO_TARGET_DIR so its pointer-compression V8 prebuilt does not collide with the shared
 # gn_out/obj/librusty_v8.a a preceding feature-off build wrote — the build.rs guard otherwise fails).
@@ -194,10 +195,12 @@ test-rust-runtime-cage:
 # regenerates both (the `-on` half in a separate CARGO_TARGET_DIR to dodge the shared-.a guard).
 build-node22-anchor-snapshot-off:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check \
-		|| cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
+		|| { cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot \
+			&& cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check; }
 build-node22-anchor-snapshot-on:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check \
-		|| cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
+		|| { cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression \
+			&& cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression -- --check; }
 build-node22-anchor-snapshot:
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
 	cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check
@@ -223,12 +226,6 @@ endif
 # before the workspace build — locally and in CI.
 test-rust-workspace: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST) build-node22-anchor-snapshot-off
 	NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 $(SINGLE_FLIGHT) --key cargo-nextest-workspace-ci$(NEXTEST_SINGLE_FLIGHT_SUFFIX) -- cargo nextest run --workspace --exclude nimbus-runtime $(NEXTEST_PARTITION_ARGS)
-
-# LR12: live hidden node-workload-executor test against session systemd
-# (Linux CI lane node-dbus-integration). Builds nimbus-bin, so it rides the
-# same UI + embedded-package prerequisite graph as the workspace lanes.
-test-node-workload-executor-live: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
-	cargo test -p nimbus-bin --features node-workload-executor-integration-tests node_workload_executor_converges_transient_unit -- --nocapture
 
 # Run the CI workspace doctest bucket
 test-rust-docs: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
@@ -379,6 +376,9 @@ proof-helpers:
 	bash -n scripts/verify-artifact-provenance.sh
 	bash -n scripts/verify-bun-jsc-runtime-contract.sh
 	bash -n scripts/verify-bun-jsc-in-process-lockdown.sh
+	bash -n scripts/verify-bun-webkit-source.sh
+	bash -n scripts/verify-bun-webkit-source-helper.sh
+	bash scripts/verify-bun-webkit-source-helper.sh
 	bash -n scripts/bun-jsc-adapter-contract.sh
 	bash -n scripts/build-bun-jsc-adapter-artifacts.sh
 	bash -n scripts/package-bun-jsc-adapter.sh
@@ -389,9 +389,14 @@ proof-helpers:
 	bash -n scripts/render-release-oci-image-report.sh
 	bash -n scripts/verify-release-oci-image-report.sh
 	bash -n scripts/nimbus-release-rust-features.sh
-	bash -n scripts/verify-node-full-substrate-realm.sh
+	bash -n scripts/verify-profile-aware-isolate-runtime.sh
+	bash scripts/verify-profile-aware-isolate-runtime.sh
 	bash -n scripts/verify-runtime-execution-classification.sh
 	bash -n scripts/verify-profile-aware-isolate-runtime-crossover.sh
+	python3 -m unittest scripts.test_verify_profile_aware_isolate_runtime_gate
+	python3 -m unittest scripts.test_verify_profile_aware_isolate_runtime_crossover_trace
+	python3 -m unittest scripts.test_verify_release_version_contract
+	python3 -m unittest scripts.test_run_bun_jsc_shared_smoke
 	bash -n scripts/verify-release-oci-image-assets.sh
 	bash -n scripts/smoke-release-oci-image.sh
 	bash -n scripts/verify-release-oci-image-helper.sh
@@ -474,6 +479,7 @@ verify-release-oci-image-live:
 		$(if $(IMAGE),--image "$(IMAGE)",) \
 		$(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",) \
 		$(if $(RUNTIME),--runtime "$(RUNTIME)",) \
+		$(if $(SKIP_WINDOWS),--skip-windows,) \
 		$(if $(SKIP_SMOKE),--skip-smoke,)
 
 verify-release-oci-image-live-helper:
@@ -519,6 +525,13 @@ verify-artifact-provenance:
 
 verify-bun-jsc-runtime-contract:
 	bash scripts/verify-bun-jsc-runtime-contract.sh
+
+verify-bun-webkit-source:
+	@bun_repo="$${NIMBUS_BUN_REPO:-$${HOME}/src/github.com/nimbus/bun}"; \
+	webkit_repo="$${BUN_WEBKIT_PATH:-vendor/WebKit}"; \
+	bash scripts/verify-bun-webkit-source.sh \
+		--bun-repo "$${bun_repo}" \
+		--webkit-repo "$${webkit_repo}"
 
 verify-bun-jsc-linked-adapter:
 	bash scripts/verify-bun-jsc-linked-adapter.sh

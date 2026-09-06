@@ -86,11 +86,12 @@ fn main() {
 
     // The lib `include_bytes!`es one of two embedded NodeFull(Node22) anchor snapshots, selected by
     // the `v8-pointer-compression` cfg (`.pc.bin` = pointer-compressed = release; `.bin` = feature
-    // off = dev/test). The REAL blobs are produced by `make build-node22-anchor-snapshot` (which runs
-    // the builder binary once per config) and committed. So a fresh checkout / a bootstrap build
-    // compiles for EITHER config, write an EMPTY placeholder for BOTH paths when absent — an empty
-    // blob fails the provenance guard at runtime and falls back to a runtime build (slow-but-correct)
-    // until the blob is generated. Never overwrite a real blob.
+    // off = dev/test). The real blobs are produced by `make build-node22-anchor-snapshot` (which runs
+    // the builder binary once per config) and remain gitignored. A fresh checkout or bootstrap build
+    // for either config writes an empty placeholder for both paths when they are absent. A source
+    // checkout can reject that placeholder and build the snapshot from its Deno sources. A packaged
+    // binary cannot access those build-only paths, so the release workflow must generate and check
+    // the selected blob before it builds the binary. Never overwrite a real blob.
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     for filename in [
         "node22_anchor_snapshot.bin",

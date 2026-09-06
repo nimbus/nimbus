@@ -384,6 +384,14 @@ export {};
     let metrics_after_cold = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics_after_cold.warm_pool_misses, 1);
     assert_eq!(metrics_after_cold.warm_pool_hits, 0);
+    assert_eq!(
+        metrics_after_cold.v8_startup_snapshot_runtime_constructions, 0,
+        "WebStandard cold construction must not restore a startup snapshot"
+    );
+    assert_eq!(
+        metrics_after_cold.v8_unsnapshotted_runtime_constructions, 1,
+        "WebStandard cold construction must record the completed unsnapshotted runtime"
+    );
 
     // Return the runtime to the pool under tenant-A's identity.
     v8_runtime_pool.return_runtime_for_invocation(
@@ -826,6 +834,15 @@ export {};
         reusable.construction_mode,
         V8RuntimeConstructionMode::StartupSnapshot,
         "node-compatible V8 runtimes should consume the startup snapshot path"
+    );
+    let metrics = runtime_instance.policy.metrics_snapshot();
+    assert_eq!(
+        metrics.v8_startup_snapshot_runtime_constructions, 1,
+        "Node22 cold construction must record the completed startup-snapshot runtime"
+    );
+    assert_eq!(
+        metrics.v8_unsnapshotted_runtime_constructions, 0,
+        "Node22 cold construction must not record an unsnapshotted runtime"
     );
     assert_eq!(
         snapshot_builds_after,

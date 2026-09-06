@@ -466,6 +466,7 @@ mod tests {
             host: host.to_string(),
             port: 443,
             path_and_query: Some(path.to_string()),
+            resolved_ip: None,
             tenant_label: Some(tenant.to_string()),
             session_id: Some("session-egress-gateway-test".to_string()),
             invocation_id: Some(1),

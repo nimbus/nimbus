@@ -94,6 +94,28 @@ fn ssh_command_applies_localhost_machine_safety_options() {
 }
 
 #[test]
+fn guest_management_ssh_uses_the_root_management_channel() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    let identity_path = temp_dir.path().join("machine");
+    fs::write(&image_path, []).expect("image should write");
+    fs::write(&identity_path, "fake-private-key").expect("identity should write");
+
+    let mut config = sample_config(&image_path);
+    config.guest.ssh_user = DEFAULT_BOOTC_MACHINE_SSH_USER.to_owned();
+    config.guest.ssh_identity_path = Some(identity_path);
+
+    let command = build_guest_management_ssh_command(&config, 2222)
+        .expect("guest management SSH command should build");
+    let args = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(args.last().map(String::as_str), Some("root@127.0.0.1"));
+}
+
+#[test]
 fn scp_command_applies_localhost_machine_safety_options() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let image_path = temp_dir.path().join("disk.raw");

@@ -16,9 +16,9 @@ claim, and the headline numbers.
 | Target | Status | Release phase | Default | LTS support | Upstream line |
 | --- | --- | --- | --- | --- | --- |
 | Node20 | Supported for local development only | EOL legacy | no | no | `v20.20.2` |
-| Node22 | Supported in process | Maintenance LTS | no | yes | `v22.22.3` |
-| Node24 | Supported in process | Active LTS | yes | yes | `v24.16.0` |
-| Node26 | Supported in process | Current non-LTS | no | no | `v26.2.0` |
+| Node22 | Supported in process | Maintenance LTS | no | yes | `v22.23.2` |
+| Node24 | Supported in process | Active LTS | yes | yes | `v24.20.0` |
+| Node26 | Supported in process | Current non-LTS | no | no | `v26.8.1` |
 
 - Node24 is the default compatibility target. The default is a routing
   default, not an evidence priority.
@@ -57,7 +57,7 @@ claim, and the headline numbers.
 
 ## Evidence summary
 
-As of 2026-05-28, from the checked-in evidence snapshots. Fixtures are
+As of 2026-09-01, from the checked-in evidence snapshots. Fixtures are
 official upstream Node test files executed against the Nimbus runtime;
 canaries are real packages and application scenarios exercised end-to-end.
 
@@ -65,10 +65,10 @@ canaries are real packages and application scenarios exercised end-to-end.
 
 | Target | Upstream | Fixtures | Passed | Expected failure / known gap | Skipped / excluded | Pass rate | Classified coverage |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Node20 | `v20.20.2` | 1308 | 902 | 401 | 5 | 69.0% | 100.0% |
-| Node22 | `v22.22.3` | 4748 | 1000 | 3728 | 20 | 21.1% | 100.0% |
-| Node24 | `v24.16.0` | 5198 | 1002 | 4149 | 47 | 19.3% | 100.0% |
-| Node26 | `v26.2.0` | 5578 | 0 | 5529 | 49 | 0.0% | 100.0% |
+| Node20 | `v20.20.2` | 4248 | 919 | 3316 | 13 | 21.6% | 100.0% |
+| Node22 | `v22.23.2` | 4762 | 2362 | 2380 | 20 | 49.6% | 100.0% |
+| Node24 | `v24.20.0` | 5671 | 2397 | 3226 | 48 | 42.3% | 100.0% |
+| Node26 | `v26.8.1` | 5940 | 2090 | 3795 | 55 | 35.2% | 100.0% |
 
 How to read these numbers:
 
@@ -86,9 +86,10 @@ How to read these numbers:
 
 ### Canary results
 
-- 37 package and framework canary claims across 101 checks, all passing on
+- 79 package and framework canary claims across 101 checks, all passing on
   their required versions.
-- 11 diagnostic canary claims proving host-heavy denials and service routes
+- The 79 claims include 68 positive-support claims and 11 diagnostic claims.
+  The diagnostic claims prove that host-heavy denials and service routes
   produce the intended errors.
 - 0 required canary gaps.
 

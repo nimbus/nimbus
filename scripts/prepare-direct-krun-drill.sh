@@ -226,11 +226,10 @@ runtime_command=(
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf '%s\n' '# The krun handler writes .krun_config.json to the rootfs via openat2 during'
-  printf '%s\n' '# crun create.  In rootless mode this requires a user namespace with UID 0'
-  printf '%s\n' '# mapped to the real user.  Re-exec under buildah unshare if needed.'
-  printf '%s\n' 'if [[ "$(id -u)" != "0" ]] && command -v buildah >/dev/null 2>&1; then'
-  printf '%s\n' '  exec buildah unshare -- "$0" "$@"'
+  printf '%s\n' '# The VMM follows the system-service privilege boundary.  Re-exec through'
+  printf '%s\n' '# noninteractive sudo so crun retains KVM access after applying OCI credentials.'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
   printf '%s\n' 'fi'
   printf '%s\n' ''
   printf 'rm -f %q %q %q\n' "${runtime_pidfile}" "${launcher_pidfile}" "${exit_status_file}"
@@ -241,14 +240,21 @@ runtime_command=(
   printf '%s\n' '  exit 69'
   printf '%s\n' 'fi'
   printf '%s\n' ''
+  printf 'if %q state %q >/dev/null 2>&1; then\n' "${runtime_path}" "${container_id}"
+  printf '  %q delete %q\n' "${runtime_path}" "${container_id}"
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
   printf '%s ' "${runtime_command[0]}"
   printf '%q ' "${runtime_command[@]:1}"
   printf '> %q 2> %q &\n' "${stdout_log}" "${stderr_log}"
   printf '%s\n' 'runtime_pid=$!'
   printf 'printf '\''%%s\\n'\'' "${runtime_pid}" > %q\n' "${runtime_pidfile}"
   printf '%s\n' ''
-  printf 'wait "${runtime_pid}"\n'
-  printf '%s\n' 'status=$?'
+  printf '%s\n' 'if wait "${runtime_pid}"; then'
+  printf '%s\n' '  status=0'
+  printf '%s\n' 'else'
+  printf '%s\n' '  status=$?'
+  printf '%s\n' 'fi'
   printf 'printf '\''%%s\\n'\'' "${status}" > %q\n' "${exit_status_file}"
   printf '%s\n' 'exit "${status}"'
 } > "${command_file}"
@@ -258,10 +264,14 @@ chmod 0755 "${command_file}"
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf 'bash %q &\n' "${command_file}"
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf 'bash %q </dev/null >>%q 2>>%q &\n' "${command_file}" "${stdout_log}" "${stderr_log}"
   printf '%s\n' 'launcher_pid=$!'
   printf 'printf '\''%%s\\n'\'' "${launcher_pid}" > %q\n' "${launcher_pidfile}"
-  printf '%s\n' 'printf '\''launcher.pid=%s\\n'\'' "${launcher_pid}"'
+  printf '%s\n' 'printf '\''launcher.pid=%s\n'\'' "${launcher_pid}"'
   printf 'printf '\''runtime.pidfile=%s\\n'\'' %q\n' "${runtime_pidfile}"
 } > "${start_script}"
 chmod 0755 "${start_script}"
@@ -326,9 +336,20 @@ chmod 0755 "${show_exit_status_script}"
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf 'runtime_pid="$(cat %q)"\n' "${runtime_pidfile}"
-  printf '%s\n' 'kill -TERM "${runtime_pid}"'
-  printf 'bash %q "${1:-30}"\n' "${wait_for_exit_script}"
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf '%s\n' 'timeout_seconds="${1:-30}"'
+  printf '%q kill %q TERM\n' "${runtime_path}" "${container_id}"
+  printf 'if bash %q "${timeout_seconds}" 2>/dev/null; then\n' "${wait_for_exit_script}"
+  printf '%s\n' '  echo "stop.result=graceful"'
+  printf '%s\n' '  exit 0'
+  printf '%s\n' 'fi'
+  printf '%s\n' 'echo "stop.escalation=KILL"'
+  printf '%q kill %q KILL\n' "${runtime_path}" "${container_id}"
+  printf 'bash %q "${timeout_seconds}"\n' "${wait_for_exit_script}"
+  printf '%s\n' 'echo "stop.result=forced"'
 } > "${graceful_stop_script}"
 chmod 0755 "${graceful_stop_script}"
 
@@ -336,8 +357,11 @@ chmod 0755 "${graceful_stop_script}"
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf 'runtime_pid="$(cat %q)"\n' "${runtime_pidfile}"
-  printf '%s\n' 'kill -KILL "${runtime_pid}"'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf '%q kill %q KILL\n' "${runtime_path}" "${container_id}"
   printf 'bash %q "${1:-30}"\n' "${wait_for_exit_script}"
 } > "${force_stop_script}"
 chmod 0755 "${force_stop_script}"

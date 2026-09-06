@@ -95,11 +95,7 @@ function __nimbusResolveDeno() {
     deno.execPath = () => __nimbusCore.ops.op_nimbus_runtime_exec_path();
   }
   if (deno.version === undefined) {
-    deno.version = {
-      deno: "2.9.0-nimbus.1",
-      v8: "149.4.0-nimbus.10",
-      typescript: "0.0.0-nimbus",
-    };
+    deno.version = __nimbusCore.ops.op_nimbus_runtime_versions();
   }
   if (
     __nimbusPublicDenoPrototype &&

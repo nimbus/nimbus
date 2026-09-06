@@ -552,6 +552,57 @@ fn container_stop_records_execution_terminality_without_network_release() {
 }
 
 #[test]
+fn container_pre_activation_stop_closes_admission_without_a_drain_command() {
+    let fixture = TeardownFixture::attached("pre-activation-stop");
+    let runtime = ScriptedRuntime::live(fixture.backend.clone(), 100);
+    runtime.terminal.store(true, Ordering::Release);
+    let before = fixture.network_authority();
+    let stop = fixture.command(SandboxExecutionTeardownOperation::Stop, "stop", 1);
+
+    assert!(matches!(
+        fixture
+            .backend
+            .inspect_execution_teardown_inner_with_runtime(&stop, &runtime)
+            .expect("pre-activation stop inspection should classify"),
+        SandboxExecutionTeardownObservation::Absent { .. }
+    ));
+    assert!(matches!(
+        fixture
+            .backend
+            .execute_execution_teardown_inner_with_runtime(&stop, &runtime)
+            .expect("pre-activation stop should persist"),
+        SandboxExecutionTeardownObservation::Succeeded { .. }
+    ));
+
+    let durable = fixture.manifest();
+    assert!(matches!(
+        durable.execution_teardown.drain(),
+        ContainerDrainProgress::ExecutionNeverAdmitted { fence, .. }
+            if fence == stop.provider_claim()
+    ));
+    assert!(matches!(
+        durable.execution_teardown.stop(),
+        ContainerStopProgress::ExecutionStopped { fence, .. }
+            if fence == stop.provider_claim()
+    ));
+    assert!(
+        durable
+            .require_execution_admission_open("late Container activation")
+            .is_err(),
+        "the no-execution stop fence must close later activation admission"
+    );
+    assert!(runtime.signals().is_empty());
+    assert_eq!(fixture.network_authority(), before);
+    assert!(matches!(
+        fixture
+            .backend
+            .inspect_execution_teardown_inner_with_runtime(&stop, &runtime)
+            .expect("persisted pre-activation stop should inspect"),
+        SandboxExecutionTeardownObservation::Succeeded { .. }
+    ));
+}
+
+#[test]
 fn container_stop_rejects_a_crossed_drain_subject_without_mutation() {
     let fixture = TeardownFixture::reserved("stop-crossed-subject");
     fixture.set_explicit_runtime_absence();

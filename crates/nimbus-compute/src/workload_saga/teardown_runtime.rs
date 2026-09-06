@@ -106,7 +106,7 @@ impl WorkloadTeardownCancellationToken {
 }
 
 /// Explicit submission failure for one exact retained teardown key.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum WorkloadTeardownSubmissionError {
     #[error("workload teardown submission was cancelled")]
     Cancelled,

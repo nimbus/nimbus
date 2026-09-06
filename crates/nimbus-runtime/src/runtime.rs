@@ -25,8 +25,6 @@ mod cooperative;
 pub(crate) mod driver;
 mod facade;
 mod invocation;
-pub(crate) mod realm_lease;
-mod realm_lifecycle;
 
 #[cfg(test)]
 use self::bootstrap::RuntimeCancellationState;
@@ -89,10 +87,7 @@ pub(crate) use self::cooperative::{
     RuntimeInvocationExecution,
 };
 
-pub(crate) use self::driver::{
-    FreshRealmInvocationResponse, FreshRealmInvocationTrace, RuntimeInvocationDriver,
-    RuntimeInvocationDriverPrepare,
-};
+pub(crate) use self::driver::{RuntimeInvocationDriver, RuntimeInvocationDriverPrepare};
 
 #[cfg(test)]
 mod tests {
@@ -103,7 +98,6 @@ mod tests {
     use crate::test_support::run_v8_crash_control_in_subprocess;
     use crate::test_support::{
         IsolatedRuntimeTestCase, acquire_runtime_suite_lock, acquire_snapshot_reset_test_lock,
-        cooperative_context_recycle_runtime_test_limits,
         cooperative_startup_snapshot_runtime_test_limits,
         cooperative_startup_snapshot_runtime_test_policy,
         cooperative_warm_pool_runtime_test_limits, cooperative_warm_pool_runtime_test_policy,

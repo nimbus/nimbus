@@ -12,7 +12,7 @@ pub(crate) const BUN_JSC_ADAPTER_README_FILE: &str = "README.md";
 pub(crate) const BUN_JSC_ADAPTER_KIND: &str = "nimbus.bun_jsc.adapter";
 pub(crate) const BUN_JSC_ADAPTER_SCHEMA_VERSION: u32 = 1;
 pub(crate) const BUN_JSC_ADAPTER_ABI_NAME: &str = "nimbus-bun-jsc-embedder";
-pub(crate) const BUN_JSC_ADAPTER_ABI_VERSION: u32 = 1;
+pub(crate) const BUN_JSC_ADAPTER_ABI_VERSION: u32 = 3;
 pub(crate) const BUN_JSC_MEMORY_ENFORCEMENT: &str = "outer_quota_required";
 pub(crate) const BUN_JSC_LIFECYCLE: &str = "fresh_discard";
 
@@ -29,8 +29,8 @@ pub(crate) struct BunJscLinkedAdapterSourceContract {
 pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSourceContract =
     BunJscLinkedAdapterSourceContract {
         repository: "https://github.com/nimbus/bun",
-        source_ref: "nimbus-bun-jsc-proof-main-20260709",
-        git_revision: "cc0a59c301ac2f56e94102c4ad16c3f085821409",
+        source_ref: "bun-v1.4.2-nimbus.1",
+        git_revision: "d6d4c5e39938b6c5ac243490a9230c26d52d737f",
         proof_target: "check-bun-embed-shared",
         simdutf_namespace: "nimbus_bun_simdutf",
         required_exports: &[
@@ -45,6 +45,7 @@ pub(crate) const BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT: BunJscLinkedAdapterSour
             "nimbus_bun_embed_probe_lifecycle_reuse_stress",
             "nimbus_bun_embed_invoke_program_wrapper_json",
             "nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge",
+            "nimbus_bun_embed_take_pending_response",
         ],
     };
 

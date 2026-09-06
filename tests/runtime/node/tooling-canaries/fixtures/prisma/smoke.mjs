@@ -1,10 +1,10 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
 
-// Prisma 7's generated "client" engine now validates the constructor shape
-// before it reaches query execution. Using an explicit empty options object
-// yields the stable adapter/accelerate requirement instead of the vaguer
-// "missing options" initialization path.
-const prisma = new PrismaClient({});
+const adapter = new PrismaLibSql({
+  url: process.env.DATABASE_URL,
+});
+const prisma = new PrismaClient({ adapter });
 
 try {
   const created = await prisma.user.create({

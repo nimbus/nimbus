@@ -11,25 +11,18 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit 1
 
-PLAN_ACTIVE="docs/private/plans/service-sandbox-node-reconciliation-plan.md"
-PLAN_ARCHIVE="docs/private/plans/archive/service-sandbox-node-reconciliation-plan.md"
-if [[ -f "${PLAN_ACTIVE}" ]]; then
-  PLAN="${PLAN_ACTIVE}"
-else
-  PLAN="${PLAN_ARCHIVE}"
-fi
-PLANS_README="docs/private/plans/README.md"
+PLAN="docs/private/plans/archive/service-sandbox-node-reconciliation-plan.md"
 PROOF_DIR="docs/private/plans/proof/service-sandbox-node-reconciliation"
 VERIFIER="scripts/verify-service-sandbox-node-reconciliation.sh"
 NSR5_PROOF="${PROOF_DIR}/nsr5-machine-os-guest-node.md"
-BIN_MAIN="crates/nimbus-bin/src/main.rs"
+CLI_ROOT="crates/nimbus-cli/src"
+BIN_MAIN="${CLI_ROOT}/lib.rs"
 NODE_CARGO="crates/nimbus-node/Cargo.toml"
 NODE_SRC="crates/nimbus-node/src"
-COMPOSE_SRC="crates/nimbus-bin/src/compose"
-MACHINE_API_SRC="crates/nimbus-bin/src/machine/api"
-MACHINE_API_ROOT="crates/nimbus-bin/src/machine/api.rs"
-WORKLOAD_CONTROL_DIR="crates/nimbus-services/src/workload_control"
-WORKLOAD_SCHEDULING_SRC="${WORKLOAD_CONTROL_DIR}/scheduling.rs"
+COMPOSE_SRC="${CLI_ROOT}/compose"
+MACHINE_API_SRC="${CLI_ROOT}/machine/api"
+MACHINE_API_ROOT="${CLI_ROOT}/machine/api.rs"
+WORKLOAD_SCHEDULING_SRC="crates/nimbus-workloads/src/scheduling.rs"
 SESSION_MODEL="docs/private/architecture/sandbox/service-sandbox-session-model.md"
 SDK_PLAN="docs/private/plans/archive/nimbus-sdk-resource-model-plan.md"
 CAPABILITY_PLAN="docs/private/plans/archive/nimbus-capability-segregation-plan.md"
@@ -66,7 +59,8 @@ plan_grep() {
 
 compose_backend_lifecycle_leaks() {
   grep -R -n --include='*.rs' -E '\.(start|stop|inspect)\(' "${COMPOSE_SRC}" 2>/dev/null \
-    | grep -v '^crates/nimbus-bin/src/compose/lifecycle.rs:' || true
+    | grep -v '^crates/nimbus-cli/src/compose/lifecycle.rs:' \
+    | grep -v '/tests/' || true
 }
 
 machine_api_direct_container_lifecycle_leaks() {
@@ -83,9 +77,9 @@ if [[ -f "${PLAN}" ]] \
   && grep -q 'Control Plane Protocol' "${PLAN}" \
   && grep -q 'Verifiable Success Criteria' "${PLAN}" \
   && grep -Eq '(Autonomous|Historical) `/goal` Prompt' "${PLAN}" \
-  && grep -q 'service-sandbox-node-reconciliation-plan.md' "${PLANS_README}" \
   && [[ -d "${PROOF_DIR}" ]] \
   && [[ -f "${PROOF_DIR}/README.md" ]] \
+  && grep -q 'archive/service-sandbox-node-reconciliation-plan.md' "${PROOF_DIR}/README.md" \
   && [[ -f "${PROOF_DIR}/nsr0-control-plane.md" ]] \
   && [[ -f "${VERIFIER}" ]]; then
   pass "${C}"
@@ -117,7 +111,7 @@ fi
 # --- 4. NSR1 start/dev/compose Compose trigger policy -------------------------
 C="4. NSR1 start requires explicit Compose input while dev/compose keep scoped discovery"
 if crates_grep 'start_does_not_auto_admit_ambient_compose' \
-  && crates_grep 'dev_auto_discovers_compose_for_local_development' \
+  && crates_grep 'compose_discovery_defaults_to_enabled' \
   && crates_grep 'compose_command_auto_discovers_compose_project'; then
   pass "${C}"
 else
@@ -216,7 +210,7 @@ if crates_grep 'trait MachineApiNodeWorkloadFacade' \
   && crates_grep 'struct GuestNodeWorkloadService' \
   && crates_grep 'prepare_plan_only_service_workload' \
   && crates_grep 'RunnerSpec::container' \
-  && crates_grep 'NodeAgentAssignment::from_spec' \
+  && crates_grep 'into_host_lifecycle_request(HostLifecycleBackendKind::SystemdTransientUnit)' \
   && grep -q 'require_service_workloads(&state)' "${MACHINE_API_SRC}/routes.rs" \
   && ! grep -q 'ContainerSandboxBackend' "${MACHINE_API_SRC}/routes.rs" \
   && [[ -z "$(machine_api_direct_container_lifecycle_leaks)" ]]; then
@@ -258,7 +252,7 @@ if grep -q -- '--service-proof-dir' scripts/verify-bootc-default-promotion-gate.
   && grep -q 'guest-systemd-transient-unit-status.txt' scripts/collect-nimbus-machine-service-proof.sh \
   && grep -q 'guest-node-workload-journal.txt' scripts/collect-nimbus-machine-service-proof.sh \
   && grep -q 'guest-typed-runner-path.txt' scripts/collect-nimbus-machine-service-proof.sh \
-  && grep -q 'verified: bootc default promotion gate helper accepts complete evidence and rejects failed SELinux or missing node-agent proof' scripts/verify-bootc-default-promotion-gate-helper.sh; then
+  && grep -q 'verified: bootc promotion helper accepts complete evidence and rejects lossy generation, crossed identity records or blocks, failed SELinux, and missing node-agent proof' scripts/verify-bootc-default-promotion-gate-helper.sh; then
   pass "${C}"
 else
   fail "${C}" "machine proof collectors/helpers do not require node-agent status, transient systemd unit, journal/cgroup, typed runner, and service proof evidence"
@@ -283,7 +277,8 @@ fi
 C="12. NSR6 Compose lifecycle localizes sandbox backend calls"
 if [[ -d "${COMPOSE_SRC}" ]] \
   && [[ -z "$(compose_backend_lifecycle_leaks)" ]] \
-  && crates_grep 'compose_lifecycle_localizes_sandbox_backend_lifecycle_calls'; then
+  && grep -q 'ComputeResourceProvisioner' "${COMPOSE_SRC}/lifecycle.rs" \
+  && crates_grep 'compose_local_and_forwarded_restart_use_compute'; then
   pass "${C}"
 else
   fail "${C}" "Compose sandbox backend lifecycle calls escaped compose/lifecycle.rs or guard test missing"
@@ -319,8 +314,8 @@ fi
 # --- 14. NSR8 dev/start scheduler integration ---------------------------------
 C="14. NSR8 dev/start produce canonical workload-control shapes"
 if crates_grep 'dev_start_resource_shapes_match_workload_control' \
-  && crates_grep 'start_uses_workload_controller_for_compose_services' \
-  && crates_grep 'dev_uses_workload_controller_for_compose_services' \
+  && crates_grep 'start_builds_ordered_desired_intents_for_compose_services' \
+  && crates_grep 'dev_builds_ordered_desired_intents_for_compose_services' \
   && crates_grep 'dev_start_scheduler_explanations_match'; then
   pass "${C}"
 else
@@ -357,11 +352,13 @@ fi
 C="17. NSR11 stale docs and command-surface drift are fixed"
 # Backticks are literal architecture-doc anchors.
 # shellcheck disable=SC2016
-if grep -q 'node-workload-executor' "${NODE_DBUS_DOC}" \
+if grep -q 'GuestNodeWorkloadService' "${NODE_DBUS_DOC}" \
+  && grep -q 'SystemdTransientUnitBackend' "${NODE_DBUS_DOC}" \
   && ! grep -q 'ServiceManager.*nimbus-server' "${MICROVM_DOC}" \
   && ! grep -q '`data`' ARCHITECTURE.md \
   && grep -q '`backup`' ARCHITECTURE.md \
-  && grep -q 'node-workload-executor' docs/source-map.md; then
+  && grep -q 'crates/nimbus-cli/src/machine/api.rs' docs/source-map.md \
+  && ! grep -q 'node-workload-executor' docs/source-map.md; then
   pass "${C}"
 else
   fail "${C}" "node/systemd docs, ARCHITECTURE.md, or source-map command anchors are stale"

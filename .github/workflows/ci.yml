@@ -6,6 +6,12 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      build_release_candidate:
+        description: "Build a full-LTO Linux release candidate without publishing it"
+        required: true
+        type: boolean
+        default: false
   schedule:
     # Weekly security audit — catches newly disclosed CVEs between PRs
     - cron: "0 8 * * 1"
@@ -102,7 +108,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: cargo-deny@0.19.0
 
@@ -420,7 +426,7 @@ jobs:
 
       - name: Verify embedded anchor installs under the cage
         # The cfg(test) cage oracle above CANNOT exercise the EMBEDDED anchor path: under cfg(test)
-        # snapshot_extensions adds a test-only extension, so provenance mismatches the committed blob
+        # snapshot_extensions adds a test-only extension, so provenance mismatches the generated blob
         # and try_embedded falls back to a runtime build. This integration test links NON-cfg(test)
         # nimbus-runtime, so the anchor installs FROM the committed .pc.bin into the real shared cage
         # — the production serving path. The shipped first-installer guard stays silent (the anchor is
@@ -452,7 +458,7 @@ jobs:
           github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
-      - name: Run PIR0/PIR2 crossover smoke benches
+      - name: Run selected runtime-strategy crossover smoke benches
         env:
           NIMBUS_PIR_CROSSOVER_SAMPLE_SIZE: "10"
           NIMBUS_PIR_CROSSOVER_MEASUREMENT_TIME: "1"
@@ -556,9 +562,9 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Install PATH poison guard
@@ -627,9 +633,9 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Set up Node.js
@@ -765,13 +771,13 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Install cargo-hakari
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: cargo-hakari@0.9.38
           fallback: cargo-install
@@ -913,7 +919,7 @@ jobs:
 
           meta = {
               "platform": "x86_64-unknown-linux-gnu",
-              "nextest_version": "0.9.138",
+              "nextest_version": "0.9.143",
               "command": "cargo nextest list --workspace --exclude nimbus-runtime --run-ignored all --locked --cargo-profile ci-archive --message-format json",
               "git_rev": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
           }
@@ -1223,6 +1229,99 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  linux-release-candidate:
+    name: Linux Release Candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    if: github.event_name == 'workflow_dispatch' && inputs.build_release_candidate
+    needs: [ui-artifacts]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Free runner disk for release build
+        run: |
+          df -h /
+          sudo rm -rf \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/share/dotnet
+          df -h /
+
+      - name: Set up Rust with verified pointer-compressed V8
+        id: setup-rust
+        uses: ./.github/actions/setup-rust-cached
+        with:
+          shared-key: ci-ubuntu-stable-linux-release-candidate-ptrcomp-no-bin-v2
+          linux-linker: default
+          consume-prebuilt-v8: ptrcomp
+          github-token: ${{ github.token }}
+          googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Download nimbus-ui artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ui-artifacts
+          path: packages/nimbus-ui
+
+      - name: Refresh nimbus-ui artifact mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+
+      - name: Download embedded package payload
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-packages
+          path: crates/nimbus-assets/embedded/packages
+
+      - name: Refresh embedded package payload mtimes
+        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
+
+      - name: Generate pointer-compressed Node22 anchor snapshot
+        run: cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot --features v8-pointer-compression
+
+      - name: Enforce disk budget before release build
+        run: bash scripts/ci/disk-guard.sh enforce --label before-linux-release-candidate --min-free-gib 40
+
+      - name: Build full-LTO release candidate
+        run: cargo build --release --locked -p nimbus-bin --features v8-pointer-compression
+
+      - name: Package build-only candidate and identity evidence
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/nimbus dist/nimbus
+          cp README.md LICENSE dist/
+          tar -czf nimbus_linux_x86_64.tar.gz -C dist nimbus README.md LICENSE
+          {
+            echo "nimbus_sha=${GITHUB_SHA}"
+            echo "rusty_v8_tag=${{ steps.setup-rust.outputs.rusty-v8-tag }}"
+            echo "deno_tag=${{ steps.setup-rust.outputs.deno-tag }}"
+            echo "target=${{ steps.setup-rust.outputs.rust-target }}"
+            echo "runtime_features=v8-pointer-compression"
+            echo "profile=release"
+            echo "publish=false"
+            target/release/nimbus --version
+            sha256sum target/release/nimbus nimbus_linux_x86_64.tar.gz
+          } | tee linux-release-candidate.txt
+
+      - name: Enforce disk budget after release build
+        if: always()
+        run: bash scripts/ci/disk-guard.sh enforce --label after-linux-release-candidate --min-free-gib 10
+
+      - name: Upload build-only release candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-release-candidate-${{ github.sha }}
+          path: |
+            nimbus_linux_x86_64.tar.gz
+            linux-release-candidate.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
   workspace-run-nightly:
     name: Nightly Rust Workspace Tests (shard ${{ matrix.partition }})
     runs-on: ubuntu-24.04
@@ -1278,9 +1377,9 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Set up Node.js
@@ -1428,9 +1527,9 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Install PATH poison guard
@@ -1483,9 +1582,9 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Set up Java
@@ -1538,9 +1637,9 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Install PATH poison guard
@@ -1721,6 +1820,8 @@ jobs:
             node-version: 22
           - lane: node24
             node-version: 24
+          - lane: node26
+            node-version: 26
     env:
       NEXTEST_BIN_EXE_nimbus: ${{ github.workspace }}/target/ci-archive/nimbus
 
@@ -1771,6 +1872,9 @@ jobs:
             node24)
               make node-compat-oracle LANE=node24 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
               ;;
+            node26)
+              make node-compat-oracle LANE=node26 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
+              ;;
             *)
               echo "unsupported oracle lane: ${{ matrix.lane }}" >&2
               exit 2
@@ -1815,7 +1919,7 @@ jobs:
           test -f target/node-compat/canaries/preset-application-node26.json
           test -f target/node-compat/canaries/preset-tooling-node22.json
           test -f target/node-compat/canaries/preset-tooling-node24.json
-          test "$(find target/node-compat/oracle -type f -name 'oracle-*.json' | wc -l)" -ge 2
+          test "$(find target/node-compat/oracle -type f -name 'oracle-*.json' | wc -l)" -ge 3
 
       - name: Build Node compatibility dashboard for PR gates
         run: make node-compat-dashboard
@@ -1835,13 +1939,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: github.event_name != 'schedule'
-    # The LR12 live node-workload-executor test still compiles its integration
-    # harness, but launcher paths consume the nimbus-bin artifact built by the
-    # dedicated frontier lane.
-    needs: [ui-artifacts, nimbus-bin-build]
-    env:
-      NEXTEST_BIN_EXE_nimbus: ${{ github.workspace }}/target/ci-archive/nimbus
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -1856,15 +1953,6 @@ jobs:
           consume-prebuilt-v8: release
           github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
-
-      - name: Download nimbus-bin binary
-        uses: actions/download-artifact@v8
-        with:
-          name: nimbus-bin
-          path: target/ci-archive
-
-      - name: Mark nimbus-bin executable
-        run: chmod +x target/ci-archive/nimbus
 
       - name: Bootstrap user-mode systemd
         # GitHub runners have no interactive login session, so the per-user
@@ -1902,29 +1990,6 @@ jobs:
           cargo test -p nimbus-node \
             --features systemd-dbus,systemd-dbus-integration-tests \
             --test zbus_systemd_live --no-fail-fast 2>&1 | tee /tmp/ndb-live.log
-
-      - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: ui-artifacts
-          path: packages/nimbus-ui
-
-      - name: Refresh nimbus-ui artifact mtimes
-        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
-
-      - name: Download embedded package payload
-        uses: actions/download-artifact@v8
-        with:
-          name: embedded-packages
-          path: crates/nimbus-assets/embedded/packages
-
-      - name: Refresh embedded package payload mtimes
-        run: find crates/nimbus-assets/embedded/packages -exec touch {} +
-
-      - name: Run live node workload executor test (LR12)
-        run: |
-          set -o pipefail
-          make test-node-workload-executor-live 2>&1 | tee -a /tmp/ndb-live.log
 
       - name: Summarize per-test results
         if: always()
@@ -2291,9 +2356,9 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
-          tool: nextest@0.9.138
+          tool: nextest@0.9.143
           fallback: none
 
       - name: Install PATH poison guard
@@ -2603,7 +2668,8 @@ jobs:
           bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
           bash -n scripts/verify-bun-jsc-release-assets.sh
           bash -n scripts/verify-bun-jsc-release-assets-helper.sh
-          bash -n scripts/verify-node-full-substrate-realm.sh
+          bash -n scripts/verify-profile-aware-isolate-runtime.sh
+          bash -n scripts/verify-tenant-function-autoscaling.sh
           bash -n scripts/verify-runtime-execution-classification.sh
           bash -n scripts/verify-profile-aware-isolate-runtime-crossover.sh
           bash -n scripts/verify-node-release-train.sh
@@ -2629,6 +2695,7 @@ jobs:
           bash -n scripts/verify-install.sh
           bash -n scripts/verify-install-helper.sh
           python3 -m py_compile \
+            scripts/run_bun_jsc_shared_smoke.py \
             scripts/ci/detect-nextest-flakes.py \
             scripts/ci/shard-scaling-probe-summary.py
 
@@ -2658,6 +2725,9 @@ jobs:
 
       - name: Verify Bun/JSC release asset helper
         run: bash scripts/verify-bun-jsc-release-assets-helper.sh
+
+      - name: Verify Bun/JSC shared smoke runner
+        run: python3 -m unittest scripts.test_run_bun_jsc_shared_smoke
 
       - name: Verify Linux package helper
         run: bash scripts/verify-build-linux-release-packages-helper.sh

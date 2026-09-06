@@ -760,6 +760,77 @@ fn same_sequence_different_state_has_different_materialized_position() {
 }
 
 #[test]
+fn materialized_position_covers_resource_bindings_and_trigger_cursor() {
+    let sequence = SequenceNumber(7);
+    let parts = snapshot_parts(&[("alpha", 1)]);
+    let baseline = assemble_snapshot(sequence, &parts, &[0], Vec::new());
+    let baseline_position = baseline
+        .materialized_position()
+        .expect("baseline position should compute");
+
+    let document = baseline
+        .documents
+        .first()
+        .expect("baseline snapshot should carry a document");
+    let mut with_binding = baseline.clone();
+    with_binding.resource_path_bindings = vec![nimbus_core::ResourcePathBinding::new(
+        nimbus_core::DocumentLocator::new(document.table.clone(), document.id.clone()),
+        nimbus_core::DocumentPath::from_segments(["alpha", document.id.as_str()])
+            .expect("resource path should be valid"),
+    )];
+    assert_ne!(
+        with_binding
+            .materialized_position()
+            .expect("binding position should compute"),
+        baseline_position,
+        "a resource binding change at one sequence must change the position"
+    );
+
+    let mut with_cursor = baseline;
+    with_cursor.trigger_delivery_cursor =
+        nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(6));
+    assert_ne!(
+        with_cursor
+            .materialized_position()
+            .expect("cursor position should compute"),
+        baseline_position,
+        "a trigger cursor change at one sequence must change the position"
+    );
+}
+
+#[test]
+fn resource_binding_order_does_not_change_materialized_position() {
+    let sequence = SequenceNumber(7);
+    let parts = snapshot_parts(&[("alpha", 1)]);
+    let mut forward = assemble_snapshot(sequence, &parts, &[0], Vec::new());
+    forward.resource_path_bindings = ["a", "b"]
+        .into_iter()
+        .map(|id| {
+            nimbus_core::ResourcePathBinding::new(
+                nimbus_core::DocumentLocator::new(
+                    TableName::new("alpha").expect("table should be valid"),
+                    nimbus_core::DocumentId::from_key(id).expect("document id should be valid"),
+                ),
+                nimbus_core::DocumentPath::from_segments(["alpha", id])
+                    .expect("resource path should be valid"),
+            )
+        })
+        .collect();
+    let mut reversed = forward.clone();
+    reversed.resource_path_bindings.reverse();
+
+    assert_eq!(
+        forward
+            .materialized_position()
+            .expect("forward position should compute"),
+        reversed
+            .materialized_position()
+            .expect("reversed position should compute"),
+        "resource binding vector order must not change the position"
+    );
+}
+
+#[test]
 fn logical_order_does_not_change_materialized_position() {
     let sequence = SequenceNumber(7);
     let parts = snapshot_parts(&[("alpha", 1), ("beta", 2), ("gamma", 3), ("delta", 4)]);
@@ -959,7 +1030,7 @@ fn pitr_json_decode_validates_current_archive() {
 #[test]
 fn pitr_json_decode_reports_future_archive_before_nested_position() {
     let future = br#"{
-        "version": 3,
+        "version": 4,
         "target_position": {
             "version": 1,
             "applied_sequence": 0,
@@ -971,8 +1042,8 @@ fn pitr_json_decode_reports_future_archive_before_nested_position() {
         .expect_err("future PITR JSON must fail before nested position decoding");
     let message = error.to_string();
     assert!(
-        message.contains("unsupported point-in-time restore archive version 3")
-            && message.contains("this binary supports 2"),
+        message.contains("unsupported point-in-time restore archive version 4")
+            && message.contains("this binary supports 3"),
         "future archive diagnostics must name the archive versions: {message}"
     );
     assert!(

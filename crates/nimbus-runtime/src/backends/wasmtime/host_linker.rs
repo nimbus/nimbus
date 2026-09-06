@@ -406,7 +406,6 @@ fn function_call_request(
             visibility,
             args,
             host_call_session_id: None,
-            auth: None,
         }),
     ))
 }

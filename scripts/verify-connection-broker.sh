@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Connection Broker (CB) plan verifier — the 14-condition progression gate
 # from the plan's completion contract (docs/private/plans/
-# connection-broker-plan.md §9). Conditions 1-3 are the CB0 scaffold (plan,
-# routing, landed regression coverage); conditions 4-14 are the CB1-CB10
-# bands and stay RED until their owning band lands — the expected reading at
-# CB0-complete is exactly `3 passed, 11 failed`. Green (exit 0) only at
-# 14/14. Conditions 1-2 need the local docs/private plan; on a checkout
-# without it they fail (this is a local control-plane gate, not a CI lane).
+# archive/connection-broker-plan.md §9). All CB0-CB10 bands are accounted for.
+# CB5 lands as a corrective erratum: observable runtime traffic uses the shared
+# PDP, and proxy-required isolate traffic is denied because no isolate PEP
+# transport is product-wired. Supervisor proxies enforce HTTP(S) authority
+# policy and do not claim runtime WebSocket protocol classification. The
+# required reading is `14 passed, 0 failed`. Conditions 1-2
+# need the local docs/private plan; on a checkout without it they fail (this is
+# a local control-plane gate, not a CI lane).
 
 set -u
 
@@ -128,15 +130,15 @@ else
   fail "host-heavy ws-server-listen canary incomplete" "${HOST_HEAVY_CANARY}"
 fi
 
-if contains_json_dependency "${NETWORKING_PACKAGE}" "ws" "8.17.1" \
-  && contains_json_dependency "${NETWORKING_LOCK}" "ws" "8.17.1"; then
+if contains_json_dependency "${NETWORKING_PACKAGE}" "ws" "8.21.3" \
+  && contains_json_dependency "${NETWORKING_LOCK}" "ws" "8.21.3"; then
   pass "networking canary package declares pinned ws dependency"
 else
   fail "networking canary package metadata missing pinned ws dependency" "${NETWORKING_PACKAGE} / ${NETWORKING_LOCK}"
 fi
 
-if contains_json_dependency "${HOST_HEAVY_PACKAGE}" "ws" "8.17.1" \
-  && contains_json_dependency "${HOST_HEAVY_LOCK}" "ws" "8.17.1"; then
+if contains_json_dependency "${HOST_HEAVY_PACKAGE}" "ws" "8.21.3" \
+  && contains_json_dependency "${HOST_HEAVY_LOCK}" "ws" "8.21.3"; then
   pass "host-heavy canary package declares pinned ws dependency"
 else
   fail "host-heavy canary package metadata missing pinned ws dependency" "${HOST_HEAVY_PACKAGE} / ${HOST_HEAVY_LOCK}"
@@ -208,30 +210,38 @@ else
   cond_fail 8 "CB4 pending: ingress WS-upgrade router not landed"
 fi
 
-# 9. CB5: outbound unified through PEP/PDP.
-if grep_any 'nimbus_proxy' crates/nimbus-services/Cargo.toml crates/nimbus-services/src \
-  && grep_any 'broker.*egress|EgressDecision' crates/nimbus-services/src; then
-  cond_pass 9 "broker outbound unified through nimbus-proxy PEP / nimbus-egress PDP (CB5)"
+# 9. CB5 corrective contract: one runtime PDP path, with proxy-required rules
+# denied until an actual isolate PEP transport exists. The old services-only
+# facade was deleted during the network-control-plane cutover because it was
+# not on the production request path.
+if grep_any 'fn authorize_runtime_egress' crates/nimbus-bridge/src/egress.rs \
+  && grep_any 'requires_proxy_enforcement' crates/nimbus-bridge/src/egress.rs \
+  && grep_any 'isolate.*no route to the nimbus-proxy PEP|isolate substrate cannot apply' \
+    crates/nimbus-runtime/src; then
+  cond_pass 9 "runtime egress uses one PDP and proxy-required isolate traffic fails closed (CB5 erratum)"
 else
-  cond_fail 9 "CB5 pending: outbound egress unification not landed"
+  cond_fail 9 "CB5 erratum pending: shared PDP / no-PEP fail-closed contract not proved"
 fi
 
-# 10. CB5: WebSocket-out on the same egress decision path as fetch.
-# Anchor on the real implementation: the ws-out authorizer that delegates to
-# the shared per-op PDP call (OutboundOp::WebSocket through authorize_outbound).
-if grep_any 'fn authorize_ws_out' crates/nimbus-services/src \
-  && grep_any 'OutboundOp::WebSocket' crates/nimbus-services/src; then
-  cond_pass 10 "WebSocket-out bound to the fetch egress decision path (CB5)"
+# 10. CB5: observable runtime WebSocket-out on the same decision path as fetch.
+# Anchor on the live runtime hook and the WebSocket URL-to-policy lowering.
+if grep_any 'EgressGatewayTransport::WebSocket' crates/nimbus-runtime/src/runtime/bootstrap/extensions.rs \
+  && grep_any 'from_websocket_url_with_context' crates/nimbus-runtime/src/egress.rs \
+  && grep_any 'isolate_websocket_consults_egress_gateway_before_transport' \
+    crates/nimbus-runtime/src/egress.rs; then
+  cond_pass 10 "runtime WebSocket-out bound to the fetch egress decision path (CB5)"
 else
-  cond_fail 10 "CB5 pending: WebSocket-out not bound to the egress decision path"
+  cond_fail 10 "CB5 pending: runtime WebSocket-out not bound to the egress decision path"
 fi
 
-# 11. CB7: cross-substrate egress parity test.
-if grep_any 'evil.example' crates/nimbus-services/src crates/nimbus-sandbox/src \
-  && grep_any 'parity' crates/nimbus-services/src crates/nimbus-sandbox/src; then
-  cond_pass 11 "cross-substrate egress parity test exists (CB7)"
+# 11. CB7: cross-substrate HTTP(S) authority-policy parity test. This does not
+# claim that the supervisor proxy can classify WebSocket inside opaque TLS.
+if grep_any 'evil.example' crates/nimbus-server/src/adapters/convex/host_bridge/egress_gateway.rs \
+  && grep_any 'cross_substrate_parity' \
+    crates/nimbus-server/src/adapters/convex/host_bridge/egress_gateway.rs; then
+  cond_pass 11 "cross-substrate HTTP(S) authority-policy parity test exists (CB7)"
 else
-  cond_fail 11 "CB7 pending: cross-substrate parity test not landed"
+  cond_fail 11 "CB7 pending: cross-substrate HTTP(S) parity test not landed"
 fi
 
 # 12. CB1/CB8: cluster placement seam (resolve-to-self ClusterTransport shape).
@@ -260,7 +270,7 @@ fi
 
 printf '\nSummary: %d passed, %d failed (of 14 plan conditions)\n' "${COND_PASS}" "${COND_FAIL}"
 if [ "${COND_FAIL}" -gt 0 ]; then
-  printf 'Progression gate: CB0-complete reads exactly 3 passed, 11 failed.\n'
+  printf 'Progression gate requires 14 passed, 0 failed.\n'
   exit 1
 fi
 exit 0

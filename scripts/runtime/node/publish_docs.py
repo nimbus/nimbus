@@ -428,8 +428,8 @@ def api_reference_lines(
             "## Evidence Links",
             "",
             "- [Generated evidence summary](../evidence/latest.md)",
-            "- [Architecture dashboard](../../../architecture/runtime/node-compat-evidence/latest/dashboard-summary.md)",
-            "- [FaaS compatibility profile](../../../architecture/runtime/node-faas-compatibility-profile.md)",
+            "- [Architecture dashboard](../../../compat/node-compat-evidence/latest/dashboard-summary.md)",
+            "- [FaaS compatibility profile](../../../compat/node-faas-compatibility-profile.md)",
         ]
     )
     return lines

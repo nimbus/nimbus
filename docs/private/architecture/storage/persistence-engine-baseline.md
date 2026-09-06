@@ -354,16 +354,17 @@ maintenance transaction. `retain-all` is an explicit operator profile.
 ### Tenant KV is a separate durability plane
 
 The NKV0 `TenantKvStore` tables do not participate in the document mutation or
-retention contract above. `Engine::tenant_kv_*` invokes the loaded redb store
-directly; standalone `nimbus kv` opens `RedbTenantKvStore` directly. The value
-and expiry index are atomic in one local redb write transaction, but the write
-has no committer lease, document commit sequence, or tenant event record.
+retention contract above. `Engine::tenant_kv_*` invokes the loaded embedded
+redb or SQLite store directly; standalone `nimbus kv` opens
+`RedbTenantKvStore` directly. A value, metadata, and expiry change are atomic
+in one local backend transaction, but the write has no committer lease,
+document commit sequence, or tenant event record.
 
-Document PITR, journal replay, changefeed, replication, and non-redb provider
+Document PITR, journal replay, changefeed, replication, and external-provider
 parity therefore exclude tenant-KV state today. The Engine process fence and
-redb transaction serialization protect local ownership and atomicity; they do
-not widen the recovery contract. NKV-DR owns future backup/PITR support, and
-NKV6 owns future replication and distributed ordering. See
+backend transaction serialization protect local ownership and atomicity; they
+do not widen the recovery contract. NKV-DR owns future backup/PITR support,
+and NKV6 owns future replication and distributed ordering. See
 `docs/private/operating/nimbus-kv.md`. Do not route this plane through the
 document committer without an explicit NKV owner decision.
 

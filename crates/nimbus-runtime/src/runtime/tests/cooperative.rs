@@ -29,14 +29,6 @@ pub(super) const WARM_POOL_TWO_CYCLE_CASE: IsolatedRuntimeTestCase = IsolatedRun
     "runtime::tests::cooperative::warm_pool_cooperative_async_host_two_cycles_subprocess",
 );
 
-pub(super) const FRESH_REALM_EARLY_FINISH_CASE: IsolatedRuntimeTestCase =
-    IsolatedRuntimeTestCase::new(
-        "runtime-cooperative-fresh-realm-early-finish",
-        "cooperative-context-recycle",
-        "warm context recycling destroys the fresh realm when a cooperative slot is finished early",
-        "runtime::tests::cooperative::warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_subprocess",
-    );
-
 pub(super) const CONCURRENT_DISPATCH_CASE: IsolatedRuntimeTestCase = IsolatedRuntimeTestCase::new(
     "runtime-cooperative-concurrent-dispatch",
     "cooperative-startup-snapshot-and-warm-pool",
@@ -1518,116 +1510,6 @@ export {};
     );
 }
 
-#[test]
-fn warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish() {
-    run_v8_sensitive_runtime_test_in_subprocess(FRESH_REALM_EARLY_FINISH_CASE);
-}
-
-#[test]
-#[ignore = "runs in a subprocess to isolate cooperative locker V8 state"]
-fn warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_subprocess() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime should build")
-        .block_on(
-            warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_inner(),
-        );
-}
-
-async fn warm_context_recycle_cooperative_slot_destroys_fresh_realm_on_early_finish_inner() {
-    let destroy_probe =
-        super::super::realm_lifecycle::test_probe::start_fresh_realm_destroy_probe();
-    let tempdir = tempdir().expect("tempdir should build");
-    let bundle_path = tempdir.path().join("bundle.mjs");
-    std::fs::write(
-        &bundle_path,
-        r#"
-globalThis.__nimbusInvoke = async function () {
-  return await new Promise(() => {});
-};
-
-export {};
-"#,
-    )
-    .expect("bundle should write");
-
-    let bundle = RuntimeBundle::new(&bundle_path);
-    let request = InvocationRequest {
-        kind: InvocationKind::Query,
-        function_name: "messages:pending".to_string(),
-        args: Value::Null,
-        page_size: None,
-        cursor: None,
-        auth: None,
-        services: Default::default(),
-    };
-    let mut limits = cooperative_context_recycle_runtime_test_limits();
-    limits.max_concurrent_runtime_instances = 1;
-    limits.worker_threads = 1;
-    let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_instance = NimbusRuntime::with_policy(
-        Arc::new(AsyncEchoHost),
-        policy,
-        crate::RuntimeEgressPosture::CoarsePermissions,
-    );
-    let mut v8_runtime_pool = V8WorkerRuntimePool::new();
-    let watchdog = WatchdogTimer::new();
-    let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
-    let mut permit =
-        SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
-    permit
-        .acquire_initial(std::time::Instant::now())
-        .await
-        .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
-
-    let slot = runtime_instance
-        .start_cooperative_locker_runtime_slot(
-            &mut v8_runtime_pool,
-            CooperativeRuntimeSlotStart {
-                invocation: RuntimeInvocationExecution {
-                    watchdog: watchdog.clone(),
-                    bundle,
-                    request: request.clone(),
-                    context: context.clone(),
-                    execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_instance.policy().as_ref(),
-                        &request,
-                        &context,
-                    ),
-                    external_cancellation: None,
-                    response_ready_tx: None,
-                    permit: permit.clone(),
-                },
-                activity_signal,
-            },
-        )
-        .await
-        .expect("fresh-realm cooperative slot should start");
-    assert_eq!(
-        destroy_probe.count(),
-        0,
-        "fresh realm should stay live while the cooperative slot owns the pending promise"
-    );
-
-    let (result, _returned_runtime) = slot
-        .finish_with_result_and_runtime(Err(NimbusRuntimeError::Cancelled))
-        .await;
-    assert!(
-        matches!(result, Err(NimbusRuntimeError::Cancelled)),
-        "early-finished slot should preserve the supplied cancellation error"
-    );
-    assert_eq!(
-        destroy_probe.count(),
-        1,
-        "early-finished cooperative slot should destroy the pending fresh realm"
-    );
-    let ready_jobs = permit.finish_invocation().await;
-    assert!(ready_jobs.is_empty());
-    watchdog.shutdown();
-}
-
 /// Exercises the fix for the cooperative worker loop greedy admission deadlock.
 ///
 /// Before the fix, `next_slot()` drained all pending jobs from the queue in a
@@ -1684,16 +1566,12 @@ export {};
     for &pool_kind in &[
         RuntimePoolKind::StartupSnapshotCache,
         RuntimePoolKind::WarmPool,
-        RuntimePoolKind::WarmContextRecycle,
     ] {
         let mut limits = match pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {
                 cooperative_startup_snapshot_runtime_test_limits()
             }
             RuntimePoolKind::WarmPool => cooperative_warm_pool_runtime_test_limits(),
-            RuntimePoolKind::WarmContextRecycle => {
-                cooperative_context_recycle_runtime_test_limits()
-            }
             RuntimePoolKind::BunJscTrustedRetained | RuntimePoolKind::BunJscFreshDiscard => {
                 unreachable!("test covers only V8/Deno pool kinds")
             }

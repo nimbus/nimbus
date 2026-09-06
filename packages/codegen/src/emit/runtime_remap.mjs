@@ -1,7 +1,7 @@
 //! Runtime-handler error remapping.
 //!
 //! Real Convex functions execute their *verbatim* original handler source via
-//! the Function constructor, with `return (<source>)(ctx, args, request);` as
+//! the Function constructor, with `return (<source>)(ctx, args);` as
 //! the body (see runtime_bundle_preamble.mjs). When such a handler throws, V8
 //! reports the frame inside that synthesized function — its line numbers are
 //! relative to that synthesized body, not the original module. This module turns
@@ -66,14 +66,18 @@ function nimbusRemapHandlerError(error, origin) {
 // rejections are remapped, while success values pass through untouched. Returns
 // whatever the handler returns (value or promise) so execution semantics are
 // preserved exactly.
-function nimbusWrapRuntimeInvoke(invoke, bindingValues, ctx, args, request, origin) {
+function nimbusWrapRuntimeInvoke(invoke, bindingValues, ctx, args, origin) {
   let result;
   try {
-    result = invoke(...bindingValues, ctx, args, request);
+    result = invoke(...bindingValues, ctx, args);
   } catch (error) {
     throw nimbusRemapHandlerError(error, origin);
   }
-  if (result !== null && typeof result === "object" && typeof result.then === "function") {
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    typeof result.then === "function"
+  ) {
     return result.then(undefined, (error) => {
       throw nimbusRemapHandlerError(error, origin);
     });

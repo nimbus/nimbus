@@ -92,7 +92,7 @@
       "verification": "source-occurrence",
       "category": "socket-bind",
       "path": "crates/nimbus-cli/src/dev/wire.rs",
-      "line": 333,
+      "line": 345,
       "symbol": "bind_and_retain_wire_listener",
       "authority_kinds": [
         "tcp-bind"
@@ -619,7 +619,7 @@
       "kind": "tcp-bind",
       "symbol": "bind_and_retain_wire_listener",
       "ordinal": 1,
-      "line": 333
+      "line": 345
     },
     {
       "site_id": "machine-api-unix-consumer",
@@ -963,7 +963,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "run_listener",
       "ordinal": 1,
-      "line": 234
+      "line": 252
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1630,6 +1630,12 @@
       "path_prefix": "crates/nimbus-testing/",
       "classification": "test-support-only",
       "allowed_shape": "Deterministic fixture listener; the structural scanner excludes the exact crate prefix and rejects any production source inclusion edge into it."
+    },
+    {
+      "mechanism": "test-support-crate",
+      "path_prefix": "crates/nimbus-process-harness/",
+      "classification": "test-support-only",
+      "allowed_shape": "Deterministic cross-process fixture coordination and port-window claims; the structural scanner excludes the exact crate prefix, while the aggregate verifier requires every consumer edge to remain an unconditional development dependency."
     }
   ],
   "summary": {

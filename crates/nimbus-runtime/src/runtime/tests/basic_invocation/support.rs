@@ -981,6 +981,9 @@ pub(super) fn assert_host_heavy_canary_result(
             if host_heavy_string(actual, "surface")? != "native_addon" {
                 return Err(format!("native_addon surface mismatch: {actual}"));
             }
+            if host_heavy_string(actual, "deniedCode")? != "ERR_DLOPEN_DISABLED" {
+                return Err(format!("native_addon denial code mismatch: {actual}"));
+            }
             assert_denial_contains_any(
                 actual,
                 bundle_fixture_name,

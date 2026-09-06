@@ -13,8 +13,8 @@ use nimbus_runtime::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationKind,
     InvocationRequest, NimbusRuntime, NimbusRuntimeError, Result, RuntimeExecutionModel,
     RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimeMetricsSnapshot,
-    RuntimeNodeFullRealmReusePolicy, RuntimeOwnerId, RuntimeOwnerLease, RuntimeOwnerLeaseIssuer,
-    RuntimePolicy, RuntimePoolKind, RuntimeRoutingAffinity,
+    RuntimeOwnerId, RuntimeOwnerLease, RuntimeOwnerLeaseIssuer, RuntimePolicy, RuntimePoolKind,
+    RuntimeRoutingAffinity,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -23,10 +23,10 @@ use tempfile::TempDir;
 #[path = "runtime_pool_modes/post_pir.rs"]
 mod runtime_pool_modes_post_pir;
 
-const PIR0_TRACE_SCHEMA: &str = "nimbus.profile_aware_isolate_runtime.pir0.trace.v1";
+const PIR0_TRACE_SCHEMA: &str = "nimbus.profile_aware_isolate_runtime.pir0.trace.v3";
 const PIR5_RETAINED_DENSITY_TRACE_SCHEMA: &str =
     "nimbus.profile_aware_isolate_runtime.pir5.retained_density.v1";
-const NFR6_TRACE_SCHEMA: &str = "nimbus.node_full_substrate_realm.nfr6.benchmark.v1";
+const NFR6_TRACE_SCHEMA: &str = "nimbus.runtime_pool_modes.node_full_selected.v3";
 const WASMTIME_V8_COMPARISON_TRACE_SCHEMA: &str = "nimbus.wasmtime_backend.w7.v8_comparison.v1";
 const PIR5_RETAINED_DENSITY_COUNT: usize = 4;
 const NFR6_TENANT_LABEL: &str = "tenant-a";
@@ -97,6 +97,22 @@ impl BenchmarkProfile {
             self,
             Self::Node20 | Self::Node22 | Self::Node24 | Self::Node26
         )
+    }
+}
+
+fn observed_v8_construction_mode(snapshot: &RuntimeMetricsSnapshot) -> &'static str {
+    match (
+        snapshot.v8_startup_snapshot_runtime_constructions > 0,
+        snapshot.v8_unsnapshotted_runtime_constructions > 0,
+    ) {
+        (true, false) => "startup_snapshot",
+        (false, true) => "unsnapshotted",
+        (false, false) => {
+            panic!("runtime benchmark trace requires one observed successful V8 construction mode")
+        }
+        (true, true) => panic!(
+            "runtime benchmark trace requires one construction mode, but observed both startup-snapshot and unsnapshotted runtimes"
+        ),
     }
 }
 
@@ -267,7 +283,6 @@ export {};
 enum PoolMode {
     StartupSnapshotCache,
     WarmPool,
-    WarmContextRecycle,
 }
 
 impl PoolMode {
@@ -275,7 +290,6 @@ impl PoolMode {
         match self {
             Self::StartupSnapshotCache => "startup_snapshot_cache",
             Self::WarmPool => "warm_pool",
-            Self::WarmContextRecycle => "warm_context_recycle",
         }
     }
 
@@ -283,7 +297,13 @@ impl PoolMode {
         match self {
             Self::StartupSnapshotCache => RuntimePoolKind::StartupSnapshotCache,
             Self::WarmPool => RuntimePoolKind::WarmPool,
-            Self::WarmContextRecycle => RuntimePoolKind::WarmContextRecycle,
+        }
+    }
+
+    fn benchmark_label(self, profile: BenchmarkProfile) -> &'static str {
+        match (self, profile.is_node_full()) {
+            (Self::StartupSnapshotCache, false) => "unsnapshotted_runtime_cache",
+            _ => self.label(),
         }
     }
 }
@@ -494,10 +514,6 @@ fn build_runtime_with_config(
     let mut limits = profile.limits();
     limits.execution_model = execution_model;
     limits.runtime_pool_kind = pool_mode.runtime_pool_kind();
-    if profile.is_node_full() && matches!(pool_mode, PoolMode::WarmContextRecycle) {
-        limits.node_full_realm_reuse_policy =
-            RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority;
-    }
     limits.routing_affinity = RuntimeRoutingAffinity::Tenant;
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
@@ -545,10 +561,7 @@ fn maybe_report_phase_metrics_once(
     eprintln!(
         concat!(
             "phase-metrics {} schema={}: module_load={:.3}ms evaluation={:.3}ms ",
-            "bundle_total={:.3}ms realm_create={:.3}ms ",
-            "realm_bootstrap_install={:.3}ms realm_bootstrap_finalize={:.3}ms ",
-            "realm_bootstrap_reset={:.3}ms realm_invoke_script={:.3}ms ",
-            "realm_promise_resolve={:.3}ms realm_deserialize={:.3}ms realm_destroy={:.3}ms ",
+            "bundle_total={:.3}ms ",
             "wasmtime_module_cache_hits={} wasmtime_module_cache_misses={} ",
             "wasmtime_compilation_time_ns={} wasmtime_fuel_consumed_total={} ",
             "wasmtime_store_pool_hits={} wasmtime_store_pool_misses={} ",
@@ -559,14 +572,6 @@ fn maybe_report_phase_metrics_once(
         per_invocation(snapshot.bundle_module_load_nanos_total),
         per_invocation(snapshot.bundle_evaluation_nanos_total),
         per_invocation(snapshot.bundle_load_nanos_total),
-        per_invocation(snapshot.fresh_realm_create_nanos_total),
-        per_invocation(snapshot.fresh_realm_bootstrap_install_nanos_total),
-        per_invocation(snapshot.fresh_realm_bootstrap_finalize_nanos_total),
-        per_invocation(snapshot.fresh_realm_bootstrap_reset_nanos_total),
-        per_invocation(snapshot.fresh_realm_invocation_script_nanos_total),
-        per_invocation(snapshot.fresh_realm_promise_resolve_nanos_total),
-        per_invocation(snapshot.fresh_realm_deserialization_nanos_total),
-        per_invocation(snapshot.fresh_realm_destroy_nanos_total),
         snapshot.wasmtime_module_cache_hits,
         snapshot.wasmtime_module_cache_misses,
         snapshot.wasmtime_module_compilation_nanos_total,
@@ -579,11 +584,16 @@ fn maybe_report_phase_metrics_once(
 #[derive(Serialize)]
 struct Pir0TraceRecord<'a> {
     schema: &'static str,
+    run_id: Option<String>,
     benchmark_group: &'a str,
     benchmark_id: &'a str,
     profile: &'a str,
     workload: &'a str,
     pool_kind: &'a str,
+    strategy: &'a str,
+    actual_v8_construction_mode: &'static str,
+    v8_startup_snapshot_runtime_constructions: u64,
+    v8_unsnapshotted_runtime_constructions: u64,
     execution_model: &'a str,
     tenant_count: usize,
     measured_iterations: u64,
@@ -593,22 +603,6 @@ struct Pir0TraceRecord<'a> {
     bundle_loads: u64,
     bundle_module_loads: u64,
     bundle_evaluations: u64,
-    fresh_realm_creates: u64,
-    fresh_realm_create_nanos_total: u64,
-    fresh_realm_bootstrap_installs: u64,
-    fresh_realm_bootstrap_install_nanos_total: u64,
-    fresh_realm_bootstrap_finalizes: u64,
-    fresh_realm_bootstrap_finalize_nanos_total: u64,
-    fresh_realm_bootstrap_resets: u64,
-    fresh_realm_bootstrap_reset_nanos_total: u64,
-    fresh_realm_invocation_scripts: u64,
-    fresh_realm_invocation_script_nanos_total: u64,
-    fresh_realm_promise_resolves: u64,
-    fresh_realm_promise_resolve_nanos_total: u64,
-    fresh_realm_deserializations: u64,
-    fresh_realm_deserialization_nanos_total: u64,
-    fresh_realm_destroys: u64,
-    fresh_realm_destroy_nanos_total: u64,
     runtime_pool_hits: u64,
     runtime_pool_misses: u64,
     warm_pool_hits: u64,
@@ -654,6 +648,10 @@ struct Nfr6TraceRecord<'a> {
     profile: &'a str,
     workload: &'a str,
     pool_kind: &'a str,
+    strategy: &'a str,
+    actual_v8_construction_mode: &'static str,
+    v8_startup_snapshot_runtime_constructions: u64,
+    v8_unsnapshotted_runtime_constructions: u64,
     substrate: &'static str,
     execution_model: &'static str,
     tenant_count: usize,
@@ -692,22 +690,6 @@ struct Nfr6TraceRecord<'a> {
     retained_runtime_pool_retirements: u64,
     queue_wait_nanos_total: u64,
     execution_nanos_total: u64,
-    fresh_realm_creates: u64,
-    fresh_realm_create_nanos_total: u64,
-    fresh_realm_bootstrap_installs: u64,
-    fresh_realm_bootstrap_install_nanos_total: u64,
-    fresh_realm_bootstrap_finalizes: u64,
-    fresh_realm_bootstrap_finalize_nanos_total: u64,
-    fresh_realm_bootstrap_resets: u64,
-    fresh_realm_bootstrap_reset_nanos_total: u64,
-    fresh_realm_invocation_scripts: u64,
-    fresh_realm_invocation_script_nanos_total: u64,
-    fresh_realm_promise_resolves: u64,
-    fresh_realm_promise_resolve_nanos_total: u64,
-    fresh_realm_deserializations: u64,
-    fresh_realm_deserialization_nanos_total: u64,
-    fresh_realm_destroys: u64,
-    fresh_realm_destroy_nanos_total: u64,
     host_pressure_decisions: u64,
     host_pressure_high_decisions: u64,
     host_pressure_critical_decisions: u64,
@@ -718,6 +700,11 @@ fn maybe_emit_pir0_trace_record(record: Pir0TraceRecord<'_>) {
     let Some(path) = std::env::var_os("NIMBUS_PIR0_TRACE_PATH") else {
         return;
     };
+    record
+        .run_id
+        .as_deref()
+        .filter(|run_id| !run_id.is_empty())
+        .expect("PIR0 trace emission requires NIMBUS_PIR0_TRACE_RUN_ID");
     static EMITTED_MAX_ITERS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
     let key = format!("{}/{}", record.benchmark_group, record.benchmark_id);
     let emitted = EMITTED_MAX_ITERS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -1040,7 +1027,7 @@ impl SequentialScenario {
                 assert_eq!(snapshot.warm_pool_hits, total_invocations - owner_count);
                 assert_eq!(snapshot.warm_pool_discard_unquiesced, 0);
             }
-            PoolMode::StartupSnapshotCache | PoolMode::WarmContextRecycle => {
+            PoolMode::StartupSnapshotCache => {
                 assert_eq!(snapshot.bundle_loads, total_invocations);
                 assert_eq!(snapshot.bundle_module_loads, total_invocations);
                 assert_eq!(snapshot.bundle_evaluations, total_invocations);
@@ -1057,30 +1044,13 @@ impl SequentialScenario {
                 assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
                 assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
             }
-            PoolMode::WarmContextRecycle => {
-                let owner_count = self.tenant_labels.len() as u64;
-                assert_eq!(snapshot.runtime_pool_misses, owner_count);
-                assert_eq!(
-                    snapshot.runtime_pool_hits,
-                    total_invocations.saturating_sub(owner_count)
-                );
-                assert_eq!(snapshot.warm_pool_misses, owner_count);
-                assert_eq!(
-                    snapshot.warm_pool_hits,
-                    total_invocations.saturating_sub(owner_count)
-                );
-                assert_eq!(snapshot.warm_pool_discard_unquiesced, 0);
-                assert_eq!(snapshot.retained_runtime_pool_entries, 1);
-                assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
-                assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
-            }
             PoolMode::WarmPool => {
                 // Already asserted above
             }
         }
         maybe_report_phase_metrics_once(
             self.scenario_label,
-            self.pool_mode.label(),
+            self.pool_mode.benchmark_label(self.profile),
             &snapshot,
             total_invocations,
         );
@@ -1089,15 +1059,21 @@ impl SequentialScenario {
             self.profile.label(),
             self.workload_label,
             self.scenario_label,
-            self.pool_mode.label()
+            self.pool_mode.benchmark_label(self.profile)
         );
         maybe_emit_pir0_trace_record(Pir0TraceRecord {
             schema: PIR0_TRACE_SCHEMA,
+            run_id: std::env::var("NIMBUS_PIR0_TRACE_RUN_ID").ok(),
             benchmark_group: self.benchmark_group,
             benchmark_id: &benchmark_id,
             profile: self.profile.label(),
             workload: self.workload_label,
             pool_kind: self.pool_mode.label(),
+            strategy: self.pool_mode.benchmark_label(self.profile),
+            actual_v8_construction_mode: observed_v8_construction_mode(&snapshot),
+            v8_startup_snapshot_runtime_constructions: snapshot
+                .v8_startup_snapshot_runtime_constructions,
+            v8_unsnapshotted_runtime_constructions: snapshot.v8_unsnapshotted_runtime_constructions,
             execution_model: execution_model_label(self.execution_model),
             tenant_count: self.tenant_labels.len(),
             measured_iterations,
@@ -1107,28 +1083,6 @@ impl SequentialScenario {
             bundle_loads: snapshot.bundle_loads,
             bundle_module_loads: snapshot.bundle_module_loads,
             bundle_evaluations: snapshot.bundle_evaluations,
-            fresh_realm_creates: snapshot.fresh_realm_creates,
-            fresh_realm_create_nanos_total: snapshot.fresh_realm_create_nanos_total,
-            fresh_realm_bootstrap_installs: snapshot.fresh_realm_bootstrap_installs,
-            fresh_realm_bootstrap_install_nanos_total: snapshot
-                .fresh_realm_bootstrap_install_nanos_total,
-            fresh_realm_bootstrap_finalizes: snapshot.fresh_realm_bootstrap_finalizes,
-            fresh_realm_bootstrap_finalize_nanos_total: snapshot
-                .fresh_realm_bootstrap_finalize_nanos_total,
-            fresh_realm_bootstrap_resets: snapshot.fresh_realm_bootstrap_resets,
-            fresh_realm_bootstrap_reset_nanos_total: snapshot
-                .fresh_realm_bootstrap_reset_nanos_total,
-            fresh_realm_invocation_scripts: snapshot.fresh_realm_invocation_scripts,
-            fresh_realm_invocation_script_nanos_total: snapshot
-                .fresh_realm_invocation_script_nanos_total,
-            fresh_realm_promise_resolves: snapshot.fresh_realm_promise_resolves,
-            fresh_realm_promise_resolve_nanos_total: snapshot
-                .fresh_realm_promise_resolve_nanos_total,
-            fresh_realm_deserializations: snapshot.fresh_realm_deserializations,
-            fresh_realm_deserialization_nanos_total: snapshot
-                .fresh_realm_deserialization_nanos_total,
-            fresh_realm_destroys: snapshot.fresh_realm_destroys,
-            fresh_realm_destroy_nanos_total: snapshot.fresh_realm_destroy_nanos_total,
             runtime_pool_hits: snapshot.runtime_pool_hits,
             runtime_pool_misses: snapshot.runtime_pool_misses,
             warm_pool_hits: snapshot.warm_pool_hits,
@@ -1358,7 +1312,7 @@ impl Nfr6NodeFullScenario {
                 assert_eq!(snapshot.warm_pool_hits, total_invocations - 1);
                 assert_eq!(snapshot.warm_pool_discard_unquiesced, 0);
             }
-            PoolMode::StartupSnapshotCache | PoolMode::WarmContextRecycle => {
+            PoolMode::StartupSnapshotCache => {
                 assert_eq!(snapshot.bundle_loads, total_invocations);
                 assert_eq!(snapshot.bundle_module_loads, total_invocations);
                 assert_eq!(snapshot.bundle_evaluations, total_invocations);
@@ -1376,19 +1330,6 @@ impl Nfr6NodeFullScenario {
                 assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
             }
             PoolMode::WarmPool => {}
-            PoolMode::WarmContextRecycle => {
-                assert_eq!(snapshot.runtime_pool_misses, 1);
-                assert_eq!(
-                    snapshot.runtime_pool_hits,
-                    total_invocations.saturating_sub(1)
-                );
-                assert_eq!(snapshot.warm_pool_misses, 1);
-                assert_eq!(snapshot.warm_pool_hits, total_invocations.saturating_sub(1));
-                assert_eq!(snapshot.warm_pool_discard_unquiesced, 0);
-                assert_eq!(snapshot.retained_runtime_pool_entries, 1);
-                assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
-                assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
-            }
         }
     }
 
@@ -1421,16 +1362,21 @@ impl Nfr6NodeFullScenario {
             self.profile.label(),
             self.workload.label(),
             execution_model_label(RuntimeExecutionModel::CooperativeLocker),
-            self.pool_mode.label()
+            self.pool_mode.benchmark_label(self.profile)
         );
         maybe_emit_nfr6_trace_record(Nfr6TraceRecord {
             schema: NFR6_TRACE_SCHEMA,
-            benchmark_group: "runtime_pool_modes_nfr6_node_full_realm",
+            benchmark_group: "runtime_pool_modes_node_full_selected",
             benchmark_id: &benchmark_id,
             profile: self.profile.label(),
             workload: self.workload.label(),
             pool_kind: self.pool_mode.label(),
-            substrate: "node_full_realm_lease",
+            strategy: self.pool_mode.benchmark_label(self.profile),
+            actual_v8_construction_mode: observed_v8_construction_mode(&snapshot),
+            v8_startup_snapshot_runtime_constructions: snapshot
+                .v8_startup_snapshot_runtime_constructions,
+            v8_unsnapshotted_runtime_constructions: snapshot.v8_unsnapshotted_runtime_constructions,
+            substrate: "node_full_startup_or_exact_warm_pool",
             execution_model: execution_model_label(RuntimeExecutionModel::CooperativeLocker),
             tenant_count: 1,
             measured_iterations,
@@ -1468,28 +1414,6 @@ impl Nfr6NodeFullScenario {
             retained_runtime_pool_retirements: snapshot.retained_runtime_pool_retirements,
             queue_wait_nanos_total: snapshot.queue_wait_nanos_total,
             execution_nanos_total: snapshot.execution_nanos_total,
-            fresh_realm_creates: snapshot.fresh_realm_creates,
-            fresh_realm_create_nanos_total: snapshot.fresh_realm_create_nanos_total,
-            fresh_realm_bootstrap_installs: snapshot.fresh_realm_bootstrap_installs,
-            fresh_realm_bootstrap_install_nanos_total: snapshot
-                .fresh_realm_bootstrap_install_nanos_total,
-            fresh_realm_bootstrap_finalizes: snapshot.fresh_realm_bootstrap_finalizes,
-            fresh_realm_bootstrap_finalize_nanos_total: snapshot
-                .fresh_realm_bootstrap_finalize_nanos_total,
-            fresh_realm_bootstrap_resets: snapshot.fresh_realm_bootstrap_resets,
-            fresh_realm_bootstrap_reset_nanos_total: snapshot
-                .fresh_realm_bootstrap_reset_nanos_total,
-            fresh_realm_invocation_scripts: snapshot.fresh_realm_invocation_scripts,
-            fresh_realm_invocation_script_nanos_total: snapshot
-                .fresh_realm_invocation_script_nanos_total,
-            fresh_realm_promise_resolves: snapshot.fresh_realm_promise_resolves,
-            fresh_realm_promise_resolve_nanos_total: snapshot
-                .fresh_realm_promise_resolve_nanos_total,
-            fresh_realm_deserializations: snapshot.fresh_realm_deserializations,
-            fresh_realm_deserialization_nanos_total: snapshot
-                .fresh_realm_deserialization_nanos_total,
-            fresh_realm_destroys: snapshot.fresh_realm_destroys,
-            fresh_realm_destroy_nanos_total: snapshot.fresh_realm_destroy_nanos_total,
             host_pressure_decisions: snapshot.host_pressure.decisions,
             host_pressure_high_decisions: snapshot.host_pressure.high_decisions,
             host_pressure_critical_decisions: snapshot.host_pressure.critical_decisions,
@@ -1707,13 +1631,10 @@ export {};
             PoolMode::WarmPool => {
                 // Warm pool metrics are validated at the top-level match
             }
-            PoolMode::WarmContextRecycle => {
-                // Not used by the async-host matrix yet.
-            }
         }
         maybe_report_phase_metrics_once(
             self.scenario_kind.label(),
-            self.pool_mode.label(),
+            self.pool_mode.benchmark_label(self.profile),
             &snapshot,
             total_invocations,
         );
@@ -1722,15 +1643,21 @@ export {};
             self.profile.label(),
             self.synthetic_await_ms,
             self.scenario_kind.label(),
-            self.pool_mode.label()
+            self.pool_mode.benchmark_label(self.profile)
         );
         maybe_emit_pir0_trace_record(Pir0TraceRecord {
             schema: PIR0_TRACE_SCHEMA,
+            run_id: std::env::var("NIMBUS_PIR0_TRACE_RUN_ID").ok(),
             benchmark_group: self.benchmark_group,
             benchmark_id: &benchmark_id,
             profile: self.profile.label(),
             workload: "await_heavy_synthetic_host_call",
             pool_kind: self.pool_mode.label(),
+            strategy: self.pool_mode.benchmark_label(self.profile),
+            actual_v8_construction_mode: observed_v8_construction_mode(&snapshot),
+            v8_startup_snapshot_runtime_constructions: snapshot
+                .v8_startup_snapshot_runtime_constructions,
+            v8_unsnapshotted_runtime_constructions: snapshot.v8_unsnapshotted_runtime_constructions,
             execution_model: execution_model_label(self.scenario_kind.execution_model()),
             tenant_count: self.tenant_labels.len(),
             measured_iterations: measured_batches,
@@ -1740,28 +1667,6 @@ export {};
             bundle_loads: snapshot.bundle_loads,
             bundle_module_loads: snapshot.bundle_module_loads,
             bundle_evaluations: snapshot.bundle_evaluations,
-            fresh_realm_creates: snapshot.fresh_realm_creates,
-            fresh_realm_create_nanos_total: snapshot.fresh_realm_create_nanos_total,
-            fresh_realm_bootstrap_installs: snapshot.fresh_realm_bootstrap_installs,
-            fresh_realm_bootstrap_install_nanos_total: snapshot
-                .fresh_realm_bootstrap_install_nanos_total,
-            fresh_realm_bootstrap_finalizes: snapshot.fresh_realm_bootstrap_finalizes,
-            fresh_realm_bootstrap_finalize_nanos_total: snapshot
-                .fresh_realm_bootstrap_finalize_nanos_total,
-            fresh_realm_bootstrap_resets: snapshot.fresh_realm_bootstrap_resets,
-            fresh_realm_bootstrap_reset_nanos_total: snapshot
-                .fresh_realm_bootstrap_reset_nanos_total,
-            fresh_realm_invocation_scripts: snapshot.fresh_realm_invocation_scripts,
-            fresh_realm_invocation_script_nanos_total: snapshot
-                .fresh_realm_invocation_script_nanos_total,
-            fresh_realm_promise_resolves: snapshot.fresh_realm_promise_resolves,
-            fresh_realm_promise_resolve_nanos_total: snapshot
-                .fresh_realm_promise_resolve_nanos_total,
-            fresh_realm_deserializations: snapshot.fresh_realm_deserializations,
-            fresh_realm_deserialization_nanos_total: snapshot
-                .fresh_realm_deserialization_nanos_total,
-            fresh_realm_destroys: snapshot.fresh_realm_destroys,
-            fresh_realm_destroy_nanos_total: snapshot.fresh_realm_destroy_nanos_total,
             runtime_pool_hits: snapshot.runtime_pool_hits,
             runtime_pool_misses: snapshot.runtime_pool_misses,
             warm_pool_hits: snapshot.warm_pool_hits,
@@ -1794,7 +1699,10 @@ fn pure_js_pool_modes_benchmark(c: &mut Criterion) {
         };
         for &pool_mode in pool_modes {
             group.bench_with_input(
-                BenchmarkId::new(scenario_kind.label(), pool_mode.label()),
+                BenchmarkId::new(
+                    scenario_kind.label(),
+                    pool_mode.benchmark_label(BenchmarkProfile::WebStandard),
+                ),
                 &(scenario_kind, pool_mode),
                 |b, &(scenario_kind, pool_mode)| {
                     b.iter_custom(|iters| {
@@ -1852,7 +1760,7 @@ fn pir0_profile_matrix_benchmark(c: &mut Criterion) {
                             workload.label(),
                             scenario_label
                         ),
-                        pool_mode.label(),
+                        pool_mode.benchmark_label(profile),
                     );
                     group.bench_with_input(
                         benchmark_id,
@@ -1924,7 +1832,7 @@ fn pir0_synthetic_await_matrix_benchmark(c: &mut Criterion) {
                             synthetic_await.as_millis(),
                             scenario_kind.label()
                         ),
-                        pool_mode.label(),
+                        pool_mode.benchmark_label(profile),
                     );
                     group.bench_with_input(
                         benchmark_id,
@@ -1958,19 +1866,15 @@ fn pir0_synthetic_await_matrix_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-fn pir2_context_recycle_impact_benchmark(c: &mut Criterion) {
-    let mut group = c.benchmark_group("runtime_pool_modes_pir2_context_recycle_impact");
+fn selected_web_pool_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime_pool_modes_web_selected");
     group.throughput(Throughput::Elements(1));
 
     for workload in [
         PureJsWorkloadKind::HostlessTrivial,
         PureJsWorkloadKind::SetupHeavy,
     ] {
-        for pool_mode in [
-            PoolMode::StartupSnapshotCache,
-            PoolMode::WarmPool,
-            PoolMode::WarmContextRecycle,
-        ] {
+        for pool_mode in [PoolMode::StartupSnapshotCache, PoolMode::WarmPool] {
             let benchmark_id = BenchmarkId::new(
                 format!(
                     "{}/{}/{}",
@@ -1978,7 +1882,7 @@ fn pir2_context_recycle_impact_benchmark(c: &mut Criterion) {
                     workload.label(),
                     execution_model_label(RuntimeExecutionModel::CooperativeLocker)
                 ),
-                pool_mode.label(),
+                pool_mode.benchmark_label(BenchmarkProfile::WebStandard),
             );
             group.bench_with_input(
                 benchmark_id,
@@ -1990,7 +1894,7 @@ fn pir2_context_recycle_impact_benchmark(c: &mut Criterion) {
                             pool_mode,
                             RuntimeExecutionModel::CooperativeLocker,
                             &["tenant-a"],
-                            "runtime_pool_modes_pir2_context_recycle_impact",
+                            "runtime_pool_modes_web_selected",
                             execution_model_label(RuntimeExecutionModel::CooperativeLocker),
                             workload,
                         );
@@ -2101,8 +2005,8 @@ fn pir5_retained_density_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-fn nfr6_node_full_realm_benchmark(c: &mut Criterion) {
-    let mut group = c.benchmark_group("runtime_pool_modes_nfr6_node_full_realm");
+fn selected_node_pool_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime_pool_modes_node_full_selected");
     group.throughput(Throughput::Elements(1));
 
     for profile in [
@@ -2122,11 +2026,7 @@ fn nfr6_node_full_realm_benchmark(c: &mut Criterion) {
             if !include_nfr6_workload(workload) {
                 continue;
             }
-            for pool_mode in [
-                PoolMode::StartupSnapshotCache,
-                PoolMode::WarmPool,
-                PoolMode::WarmContextRecycle,
-            ] {
+            for pool_mode in [PoolMode::StartupSnapshotCache, PoolMode::WarmPool] {
                 if !include_nfr6_pool_mode(pool_mode) {
                     continue;
                 }
@@ -2137,7 +2037,7 @@ fn nfr6_node_full_realm_benchmark(c: &mut Criterion) {
                         workload.label(),
                         execution_model_label(RuntimeExecutionModel::CooperativeLocker)
                     ),
-                    pool_mode.label(),
+                    pool_mode.benchmark_label(profile),
                 );
                 group.bench_with_input(
                     benchmark_id,
@@ -2206,7 +2106,10 @@ fn async_host_batch_benchmark(c: &mut Criterion) {
         };
         for &pool_mode in pool_modes {
             group.bench_with_input(
-                BenchmarkId::new(scenario_kind.label(), pool_mode.label()),
+                BenchmarkId::new(
+                    scenario_kind.label(),
+                    pool_mode.benchmark_label(BenchmarkProfile::WebStandard),
+                ),
                 &(scenario_kind, pool_mode),
                 |b, &(scenario_kind, pool_mode)| {
                     b.iter_custom(|iters| {
@@ -2342,10 +2245,10 @@ criterion_group!(
     async_host_batch_benchmark,
     pir0_profile_matrix_benchmark,
     pir0_synthetic_await_matrix_benchmark,
-    pir2_context_recycle_impact_benchmark,
+    selected_web_pool_benchmark,
     pir6_code_cache_impact_benchmark,
     pir5_retained_density_benchmark,
-    nfr6_node_full_realm_benchmark,
+    selected_node_pool_benchmark,
     runtime_owner_partition_benchmark,
     runtime_pool_modes_post_pir::post_pir_optimization_benchmark
 );

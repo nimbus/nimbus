@@ -388,13 +388,6 @@ pub enum RuntimePoolKind {
     /// Requires `CooperativeLocker` execution model. Fails fast with
     /// `RunToCompletion`.
     WarmPool,
-    /// V8/Deno: retain the worker-local JsRuntime/isolate, but create a fresh
-    /// realm and module map for every invocation.
-    ///
-    /// This is the PIR2 context-recycling pool shape. Node targets require the
-    /// explicit `SameOwnerExactAuthority` proof axis and remain non-default
-    /// after the NFR6 benchmark rejected adoption for this plan.
-    WarmContextRecycle,
     /// Bun/JSC: future trusted generated-wrapper pool shape. Retains VMs only
     /// for host-authored generated wrappers, never for untrusted tenants.
     ///
@@ -414,14 +407,6 @@ pub enum RuntimePoolKind {
     /// Wasmtime: worker-local retained Store pool. W6 owns the concrete
     /// lifecycle; W3 rejects this pool until that phase lands.
     RetainedStorePool,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeNodeFullRealmReusePolicy {
-    #[default]
-    Unproven,
-    SameOwnerExactAuthority,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
@@ -496,27 +481,11 @@ pub(super) fn validate_backend_policy_axes(limits: &RuntimeLimits) {
             }
             if !matches!(
                 limits.runtime_pool_kind,
-                RuntimePoolKind::StartupSnapshotCache
-                    | RuntimePoolKind::WarmPool
-                    | RuntimePoolKind::WarmContextRecycle
+                RuntimePoolKind::StartupSnapshotCache | RuntimePoolKind::WarmPool
             ) {
                 panic!(
                     "V8 runtime backend requires a V8/Deno pool kind, got {:?}",
                     limits.runtime_pool_kind
-                );
-            }
-            if matches!(
-                limits.runtime_pool_kind,
-                RuntimePoolKind::WarmContextRecycle
-            ) && limits.compatibility_target.is_node()
-                && !matches!(
-                    limits.node_full_realm_reuse_policy,
-                    RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority
-                )
-            {
-                panic!(
-                    "V8 Node warm context recycling requires same-owner exact-authority realm reuse proof, got {:?}",
-                    limits.node_full_realm_reuse_policy
                 );
             }
             if matches!(

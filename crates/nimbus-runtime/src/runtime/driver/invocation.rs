@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::backends::v8::embedder::JsRuntime;
 use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
@@ -13,19 +13,13 @@ use crate::watchdog::WatchdogTimer;
 
 use super::super::bootstrap::{RuntimeCancellationState, take_runtime_wait_until_pending};
 use super::super::classify::{classify_runtime_error, classify_wait_until_drain_error};
-use super::super::realm_lease::RuntimeRealmLeaseCondemnationReason;
-use super::super::realm_lifecycle::destroy_fresh_realm;
-use super::super::{
-    FreshRealmInvocationResponse, FreshRealmInvocationTrace, NimbusRuntime,
-    RuntimeInvocationExecution, RuntimeInvocationTimeoutController,
-};
+use super::super::{NimbusRuntime, RuntimeInvocationExecution, RuntimeInvocationTimeoutController};
 
 pub(crate) struct RuntimeInvocationDriver {
     pub(crate) runtime: JsRuntime,
     pub(crate) warm_reuse_count: usize,
     pub(crate) construction_mode: V8RuntimeConstructionMode,
     pub(crate) lifecycle: crate::backends::v8::RuntimeReuseLifecycle,
-    pub(crate) realm_lease_controller: crate::runtime::realm_lease::RuntimeRealmLeaseController,
     pub(crate) owner_lease: Option<crate::RuntimeOwnerLease>,
     policy: Arc<RuntimePolicy>,
     permit: SharedInvocationPermit,
@@ -132,48 +126,6 @@ impl RuntimeInvocationDriver {
         )
     }
 
-    pub(crate) fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
-        self.policy
-            .metrics()
-            .record_fresh_realm_promise_resolve(duration);
-    }
-
-    pub(crate) fn record_fresh_realm_deserialization(&self, duration: Duration) {
-        self.policy
-            .metrics()
-            .record_fresh_realm_deserialization(duration);
-    }
-
-    pub(crate) fn record_fresh_realm_destroy(&self, duration: Duration) {
-        self.policy.metrics().record_fresh_realm_destroy(duration);
-    }
-
-    pub(crate) fn realm_lease_condemnation_reason(&self) -> RuntimeRealmLeaseCondemnationReason {
-        realm_lease_condemnation_reason_from_flags(
-            &self.timeout_triggered,
-            &self.system_timeout_triggered,
-            &self.heap_limit_triggered,
-            &self.external_cancellation_triggered,
-        )
-    }
-
-    pub(crate) fn realm_lease_condemnation_reason_classifier(
-        &self,
-    ) -> impl Fn() -> RuntimeRealmLeaseCondemnationReason + 'static {
-        let timeout_triggered = self.timeout_triggered.clone();
-        let system_timeout_triggered = self.system_timeout_triggered.clone();
-        let heap_limit_triggered = self.heap_limit_triggered.clone();
-        let external_cancellation_triggered = self.external_cancellation_triggered.clone();
-        move || {
-            realm_lease_condemnation_reason_from_flags(
-                &timeout_triggered,
-                &system_timeout_triggered,
-                &heap_limit_triggered,
-                &external_cancellation_triggered,
-            )
-        }
-    }
-
     pub(crate) async fn finalize_with_runtime(
         mut self,
         result: Result<serde_json::Value>,
@@ -225,7 +177,6 @@ impl RuntimeInvocationDriver {
                 warm_reuse_count: self.warm_reuse_count,
                 construction_mode: self.construction_mode,
                 lifecycle: self.lifecycle,
-                realm_lease_controller: self.realm_lease_controller,
                 owner_lease: self.owner_lease,
             })
         } else {
@@ -309,88 +260,11 @@ impl NimbusRuntime {
                     .clone()
             };
             let external_cancellation_triggered = driver.external_cancellation_triggered.clone();
-            let context_recycling = matches!(
-                self.policy.limits().runtime_pool_kind,
-                crate::limits::RuntimePoolKind::WarmContextRecycle,
-            );
             let is_warm_hit = matches!(
                 self.policy.limits().runtime_pool_kind,
                 crate::limits::RuntimePoolKind::WarmPool,
             ) && driver.warm_reuse_count > 0;
             let invoke = async {
-                if context_recycling {
-                    let lease_failure_reason = driver.realm_lease_condemnation_reason_classifier();
-                    let trace = FreshRealmInvocationTrace {
-                        bundle: &bundle,
-                        request: &request,
-                        construction_mode: driver.construction_mode,
-                        context: Some(&context),
-                    };
-                    let (value, realm, mut realm_lease) = self
-                        .start_fresh_realm_bundle_invocation_with_lease_and_reason_trace(
-                            &driver.realm_lease_controller,
-                            &mut driver.runtime,
-                            trace,
-                            lease_failure_reason,
-                        )
-                        .await?;
-                    let response = self
-                        .resolve_fresh_realm_invocation_response_with_lease_and_trace(
-                            &mut driver.runtime,
-                            FreshRealmInvocationResponse {
-                                realm: &realm,
-                                value,
-                                trace,
-                            },
-                            &mut realm_lease,
-                        )
-                        .await;
-                    let result = match response {
-                        Ok(response) => {
-                            if let Some(response_ready_tx) = response_ready_tx.take() {
-                                let _ = response_ready_tx.send(response.clone());
-                            }
-                            if take_runtime_wait_until_pending(&mut driver.runtime) {
-                                driver.begin_wait_until_phase().await?;
-                                let drain = self
-                                    .drain_wait_until_with_trace(
-                                        &mut driver.runtime,
-                                        Some(&realm),
-                                        Some(&bundle),
-                                        &request,
-                                        driver.construction_mode,
-                                        Some(&context),
-                                    )
-                                    .await;
-                                driver
-                                    .classify_wait_until_drain_result(drain)
-                                    .map(|()| response)
-                            } else {
-                                Ok(response)
-                            }
-                        }
-                        Err(error) => Err(error),
-                    };
-                    let destroy_started_at = std::time::Instant::now();
-                    destroy_fresh_realm(&mut driver.runtime, realm);
-                    driver.record_fresh_realm_destroy(destroy_started_at.elapsed());
-                    return match result {
-                        Ok(response) => {
-                            self.return_clean_fresh_realm_lease(
-                                &mut driver.runtime,
-                                &mut realm_lease,
-                            )?;
-                            Ok(response)
-                        }
-                        Err(error) => {
-                            self.condemn_fresh_realm_lease_with_reason(
-                                &mut realm_lease,
-                                driver.realm_lease_condemnation_reason(),
-                            );
-                            Err(error)
-                        }
-                    };
-                }
                 if !is_warm_hit {
                     self.load_bundle_with_trace(
                         &mut driver.runtime,
@@ -418,7 +292,6 @@ impl NimbusRuntime {
                     let drain = self
                         .drain_wait_until_with_trace(
                             &mut driver.runtime,
-                            None,
                             Some(&bundle),
                             &request,
                             driver.construction_mode,
@@ -452,8 +325,7 @@ impl NimbusRuntime {
         let (result, reusable_runtime) = driver.finalize_with_runtime(result).await;
         if let (Some(pool), Some(mut runtime)) = (v8_runtime_pool, reusable_runtime) {
             match self.policy.limits().runtime_pool_kind {
-                crate::limits::RuntimePoolKind::WarmPool
-                | crate::limits::RuntimePoolKind::WarmContextRecycle => {
+                crate::limits::RuntimePoolKind::WarmPool => {
                     runtime.warm_reuse_count = runtime.warm_reuse_count.saturating_add(1);
                 }
                 crate::limits::RuntimePoolKind::StartupSnapshotCache
@@ -486,7 +358,6 @@ impl NimbusRuntime {
             warm_reuse_count,
             construction_mode,
             lifecycle,
-            realm_lease_controller,
             owner_lease,
         } = runtime;
         let timeout = self.policy.limits().execution_timeout;
@@ -612,7 +483,6 @@ impl NimbusRuntime {
             warm_reuse_count,
             construction_mode,
             lifecycle,
-            realm_lease_controller,
             policy: self.policy.clone(),
             permit,
             watchdog,
@@ -628,23 +498,6 @@ impl NimbusRuntime {
             owner_lease,
         })
     }
-}
-
-fn realm_lease_condemnation_reason_from_flags(
-    timeout_triggered: &AtomicBool,
-    system_timeout_triggered: &AtomicBool,
-    heap_limit_triggered: &AtomicBool,
-    external_cancellation_triggered: &AtomicBool,
-) -> RuntimeRealmLeaseCondemnationReason {
-    if timeout_triggered.load(Ordering::SeqCst) || system_timeout_triggered.load(Ordering::SeqCst) {
-        return RuntimeRealmLeaseCondemnationReason::TimedOut;
-    }
-    if heap_limit_triggered.load(Ordering::SeqCst)
-        || external_cancellation_triggered.load(Ordering::SeqCst)
-    {
-        return RuntimeRealmLeaseCondemnationReason::ExternalPressure;
-    }
-    RuntimeRealmLeaseCondemnationReason::Dirty
 }
 
 fn wait_until_idle_pending_error(error: &NimbusRuntimeError) -> bool {

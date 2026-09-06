@@ -9,7 +9,7 @@ git-fetch-with-cli = true
 [env]
 # Fork release tags keep upstream crate versions intact while selecting the
 # Nimbus prebuilt asset line explicitly.
-RUSTY_V8_VERSION = "149.4.0-nimbus.10"
+RUSTY_V8_VERSION = "150.4.0-nimbus.1"
 # Match the Node sqlite capability profile on top of the bundled SQLCipher
 # lane so `node:sqlite` exposes the same built-in SQL function families that
 # the upstream Node LTS fixtures validate.

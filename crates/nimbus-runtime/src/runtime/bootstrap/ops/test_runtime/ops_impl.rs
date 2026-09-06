@@ -116,11 +116,10 @@ pub(in super::super) fn op_nimbus_runtime_test_force_gc(
     // The bounded loop handles cascades: one full GC can free an object whose
     // finalization frees another (e.g. a WeakMap value reachable only through a
     // now-dead key), so repeat until a pass collects and runs nothing new.
-    let isolate_key = deno_core::isolate_ptr_to_key(unsafe { scope.as_raw_isolate_ptr() });
     for _ in 0..8 {
         scope.clear_kept_objects();
         scope.low_memory_notification();
-        let ran_tasks = deno_core::run_foreground_tasks(isolate_key);
+        let ran_tasks = deno_core::run_foreground_tasks(scope);
         // Drain any microtasks the cleanups scheduled (e.g. the deferred-destroy
         // hatch). V8 makes this a no-op when a checkpoint is already running, so
         // it is safe even when gc() is called from inside an await chain.

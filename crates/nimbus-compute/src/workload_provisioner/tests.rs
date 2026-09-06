@@ -17,7 +17,7 @@ use nimbus_tenant::{
     WorkloadAttributes, WorkloadLocation,
 };
 use nimbus_workloads::{
-    WorkloadProvisionCommandMode, WorkloadProvisionInspectionResult,
+    WorkloadOwnerEvidenceDigest, WorkloadProvisionCommandMode, WorkloadProvisionInspectionResult,
     WorkloadProvisionSourceEvidence, WorkloadProvisionSourceIdentity, WorkloadSagaCommit,
     WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaPage, WorkloadSagaPageRequest,
     WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
@@ -84,6 +84,7 @@ struct DurableStore {
     record: Mutex<Option<WorkloadSagaRecord>>,
     loads: AtomicUsize,
     compare_and_swaps: AtomicUsize,
+    ambiguous_before_apply_at: AtomicUsize,
     pause_after_first_submission: AtomicBool,
     first_submission_applied: Semaphore,
     release_first_submission: Semaphore,
@@ -95,6 +96,7 @@ impl Default for DurableStore {
             record: Mutex::new(None),
             loads: AtomicUsize::new(0),
             compare_and_swaps: AtomicUsize::new(0),
+            ambiguous_before_apply_at: AtomicUsize::new(0),
             pause_after_first_submission: AtomicBool::new(false),
             first_submission_applied: Semaphore::new(0),
             release_first_submission: Semaphore::new(0),
@@ -106,6 +108,14 @@ impl DurableStore {
     fn pausing() -> Arc<Self> {
         Arc::new(Self {
             pause_after_first_submission: AtomicBool::new(true),
+            ..Self::default()
+        })
+    }
+
+    fn ambiguous_before_apply_at(call: usize) -> Arc<Self> {
+        assert!(call > 0, "the injected CAS call must be one-based");
+        Arc::new(Self {
+            ambiguous_before_apply_at: AtomicUsize::new(call),
             ..Self::default()
         })
     }
@@ -143,7 +153,10 @@ impl WorkloadSagaStore for DurableStore {
         next: WorkloadSagaRecord,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaCommit> {
         Box::pin(async move {
-            self.compare_and_swaps.fetch_add(1, Ordering::AcqRel);
+            let call = self.compare_and_swaps.fetch_add(1, Ordering::AcqRel) + 1;
+            if self.ambiguous_before_apply_at.load(Ordering::Acquire) == call {
+                return Err(WorkloadSagaStoreError::Ambiguous);
+            }
             let first_submission = {
                 let mut current = self
                     .record
@@ -217,9 +230,17 @@ struct RecordingProvider {
     >,
     execution_observations: AtomicUsize,
     ingress_observations: AtomicUsize,
+    readiness_waits_remaining: AtomicUsize,
 }
 
 impl RecordingProvider {
+    fn with_readiness_waits(count: usize) -> Arc<Self> {
+        Arc::new(Self {
+            readiness_waits_remaining: AtomicUsize::new(count),
+            ..Self::default()
+        })
+    }
+
     fn outcome(
         &self,
         command: &ConfirmedWorkloadProvisionCommand,
@@ -228,6 +249,23 @@ impl RecordingProvider {
             .lock()
             .expect("provider call lock should not be poisoned")
             .push((command.step(), command.mode()));
+        if command.step() == nimbus_workloads::WorkloadProvisionStep::InspectWorkloadReadiness
+            && self
+                .readiness_waits_remaining
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok()
+        {
+            return WorkloadProvisionInspectionResult::InProgress {
+                attempt_id: command.attempt_id().clone(),
+                dispatch_epoch: command.dispatch_epoch(),
+                provider_target: command.provider_target().clone(),
+                evidence: WorkloadOwnerEvidenceDigest::sha256(
+                    "fixture workload readiness remains in progress",
+                ),
+            };
+        }
         WorkloadProvisionInspectionResult::Succeeded {
             attempt_id: command.attempt_id().clone(),
             dispatch_epoch: command.dispatch_epoch(),
@@ -811,6 +849,215 @@ async fn concurrent_exact_callers_share_one_tracked_run_and_provider_effect_per_
             1
         );
     }
+}
+
+#[tokio::test]
+async fn pending_readiness_retains_supervisor_and_converges_without_resubmission() {
+    let store = Arc::new(DurableStore::default());
+    let source = RecordingSourceAuthority::with_evidence(source_evidence(1));
+    let provider = RecordingProvider::with_readiness_waits(2);
+    let projection_sink = Arc::new(RecordingProjectionSink::default());
+    let provisioner = provisioner_with_sink(
+        store.clone(),
+        source,
+        provider.clone(),
+        projection_sink.clone(),
+    );
+
+    let receipt = provisioner
+        .provision(
+            request("node-a", 1),
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await
+        .expect("the first bounded provision receipt should remain truthful");
+    assert_eq!(
+        receipt.disposition(),
+        WorkloadProvisionRunDisposition::Waiting
+    );
+    assert_eq!(
+        receipt.projection(),
+        WorkloadProjectionState::Pending(
+            crate::workload_projection::WorkloadProjectionPendingReason::ProvisionWaiting,
+        )
+    );
+    assert!(provisioner.has_tracked_submission(&key()));
+    assert!(provisioner.has_running_tracked_task(&key()));
+
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        provisioner.wait_for_tracked_settlement(&key()),
+    )
+    .await
+    .expect("the retained supervisor should converge without another submission")
+    .expect("the retained supervisor should publish settlement")
+    .expect("the retained supervisor should settle successfully");
+    assert_eq!(
+        settled.disposition(),
+        WorkloadProvisionRunDisposition::Observed
+    );
+
+    let durable = store
+        .record()
+        .expect("retained supervision should preserve durable provision truth");
+    assert_eq!(
+        durable.phase(),
+        nimbus_workloads::WorkloadSagaPhase::Observed
+    );
+    assert_eq!(projection_sink.calls.load(Ordering::Acquire), 1);
+    let readiness_calls = provider
+        .calls()
+        .into_iter()
+        .filter(|(step, _)| {
+            *step == nimbus_workloads::WorkloadProvisionStep::InspectWorkloadReadiness
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(readiness_calls.len(), 3);
+    assert_eq!(
+        readiness_calls
+            .iter()
+            .filter(|(_, mode)| *mode == WorkloadProvisionCommandMode::Inspect)
+            .count(),
+        3,
+        "readiness progress must converge through the read-only inspection seam"
+    );
+}
+
+#[tokio::test]
+async fn intermediate_cas_ambiguity_retains_supervisor_and_converges_without_resubmission() {
+    // The sixth CAS claims network attachment after workload preparation. An
+    // ambiguity before apply leaves durable truth at WorkloadPrepared, which
+    // still requires retained supervision.
+    let store = DurableStore::ambiguous_before_apply_at(6);
+    let source = RecordingSourceAuthority::with_evidence(source_evidence(1));
+    let provider = Arc::new(RecordingProvider::default());
+    let provisioner = provisioner(store.clone(), source, provider.clone());
+
+    let receipt = provisioner
+        .provision(
+            request("node-a", 1),
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await
+        .expect("the ambiguous intermediate receipt should remain truthful");
+    assert_eq!(
+        receipt.disposition(),
+        WorkloadProvisionRunDisposition::Waiting
+    );
+    assert_eq!(
+        receipt.record().phase(),
+        nimbus_workloads::WorkloadSagaPhase::WorkloadPrepared
+    );
+    assert!(provisioner.has_running_tracked_task(&key()));
+
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        provisioner.wait_for_tracked_settlement(&key()),
+    )
+    .await
+    .expect("retained supervision should retry the exact durable phase")
+    .expect("retained supervision should publish settlement")
+    .expect("retained supervision should settle successfully");
+    assert_eq!(
+        settled.disposition(),
+        WorkloadProvisionRunDisposition::Observed
+    );
+
+    assert_eq!(
+        store
+            .record()
+            .expect("retained supervision should preserve durable truth")
+            .phase(),
+        nimbus_workloads::WorkloadSagaPhase::Observed
+    );
+    assert_eq!(
+        provider
+            .calls()
+            .iter()
+            .filter(|(step, _)| { *step == nimbus_workloads::WorkloadProvisionStep::AttachNetwork })
+            .count(),
+        1,
+        "the pre-effect CAS ambiguity must not duplicate attachment"
+    );
+}
+
+#[tokio::test]
+async fn prepare_only_quiescence_does_not_retain_a_polling_supervisor() {
+    let store = Arc::new(DurableStore::default());
+    let source = RecordingSourceAuthority::with_evidence(source_evidence(1));
+    let provider = Arc::new(RecordingProvider::default());
+    let provisioner = provisioner(store, source, provider.clone());
+    let mut prepare_only = request("node-a", 1);
+    prepare_only.activation = WorkloadActivationIntent::PrepareOnly;
+
+    let receipt = provisioner
+        .provision(prepare_only, &WorkloadProvisionCancellation::default())
+        .await
+        .expect("prepare-only provisioning should stop at its intended plateau");
+
+    assert_eq!(
+        receipt.disposition(),
+        WorkloadProvisionRunDisposition::Waiting
+    );
+    assert_eq!(
+        receipt.record().phase(),
+        nimbus_workloads::WorkloadSagaPhase::NetworkAttached
+    );
+    assert!(!provisioner.has_tracked_submission(&key()));
+    assert!(provider.calls().iter().all(|(step, _)| {
+        !matches!(
+            step,
+            nimbus_workloads::WorkloadProvisionStep::InspectActivationPrerequisites
+                | nimbus_workloads::WorkloadProvisionStep::ActivateWorkload
+                | nimbus_workloads::WorkloadProvisionStep::InspectWorkloadReadiness
+        )
+    }));
+}
+
+#[tokio::test]
+async fn retirement_joins_pending_supervisor_and_stops_later_inspection() {
+    let store = Arc::new(DurableStore::default());
+    let source = RecordingSourceAuthority::with_evidence(source_evidence(1));
+    let provider = RecordingProvider::with_readiness_waits(100);
+    let provisioner = provisioner(store, source, provider.clone());
+
+    let receipt = provisioner
+        .provision(
+            request("node-a", 1),
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await
+        .expect("the first bounded provision receipt should remain truthful");
+    assert_eq!(
+        receipt.disposition(),
+        WorkloadProvisionRunDisposition::Waiting
+    );
+    assert!(provisioner.has_running_tracked_task(&key()));
+    let calls_before_retirement = provider.calls().len();
+
+    let (claim, joined) = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        provisioner
+            .claim_retirement_and_join(&key(), || Ok::<_, nimbus_core::Error>("retirement-claim")),
+    )
+    .await
+    .expect("retirement should join the retained supervisor within its retry delay")
+    .expect("retirement should join the pending provision cleanly");
+    assert_eq!(claim, "retirement-claim");
+    assert_eq!(
+        joined
+            .expect("retirement should receive the last exact provision truth")
+            .disposition(),
+        WorkloadProvisionRunDisposition::Waiting
+    );
+    assert!(!provisioner.has_tracked_submission(&key()));
+
+    assert_eq!(
+        provider.calls().len(),
+        calls_before_retirement,
+        "retirement must stop retained readiness inspection before teardown"
+    );
+    provisioner.release_retirement_fence(&key());
 }
 
 #[tokio::test]

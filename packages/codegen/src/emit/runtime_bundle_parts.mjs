@@ -4,7 +4,7 @@ import { runtimeBundlePreamble } from "./runtime_bundle_preamble.mjs";
 
 function buildRuntimeBundleSource(manifestJson, options = {}) {
   return [
-    runtimeBundlePreamble(manifestJson),
+    runtimeBundlePreamble(manifestJson, options),
     runtimeBundleExecution(),
     runtimeBundleDispatch(options),
   ].filter(Boolean).join("\n\n");

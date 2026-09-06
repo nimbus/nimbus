@@ -296,6 +296,51 @@ export {};
 }
 
 #[tokio::test]
+async fn convex_semantics_websocket_rejected_in_queries_and_mutations_only() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let bundle = r#"
+globalThis.__nimbusInvoke = function () {
+  try {
+    new WebSocket("wss://nimbus-guest-semantics.invalid/");
+    return { outcome: "connected" };
+  } catch (error) {
+    return { outcome: "rejected", message: String(error?.message ?? error) };
+  }
+};
+
+export {};
+"#;
+    for kind in [InvocationKind::Query, InvocationKind::Mutation] {
+        let result =
+            invoke_convex_semantics_bundle(bundle, &request_of_kind(kind.clone(), "messages:list"))
+                .await;
+        assert_eq!(result["outcome"], "rejected");
+        let message = result["message"]
+            .as_str()
+            .expect("message should be a string");
+        assert!(
+            message.contains("Can't use new WebSocket() in queries and mutations"),
+            "{kind:?} WebSocket must fail with the actions-only contract error, got: {message}"
+        );
+    }
+
+    // Actions pass the semantics gate and reach the ordinary egress layer.
+    let action_result = invoke_convex_semantics_bundle(
+        bundle,
+        &request_of_kind(InvocationKind::Action, "messages:send"),
+    )
+    .await;
+    assert_eq!(action_result["outcome"], "rejected");
+    let action_message = action_result["message"]
+        .as_str()
+        .expect("action message should be a string");
+    assert!(
+        !action_message.contains("Can't use new WebSocket() in queries and mutations"),
+        "action WebSocket must NOT be blocked by the actions-only rule, got: {action_message}"
+    );
+}
+
+#[tokio::test]
 async fn convex_semantics_process_env_subset_is_capability_gated() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let _env_guard = ScopedProcessEnvVar::set("NIMBUS_GUEST_SEMANTICS_TEST_VAR", "granted-value");

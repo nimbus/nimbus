@@ -8,6 +8,7 @@ mod config;
 mod first_boot;
 mod network_bind;
 mod runtime_limits;
+mod shutdown;
 #[cfg(test)]
 mod tests;
 

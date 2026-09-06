@@ -12,6 +12,11 @@ fn parses_machine_init_defaults_to_version_pinned_release_image() {
             assert_eq!(init.image, expected_default_machine_image());
             assert!(!init.bootc_native);
             if cfg!(target_os = "macos") {
+                assert_eq!(
+                    init.image,
+                    "docker://ghcr.io/nimbus/machine-os:v0.1.45@sha256:e313a09b481b86de8cfe99cefdc1e9b631d65e96b3971eb300660f8ae92e1e9b",
+                    "the macOS host release must pin the matching published guest image"
+                );
                 assert!(init.volumes.is_empty());
                 assert_eq!(
                     default_machine_volumes(),

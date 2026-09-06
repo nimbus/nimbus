@@ -21,6 +21,7 @@ import { api } from "../../convex/_generated/api";
 // (via `queryEntry(api.X, args)`) is type-checked against api.X's TArgs;
 // TArgs is widened to `any` only at the array level so a single NavEntry
 // shape can host counts with different arg shapes.
+// biome-ignore lint/suspicious/noExplicitAny: This erased storage type preserves each queryEntry construction site's generic type check.
 export type NavCountEntry = QueryEntry<any, readonly unknown[]>;
 
 // Non-query nav-count sources: tenants come from the HTTP tenant list and

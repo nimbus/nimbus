@@ -12,8 +12,7 @@ function compileRuntimeHandler(definition) {
   return new Function(
     "ctx",
     "args",
-    "request",
-    "return (" + definition.runtime_handler + ")(ctx, args, request);",
+    "return (" + definition.runtime_handler + ")(ctx, args);",
   );
 }
 
@@ -35,7 +34,6 @@ globalThis.__nimbusInvoke = async function(request) {
           hostCallSessionId: `${request.kind}:${request.function_name}`,
         }),
         request.args ?? {},
-        request,
       ),
     };
   } catch (error) {

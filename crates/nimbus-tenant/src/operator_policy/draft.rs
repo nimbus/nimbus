@@ -192,7 +192,10 @@ fn draft_rule_from_denied_event(
     }
     let mut methods = Vec::new();
     let mut path_prefixes = Vec::new();
-    if matches!(event.protocol, EgressProtocol::Http | EgressProtocol::Https) {
+    if matches!(
+        event.protocol,
+        EgressProtocol::Http | EgressProtocol::Https | EgressProtocol::Ws | EgressProtocol::Wss
+    ) {
         if let Some(method) = event.method.as_deref().map(str::trim)
             && !method.is_empty()
         {
@@ -231,6 +234,8 @@ fn unique_rule_name(
         EgressProtocol::Tcp => "tcp",
         EgressProtocol::Http => "http",
         EgressProtocol::Https => "https",
+        EgressProtocol::Ws => "ws",
+        EgressProtocol::Wss => "wss",
     };
     let mut base = host
         .chars()

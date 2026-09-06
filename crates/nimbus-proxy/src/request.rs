@@ -57,8 +57,10 @@ pub(crate) fn parse_proxy_request(
     if method.eq_ignore_ascii_case("CONNECT") {
         let (host, port) = parse_connect_authority(target)?;
         // CONNECT establishes an authority tunnel; it is not the decrypted
-        // application request. Method/path policy is evaluated only after TLS
-        // interception reveals the inner request.
+        // application request. It therefore carries HTTPS authority semantics,
+        // not WSS: the proxy cannot identify a WebSocket inside opaque TLS.
+        // Supervisor-proxy policy validation rejects ws/wss rules instead of
+        // accepting an unenforceable application-protocol promise.
         let egress_request = EgressRequest::new(EgressProtocol::Https, host.clone(), port);
         return Ok(ParsedProxyRequest {
             egress_request,

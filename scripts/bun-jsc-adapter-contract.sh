@@ -14,15 +14,15 @@ NIMBUS_BUN_JSC_ADAPTER_CONTRACT_SH_INCLUDED=1
 BUN_JSC_ADAPTER_SCHEMA_VERSION=1
 BUN_JSC_ADAPTER_KIND="nimbus.bun_jsc.adapter"
 BUN_JSC_ADAPTER_ABI_NAME="nimbus-bun-jsc-embedder"
-BUN_JSC_ADAPTER_ABI_VERSION=1
+BUN_JSC_ADAPTER_ABI_VERSION=3
 BUN_JSC_ADAPTER_MEMORY_ENFORCEMENT="outer_quota_required"
 BUN_JSC_ADAPTER_LIFECYCLE="fresh_discard"
 BUN_JSC_ADAPTER_MANIFEST_FILE="nimbus-bun-jsc-adapter.json"
 BUN_JSC_ADAPTER_CHECKSUMS_FILE="checksums-sha256.txt"
 BUN_JSC_ADAPTER_README_FILE="README.md"
 BUN_JSC_ADAPTER_SOURCE_REPOSITORY="https://github.com/nimbus/bun"
-BUN_JSC_ADAPTER_SOURCE_REF="nimbus-bun-jsc-proof-main-20260709"
-BUN_JSC_ADAPTER_SOURCE_REVISION="cc0a59c301ac2f56e94102c4ad16c3f085821409"
+BUN_JSC_ADAPTER_SOURCE_REF="bun-v1.4.2-nimbus.1"
+BUN_JSC_ADAPTER_SOURCE_REVISION="d6d4c5e39938b6c5ac243490a9230c26d52d737f"
 BUN_JSC_ADAPTER_PROOF_TARGET="check-bun-embed-shared"
 BUN_JSC_ADAPTER_SIMDUTF_NAMESPACE="nimbus_bun_simdutf"
 
@@ -38,6 +38,7 @@ BUN_JSC_ADAPTER_REQUIRED_EXPORTS=(
   nimbus_bun_embed_probe_lifecycle_reuse_stress
   nimbus_bun_embed_invoke_program_wrapper_json
   nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge
+  nimbus_bun_embed_take_pending_response
 )
 
 bun_jsc_adapter_host_triple() {

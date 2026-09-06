@@ -216,12 +216,20 @@ fi
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf '%s\n' '# The krun handler writes .krun_config.json to the rootfs via openat2 during'
-  printf '%s\n' '# crun create.  In rootless mode this requires a user namespace with UID 0'
-  printf '%s\n' '# mapped to the real user.  Re-exec under buildah unshare if needed.'
-  printf '%s\n' 'if [[ "$(id -u)" != "0" ]] && command -v buildah >/dev/null 2>&1; then'
-  printf '%s\n' '  exec buildah unshare -- "$0" "$@"'
+  printf '%s\n' '# The VMM follows the system-service privilege boundary.  Re-exec through'
+  printf '%s\n' '# noninteractive sudo so crun retains KVM access after applying OCI credentials.'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
   printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf 'if %q state %q >/dev/null 2>&1; then\n' "${runtime_path}" "${container_id}"
+  printf '  %q delete %q\n' "${runtime_path}" "${container_id}"
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf 'rm -f %q %q %q %q %q\n' \
+    "${ctr_log}" "${oci_log}" "${pidfile}" "${conmon_pidfile}" "${exit_status_file}"
+  printf 'rm -rf %q\n' "${persist_dir}"
+  printf 'mkdir -p %q\n' "${persist_dir}"
   printf '%s\n' ''
   printf 'exec '
   printf '%q ' "${command[@]}"
@@ -238,9 +246,9 @@ chmod 0755 "${command_file}"
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf '%s\n' '# Re-exec under buildah unshare for rootless, same as run-conmon.sh.'
-  printf '%s\n' 'if [[ "$(id -u)" != "0" ]] && command -v buildah >/dev/null 2>&1; then'
-  printf '%s\n' '  exec buildah unshare -- "$0" "$@"'
+  printf '%s\n' '# Use the same service privilege boundary as run-conmon.sh.'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
   printf '%s\n' 'fi'
   printf '%s\n' ''
   printf '%s\n' 'timeout_seconds="${1:-30}"'
@@ -316,9 +324,20 @@ chmod 0755 "${show_exit_status_script}"
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf 'runtime_pid="$(cat %q)"\n' "${pidfile}"
-  printf '%s\n' 'kill -TERM "${runtime_pid}"'
-  printf 'bash %q "${1:-30}"\n' "${wait_for_exit_script}"
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf '%s\n' 'timeout_seconds="${1:-30}"'
+  printf '%q kill %q TERM\n' "${runtime_path}" "${container_id}"
+  printf 'if bash %q "${timeout_seconds}" 2>/dev/null; then\n' "${wait_for_exit_script}"
+  printf '%s\n' '  echo "stop.result=graceful"'
+  printf '%s\n' '  exit 0'
+  printf '%s\n' 'fi'
+  printf '%s\n' 'echo "stop.escalation=KILL"'
+  printf '%q kill %q KILL\n' "${runtime_path}" "${container_id}"
+  printf 'bash %q "${timeout_seconds}"\n' "${wait_for_exit_script}"
+  printf '%s\n' 'echo "stop.result=forced"'
 } > "${graceful_stop_script}"
 chmod 0755 "${graceful_stop_script}"
 
@@ -326,8 +345,11 @@ chmod 0755 "${graceful_stop_script}"
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf '%s\n' ''
-  printf 'runtime_pid="$(cat %q)"\n' "${pidfile}"
-  printf '%s\n' 'kill -KILL "${runtime_pid}"'
+  printf '%s\n' 'if [[ "$(id -u)" != "0" ]]; then'
+  printf '%s\n' '  exec sudo -n -- "$0" "$@"'
+  printf '%s\n' 'fi'
+  printf '%s\n' ''
+  printf '%q kill %q KILL\n' "${runtime_path}" "${container_id}"
   printf 'bash %q "${1:-30}"\n' "${wait_for_exit_script}"
 } > "${force_stop_script}"
 chmod 0755 "${force_stop_script}"

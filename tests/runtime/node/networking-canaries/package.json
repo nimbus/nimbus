@@ -3,12 +3,12 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "axios": "1.7.7",
-    "express": "4.19.2",
-    "fastify": "4.28.1",
-    "socket.io": "4.7.5",
-    "socket.io-client": "4.7.5",
-    "undici": "6.19.8",
-    "ws": "8.17.1"
+    "axios": "1.20.0",
+    "express": "4.22.2",
+    "fastify": "5.12.1",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.8.3",
+    "undici": "6.28.0",
+    "ws": "8.21.3"
   }
 }

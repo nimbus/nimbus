@@ -451,7 +451,7 @@ fn compose_egress_policy(
         .collect::<Vec<_>>();
     rules.sort_by(|left, right| left.name.cmp(&right.name));
     let policy = EgressPolicy::new(rules);
-    policy.validate().map_err(|message| {
+    policy.compile_for_supervisor_proxy().map_err(|message| {
         Error::InvalidInput(format!(
             "services.{service_name}.x-nimbus.egress: {message}"
         ))

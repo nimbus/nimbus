@@ -32,7 +32,8 @@ enum NetworkContenderRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InterruptedAdoptionAllocatorCut {
-    Reserved,
+    LaunchReserved,
+    AdoptionIntentReserved,
     Adopted,
     ReservationCleanupPending,
     Absent,
@@ -224,17 +225,24 @@ impl NetworkTeardownFixture {
             .read_manifest(&id)
             .expect("adopting manifest should read")
             .expect("adopting manifest should exist");
-        let reservation_claim = backend
-            .mark_attachment_adopting(&mut manifest)
-            .expect("fixture should enter attachment adoption intent");
-        backend
-            .persist_effect_barrier(&manifest, "test interrupted Krun adoption intent")
-            .expect("interrupted adoption intent should persist");
+        let reservation_claim = manifest
+            .require_reserved_claim()
+            .expect("fixture should retain its reserved launch claim")
+            .clone();
+        if cut != InterruptedAdoptionAllocatorCut::LaunchReserved {
+            backend
+                .mark_attachment_adopting(&mut manifest)
+                .expect("fixture should enter attachment adoption intent");
+            backend
+                .persist_effect_barrier(&manifest, "test interrupted Krun adoption intent")
+                .expect("interrupted adoption intent should persist");
+        }
         let network_config = manifest
             .require_network_config()
             .expect("adopting fixture should retain network config");
         match cut {
-            InterruptedAdoptionAllocatorCut::Reserved => {
+            InterruptedAdoptionAllocatorCut::LaunchReserved
+            | InterruptedAdoptionAllocatorCut::AdoptionIntentReserved => {
                 settle_separate_publication_without_effect(&backend, &manifest, &reservation_claim);
             }
             InterruptedAdoptionAllocatorCut::Adopted => {
@@ -477,7 +485,14 @@ fn retain_stale_runtime_artifacts(manifest: &KrunSandboxManifest) -> [PathBuf; 3
 #[test]
 fn interrupted_adopting_attachment_converges_through_exact_teardown() {
     for (label, cut) in [
-        ("reserved", InterruptedAdoptionAllocatorCut::Reserved),
+        (
+            "launch-reserved",
+            InterruptedAdoptionAllocatorCut::LaunchReserved,
+        ),
+        (
+            "adoption-intent-reserved",
+            InterruptedAdoptionAllocatorCut::AdoptionIntentReserved,
+        ),
         ("adopted", InterruptedAdoptionAllocatorCut::Adopted),
         (
             "reservation-cleanup-pending",

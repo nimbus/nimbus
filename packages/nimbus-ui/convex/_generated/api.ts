@@ -64,7 +64,7 @@ export const api = {
   listeners: {
     list: makeQueryReference<{
   "adapter": string | null;
-  "state": string | null;
+  "observedPhase": string | null;
   "limit": number | null;
 }, Doc<"listeners">[]>("listeners:list", "public")
   },
@@ -82,7 +82,7 @@ export const api = {
     list: makeQueryReference<{
   "machineId": string | null;
   "serviceId": string | null;
-  "state": string | null;
+  "observedPhase": string | null;
   "limit": number | null;
 }, Doc<"ports">[]>("ports:list", "public")
   },

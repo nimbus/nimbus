@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn direct_machine_dispatch_requests_engine_authority_only_for_fenced_effects() {
+    let stop = MachineCommand {
+        command: MachineSubcommand::Stop(MachineStopCommand { name: None }),
+    };
+    let status = MachineCommand {
+        command: MachineSubcommand::Status(MachineStatusCommand::default()),
+    };
+
+    assert!(machine_command_requires_canonical_engine_authority(&stop));
+    assert!(!machine_command_requires_canonical_engine_authority(
+        &status
+    ));
+}
+
+#[test]
 fn standalone_machine_stop_fails_closed_without_engine_drain_authority() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(

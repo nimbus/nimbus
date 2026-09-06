@@ -57,7 +57,11 @@ describe("buildFunctionTree", () => {
   });
 
   it("ignores entries without a path", () => {
-    const tree = buildFunctionTree([{}, { path: "" }, { path: "messages:send" }]);
+    const tree = buildFunctionTree([
+      {},
+      { path: "" },
+      { path: "messages:send" },
+    ]);
     expect(tree.count).toBe(1);
     expect(tree.modules.map((m) => m.name)).toEqual(["messages"]);
   });
@@ -75,9 +79,16 @@ describe("buildFunctionTree", () => {
     expect(tree.modules.map((m) => m.name)).toEqual(["auth", "messages"]);
     expect(tree.folders.map((f) => f.name)).toEqual(["billing"]);
     const billing = tree.folders[0];
-    expect(billing.modules.map((m) => m.name)).toEqual(["invoices", "transfers"]);
-    const transfers = billing.modules.find((m) => m.name === "transfers")!;
-    expect(transfers.functions.map((f) => f.name)).toEqual(["cancel", "refund"]);
+    expect(billing.modules.map((m) => m.name)).toEqual([
+      "invoices",
+      "transfers",
+    ]);
+    const transfers = billing.modules.find((m) => m.name === "transfers");
+    if (!transfers) throw new Error("missing transfers module");
+    expect(transfers.functions.map((f) => f.name)).toEqual([
+      "cancel",
+      "refund",
+    ]);
   });
 
   it("sorts folders, modules, and functions alphabetically", () => {
@@ -89,7 +100,8 @@ describe("buildFunctionTree", () => {
       { path: "a:fn" },
     ]);
     expect(tree.modules.map((m) => m.name)).toEqual(["a", "m", "z"]);
-    const z = tree.modules.find((m) => m.name === "z")!;
+    const z = tree.modules.find((m) => m.name === "z");
+    if (!z) throw new Error("missing z module");
     expect(z.functions.map((f) => f.name)).toEqual(["a", "b", "c"]);
   });
 

@@ -3,7 +3,7 @@ use std::fs;
 use std::hint::black_box;
 use std::io::Read;
 use std::mem::size_of;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,6 +14,7 @@ use nimbus_core::{
     TableName, TenantId, WriteKey, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::Engine;
+use nimbus_storage::{LogicalLeafKey, LogicalLeafKind, MaterializedVerificationIndex};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -24,10 +25,11 @@ const SOURCE_BASE_COMMIT: &str = "9c807015a3049adbd8e24b15a57ccac34b2fc380";
 const QUICK_DOCUMENTS: usize = 10_000;
 const QUICK_PAYLOAD_BYTES: usize = 1_024;
 const CHURN_BASIS_POINTS: [u32; 4] = [0, 10, 100, 1_000];
-const DEFAULT_FULL_SAMPLES: usize = 3;
-const QUICK_FULL_SAMPLES: usize = 1;
 const CANDIDATE_SAMPLES: usize = 21;
 const CANDIDATE_COMPARISONS_PER_SAMPLE: usize = 10_000;
+const CANDIDATE_PRODUCTION_DOCUMENTS: [usize; 2] = [100_000, 1_000_000];
+const CANDIDATE_PRODUCTION_PAYLOAD_BYTES: usize = 1_024;
+const CANDIDATE_PRODUCTION_CHURN_BASIS_POINTS: u32 = 10;
 const WRITE_OVERHEAD_DOCUMENTS: usize = 100_000;
 const WRITE_OVERHEAD_PAYLOAD_BYTES: usize = 1_024;
 const WRITE_OVERHEAD_SAMPLES: usize = 1_000;
@@ -85,23 +87,10 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
-#[derive(Debug)]
-struct Arguments {
-    output: Option<PathBuf>,
-    quick: bool,
-    documents: Option<usize>,
-    payload_bytes: Option<usize>,
-    full_samples: usize,
-    child: Option<ChildArguments>,
-}
+#[path = "materialized_verification/arguments.rs"]
+mod arguments;
 
-#[derive(Debug)]
-struct ChildArguments {
-    data_dir: PathBuf,
-    documents: usize,
-    payload_bytes: usize,
-    churn_basis_points: u32,
-}
+use arguments::{Arguments, ChildArguments, parse_arguments};
 
 #[derive(Debug, Clone, Serialize)]
 struct BenchmarkReport {
@@ -171,6 +160,34 @@ struct CandidateMeasurement {
     resident_bytes_per_leaf: usize,
     total_resident_bytes: u64,
     memory_derivation: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CandidatePerformanceReport {
+    format_version: u16,
+    target_os: &'static str,
+    target_arch: &'static str,
+    measurement: &'static str,
+    samples_per_rung: usize,
+    rungs: Vec<CandidatePerformanceMeasurement>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CandidatePerformanceMeasurement {
+    documents: usize,
+    payload_bytes: usize,
+    churn_basis_points: u32,
+    churn_documents: usize,
+    status: &'static str,
+    samples_ns: Vec<u128>,
+    summary: SampleSummary,
+    leaf_count: usize,
+    resident_bytes_status: &'static str,
+    resident_bytes: usize,
+    resident_bytes_per_leaf: usize,
+    max_depth: usize,
+    latency_scope: &'static str,
+    memory_source: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -248,6 +265,10 @@ fn main() -> Result<()> {
                 .map_err(|error| Error::Serialization(error.to_string()))?
         );
         return Ok(());
+    }
+    if arguments.candidate_only {
+        let report = measure_production_candidate()?;
+        return write_report(arguments.output.as_deref(), &report);
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -404,6 +425,77 @@ fn main() -> Result<()> {
 
     let report = benchmark_report(arguments.full_samples, matrix, write_overhead);
     write_report(arguments.output.as_deref(), &report)
+}
+
+fn measure_production_candidate() -> Result<CandidatePerformanceReport> {
+    let mut rungs = Vec::with_capacity(CANDIDATE_PRODUCTION_DOCUMENTS.len());
+    for documents in CANDIDATE_PRODUCTION_DOCUMENTS {
+        eprintln!("measuring production candidate at {documents} documents");
+        let mut index = MaterializedVerificationIndex::from_leaves((0..documents).map(|rank| {
+            let key = candidate_leaf_key(rank)
+                .expect("a nonempty rank identity must produce a logical leaf key");
+            (key, candidate_leaf_value(rank, 0))
+        }))?;
+        let churn_documents = churn_count(documents, CANDIDATE_PRODUCTION_CHURN_BASIS_POINTS);
+        let mut samples_ns = Vec::with_capacity(CANDIDATE_SAMPLES);
+        let mut prior_root = index.root_hash();
+        for sample_index in 1..=CANDIDATE_SAMPLES {
+            let started = Instant::now();
+            for rank in 0..churn_documents {
+                index.upsert(
+                    candidate_leaf_key(rank)?,
+                    &candidate_leaf_value(rank, sample_index),
+                )?;
+            }
+            let root = black_box(index.root_hash());
+            let elapsed_ns = started.elapsed().as_nanos();
+            if root == prior_root {
+                return Err(Error::Internal(format!(
+                    "candidate root did not change for sample {sample_index} at {documents} documents"
+                )));
+            }
+            prior_root = root;
+            samples_ns.push(elapsed_ns);
+        }
+        let summary = summarize(samples_ns.clone()).ok_or_else(|| {
+            Error::Internal("production candidate samples are unexpectedly empty".to_string())
+        })?;
+        rungs.push(CandidatePerformanceMeasurement {
+            documents,
+            payload_bytes: CANDIDATE_PRODUCTION_PAYLOAD_BYTES,
+            churn_basis_points: CANDIDATE_PRODUCTION_CHURN_BASIS_POINTS,
+            churn_documents,
+            status: "measured",
+            samples_ns,
+            summary,
+            leaf_count: index.len(),
+            resident_bytes_status: "measured",
+            resident_bytes: index.resident_bytes(),
+            resident_bytes_per_leaf: index.resident_bytes_per_leaf(),
+            max_depth: index.max_depth(),
+            latency_scope: "0.1% production-index upserts plus the final root read",
+            memory_source: "MaterializedVerificationIndex::resident_bytes",
+        });
+    }
+    Ok(CandidatePerformanceReport {
+        format_version: 1,
+        target_os: std::env::consts::OS,
+        target_arch: std::env::consts::ARCH,
+        measurement: "production_materialized_verification_index",
+        samples_per_rung: CANDIDATE_SAMPLES,
+        rungs,
+    })
+}
+
+fn candidate_leaf_key(rank: usize) -> Result<LogicalLeafKey> {
+    LogicalLeafKey::new(LogicalLeafKind::Document, &(rank as u64).to_be_bytes())
+}
+
+fn candidate_leaf_value(rank: usize, sample: usize) -> Vec<u8> {
+    let mut value = vec![b'x'; CANDIDATE_PRODUCTION_PAYLOAD_BYTES];
+    value[..8].copy_from_slice(&(rank as u64).to_be_bytes());
+    value[8..16].copy_from_slice(&(sample as u64).to_be_bytes());
+    value
 }
 
 fn benchmark_report(
@@ -990,106 +1082,7 @@ fn percentile(sorted: &[u128], percentile: usize) -> u128 {
     sorted[index]
 }
 
-fn parse_arguments() -> Result<Arguments> {
-    let mut output = None;
-    let mut quick = false;
-    let mut documents = None;
-    let mut payload_bytes = None;
-    let mut full_samples = DEFAULT_FULL_SAMPLES;
-    let mut child_data_dir = None;
-    let mut child_churn = None;
-    let mut arguments = std::env::args().skip(1);
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "--bench" => {}
-            "--quick" => {
-                quick = true;
-                full_samples = QUICK_FULL_SAMPLES;
-            }
-            "--output" => output = Some(PathBuf::from(next_value(&mut arguments, "--output")?)),
-            "--documents" => {
-                documents = Some(parse_usize(
-                    next_value(&mut arguments, "--documents")?,
-                    "--documents",
-                )?)
-            }
-            "--payload-bytes" => {
-                payload_bytes = Some(parse_usize(
-                    next_value(&mut arguments, "--payload-bytes")?,
-                    "--payload-bytes",
-                )?)
-            }
-            "--full-samples" => {
-                full_samples = parse_usize(
-                    next_value(&mut arguments, "--full-samples")?,
-                    "--full-samples",
-                )?
-            }
-            "--child-full" => {
-                child_data_dir = Some(PathBuf::from(next_value(&mut arguments, "--child-full")?))
-            }
-            "--churn-basis-points" => {
-                child_churn = Some(parse_u32(
-                    next_value(&mut arguments, "--churn-basis-points")?,
-                    "--churn-basis-points",
-                )?)
-            }
-            _ => {
-                return Err(Error::InvalidInput(format!(
-                    "unknown materialized-verification argument: {argument}"
-                )));
-            }
-        }
-    }
-    if full_samples == 0 {
-        return Err(Error::InvalidInput(
-            "--full-samples must be positive".to_string(),
-        ));
-    }
-    let child = match child_data_dir {
-        Some(data_dir) => Some(ChildArguments {
-            data_dir,
-            documents: documents.ok_or_else(|| {
-                Error::InvalidInput("--child-full requires --documents".to_string())
-            })?,
-            payload_bytes: payload_bytes.ok_or_else(|| {
-                Error::InvalidInput("--child-full requires --payload-bytes".to_string())
-            })?,
-            churn_basis_points: child_churn.ok_or_else(|| {
-                Error::InvalidInput("--child-full requires --churn-basis-points".to_string())
-            })?,
-        }),
-        None => None,
-    };
-    Ok(Arguments {
-        output,
-        quick,
-        documents,
-        payload_bytes,
-        full_samples,
-        child,
-    })
-}
-
-fn next_value(arguments: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
-    arguments
-        .next()
-        .ok_or_else(|| Error::InvalidInput(format!("{flag} requires a value")))
-}
-
-fn parse_usize(value: String, flag: &str) -> Result<usize> {
-    value
-        .parse()
-        .map_err(|error| Error::InvalidInput(format!("invalid {flag}: {error}")))
-}
-
-fn parse_u32(value: String, flag: &str) -> Result<u32> {
-    value
-        .parse()
-        .map_err(|error| Error::InvalidInput(format!("invalid {flag}: {error}")))
-}
-
-fn write_report(path: Option<&Path>, report: &BenchmarkReport) -> Result<()> {
+fn write_report(path: Option<&Path>, report: &impl Serialize) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(report)
         .map_err(|error| Error::Serialization(error.to_string()))?;
     let Some(path) = path else {

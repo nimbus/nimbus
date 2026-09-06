@@ -620,6 +620,12 @@ impl Engine {
         for runtime in &runtimes {
             runtime.shutdown_metadata_retention();
             runtime.shutdown_committer_lease_renewal();
+            // The trigger-candidate worker is a tenant-owned OS thread, not
+            // an engine-executor task. Close and join it while the committer
+            // can still finish any batch that the worker already accepted.
+            // Remaining queued commits stay behind the durable trigger cursor
+            // and are replayed when the tenant reopens.
+            runtime.close_trigger_candidates();
         }
         self.engine_executor.quiesce().await;
         self.storage_executor.quiesce().await;

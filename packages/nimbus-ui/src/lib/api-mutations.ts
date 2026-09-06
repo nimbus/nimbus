@@ -44,12 +44,17 @@ export async function apiFetch<T>(
       // Only advertise a JSON body when one is actually sent — no-body
       // writes (delete/drop/shutdown/rotate) sent no Content-Type before.
       headers: {
-        ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(init.body !== undefined
+          ? { "content-type": "application/json" }
+          : {}),
         ...init.headers,
       },
     });
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
   const body = (await response.json().catch(() => null)) as unknown;
@@ -97,7 +102,11 @@ export type PaginatedQuery = {
 // Tenant-scoped document writes plus the one typed read (the paginated query is
 // a POST read, so it rides here beside the mutations rather than in a loader).
 export const documents = {
-  insert(tenant: string, table: string, fields: unknown): Promise<ApiResult<unknown>> {
+  insert(
+    tenant: string,
+    table: string,
+    fields: unknown,
+  ): Promise<ApiResult<unknown>> {
     return apiFetch(`/api/tenants/${enc(tenant)}/documents`, {
       method: "POST",
       body: JSON.stringify({ table, fields }),
@@ -114,7 +123,11 @@ export const documents = {
       { method: "PATCH", body: JSON.stringify({ patch }) },
     );
   },
-  remove(tenant: string, table: string, id: string): Promise<ApiResult<unknown>> {
+  remove(
+    tenant: string,
+    table: string,
+    id: string,
+  ): Promise<ApiResult<unknown>> {
     return apiFetch(
       `/api/tenants/${enc(tenant)}/documents/${enc(table)}/${enc(id)}`,
       { method: "DELETE" },
@@ -136,7 +149,11 @@ export const documents = {
 // Tenant-scoped schema enforcement. `put` sends the raw schema object; `drop`
 // removes enforcement while keeping the table's documents.
 export const schema = {
-  put(tenant: string, table: string, value: unknown): Promise<ApiResult<unknown>> {
+  put(
+    tenant: string,
+    table: string,
+    value: unknown,
+  ): Promise<ApiResult<unknown>> {
     return apiFetch(`/api/tenants/${enc(tenant)}/schema/${enc(table)}`, {
       method: "PUT",
       body: JSON.stringify(value),

@@ -129,7 +129,14 @@ if [[ -z "${bundle_dir}" && -n "${config_path}" ]]; then
 fi
 
 if [[ "${#process_args[@]}" -eq 0 ]]; then
-  process_args=("/bin/busybox" "httpd" "-f" "-p" "${guest_port}")
+  process_args=(
+    "/bin/busybox"
+    "sh"
+    "-c"
+    'set -e; /bin/busybox mkdir -p /tmp/nimbus-http; printf "nimbus krun probe\n" > /tmp/nimbus-http/index.html; trap "exit 0" TERM INT; /bin/busybox httpd -f -h /tmp/nimbus-http -p "$1" & wait "$!"'
+    "nimbus-httpd"
+    "${guest_port}"
+  )
 fi
 
 if [[ "${skip_spec}" -eq 0 ]]; then

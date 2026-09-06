@@ -6,8 +6,7 @@
 export const ACTIVE_OBSERVABILITY_TABS = ["logs", "runs"] as const;
 export const DISABLED_OBSERVABILITY_TABS = ["events", "errors"] as const;
 
-export type ActiveObservabilityTab =
-  (typeof ACTIVE_OBSERVABILITY_TABS)[number];
+export type ActiveObservabilityTab = (typeof ACTIVE_OBSERVABILITY_TABS)[number];
 export type DisabledObservabilityTab =
   (typeof DISABLED_OBSERVABILITY_TABS)[number];
 export type ObservabilityTab =

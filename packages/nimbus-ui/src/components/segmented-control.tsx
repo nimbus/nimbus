@@ -1,5 +1,5 @@
 import type { ComponentType, KeyboardEvent, ReactNode } from "react";
-import { useCallback, useRef } from "react";
+import { useCallback, useId, useRef } from "react";
 
 import { cn } from "../lib/cn";
 
@@ -38,7 +38,8 @@ export function SegmentedControl<T extends string>({
   segmentClassName,
   renderSegment,
 }: SegmentedControlProps<T>) {
-  const refs = useRef(new Map<T, HTMLButtonElement | null>());
+  const groupName = useId();
+  const refs = useRef(new Map<T, HTMLInputElement | null>());
 
   const focusByOffset = useCallback(
     (current: T, offset: number) => {
@@ -48,12 +49,13 @@ export function SegmentedControl<T extends string>({
       const nextIdx = (idx + offset + options.length) % options.length;
       const next = options[nextIdx].value;
       refs.current.get(next)?.focus();
+      onChange(next);
     },
-    [options],
+    [onChange, options],
   );
 
   const onKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLButtonElement>, current: T) => {
+    (e: KeyboardEvent<HTMLInputElement>, current: T) => {
       switch (e.key) {
         case "ArrowLeft":
         case "ArrowUp":
@@ -68,13 +70,17 @@ export function SegmentedControl<T extends string>({
         case "Home":
           e.preventDefault();
           if (options.length > 0) {
-            refs.current.get(options[0].value)?.focus();
+            const first = options[0].value;
+            refs.current.get(first)?.focus();
+            onChange(first);
           }
           break;
         case "End":
           e.preventDefault();
           if (options.length > 0) {
-            refs.current.get(options[options.length - 1].value)?.focus();
+            const last = options[options.length - 1].value;
+            refs.current.get(last)?.focus();
+            onChange(last);
           }
           break;
         case "Enter":
@@ -104,20 +110,11 @@ export function SegmentedControl<T extends string>({
       {options.map((opt, idx) => {
         const active = opt.value === value;
         const Icon = opt.icon;
+        const first = idx === 0;
+        const last = idx === options.length - 1;
         return (
-          <button
+          <label
             key={opt.value}
-            ref={(node) => {
-              refs.current.set(opt.value, node);
-            }}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            aria-label={opt.description ?? opt.label}
-            tabIndex={active ? 0 : -1}
-            onClick={() => onChange(opt.value)}
-            onKeyDown={(e) => onKeyDown(e, opt.value)}
-            data-testid={testid ? `${testid}-${opt.value}` : undefined}
             data-active={active ? "true" : "false"}
             className={cn(
               // `max-h-full` keeps a segment inside the group now that nothing
@@ -128,26 +125,50 @@ export function SegmentedControl<T extends string>({
               // 5px, not `rounded-l-md` (6px): the child radius has to match the
               // parent's inner radius across its 1px border, or the filled end
               // segments show a hairline corner mismatch.
-              idx === 0 && "rounded-l-[5px]",
-              idx === options.length - 1 && "rounded-r-[5px]",
+              first && "rounded-l-[5px]",
+              last && "rounded-r-[5px]",
               idx > 0 && "border-l border-app",
               active
                 ? "bg-surface-2 text-default"
                 : "text-muted hover:bg-surface-2 hover:text-default",
+              "relative cursor-pointer",
               segmentClassName,
             )}
           >
-            {renderSegment ? (
-              renderSegment(opt, active)
-            ) : (
-              <>
-                {Icon ? (
-                  <Icon size={14} aria-hidden className="shrink-0" />
-                ) : null}
-                <span>{opt.label}</span>
-              </>
-            )}
-          </button>
+            <input
+              ref={(node) => {
+                refs.current.set(opt.value, node);
+              }}
+              type="radio"
+              name={groupName}
+              value={opt.value}
+              checked={active}
+              aria-checked={active}
+              aria-label={opt.description ?? opt.label}
+              tabIndex={active ? 0 : -1}
+              onChange={() => onChange(opt.value)}
+              onKeyDown={(e) => onKeyDown(e, opt.value)}
+              data-testid={testid ? `${testid}-${opt.value}` : undefined}
+              data-active={active ? "true" : "false"}
+              className={cn(
+                "absolute inset-0 z-10 m-0 h-full w-full cursor-pointer appearance-none border-0 bg-transparent p-0",
+                first && "rounded-l-[5px]",
+                last && "rounded-r-[5px]",
+              )}
+            />
+            <span className="pointer-events-none flex items-center gap-1.5">
+              {renderSegment ? (
+                renderSegment(opt, active)
+              ) : (
+                <>
+                  {Icon ? (
+                    <Icon size={14} aria-hidden className="shrink-0" />
+                  ) : null}
+                  <span>{opt.label}</span>
+                </>
+              )}
+            </span>
+          </label>
         );
       })}
     </div>

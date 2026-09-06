@@ -242,6 +242,7 @@ def collect_errors(
     registry: dict[str, Any],
     latest_tags: dict[str, Any],
     status_summary: dict[str, Any],
+    dashboard_summary: dict[str, Any],
     dist_index: list[dict[str, Any]] | None,
     schedule: dict[str, Any] | None,
     check_proof: bool,
@@ -251,6 +252,7 @@ def collect_errors(
         "tag_drift": [],
         "lifecycle_drift": [],
         "role_drift": [],
+        "evidence_drift": [],
         "proof_drift": [],
     }
 
@@ -268,6 +270,30 @@ def collect_errors(
             {
                 "lane": str(registry.get("product_default_lane")),
                 "message": f"product_default_lane must remain {EXPECTED_PRODUCT_DEFAULT}",
+            }
+        )
+
+    canary_claim_count = dashboard_summary.get("canary_claim_count")
+    canary_check_count = dashboard_summary.get("canary_check_count")
+    if (
+        isinstance(canary_claim_count, int)
+        and canary_claim_count > 0
+        and (not isinstance(canary_check_count, int) or canary_check_count <= 0)
+    ):
+        errors["evidence_drift"].append(
+            {
+                "path": display_path(DASHBOARD_SUMMARY_PATH),
+                "message": (
+                    f"{canary_claim_count} active canary claims have no current canary checks"
+                ),
+            }
+        )
+    required_canary_gaps = dashboard_summary.get("required_canary_gaps")
+    if isinstance(required_canary_gaps, list) and required_canary_gaps:
+        errors["evidence_drift"].append(
+            {
+                "path": display_path(DASHBOARD_SUMMARY_PATH),
+                "message": f"{len(required_canary_gaps)} required canary gaps remain",
             }
         )
 
@@ -470,6 +496,7 @@ def build_summary(
         registry,
         latest_tags,
         status_summary,
+        dashboard_summary,
         dist_index,
         schedule,
         check_proof=check_proof,
@@ -669,21 +696,24 @@ def command_self_test(_: argparse.Namespace) -> int:
     registry = load_json(LANE_REGISTRY_PATH)
     latest_tags = load_json(LATEST_TAGS_PATH)
     status_summary = load_json(STATUS_SUMMARY_PATH)
+    dashboard_summary = load_json(DASHBOARD_SUMMARY_PATH)
     errors: list[str] = []
 
     def expect_drift(name: str, mutator, expected_kind: str) -> None:
         test_registry = copy.deepcopy(registry)
         test_latest = copy.deepcopy(latest_tags)
         test_status = copy.deepcopy(status_summary)
+        test_dashboard = copy.deepcopy(dashboard_summary)
         dist_index: list[dict[str, Any]] | None = None
         schedule: dict[str, Any] | None = None
-        result = mutator(test_registry, test_latest, test_status)
+        result = mutator(test_registry, test_latest, test_status, test_dashboard)
         if isinstance(result, tuple):
             dist_index, schedule = result
         drift = collect_errors(
             test_registry,
             test_latest,
             test_status,
+            test_dashboard,
             dist_index,
             schedule,
             check_proof=False,
@@ -691,13 +721,19 @@ def command_self_test(_: argparse.Namespace) -> int:
         if not drift[expected_kind]:
             errors.append(f"negative self-test failed: {name} produced no {expected_kind}")
 
-    def tag_drift(_registry: dict[str, Any], _latest: dict[str, Any], _status: dict[str, Any]):
+    def tag_drift(
+        _registry: dict[str, Any],
+        _latest: dict[str, Any],
+        _status: dict[str, Any],
+        _dashboard: dict[str, Any],
+    ):
         return ([{"version": "v24.99.0"}], None)
 
     def lifecycle_drift(
         _registry: dict[str, Any],
         _latest: dict[str, Any],
         _status: dict[str, Any],
+        _dashboard: dict[str, Any],
     ):
         schedule = {
             "v20": {"lts": "2023-10-24", "maintenance": "2024-10-22", "end": "2026-04-30"},
@@ -707,16 +743,36 @@ def command_self_test(_: argparse.Namespace) -> int:
         }
         return (None, schedule)
 
-    def role_drift(_registry: dict[str, Any], _latest: dict[str, Any], status: dict[str, Any]):
+    def role_drift(
+        _registry: dict[str, Any],
+        _latest: dict[str, Any],
+        status: dict[str, Any],
+        _dashboard: dict[str, Any],
+    ):
         status_lanes_by_name(status)["node26"]["lane_role"] = "supported"
 
-    def default_drift(registry_payload: dict[str, Any], _latest: dict[str, Any], _status: dict[str, Any]):
+    def default_drift(
+        registry_payload: dict[str, Any],
+        _latest: dict[str, Any],
+        _status: dict[str, Any],
+        _dashboard: dict[str, Any],
+    ):
         registry_payload["product_default_lane"] = "node22"
+
+    def evidence_drift(
+        _registry: dict[str, Any],
+        _latest: dict[str, Any],
+        _status: dict[str, Any],
+        dashboard: dict[str, Any],
+    ):
+        dashboard["canary_check_count"] = 0
+        dashboard["canary_report_count"] = 0
 
     expect_drift("tag_drift", tag_drift, "tag_drift")
     expect_drift("lifecycle_drift", lifecycle_drift, "lifecycle_drift")
     expect_drift("role_drift", role_drift, "role_drift")
     expect_drift("default_drift", default_drift, "role_drift")
+    expect_drift("evidence_drift", evidence_drift, "evidence_drift")
 
     if errors:
         for error in errors:

@@ -1,6 +1,6 @@
+import { useQuery } from "@nimbus/nimbus/react";
 import { useRouterState } from "@tanstack/react-router";
 import { X } from "lucide-react";
-import { useQuery } from "@nimbus/nimbus/react";
 import { useEffect, useRef } from "react";
 
 import { api } from "../../convex/_generated/api";
@@ -120,7 +120,7 @@ function useLensDocuments(view: LensView) {
   });
   const listeners = useQuery(api.listeners.list, {
     adapter: null,
-    state: null,
+    observedPhase: null,
     limit: 50,
   });
   const status = useQuery(api.system.status, {});

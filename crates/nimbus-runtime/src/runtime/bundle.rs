@@ -12,9 +12,8 @@ use crate::limits::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGuestSemantics, RuntimeJavaScriptEvaluationFormat,
-    RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement, RuntimeMode,
-    RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimePreset, RuntimeProfile,
-    RuntimeRoutingAffinity,
+    RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement, RuntimeMode, RuntimePoolKind,
+    RuntimePreset, RuntimeProfile, RuntimeRoutingAffinity,
 };
 use crate::module_loader::BundleModuleCodeCache;
 
@@ -156,7 +155,6 @@ struct RuntimeBundleEngineCacheKey {
     language: RuntimeLanguage,
     preset: RuntimePreset,
     runtime_pool_kind: RuntimePoolKind,
-    node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy,
     memory_enforcement: RuntimeMemoryEnforcement,
     routing_affinity: RuntimeRoutingAffinity,
     max_heap_mb: usize,
@@ -202,7 +200,6 @@ impl RuntimeBundleEngineCacheKey {
             language: limits.language,
             preset: limits.preset,
             runtime_pool_kind: limits.runtime_pool_kind,
-            node_full_realm_reuse_policy: limits.node_full_realm_reuse_policy,
             memory_enforcement: limits.memory_enforcement,
             routing_affinity: limits.routing_affinity,
             max_heap_mb: limits.max_heap_mb,

@@ -31,7 +31,7 @@ function SystemQueryProbe() {
   });
   const listeners = useQuery(api.listeners.list, {
     adapter: null,
-    state: null,
+    observedPhase: null,
     limit: 50,
   });
   const adapterCapabilities = useQuery(api.adapter_capabilities.list, {
@@ -47,7 +47,7 @@ function SystemQueryProbe() {
     },
     listeners: {
       query: api.listeners.list,
-      args: { adapter: null, state: null, limit: 10 },
+      args: { adapter: null, observedPhase: null, limit: 10 },
     },
     status: {
       query: api.system.status,

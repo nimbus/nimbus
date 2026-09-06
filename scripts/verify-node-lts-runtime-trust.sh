@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Verifies the completed Node LTS Runtime Trust (NLRT) control plane.
+# The plan and proof inputs are intentionally local-only under docs/private/;
+# run this composed gate from a primary checkout that contains that tree.
 
 set -u
 
@@ -80,6 +82,7 @@ supplementary_failures = repo / "tests/runtime/node/compat/node-compat-supplemen
 harness_doc = repo / "tests/runtime/node/compat/node-lts-compat/harness-timeouts-and-hangs.md"
 permission_doc = repo / "docs/private/architecture/runtime/permission-model.md"
 dashboard = repo / "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
+canary_registry = repo / "tests/runtime/node/canary-registry.json"
 process_shape_tests = repo / "crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs"
 
 expected_proofs = {
@@ -159,6 +162,20 @@ supported = [
 ]
 if supported != ["node22", "node24"]:
     errors.append(f"supported LTS lane set should be ['node22', 'node24'], got {supported}")
+required_oracle_lanes = [
+    lane["lane_name"]
+    for lane in registry["lanes"]
+    if lane.get("evidence_policy")
+    in {
+        "supported_lts_lane_local_evidence",
+        "current_non_lts_lane_local_evidence_until_lts_promotion",
+    }
+]
+if required_oracle_lanes != ["node22", "node24", "node26"]:
+    errors.append(
+        "oracle lane set should be ['node22', 'node24', 'node26'], "
+        f"got {required_oracle_lanes}"
+    )
 if registry.get("product_default_lane") != "node24":
     errors.append("product default lane is not explicitly node24")
 
@@ -208,12 +225,27 @@ for phrase in required_permission_phrases:
         errors.append(f"permission-model doc is missing phrase: {phrase}")
 
 dashboard_payload = json.loads(dashboard.read_text(encoding="utf-8"))
-if dashboard_payload.get("canary_claim_count") != 12:
-    errors.append("dashboard canary_claim_count is not 12")
-if dashboard_payload.get("canary_check_count") != 26:
-    errors.append("dashboard canary_check_count is not 26")
-if dashboard_payload.get("oracle_report_count") != 2:
-    errors.append("dashboard oracle_report_count is not 2")
+canary_payload = json.loads(canary_registry.read_text(encoding="utf-8"))
+expected_claim_count = len(canary_payload.get("claims", []))
+observed_claim_count = len(dashboard_payload.get("claim_summaries", []))
+if dashboard_payload.get("canary_claim_count") != expected_claim_count:
+    errors.append("dashboard canary_claim_count does not match the canary registry")
+if observed_claim_count != expected_claim_count:
+    errors.append("dashboard claim_summaries do not cover the canary registry")
+
+observed_check_count = sum(
+    len(report.get("canary_results", []))
+    for report in dashboard_payload.get("canary_reports", [])
+)
+if dashboard_payload.get("canary_check_count") != observed_check_count:
+    errors.append("dashboard canary_check_count does not match its report results")
+
+oracle_reports = dashboard_payload.get("oracle_reports", [])
+if dashboard_payload.get("oracle_report_count") != len(oracle_reports):
+    errors.append("dashboard oracle_report_count does not match its report entries")
+oracle_lanes = {report.get("lane") for report in oracle_reports}
+if not set(required_oracle_lanes).issubset(oracle_lanes):
+    errors.append("dashboard lacks a required LTS or current-line oracle report")
 if dashboard_payload.get("required_canary_gaps"):
     errors.append("dashboard reports required canary gaps")
 

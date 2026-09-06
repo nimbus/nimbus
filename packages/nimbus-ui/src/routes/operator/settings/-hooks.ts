@@ -9,13 +9,13 @@ import type {
 // The settings page's three one-shot debug reads. Each is a `useApiRead` over
 // its `/debug/*` endpoint, reporting the console's shared `LoadingValue<T>`.
 export function useLicenseSnapshot(): LoadingValue<LicenseSnapshot> {
-  return useApiRead<LicenseSnapshot>("/debug/license/status", []);
+  return useApiRead<LicenseSnapshot>("/debug/license/status");
 }
 
 export function useEncryptionStatus(): LoadingValue<EncryptionStatus> {
-  return useApiRead<EncryptionStatus>("/debug/encryption/status", []);
+  return useApiRead<EncryptionStatus>("/debug/encryption/status");
 }
 
 export function useRuntimeDiagnostics(): LoadingValue<RuntimeDiagnostics> {
-  return useApiRead<RuntimeDiagnostics>("/debug/runtime/metrics", []);
+  return useApiRead<RuntimeDiagnostics>("/debug/runtime/metrics");
 }

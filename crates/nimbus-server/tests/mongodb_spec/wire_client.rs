@@ -17,13 +17,23 @@ pub struct WireClient {
 
 impl WireClient {
     pub async fn connect(addr: std::net::SocketAddr) -> Self {
-        let stream = TcpStream::connect(addr).await.expect("connect to listener");
-        Self { stream }
+        Self::try_connect(addr).await.expect("connect to listener")
+    }
+
+    pub async fn try_connect(addr: std::net::SocketAddr) -> std::io::Result<Self> {
+        TcpStream::connect(addr).await.map(|stream| Self { stream })
     }
 
     pub async fn command(&mut self, doc: &bson::Document) -> bson::Document {
+        self.try_command(doc)
+            .await
+            .expect("execute MongoDB command")
+    }
+
+    pub async fn try_command(&mut self, doc: &bson::Document) -> Result<bson::Document, String> {
         let request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
-        let body_bytes = bson::serialize_to_vec(doc).expect("serialize command");
+        let body_bytes = bson::serialize_to_vec(doc)
+            .map_err(|error| format!("serialize MongoDB command: {error}"))?;
 
         let flag_bits: u32 = 0;
         let payload_len = 4 + 1 + body_bytes.len();
@@ -38,26 +48,33 @@ impl WireClient {
         buf.push(0);
         buf.extend_from_slice(&body_bytes);
 
-        self.stream.write_all(&buf).await.expect("write command");
+        self.stream
+            .write_all(&buf)
+            .await
+            .map_err(|error| format!("write MongoDB command: {error}"))?;
 
         let mut header_buf = [0u8; 16];
         self.stream
             .read_exact(&mut header_buf)
             .await
-            .expect("read response header");
+            .map_err(|error| format!("read MongoDB response header: {error}"))?;
 
         let msg_len =
             i32::from_le_bytes([header_buf[0], header_buf[1], header_buf[2], header_buf[3]]);
+        if msg_len < 21 {
+            return Err(format!("MongoDB response length {msg_len} is too short"));
+        }
 
         let body_len = (msg_len as usize) - 16;
         let mut body = vec![0u8; body_len];
         self.stream
             .read_exact(&mut body)
             .await
-            .expect("read response body");
+            .map_err(|error| format!("read MongoDB response body: {error}"))?;
 
         // skip flags (4 bytes) + section kind (1 byte)
-        bson::deserialize_from_slice(&body[5..]).expect("deserialize response")
+        bson::deserialize_from_slice(&body[5..])
+            .map_err(|error| format!("deserialize MongoDB response: {error}"))
     }
 
     pub async fn authenticate(&mut self, username: &str, password: &str) -> Result<(), String> {

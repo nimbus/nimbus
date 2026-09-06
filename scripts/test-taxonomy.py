@@ -62,7 +62,7 @@ EVIDENCE_LANE_RE = re.compile(
 # environment (B4 archive job) alongside this meta file.
 INVENTORY_META_PATH = REPO_ROOT / "target" / "test-inventory" / "nextest-list.meta.json"
 CANONICAL_INVENTORY_PLATFORM = "x86_64-unknown-linux-gnu"
-REQUIRED_NEXTEST_VERSION = "0.9.138"
+REQUIRED_NEXTEST_VERSION = "0.9.143"
 
 MODULE_ALIASES = (
     ("runtime::tests::node::", "runtime::tests::node_compat::"),

@@ -35,6 +35,7 @@ use super::runtime_limits::{
     runtime_adaptive_controller_settings_from_command, runtime_host_resource_budget_from_command,
     runtime_limits_from_command,
 };
+use super::shutdown::{ProcessShutdownSignals, serve_until_shutdown};
 use crate::cli_ux;
 use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
@@ -65,6 +66,12 @@ impl ResolvedStartAppDir {
 pub(crate) async fn run_start_command(
     command: StartCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Reject an unsafe explicit bind before claiming the process-wide local
+    // network authority. A different Nimbus process can hold that authority;
+    // waiting on it must never hide a deterministic CLI policy error.
+    if !command.systemd_socket_activation {
+        ensure_host_opt_in(&command.host, command.allow_network)?;
+    }
     let network_root = network_root_from_start_command(&command)?;
     let staged_network = StagedLocalNetworkComposition::claim(&network_root)?;
     run_start_command_with_network(command, StartNetworkComposition::Staged(staged_network)).await
@@ -198,6 +205,9 @@ async fn run_start_command_inner(
             "resolved compose workload-control boot plan"
         );
     }
+    let server_workload_boot_plan = workload_boot_plan
+        .map(crate::workload_boot::WorkloadControlBootPlan::into_server_plan)
+        .transpose()?;
     let source_ingress = nimbus_server::nimbus_owned_workload_ingress_registration();
     let prepared_network = match network {
         StartNetworkComposition::Staged(staged) => PreparedLocalNetworkComposition::prepare(
@@ -267,6 +277,9 @@ async fn run_start_command_inner(
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
         .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
+    if let Some(plan) = server_workload_boot_plan {
+        serve_options = serve_options.with_workload_boot_plan(plan);
+    }
     if let Some(listeners) = prebound_wire_listeners.as_ref() {
         serve_options = serve_options.with_prebound_listener_authority(listeners)?;
     }
@@ -340,6 +353,11 @@ async fn run_start_command_inner(
             )));
         }
     };
+    let server_shutdown = serve_options.shutdown_handle();
+    let shutdown_signals = ProcessShutdownSignals::install()?;
+    if let Some(listeners) = prebound_wire_listeners.take() {
+        serve_options = serve_options.with_prebound_wire_listeners(listeners)?;
+    }
     emit_start_startup_summary(
         &command,
         resolved_app_dir.as_ref(),
@@ -371,19 +389,21 @@ async fn run_start_command_inner(
     }
 
     tracing::info!("nimbus listening on {listener_addr}");
-    if let Some(listeners) = prebound_wire_listeners.take() {
-        serve_options = serve_options.with_prebound_wire_listeners(listeners)?;
-    }
-    let server_result = serve_leased(listener, serve_options).await;
-    drop(discovery_lease);
-    let _ = shutdown_tx.send(true);
-    let _ = scheduler_handle.await;
-    if let Some(handle) = first_boot_handle {
-        handle.abort();
-        let _ = handle.await;
-    }
-    shutdown_engine.quiesce().await;
-    drop(prepared_network);
+    let server_lifecycle = Box::pin(async move {
+        let server_result = serve_leased(listener, serve_options).await;
+        drop(discovery_lease);
+        let _ = shutdown_tx.send(true);
+        let _ = scheduler_handle.await;
+        if let Some(handle) = first_boot_handle {
+            handle.abort();
+            let _ = handle.await;
+        }
+        shutdown_engine.quiesce().await;
+        drop(prepared_network);
+        server_result
+    });
+    let server_result =
+        serve_until_shutdown(server_lifecycle, shutdown_signals, server_shutdown).await;
     server_result.map_err(|error| conventional_wire_port_guidance(&command, error))?;
     Ok(())
 }

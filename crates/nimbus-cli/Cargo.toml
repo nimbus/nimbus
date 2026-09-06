@@ -22,9 +22,6 @@ default = ["libsql", "mysql", "postgres"]
 libsql = ["nimbus/libsql", "nimbus-server/libsql"]
 mysql = ["nimbus/mysql", "nimbus-server/mysql"]
 postgres = ["nimbus/postgres", "nimbus-server/postgres"]
-# LR12: opt-in lane for the live hidden node workload executor integration
-# test against session systemd (mirrors nimbus-node's systemd-dbus-integration-tests).
-node-workload-executor-integration-tests = []
 bun-jsc-linked-adapter = [
     "nimbus/bun-jsc-linked-adapter",
     "nimbus-server/bun-jsc-linked-adapter",

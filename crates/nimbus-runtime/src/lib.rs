@@ -33,15 +33,15 @@ pub fn wasmtime_component_linker_diagnostics() -> Result<()> {
 
 /// Build / check the embeddable NodeFull(Node22) anchor-snapshot blob. Called by the
 /// `build_node22_anchor_snapshot` builder binary (a normal consumer of this crate): it writes the
-/// committed per-config `.bin`/`.pc.bin` the lib `include_bytes!`es, and `--check` byte-compares a
-/// fresh rebuild against the committed file. Neither is used on the serving path.
+/// generated per-config `.bin`/`.pc.bin` the lib `include_bytes!`es. `--check` validates provenance
+/// and structure. Neither builder action runs on the serving path.
 pub use backends::v8::{
-    build_embeddable_node22_snapshot_blob, check_committed_embedded_anchor_snapshot,
+    build_embeddable_node22_snapshot_blob, check_generated_embedded_anchor_snapshot,
 };
-/// DIAGNOSTIC re-export: force-install the committed embedded anchor snapshot in THIS binary to
+/// DIAGNOSTIC re-export: force-install the generated embedded anchor snapshot in THIS binary to
 /// isolate "bad bytes" from "cross-binary" magic mismatches. Used by `build_node22_anchor_snapshot
-/// --smoke`. See `runtime::driver::anchor::smoke_install_committed_embedded_anchor`.
-pub use runtime::driver::anchor::smoke_install_committed_embedded_anchor;
+/// --smoke`. See `runtime::driver::anchor::smoke_install_generated_embedded_anchor`.
+pub use runtime::driver::anchor::smoke_install_generated_embedded_anchor;
 
 pub use context::RuntimeInvocationContext;
 pub use egress::{
@@ -90,12 +90,11 @@ pub use limits::{
     RuntimeHostWorkClass, RuntimeIsolateGroupFfiStatus, RuntimeJavaScriptEvaluationFormat,
     RuntimeLanguage, RuntimeLimits, RuntimeMemoryEnforcement, RuntimeMemoryPressureDecision,
     RuntimeMemoryPressureLevel, RuntimeMemoryPressureSample, RuntimeMemoryPressureSourceStatus,
-    RuntimeMode, RuntimeModuleStateSemantics, RuntimeNodeFullRealmReusePolicy, RuntimeNodeLtsLane,
-    RuntimeNodeSupportPhase, RuntimePolicy, RuntimePoolKind, RuntimePreset,
-    RuntimePrewarmScheduleDecision, RuntimeProfile, RuntimeResetCapabilities,
-    RuntimeRoutingAffinity, RuntimeScalingAdjustmentReason, RuntimeScalingLimit,
-    RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget, RuntimeTenantBudget,
-    replay_runtime_controller,
+    RuntimeMode, RuntimeModuleStateSemantics, RuntimeNodeLtsLane, RuntimeNodeSupportPhase,
+    RuntimePolicy, RuntimePoolKind, RuntimePreset, RuntimePrewarmScheduleDecision, RuntimeProfile,
+    RuntimeResetCapabilities, RuntimeRoutingAffinity, RuntimeScalingAdjustmentReason,
+    RuntimeScalingLimit, RuntimeScalingPlanSet, RuntimeScalingPreset, RuntimeScalingTarget,
+    RuntimeTenantBudget, replay_runtime_controller,
 };
 pub use metrics::{
     RuntimeAdaptiveControllerMetricsSnapshot, RuntimeDurationDistributionSnapshot,

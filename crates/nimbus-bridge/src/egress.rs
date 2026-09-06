@@ -95,13 +95,13 @@ impl EgressGatewayEnforcementReadiness {
 
 /// Authorize a runtime egress request against the tenant's admitted decision.
 ///
-/// This is the single shared bridging path between the `nimbus-runtime` fetch
+/// This is the single shared bridging path between the `nimbus-runtime` egress
 /// surface and the `nimbus-egress` PDP. It enforces, in order: the readiness
 /// latch, the tenant-label guard, the custom-client fail-closed, the
 /// unsupported-protocol (UDP) fail-closed, and finally the per-tenant policy
 /// verdict — faithfully propagating whether the matched rule still requires
 /// PEP-mediated L7 enforcement (credential injection / DLP) so the runtime
-/// fetch hook can fail it closed on substrates with no proxy route (the
+/// egress hook can fail it closed on substrates with no proxy route (the
 /// isolate). The bridge propagates; it never re-encodes the L7 fail-closed.
 pub fn authorize_runtime_egress(
     decision: &TenantIsolationDecision,
@@ -147,17 +147,25 @@ fn policy_request_from_runtime_request(
     let protocol = match request.protocol {
         RuntimeEgressProtocol::Http => PolicyEgressProtocol::Http,
         RuntimeEgressProtocol::Https => PolicyEgressProtocol::Https,
+        RuntimeEgressProtocol::Ws => PolicyEgressProtocol::Ws,
+        RuntimeEgressProtocol::Wss => PolicyEgressProtocol::Wss,
         RuntimeEgressProtocol::Tcp => PolicyEgressProtocol::Tcp,
         RuntimeEgressProtocol::Udp => return None,
     };
     let mut policy_request = PolicyEgressRequest::new(protocol, request.host.clone(), request.port);
     if matches!(
         request.protocol,
-        RuntimeEgressProtocol::Http | RuntimeEgressProtocol::Https
+        RuntimeEgressProtocol::Http
+            | RuntimeEgressProtocol::Https
+            | RuntimeEgressProtocol::Ws
+            | RuntimeEgressProtocol::Wss
     ) && let (Some(method), Some(path)) =
         (request.method.as_deref(), request.path_and_query.as_deref())
     {
         policy_request = policy_request.with_http(method, path);
+    }
+    if let Some(resolved_ip) = request.resolved_ip {
+        policy_request = policy_request.with_resolved_ip(resolved_ip);
     }
     Some(policy_request)
 }
@@ -288,6 +296,108 @@ mod tests {
         );
     }
 
+    #[test]
+    fn runtime_websocket_requires_an_explicit_websocket_policy_rule() {
+        let https_decision = decision_for_policy(
+            "tenant-a",
+            EgressPolicy::new([EgressRule::new(
+                "api-http",
+                EgressProtocol::Https,
+                "api.internal",
+                443,
+            )]),
+        );
+        let https_readiness =
+            EgressGatewayEnforcementReadiness::ready_for_decision(&https_decision);
+        let mut websocket_request = runtime_request(Some("tenant-a"), "api.internal");
+        websocket_request.protocol = RuntimeEgressProtocol::Wss;
+        websocket_request.url = Some("wss://api.internal/v1/messages".to_string());
+
+        let denied =
+            authorize_runtime_egress(&https_decision, &https_readiness, &websocket_request);
+        assert!(!denied.is_allowed());
+        assert!(
+            denied.reason().contains("wss://api.internal:443"),
+            "shared policy must retain the WebSocket protocol: {}",
+            denied.reason()
+        );
+
+        let websocket_decision = decision_for_policy(
+            "tenant-a",
+            EgressPolicy::new([EgressRule::new(
+                "api-websocket",
+                EgressProtocol::Wss,
+                "api.internal",
+                443,
+            )]),
+        );
+        let websocket_readiness =
+            EgressGatewayEnforcementReadiness::ready_for_decision(&websocket_decision);
+        let allowed = authorize_runtime_egress(
+            &websocket_decision,
+            &websocket_readiness,
+            &websocket_request,
+        );
+        assert!(allowed.is_allowed(), "{}", allowed.reason());
+        assert_eq!(allowed.matched_rule(), Some("api-websocket"));
+    }
+
+    #[test]
+    fn runtime_websocket_denies_internal_address_selected_by_dns() {
+        let decision = decision_for_policy(
+            "tenant-a",
+            EgressPolicy::new([EgressRule::new(
+                "public-websocket",
+                EgressProtocol::Wss,
+                "events.example.com",
+                443,
+            )]),
+        );
+        let readiness = EgressGatewayEnforcementReadiness::ready_for_decision(&decision);
+        let mut request = runtime_request(Some("tenant-a"), "events.example.com");
+        request.protocol = RuntimeEgressProtocol::Wss;
+        request.url = Some("wss://events.example.com/socket".to_string());
+        request.resolved_ip = Some(
+            "169.254.169.254"
+                .parse()
+                .expect("metadata address should parse"),
+        );
+
+        let denied = authorize_runtime_egress(&decision, &readiness, &request);
+
+        assert!(!denied.is_allowed());
+        assert!(
+            denied.reason().contains("internal/non-global targets"),
+            "resolved metadata address must be denied by the shared policy: {}",
+            denied.reason()
+        );
+    }
+
+    #[test]
+    fn runtime_fetch_denies_internal_address_selected_by_dns() {
+        let decision = decision_for_policy(
+            "tenant-a",
+            EgressPolicy::new([EgressRule::new(
+                "public-api",
+                EgressProtocol::Https,
+                "api.example.com",
+                443,
+            )]),
+        );
+        let readiness = EgressGatewayEnforcementReadiness::ready_for_decision(&decision);
+        let mut request = runtime_request(Some("tenant-a"), "api.example.com");
+        request.resolved_ip = Some("127.0.0.1".parse().expect("loopback address should parse"));
+
+        let denied = authorize_runtime_egress(&decision, &readiness, &request);
+
+        assert!(!denied.is_allowed());
+        assert!(
+            denied.reason().contains("internal/non-global targets"),
+            "resolved loopback address must be denied by the shared policy: {}",
+            denied.reason()
+        );
+    }
+
     fn decision_for_policy(tenant: &str, policy: EgressPolicy) -> TenantIsolationDecision {
         let context = TenantIsolationContext::application(
             TenantId::new(tenant).expect("tenant id should build"),
@@ -327,6 +437,7 @@ mod tests {
             host: host.to_string(),
             port: 443,
             path_and_query: Some("/v1/messages".to_string()),
+            resolved_ip: None,
             tenant_label: tenant_label.map(str::to_string),
             session_id: Some("session-egress-bridge-test".to_string()),
             invocation_id: Some(1),

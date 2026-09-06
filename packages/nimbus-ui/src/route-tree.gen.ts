@@ -10,25 +10,25 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as OperatorIndexRouteImport } from './routes/operator/index'
 import { Route as DeveloperIndexRouteImport } from './routes/developer/index'
-import { Route as OperatorTenantsRouteImport } from './routes/operator/tenants'
-import { Route as OperatorSettingsRouteImport } from './routes/operator/settings'
-import { Route as OperatorServicesRouteImport } from './routes/operator/services'
-import { Route as OperatorObservabilityRouteImport } from './routes/operator/observability'
-import { Route as OperatorNetworkRouteImport } from './routes/operator/network'
-import { Route as OperatorMachinesRouteImport } from './routes/operator/machines'
-import { Route as DeveloperStorageRouteImport } from './routes/developer/storage'
-import { Route as DeveloperSettingsRouteImport } from './routes/developer/settings'
-import { Route as DeveloperServicesRouteImport } from './routes/developer/services'
-import { Route as DeveloperSchedulesRouteImport } from './routes/developer/schedules'
-import { Route as DeveloperObservabilityRouteImport } from './routes/developer/observability'
-import { Route as DeveloperFilesRouteImport } from './routes/developer/files'
 import { Route as DeveloperComputeRouteImport } from './routes/developer/compute'
-import { Route as OperatorServicesServiceRouteImport } from './routes/operator/services_.$service'
-import { Route as DeveloperStorageTableRouteImport } from './routes/developer/storage_.$table'
-import { Route as DeveloperServicesServiceRouteImport } from './routes/developer/services_.$service'
+import { Route as DeveloperFilesRouteImport } from './routes/developer/files'
+import { Route as DeveloperObservabilityRouteImport } from './routes/developer/observability'
+import { Route as DeveloperSchedulesRouteImport } from './routes/developer/schedules'
+import { Route as DeveloperServicesRouteImport } from './routes/developer/services'
+import { Route as DeveloperSettingsRouteImport } from './routes/developer/settings'
+import { Route as DeveloperStorageRouteImport } from './routes/developer/storage'
+import { Route as OperatorIndexRouteImport } from './routes/operator/index'
+import { Route as OperatorMachinesRouteImport } from './routes/operator/machines'
+import { Route as OperatorNetworkRouteImport } from './routes/operator/network'
+import { Route as OperatorObservabilityRouteImport } from './routes/operator/observability'
+import { Route as OperatorServicesRouteImport } from './routes/operator/services'
+import { Route as OperatorSettingsRouteImport } from './routes/operator/settings'
+import { Route as OperatorTenantsRouteImport } from './routes/operator/tenants'
 import { Route as DeveloperComputeFunctionRouteImport } from './routes/developer/compute_.$function'
+import { Route as DeveloperServicesServiceRouteImport } from './routes/developer/services_.$service'
+import { Route as DeveloperStorageTableRouteImport } from './routes/developer/storage_.$table'
+import { Route as OperatorServicesServiceRouteImport } from './routes/operator/services_.$service'
 import { Route as DeveloperComputeRunsRunIdRouteImport } from './routes/developer/compute_.runs_.$runId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -36,74 +36,9 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OperatorIndexRoute = OperatorIndexRouteImport.update({
-  id: '/operator/',
-  path: '/operator/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const DeveloperIndexRoute = DeveloperIndexRouteImport.update({
   id: '/developer/',
   path: '/developer/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OperatorTenantsRoute = OperatorTenantsRouteImport.update({
-  id: '/operator/tenants',
-  path: '/operator/tenants',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OperatorSettingsRoute = OperatorSettingsRouteImport.update({
-  id: '/operator/settings',
-  path: '/operator/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OperatorServicesRoute = OperatorServicesRouteImport.update({
-  id: '/operator/services',
-  path: '/operator/services',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OperatorObservabilityRoute = OperatorObservabilityRouteImport.update({
-  id: '/operator/observability',
-  path: '/operator/observability',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OperatorNetworkRoute = OperatorNetworkRouteImport.update({
-  id: '/operator/network',
-  path: '/operator/network',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OperatorMachinesRoute = OperatorMachinesRouteImport.update({
-  id: '/operator/machines',
-  path: '/operator/machines',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DeveloperStorageRoute = DeveloperStorageRouteImport.update({
-  id: '/developer/storage',
-  path: '/developer/storage',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DeveloperSettingsRoute = DeveloperSettingsRouteImport.update({
-  id: '/developer/settings',
-  path: '/developer/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DeveloperServicesRoute = DeveloperServicesRouteImport.update({
-  id: '/developer/services',
-  path: '/developer/services',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DeveloperSchedulesRoute = DeveloperSchedulesRouteImport.update({
-  id: '/developer/schedules',
-  path: '/developer/schedules',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DeveloperObservabilityRoute = DeveloperObservabilityRouteImport.update({
-  id: '/developer/observability',
-  path: '/developer/observability',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DeveloperFilesRoute = DeveloperFilesRouteImport.update({
-  id: '/developer/files',
-  path: '/developer/files',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeveloperComputeRoute = DeveloperComputeRouteImport.update({
@@ -111,28 +46,93 @@ const DeveloperComputeRoute = DeveloperComputeRouteImport.update({
   path: '/developer/compute',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OperatorServicesServiceRoute = OperatorServicesServiceRouteImport.update({
-  id: '/operator/services_/$service',
-  path: '/operator/services/$service',
+const DeveloperFilesRoute = DeveloperFilesRouteImport.update({
+  id: '/developer/files',
+  path: '/developer/files',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DeveloperStorageTableRoute = DeveloperStorageTableRouteImport.update({
-  id: '/developer/storage_/$table',
-  path: '/developer/storage/$table',
+const DeveloperObservabilityRoute = DeveloperObservabilityRouteImport.update({
+  id: '/developer/observability',
+  path: '/developer/observability',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DeveloperServicesServiceRoute =
-  DeveloperServicesServiceRouteImport.update({
-    id: '/developer/services_/$service',
-    path: '/developer/services/$service',
-    getParentRoute: () => rootRouteImport,
-  } as any)
+const DeveloperSchedulesRoute = DeveloperSchedulesRouteImport.update({
+  id: '/developer/schedules',
+  path: '/developer/schedules',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperServicesRoute = DeveloperServicesRouteImport.update({
+  id: '/developer/services',
+  path: '/developer/services',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperSettingsRoute = DeveloperSettingsRouteImport.update({
+  id: '/developer/settings',
+  path: '/developer/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperStorageRoute = DeveloperStorageRouteImport.update({
+  id: '/developer/storage',
+  path: '/developer/storage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorIndexRoute = OperatorIndexRouteImport.update({
+  id: '/operator/',
+  path: '/operator/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorMachinesRoute = OperatorMachinesRouteImport.update({
+  id: '/operator/machines',
+  path: '/operator/machines',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorNetworkRoute = OperatorNetworkRouteImport.update({
+  id: '/operator/network',
+  path: '/operator/network',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorObservabilityRoute = OperatorObservabilityRouteImport.update({
+  id: '/operator/observability',
+  path: '/operator/observability',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorServicesRoute = OperatorServicesRouteImport.update({
+  id: '/operator/services',
+  path: '/operator/services',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorSettingsRoute = OperatorSettingsRouteImport.update({
+  id: '/operator/settings',
+  path: '/operator/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorTenantsRoute = OperatorTenantsRouteImport.update({
+  id: '/operator/tenants',
+  path: '/operator/tenants',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DeveloperComputeFunctionRoute =
   DeveloperComputeFunctionRouteImport.update({
     id: '/developer/compute_/$function',
     path: '/developer/compute/$function',
     getParentRoute: () => rootRouteImport,
   } as any)
+const DeveloperServicesServiceRoute =
+  DeveloperServicesServiceRouteImport.update({
+    id: '/developer/services_/$service',
+    path: '/developer/services/$service',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DeveloperStorageTableRoute = DeveloperStorageTableRouteImport.update({
+  id: '/developer/storage_/$table',
+  path: '/developer/storage/$table',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorServicesServiceRoute = OperatorServicesServiceRouteImport.update({
+  id: '/operator/services_/$service',
+  path: '/operator/services/$service',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DeveloperComputeRunsRunIdRoute =
   DeveloperComputeRunsRunIdRouteImport.update({
     id: '/developer/compute_/runs_/$runId',
@@ -315,102 +315,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/operator/': {
-      id: '/operator/'
-      path: '/operator'
-      fullPath: '/operator/'
-      preLoaderRoute: typeof OperatorIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/developer/': {
       id: '/developer/'
       path: '/developer'
       fullPath: '/developer/'
       preLoaderRoute: typeof DeveloperIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/operator/tenants': {
-      id: '/operator/tenants'
-      path: '/operator/tenants'
-      fullPath: '/operator/tenants'
-      preLoaderRoute: typeof OperatorTenantsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/operator/settings': {
-      id: '/operator/settings'
-      path: '/operator/settings'
-      fullPath: '/operator/settings'
-      preLoaderRoute: typeof OperatorSettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/operator/services': {
-      id: '/operator/services'
-      path: '/operator/services'
-      fullPath: '/operator/services'
-      preLoaderRoute: typeof OperatorServicesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/operator/observability': {
-      id: '/operator/observability'
-      path: '/operator/observability'
-      fullPath: '/operator/observability'
-      preLoaderRoute: typeof OperatorObservabilityRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/operator/network': {
-      id: '/operator/network'
-      path: '/operator/network'
-      fullPath: '/operator/network'
-      preLoaderRoute: typeof OperatorNetworkRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/operator/machines': {
-      id: '/operator/machines'
-      path: '/operator/machines'
-      fullPath: '/operator/machines'
-      preLoaderRoute: typeof OperatorMachinesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/developer/storage': {
-      id: '/developer/storage'
-      path: '/developer/storage'
-      fullPath: '/developer/storage'
-      preLoaderRoute: typeof DeveloperStorageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/developer/settings': {
-      id: '/developer/settings'
-      path: '/developer/settings'
-      fullPath: '/developer/settings'
-      preLoaderRoute: typeof DeveloperSettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/developer/services': {
-      id: '/developer/services'
-      path: '/developer/services'
-      fullPath: '/developer/services'
-      preLoaderRoute: typeof DeveloperServicesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/developer/schedules': {
-      id: '/developer/schedules'
-      path: '/developer/schedules'
-      fullPath: '/developer/schedules'
-      preLoaderRoute: typeof DeveloperSchedulesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/developer/observability': {
-      id: '/developer/observability'
-      path: '/developer/observability'
-      fullPath: '/developer/observability'
-      preLoaderRoute: typeof DeveloperObservabilityRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/developer/files': {
-      id: '/developer/files'
-      path: '/developer/files'
-      fullPath: '/developer/files'
-      preLoaderRoute: typeof DeveloperFilesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/compute': {
@@ -420,18 +329,102 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperComputeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/operator/services_/$service': {
-      id: '/operator/services_/$service'
-      path: '/operator/services/$service'
-      fullPath: '/operator/services/$service'
-      preLoaderRoute: typeof OperatorServicesServiceRouteImport
+    '/developer/files': {
+      id: '/developer/files'
+      path: '/developer/files'
+      fullPath: '/developer/files'
+      preLoaderRoute: typeof DeveloperFilesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/developer/storage_/$table': {
-      id: '/developer/storage_/$table'
-      path: '/developer/storage/$table'
-      fullPath: '/developer/storage/$table'
-      preLoaderRoute: typeof DeveloperStorageTableRouteImport
+    '/developer/observability': {
+      id: '/developer/observability'
+      path: '/developer/observability'
+      fullPath: '/developer/observability'
+      preLoaderRoute: typeof DeveloperObservabilityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/schedules': {
+      id: '/developer/schedules'
+      path: '/developer/schedules'
+      fullPath: '/developer/schedules'
+      preLoaderRoute: typeof DeveloperSchedulesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/services': {
+      id: '/developer/services'
+      path: '/developer/services'
+      fullPath: '/developer/services'
+      preLoaderRoute: typeof DeveloperServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/settings': {
+      id: '/developer/settings'
+      path: '/developer/settings'
+      fullPath: '/developer/settings'
+      preLoaderRoute: typeof DeveloperSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/storage': {
+      id: '/developer/storage'
+      path: '/developer/storage'
+      fullPath: '/developer/storage'
+      preLoaderRoute: typeof DeveloperStorageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/': {
+      id: '/operator/'
+      path: '/operator'
+      fullPath: '/operator/'
+      preLoaderRoute: typeof OperatorIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/machines': {
+      id: '/operator/machines'
+      path: '/operator/machines'
+      fullPath: '/operator/machines'
+      preLoaderRoute: typeof OperatorMachinesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/network': {
+      id: '/operator/network'
+      path: '/operator/network'
+      fullPath: '/operator/network'
+      preLoaderRoute: typeof OperatorNetworkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/observability': {
+      id: '/operator/observability'
+      path: '/operator/observability'
+      fullPath: '/operator/observability'
+      preLoaderRoute: typeof OperatorObservabilityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/services': {
+      id: '/operator/services'
+      path: '/operator/services'
+      fullPath: '/operator/services'
+      preLoaderRoute: typeof OperatorServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/settings': {
+      id: '/operator/settings'
+      path: '/operator/settings'
+      fullPath: '/operator/settings'
+      preLoaderRoute: typeof OperatorSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/tenants': {
+      id: '/operator/tenants'
+      path: '/operator/tenants'
+      fullPath: '/operator/tenants'
+      preLoaderRoute: typeof OperatorTenantsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/compute_/$function': {
+      id: '/developer/compute_/$function'
+      path: '/developer/compute/$function'
+      fullPath: '/developer/compute/$function'
+      preLoaderRoute: typeof DeveloperComputeFunctionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/services_/$service': {
@@ -441,11 +434,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperServicesServiceRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/developer/compute_/$function': {
-      id: '/developer/compute_/$function'
-      path: '/developer/compute/$function'
-      fullPath: '/developer/compute/$function'
-      preLoaderRoute: typeof DeveloperComputeFunctionRouteImport
+    '/developer/storage_/$table': {
+      id: '/developer/storage_/$table'
+      path: '/developer/storage/$table'
+      fullPath: '/developer/storage/$table'
+      preLoaderRoute: typeof DeveloperStorageTableRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator/services_/$service': {
+      id: '/operator/services_/$service'
+      path: '/operator/services/$service'
+      fullPath: '/operator/services/$service'
+      preLoaderRoute: typeof OperatorServicesServiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/compute_/runs_/$runId': {

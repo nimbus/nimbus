@@ -1,10 +1,8 @@
 #[cfg(test)]
 use std::collections::VecDeque;
 use std::sync::Arc;
-#[cfg(test)]
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
-#[cfg(test)]
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -51,6 +49,9 @@ struct TriggerCandidateWorker {
 
 pub(super) struct TriggerCandidateFeed {
     queue: Arc<TriggerCandidateQueueState>,
+    // Prevent a lifecycle close from racing a late worker start.
+    lifecycle: Mutex<()>,
+    closed: AtomicBool,
     #[cfg(test)]
     pending: Arc<PendingTriggerCandidateState>,
     worker: Arc<TriggerCandidateWorker>,
@@ -208,12 +209,19 @@ impl TriggerCandidateWorker {
             pause.release_for_shutdown();
         });
     }
+
+    #[cfg(test)]
+    fn running(&self) -> bool {
+        self.worker.running()
+    }
 }
 
 impl TriggerCandidateFeed {
     pub(super) fn new() -> Self {
         Self {
             queue: Arc::new(TriggerCandidateQueueState::new()),
+            lifecycle: Mutex::new(()),
+            closed: AtomicBool::new(false),
             #[cfg(test)]
             pending: Arc::new(PendingTriggerCandidateState::new()),
             worker: Arc::new(TriggerCandidateWorker::new()),
@@ -225,6 +233,13 @@ impl TriggerCandidateFeed {
     }
 
     pub(super) fn start_worker(&self, runtime: &Arc<TenantRuntime>) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .expect("trigger candidate lifecycle lock should not be poisoned");
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
         #[cfg(test)]
         if self.disabled.load(Ordering::Acquire) {
             return;
@@ -240,6 +255,9 @@ impl TriggerCandidateFeed {
     }
 
     pub(super) fn enqueue_commits(&self, commits: Vec<CommitEntry>) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
         #[cfg(test)]
         if self.disabled.load(Ordering::Acquire) {
             return;
@@ -248,6 +266,19 @@ impl TriggerCandidateFeed {
     }
 
     pub(super) fn shutdown(&self) {
+        self.worker.request_shutdown(
+            &self.queue,
+            #[cfg(test)]
+            &self.pause,
+        );
+    }
+
+    pub(super) fn close(&self) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .expect("trigger candidate lifecycle lock should not be poisoned");
+        self.closed.store(true, Ordering::Release);
         self.worker.request_shutdown(
             &self.queue,
             #[cfg(test)]
@@ -264,6 +295,11 @@ impl TriggerCandidateFeed {
     #[cfg(test)]
     pub(super) fn is_disabled(&self) -> bool {
         self.disabled.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(super) fn worker_running(&self) -> bool {
+        self.worker.running()
     }
 
     #[cfg(test)]
@@ -295,6 +331,10 @@ impl TenantRuntime {
         self.trigger_candidates.shutdown();
     }
 
+    pub(crate) fn close_trigger_candidates(&self) {
+        self.trigger_candidates.close();
+    }
+
     #[cfg(test)]
     pub(crate) fn disable_trigger_candidates_for_testing(&self) {
         self.trigger_candidates.disable();
@@ -303,6 +343,11 @@ impl TenantRuntime {
     #[cfg(test)]
     pub(crate) fn trigger_candidates_disabled_for_testing(&self) -> bool {
         self.trigger_candidates.is_disabled()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trigger_candidate_worker_running_for_testing(&self) -> bool {
+        self.trigger_candidates.worker_running()
     }
 
     #[cfg(test)]

@@ -379,12 +379,10 @@ fn serve_spa_shell(state: &Arc<AppState>, headers: &HeaderMap) -> Result<Respons
     match local_server_security.authorize_session_cookie(extract_session_cookie(headers).as_deref())
     {
         SessionValidationResult::Authorized(_) => Ok(spa_index_response()),
-        SessionValidationResult::Missing => Ok(Redirect::temporary("/ui/auth").into_response()),
-        SessionValidationResult::Revoked => Err(AppError::unauthorized("auth.token_revoked")),
-        SessionValidationResult::Expired => Err(AppError::unauthorized("auth.session_expired")),
-        SessionValidationResult::Invalid => {
-            Err(AppError::unauthorized("invalid ui session cookie"))
-        }
+        SessionValidationResult::Missing
+        | SessionValidationResult::Revoked
+        | SessionValidationResult::Expired
+        | SessionValidationResult::Invalid => Ok(Redirect::temporary("/ui/auth").into_response()),
     }
 }
 

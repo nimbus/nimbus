@@ -1,5 +1,6 @@
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{rc::Rc, sync::OnceLock};
 
 use crate::error::Result;
 use crate::limits::RuntimeCompatibilityTarget;
@@ -9,10 +10,12 @@ use crate::runtime::bootstrap::{
 };
 
 use super::embedder::{
-    Extension, JsRuntimeForSnapshot, ModuleCodeString, ModuleName, RuntimeOptions,
+    Extension, ExtensionFileSource, ExtensionFileSourceCode, ExtensionSourceProvider,
+    JsRuntimeForSnapshot, ModuleCodeString, ModuleName, RuntimeOptions,
 };
 
 type ResidualLazySources = &'static [(&'static str, &'static str)];
+type PackagedRuntimeExtensionSources = &'static [(&'static str, &'static str)];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum V8RuntimeConstructionMode {
@@ -56,8 +59,6 @@ pub(crate) struct V8StartupSnapshot {
     bytes: &'static [u8],
     residual_lazy_js_sources: ResidualLazySources,
     residual_lazy_esm_sources: ResidualLazySources,
-    extension_replay_js_sources: ResidualLazySources,
-    extension_replay_esm_sources: ResidualLazySources,
 }
 
 impl V8StartupSnapshot {
@@ -65,8 +66,6 @@ impl V8StartupSnapshot {
         bytes: Box<[u8]>,
         residual_lazy_js_sources: ResidualLazySources,
         residual_lazy_esm_sources: ResidualLazySources,
-        extension_replay_js_sources: ResidualLazySources,
-        extension_replay_esm_sources: ResidualLazySources,
     ) -> Self {
         // deno_core currently accepts startup snapshots as &'static [u8]. The
         // worker pool keeps a single bootstrap snapshot for its own lifetime,
@@ -77,8 +76,6 @@ impl V8StartupSnapshot {
             bytes: Box::leak(bytes),
             residual_lazy_js_sources,
             residual_lazy_esm_sources,
-            extension_replay_js_sources,
-            extension_replay_esm_sources,
         }
     }
 
@@ -92,14 +89,6 @@ impl V8StartupSnapshot {
 
     pub(crate) fn residual_lazy_esm_sources(&self) -> ResidualLazySources {
         self.residual_lazy_esm_sources
-    }
-
-    pub(crate) fn extension_replay_js_sources(&self) -> ResidualLazySources {
-        self.extension_replay_js_sources
-    }
-
-    pub(crate) fn extension_replay_esm_sources(&self) -> ResidualLazySources {
-        self.extension_replay_esm_sources
     }
 }
 
@@ -133,15 +122,17 @@ pub(crate) fn create_v8_startup_snapshot(
     // stay in the separate finalize step for ordinary runtimes until the fork
     // offers an explicit snapshot-safe replacement.
     let extensions = snapshot_extensions(compatibility_target, service_extension_enabled);
-    let (
-        residual_lazy_js_sources,
-        residual_lazy_esm_sources,
-        extension_replay_js_sources,
-        extension_replay_esm_sources,
-    ) = collect_startup_snapshot_extension_sources(compatibility_target, &extensions)?;
+    let extension_source_provider = packaged_runtime_extension_source_provider(&extensions)?;
+    let (residual_lazy_js_sources, residual_lazy_esm_sources) =
+        collect_startup_snapshot_extension_sources(
+            compatibility_target,
+            &extensions,
+            extension_source_provider.as_deref(),
+        )?;
     let mut runtime = JsRuntimeForSnapshot::new(RuntimeOptions {
         extensions,
         extension_transpiler: extension_transpiler_for_target(compatibility_target),
+        extension_source_provider,
         create_params: Some(super::attach_cppgc_heap(Default::default())),
         ..Default::default()
     });
@@ -167,8 +158,6 @@ pub(crate) fn create_v8_startup_snapshot(
         runtime.snapshot(),
         residual_lazy_js_sources,
         residual_lazy_esm_sources,
-        extension_replay_js_sources,
-        extension_replay_esm_sources,
     ))
 }
 
@@ -181,8 +170,9 @@ pub(crate) fn create_v8_startup_snapshot(
 // BINARY (a normal consumer of this crate) calls `build_embeddable_node22_snapshot_blob`, writes
 // the blob to a committed file, and the lib `include_bytes!`es it and reconstructs the snapshot via
 // `v8_startup_snapshot_from_embedded_blob`. The serialized bytes ARE the runtime-built snapshot, so
-// the installed read-only heap is byte-identical (cage-critical). Blob format (LE, length-prefixed):
-// the V8 startup bytes, then the four residual/replay (name, source) source tables.
+// the installed read-only heap is byte-identical (cage-critical). Blob format (LE,
+// length-prefixed): the content provenance, the portable provenance, the V8 startup bytes, the two
+// residual lazy (name, source) source tables, then the packaged build-only extension source table.
 
 fn write_blob_len(out: &mut Vec<u8>, n: usize) {
     out.extend_from_slice(&(n as u64).to_le_bytes());
@@ -219,7 +209,11 @@ impl EmbeddedSnapshotBlobReader<'_> {
         })?;
         let value = u64::from_le_bytes(self.data[self.pos..end].try_into().unwrap());
         self.pos = end;
-        Ok(value as usize)
+        usize::try_from(value).map_err(|_| {
+            crate::error::NimbusRuntimeError::Contract(
+                "embedded snapshot blob length exceeds the platform limit".to_string(),
+            )
+        })
     }
 
     fn read_bytes_owned(&mut self) -> Result<Vec<u8>> {
@@ -238,6 +232,20 @@ impl EmbeddedSnapshotBlobReader<'_> {
         Ok(value)
     }
 
+    fn skip_bytes(&mut self) -> Result<()> {
+        let len = self.read_len()?;
+        let end = self
+            .pos
+            .checked_add(len)
+            .filter(|end| *end <= self.data.len());
+        self.pos = end.ok_or_else(|| {
+            crate::error::NimbusRuntimeError::Contract(
+                "embedded snapshot blob truncated (body)".to_string(),
+            )
+        })?;
+        Ok(())
+    }
+
     fn read_static_str(&mut self) -> Result<&'static str> {
         let bytes = self.read_bytes_owned()?;
         let text = String::from_utf8(bytes).map_err(|error| {
@@ -252,6 +260,12 @@ impl EmbeddedSnapshotBlobReader<'_> {
 
     fn read_table(&mut self) -> Result<ResidualLazySources> {
         let count = self.read_len()?;
+        let max_pairs = self.data.len().saturating_sub(self.pos) / 16;
+        if count > max_pairs {
+            return Err(crate::error::NimbusRuntimeError::Contract(format!(
+                "embedded snapshot blob table count {count} exceeds the remaining body"
+            )));
+        }
         let mut pairs: Vec<(&'static str, &'static str)> = Vec::with_capacity(count);
         for _ in 0..count {
             let name = self.read_static_str()?;
@@ -259,6 +273,31 @@ impl EmbeddedSnapshotBlobReader<'_> {
             pairs.push((name, source));
         }
         Ok(Box::leak(pairs.into_boxed_slice()))
+    }
+
+    fn skip_table(&mut self) -> Result<()> {
+        let count = self.read_len()?;
+        let max_pairs = self.data.len().saturating_sub(self.pos) / 16;
+        if count > max_pairs {
+            return Err(crate::error::NimbusRuntimeError::Contract(format!(
+                "embedded snapshot blob table count {count} exceeds the remaining body"
+            )));
+        }
+        for _ in 0..count {
+            self.skip_bytes()?;
+            self.skip_bytes()?;
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<()> {
+        if self.pos == self.data.len() {
+            return Ok(());
+        }
+        Err(crate::error::NimbusRuntimeError::Contract(format!(
+            "embedded snapshot blob has {} trailing bytes",
+            self.data.len() - self.pos
+        )))
     }
 }
 
@@ -275,35 +314,88 @@ fn embeddable_node22_snapshot_target() -> (RuntimeCompatibilityTarget, bool) {
 /// to the provenance hash (e.g. a change to the blob byte layout, or a subtle op-behavior change
 /// that alters the bootstrapped heap without changing op names or JS source text). This is the
 /// manual catch-all for "changed but not regenerated" inputs the structured hash cannot see.
-const EMBEDDED_SNAPSHOT_SCHEMA_VERSION: u64 = 3;
+const EMBEDDED_SNAPSHOT_SCHEMA_VERSION: u64 = 6;
 
-/// Provenance hash over EVERYTHING that determines the NodeFull snapshot's RO heap, computed
-/// IDENTICALLY at build time (in the blob) and at runtime (here). The embedded blob is used ONLY
-/// when this equals the blob's stored provenance; on ANY mismatch the serving path falls back to a
-/// runtime build (slow-but-correct), NEVER installs a stale snapshot (which would silently
-/// reinstall the cross-profile cage collision baked into the binary). Coverage:
+#[derive(Clone, Copy)]
+enum SnapshotProvenanceMode {
+    Content,
+    Portable,
+}
+
+fn hash_snapshot_extension_source<H: std::hash::Hasher>(
+    file: &ExtensionFileSource,
+    mode: SnapshotProvenanceMode,
+    hasher: &mut H,
+) -> Result<()> {
+    use std::hash::Hash;
+
+    file.specifier.hash(hasher);
+    #[allow(
+        deprecated,
+        reason = "the portable identity must recognize build-only sources"
+    )]
+    match (&file.code, mode) {
+        (
+            ExtensionFileSourceCode::LoadedFromFsDuringSnapshot(path),
+            SnapshotProvenanceMode::Portable,
+        ) => {
+            // The final binary cannot reopen a Cargo checkout path from the build machine. Hash the
+            // path identity instead. Snapshot generation and the final release build use the same
+            // checkout, and a Cargo git dependency path includes the exact Deno revision. The eager
+            // content provenance below still hashes the file bytes while the build checkout exists.
+            1_u8.hash(hasher);
+            path.hash(hasher);
+        }
+        _ => {
+            0_u8.hash(hasher);
+            file.load()?.as_bytes().hash(hasher);
+        }
+    }
+    Ok(())
+}
+
+fn extension_file_sources(extension: &Extension) -> impl Iterator<Item = &ExtensionFileSource> {
+    extension
+        .js_files
+        .iter()
+        .chain(extension.esm_files.iter())
+        .chain(extension.lazy_loaded_js_files.iter())
+        .chain(extension.lazy_loaded_esm_files.iter())
+}
+
+/// Domain-separated provenance over everything that determines the NodeFull snapshot's RO heap.
+/// The content form reads and hashes all source bytes while the build checkout exists. The release
+/// gate compares it before the final binary is accepted. The portable form hashes the build-source
+/// path identity for sources that Deno intentionally loads only while it creates a snapshot; Cargo
+/// git dependency paths include the exact revision. All other source bytes remain in the hash. A
+/// source checkout compares both forms, so an in-place source edit with an unchanged path still
+/// rejects a stale blob. A deployed binary can compare the portable form when the build-only files
+/// no longer exist. Coverage:
 ///   - the build TARGET arch + OS (a V8 startup snapshot is platform-specific — a darwin-arm64
-///     snapshot deserialized on linux-x86_64 is a hard V8_Fatal; the committed blob is per-platform,
-///     so a foreign-target blob MUST mismatch and fall back, never install);
+///     snapshot deserialized on linux-x86_64 is a hard V8_Fatal; the generated blob is per-platform,
+///     so a foreign-target blob must fail validation and never install);
 ///   - the V8 version (snapshots are V8-version-specific; skew must not install);
 ///   - the `v8-pointer-compression` feature (release ships pointer-compressed; V8 refuses to
 ///     deserialize a snapshot built under a different pointer-compression config — installing a
 ///     mismatched blob is a hard abort, so this MUST gate the cage's single-shared-heap layout);
 ///   - the exact extension SELECTION (names) for this (target, service-extension);
 ///   - the OP SURFACE (every op name, in declaration order) bound into the bootstrap context;
-///   - the full source TEXT of every extension js/esm file (nimbus AND deno bootstrap JS);
+///   - the full source TEXT of every extension source used by the snapshot or packaged
+///     unsnapshotted-runtime table (Nimbus and Deno bootstrap JS);
 ///   - the schema constant (build-logic changes not visible in the structured inputs above).
 ///
-/// NOTE: a byte-for-byte compare of the snapshot is deliberately NOT used as a backstop — V8 bakes
-/// a random hash-seed into the startup snapshot, so two builds from identical inputs differ in the
-/// snapshot bytes (empirically at offset ~24). The hash above is over INPUTS, which ARE
-/// deterministic, so it is the correct staleness gate. The residual hole — a Rust op change that
-/// alters bootstrap behavior without changing any op name or JS source — is covered by bumping
-/// `EMBEDDED_SNAPSHOT_SCHEMA_VERSION`.
-fn embedded_node22_snapshot_provenance() -> Result<u64> {
+/// A byte-for-byte comparison is not valid because V8 puts a random hash seed in the startup
+/// snapshot. The two input hashes are deterministic within their contracts. A Rust op change that
+/// changes bootstrap behavior without changing an op name or JavaScript source requires a schema
+/// version bump.
+fn embedded_node22_snapshot_provenance_with(mode: SnapshotProvenanceMode) -> Result<u64> {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     EMBEDDED_SNAPSHOT_SCHEMA_VERSION.hash(&mut hasher);
+    match mode {
+        SnapshotProvenanceMode::Content => "content".hash(&mut hasher),
+        SnapshotProvenanceMode::Portable => "portable".hash(&mut hasher),
+    }
     // A V8 startup snapshot is platform-specific: the build target's arch + OS must gate it so a
     // blob built for one platform (e.g. the committed darwin-arm64 one) can NEVER install on another
     // (e.g. linux-x86_64 CI), which would be a hard V8_Fatal. `std::env::consts` reflects the build
@@ -321,9 +413,27 @@ fn embedded_node22_snapshot_provenance() -> Result<u64> {
         for op in extension.ops.iter() {
             op.name.hash(&mut hasher);
         }
-        for file in extension.esm_files.iter().chain(extension.js_files.iter()) {
-            file.specifier.hash(&mut hasher);
-            file.load()?.as_bytes().hash(&mut hasher);
+        for file in extension_file_sources(extension) {
+            hash_snapshot_extension_source(file, mode, &mut hasher)?;
+        }
+    }
+    // The same release artifact also builds WebStandard without a startup snapshot and can build
+    // the service-bearing NodeFull snapshot after installation. Hash the union of build-only
+    // sources packaged for those construction paths. This is separate from the NodeFull snapshot
+    // inputs above because WebStandard has its own bootstrap extension.
+    "packaged-runtime-extension-sources".hash(&mut hasher);
+    for packaged_target in [
+        RuntimeCompatibilityTarget::WebStandardIsolate,
+        RuntimeCompatibilityTarget::Node22,
+    ] {
+        (packaged_target as u32).hash(&mut hasher);
+        for extension in snapshot_extensions(packaged_target, true) {
+            extension.name.hash(&mut hasher);
+            for file in
+                extension_file_sources(&extension).filter(|file| !file.is_runtime_loadable())
+            {
+                hash_snapshot_extension_source(file, mode, &mut hasher)?;
+            }
         }
     }
     // The nimbus bootstrap scripts run DURING snapshot creation (see
@@ -339,80 +449,157 @@ fn embedded_node22_snapshot_provenance() -> Result<u64> {
     Ok(hasher.finish())
 }
 
-/// Build the NodeFull(Node22) anchor snapshot and serialize it — leading provenance hash, then the
-/// V8 bytes, then the four residual/replay source tables — into a self-describing blob for
-/// compile-time embedding. Invoked by the snapshot builder binary, NOT on the serving path.
+fn embedded_node22_snapshot_provenance() -> Result<u64> {
+    embedded_node22_snapshot_provenance_with(SnapshotProvenanceMode::Content)
+}
+
+fn embedded_node22_snapshot_portable_provenance() -> Result<u64> {
+    embedded_node22_snapshot_provenance_with(SnapshotProvenanceMode::Portable)
+}
+
+/// Build the NodeFull(Node22) anchor snapshot and serialize its content provenance, portable
+/// provenance, V8 bytes, two residual lazy source tables, and the build-only extension source
+/// union into a self-describing blob for compile-time embedding. Invoked by the snapshot builder
+/// binary, not on the serving path.
 pub fn build_embeddable_node22_snapshot_blob() -> Result<Vec<u8>> {
     let (target, service_extension_enabled) = embeddable_node22_snapshot_target();
     // Compute provenance over the SAME inputs the build will consume, BEFORE building.
     let provenance = embedded_node22_snapshot_provenance()?;
+    let portable_provenance = embedded_node22_snapshot_portable_provenance()?;
     let snapshot = create_v8_startup_snapshot(target, service_extension_enabled)?;
+    let packaged_runtime_extension_sources = collect_packaged_runtime_extension_sources()?;
     let mut out = Vec::new();
     out.extend_from_slice(&provenance.to_le_bytes());
+    out.extend_from_slice(&portable_provenance.to_le_bytes());
     write_blob_bytes(&mut out, snapshot.as_startup_snapshot());
     write_blob_table(&mut out, snapshot.residual_lazy_js_sources());
     write_blob_table(&mut out, snapshot.residual_lazy_esm_sources());
-    write_blob_table(&mut out, snapshot.extension_replay_js_sources());
-    write_blob_table(&mut out, snapshot.extension_replay_esm_sources());
+    write_blob_table(&mut out, packaged_runtime_extension_sources);
     Ok(out)
 }
 
-/// The provenance hash stored in the leading 8 bytes of an embedded blob.
-fn embedded_blob_provenance(blob: &[u8]) -> Result<u64> {
-    let slice = blob.get(0..8).ok_or_else(|| {
+fn embedded_blob_provenance_at(blob: &[u8], offset: usize, name: &str) -> Result<u64> {
+    let end = offset.checked_add(8).ok_or_else(|| {
         crate::error::NimbusRuntimeError::Contract(
-            "embedded snapshot blob truncated (provenance header)".to_string(),
+            "embedded snapshot blob provenance offset overflowed".to_string(),
         )
+    })?;
+    let slice = blob.get(offset..end).ok_or_else(|| {
+        crate::error::NimbusRuntimeError::Contract(format!(
+            "embedded snapshot blob truncated ({name} provenance header)"
+        ))
     })?;
     Ok(u64::from_le_bytes(slice.try_into().unwrap()))
 }
 
+/// The content provenance hash stored in the leading 8 bytes of an embedded blob.
+fn embedded_blob_provenance(blob: &[u8]) -> Result<u64> {
+    embedded_blob_provenance_at(blob, 0, "content")
+}
+
+/// The runtime-portable provenance hash stored after the content provenance.
+fn embedded_blob_portable_provenance(blob: &[u8]) -> Result<u64> {
+    embedded_blob_provenance_at(blob, 8, "portable")
+}
+
 /// Reconstruct a `V8StartupSnapshot` from an embedded blob (the serving path: deserialize instead
 /// of building ~4.18s). The bytes are the runtime-built snapshot, so the installed RO heap is
-/// identical — cage-critical. Callers MUST first confirm `embedded_blob_provenance` matches
-/// `embedded_node22_snapshot_provenance`; this only parses.
+/// identical — cage-critical. This function only parses; the build gate validates both provenance
+/// values, and the serving path validates the portable value before it calls this function.
 pub(crate) fn v8_startup_snapshot_from_embedded_blob(blob: &[u8]) -> Result<V8StartupSnapshot> {
-    let mut reader = EmbeddedSnapshotBlobReader { data: blob, pos: 8 };
+    let mut reader = EmbeddedSnapshotBlobReader {
+        data: blob,
+        pos: 16,
+    };
     let bytes = reader.read_bytes_owned()?.into_boxed_slice();
     let residual_lazy_js_sources = reader.read_table()?;
     let residual_lazy_esm_sources = reader.read_table()?;
-    let extension_replay_js_sources = reader.read_table()?;
-    let extension_replay_esm_sources = reader.read_table()?;
+    reader.skip_table()?;
+    reader.finish()?;
     Ok(V8StartupSnapshot::new(
         bytes,
         residual_lazy_js_sources,
         residual_lazy_esm_sources,
-        extension_replay_js_sources,
-        extension_replay_esm_sources,
     ))
 }
 
-/// Fail-safe loader for the embedded NodeFull snapshot. Returns `Some` ONLY when the embedded blob's
-/// provenance matches the current binary's provenance AND it parses cleanly. On ANY doubt — stale
-/// provenance, truncation, parse error — returns `None`, and the caller MUST fall back to a runtime
-/// build. The embedded path is the optimization; the runtime build is the correctness floor.
-pub(crate) fn try_embedded_node22_anchor_snapshot(blob: &[u8]) -> Option<V8StartupSnapshot> {
-    let stored = embedded_blob_provenance(blob).ok()?;
-    let current = embedded_node22_snapshot_provenance().ok()?;
-    if stored != current {
+fn packaged_runtime_extension_sources_from_embedded_blob(
+    blob: &[u8],
+) -> Result<PackagedRuntimeExtensionSources> {
+    let mut reader = EmbeddedSnapshotBlobReader {
+        data: blob,
+        pos: 16,
+    };
+    reader.skip_bytes()?;
+    reader.skip_table()?;
+    reader.skip_table()?;
+    let sources = reader.read_table()?;
+    reader.finish()?;
+    Ok(sources)
+}
+
+fn embedded_blob_matches_current_provenance(blob: &[u8]) -> bool {
+    let Some(stored_portable) = embedded_blob_portable_provenance(blob).ok() else {
+        return false;
+    };
+    let Some(current_portable) = embedded_node22_snapshot_portable_provenance().ok() else {
+        return false;
+    };
+    if stored_portable != current_portable {
+        #[cfg(test)]
         eprintln!(
-            "nimbus-runtime: embedded NodeFull anchor snapshot is STALE (provenance {stored:016x} \
-             != current {current:016x}); falling back to a runtime build. Regenerate via \
-             `make build-node22-anchor-snapshot`."
+            "nimbus-runtime: the test-only snapshot extensions do not match the embedded \
+             production NodeFull anchor; building the test snapshot at runtime."
         );
-        return None;
+        #[cfg(not(test))]
+        eprintln!(
+            "nimbus-runtime: embedded NodeFull anchor snapshot is STALE (portable provenance \
+             {stored_portable:016x} != current {current_portable:016x}); rejecting the embedded \
+             fast path. Regenerate via `make build-node22-anchor-snapshot` before packaging."
+        );
+        return false;
     }
+
+    // Preserve the source-checkout stale-blob guard. Deployed artifacts do not contain Deno files
+    // marked `LoadedFromFsDuringSnapshot`, so failure to read those build-only paths is the expected
+    // signal to rely on the portable identity that the eager release gate already validated.
+    if let Ok(current_content) = embedded_node22_snapshot_provenance() {
+        let Some(stored_content) = embedded_blob_provenance(blob).ok() else {
+            return false;
+        };
+        if stored_content != current_content {
+            #[cfg(not(test))]
+            eprintln!(
+                "nimbus-runtime: embedded NodeFull anchor snapshot is STALE (content provenance \
+                 {stored_content:016x} != current {current_content:016x}); rejecting the embedded \
+                 fast path. Regenerate via `make build-node22-anchor-snapshot` before packaging."
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// Guarded loader for the embedded NodeFull snapshot. It always validates runtime-safe provenance.
+/// When build-only extension sources remain accessible, it also validates their content provenance
+/// so an in-place source edit cannot reuse a stale blob. A deployed binary skips that second check
+/// only when those source files are unavailable. On a mismatch or parse error, the caller uses its
+/// existing runtime-build fallback. Release packaging must prevent that fallback because Deno
+/// sources marked `LoadedFromFsDuringSnapshot` are not available on a deployed host.
+pub(crate) fn try_embedded_node22_anchor_snapshot(blob: &[u8]) -> Option<V8StartupSnapshot> {
+    embedded_blob_matches_current_provenance(blob).then_some(())?;
     v8_startup_snapshot_from_embedded_blob(blob).ok()
 }
 
-/// The committed NodeFull(Node22) anchor snapshot blob (regenerated by the
-/// `build_node22_anchor_snapshot` binary). TWO blobs are committed, one per pointer-compression
+/// The generated NodeFull(Node22) anchor snapshot blob (regenerated by the
+/// `build_node22_anchor_snapshot` binary). Two gitignored blobs exist, one per pointer-compression
 /// config, because a V8 startup snapshot is NOT portable across the `v8-pointer-compression`
 /// feature (release ships pointer-compressed; dev/test runs feature-off). The matching blob is
 /// selected here at compile time so BOTH configs HIT the embedded fast path; the provenance guard
 /// (which hashes the pc feature) is the defense-in-depth backstop if the wrong file is ever placed
-/// at a path. A fresh checkout / pre-generation has an EMPTY placeholder (written by build.rs),
-/// which fails the provenance guard and falls back to a runtime build.
+/// at a path. A fresh checkout has an empty placeholder (written by build.rs), which fails the
+/// provenance guard. Source-checkout development can build the snapshot at runtime; release
+/// packaging must generate and check the blob before it builds the deployed binary.
 #[cfg(feature = "v8-pointer-compression")]
 pub(crate) static EMBEDDED_NODE22_ANCHOR_SNAPSHOT: &[u8] =
     include_bytes!("node22_anchor_snapshot.pc.bin");
@@ -420,45 +607,86 @@ pub(crate) static EMBEDDED_NODE22_ANCHOR_SNAPSHOT: &[u8] =
 pub(crate) static EMBEDDED_NODE22_ANCHOR_SNAPSHOT: &[u8] =
     include_bytes!("node22_anchor_snapshot.bin");
 
+fn collect_packaged_runtime_extension_sources() -> Result<PackagedRuntimeExtensionSources> {
+    let mut sources = Vec::new();
+    for target in [
+        RuntimeCompatibilityTarget::WebStandardIsolate,
+        RuntimeCompatibilityTarget::Node22,
+    ] {
+        for extension in snapshot_extensions(target, true) {
+            for file in
+                extension_file_sources(&extension).filter(|file| !file.is_runtime_loadable())
+            {
+                sources.push((file.specifier, file.load()?.to_string()));
+            }
+        }
+    }
+    leak_extension_sources(sources, "packaged runtime")
+}
+
+fn packaged_runtime_extension_sources() -> Option<PackagedRuntimeExtensionSources> {
+    static SOURCES: OnceLock<Option<PackagedRuntimeExtensionSources>> = OnceLock::new();
+    *SOURCES.get_or_init(|| {
+        embedded_blob_matches_current_provenance(EMBEDDED_NODE22_ANCHOR_SNAPSHOT)
+            .then(|| {
+                packaged_runtime_extension_sources_from_embedded_blob(
+                    EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
+                )
+                .ok()
+            })
+            .flatten()
+    })
+}
+
+fn find_packaged_runtime_extension_source(
+    sources: PackagedRuntimeExtensionSources,
+    specifier: &str,
+) -> Option<&'static str> {
+    let index = sources
+        .binary_search_by_key(&specifier, |(candidate, _)| *candidate)
+        .ok()?;
+    Some(sources[index].1)
+}
+
+pub(crate) fn packaged_runtime_extension_source_provider(
+    extensions: &[Extension],
+) -> Result<Option<Rc<ExtensionSourceProvider>>> {
+    let Some(sources) = packaged_runtime_extension_sources() else {
+        // A source checkout can load the declared paths directly. The release gate requires a
+        // valid embedded table before it builds a deployable artifact.
+        return Ok(None);
+    };
+    for extension in extensions {
+        for file in extension_file_sources(extension).filter(|file| !file.is_runtime_loadable()) {
+            if find_packaged_runtime_extension_source(sources, file.specifier).is_none() {
+                return Err(crate::error::NimbusRuntimeError::Contract(format!(
+                    "embedded runtime extension source table is missing {}",
+                    file.specifier
+                )));
+            }
+        }
+    }
+    Ok(Some(Rc::new(move |source| {
+        find_packaged_runtime_extension_source(sources, source.specifier)
+            .map(|source| source.to_string().into())
+    })))
+}
+
 fn collect_startup_snapshot_extension_sources(
     compatibility_target: RuntimeCompatibilityTarget,
     extensions: &[Extension],
-) -> Result<(
-    ResidualLazySources,
-    ResidualLazySources,
-    ResidualLazySources,
-    ResidualLazySources,
-)> {
+    extension_source_provider: Option<&ExtensionSourceProvider>,
+) -> Result<(ResidualLazySources, ResidualLazySources)> {
     let mut residual_lazy_js_sources = Vec::new();
     let mut residual_lazy_esm_sources = Vec::new();
-    let mut extension_replay_js_sources = Vec::new();
-    let mut extension_replay_esm_sources = Vec::new();
 
     for extension in extensions {
-        for file in &*extension.js_files {
-            if !file.is_runtime_loadable() {
-                extension_replay_js_sources.push(transpile_snapshot_extension_source(
-                    compatibility_target,
-                    file.specifier,
-                    file.load()?,
-                )?);
-            }
-        }
-        for file in &*extension.esm_files {
-            if !file.is_runtime_loadable() {
-                extension_replay_esm_sources.push(transpile_snapshot_extension_source(
-                    compatibility_target,
-                    file.specifier,
-                    file.load()?,
-                )?);
-            }
-        }
         for file in &*extension.lazy_loaded_js_files {
             if !file.is_runtime_loadable() {
                 residual_lazy_js_sources.push(transpile_snapshot_extension_source(
                     compatibility_target,
                     file.specifier,
-                    file.load()?,
+                    load_snapshot_extension_source(file, extension_source_provider)?,
                 )?);
             }
         }
@@ -467,18 +695,34 @@ fn collect_startup_snapshot_extension_sources(
                 residual_lazy_esm_sources.push(transpile_snapshot_extension_source(
                     compatibility_target,
                     file.specifier,
-                    file.load()?,
+                    load_snapshot_extension_source(file, extension_source_provider)?,
                 )?);
             }
         }
     }
 
     Ok((
-        leak_snapshot_extension_sources(residual_lazy_js_sources)?,
-        leak_snapshot_extension_sources(residual_lazy_esm_sources)?,
-        leak_snapshot_extension_sources(extension_replay_js_sources)?,
-        leak_snapshot_extension_sources(extension_replay_esm_sources)?,
+        leak_extension_sources(residual_lazy_js_sources, "residual lazy JS")?,
+        leak_extension_sources(residual_lazy_esm_sources, "residual lazy ESM")?,
     ))
+}
+
+fn load_snapshot_extension_source(
+    file: &ExtensionFileSource,
+    extension_source_provider: Option<&ExtensionSourceProvider>,
+) -> Result<ModuleCodeString> {
+    if file.is_runtime_loadable() {
+        return Ok(file.load()?);
+    }
+    let Some(provider) = extension_source_provider else {
+        return Ok(file.load()?);
+    };
+    provider(file).ok_or_else(|| {
+        crate::error::NimbusRuntimeError::Contract(format!(
+            "packaged runtime extension source provider is missing {}",
+            file.specifier
+        ))
+    })
 }
 
 fn transpile_snapshot_extension_source(
@@ -500,8 +744,9 @@ fn transpile_snapshot_extension_source(
     Ok((specifier, source.to_string()))
 }
 
-fn leak_snapshot_extension_sources(
+fn leak_extension_sources(
     mut sources: Vec<(&'static str, String)>,
+    source_kind: &str,
 ) -> Result<ResidualLazySources> {
     sources.sort_by_key(|(specifier, _)| *specifier);
     let mut deduped = Vec::<(&'static str, String)>::new();
@@ -511,7 +756,7 @@ fn leak_snapshot_extension_sources(
         {
             if last_source != &source {
                 return Err(crate::error::NimbusRuntimeError::JavaScript(format!(
-                    "conflicting residual extension source for {specifier}"
+                    "conflicting {source_kind} extension source for {specifier}"
                 )));
             }
             continue;
@@ -536,40 +781,254 @@ pub(crate) fn v8_bootstrap_snapshot_build_count_for_test() -> usize {
     V8_BOOTSTRAP_SNAPSHOT_BUILDS.load(Ordering::Relaxed)
 }
 
-/// Validate the committed embedded NodeFull(Node22) anchor blob for THIS build config, returning
+/// Validate the generated embedded NodeFull(Node22) anchor blob for THIS build config, returning
 /// `Err(message)` on any staleness or corruption. Confirms: (1) the blob is non-empty (not a fresh
-/// placeholder); (2) its stored provenance equals the provenance recomputed from the current
-/// binary's inputs (V8 version, pointer-compression feature, extension selection, op surface,
-/// bootstrap JS source, schema version); (3) the blob deserializes structurally. This is the
-/// staleness gate the serving path relies on, run eagerly so a mismatch fails CI loudly rather than
-/// silently degrading to a ~4.18s runtime build at first request. It MUST run in a NON-`cfg(test)`
-/// build — under `cfg(test)` `snapshot_extensions` includes a test-only extension, so the recomputed
-/// provenance legitimately differs from the committed production blob. Invoked by
+/// placeholder); (2) its stored content and portable provenance equal the values recomputed from
+/// the current binary's inputs (V8 version, pointer-compression feature, extension selection, op
+/// surface, bootstrap JS source, schema version); (3) the packaged runtime source table exactly
+/// matches the current source union; (4) the blob deserializes structurally. This is the staleness
+/// gate the serving path relies on, run eagerly so a mismatch fails CI loudly rather than silently
+/// degrading to a ~4.18s runtime build at first request. It MUST run in a
+/// NON-`cfg(test)` build — under `cfg(test)` `snapshot_extensions` includes a test-only extension,
+/// so the recomputed provenance legitimately differs from the generated production blob. Invoked by
 /// `build_node22_anchor_snapshot --check` (per pointer-compression config) in CI. A byte-for-byte
 /// compare is deliberately NOT used: V8 bakes a random hash-seed into the snapshot, so the bytes are
 /// not reproducible across builds (see `embedded_node22_snapshot_provenance`).
-pub fn check_committed_embedded_anchor_snapshot(
-    committed: &[u8],
+pub fn check_generated_embedded_anchor_snapshot(
+    generated: &[u8],
 ) -> std::result::Result<(), String> {
     let pc = cfg!(feature = "v8-pointer-compression");
-    if committed.is_empty() {
+    if generated.is_empty() {
         return Err(format!(
-            "committed embedded anchor snapshot is an EMPTY placeholder \
+            "generated embedded anchor snapshot is an EMPTY placeholder \
              (v8-pointer-compression={pc}); generate it with `make build-node22-anchor-snapshot`",
         ));
     }
-    let stored = embedded_blob_provenance(committed)
-        .map_err(|error| format!("reading committed blob provenance: {error}"))?;
+    let stored = embedded_blob_provenance(generated)
+        .map_err(|error| format!("reading generated blob provenance: {error}"))?;
     let current = embedded_node22_snapshot_provenance()
         .map_err(|error| format!("computing current provenance: {error}"))?;
     if stored != current {
         return Err(format!(
-            "committed embedded anchor snapshot is STALE (v8-pointer-compression={pc}): stored \
-             provenance {stored:016x} != current {current:016x}; the serving path would fall back \
-             to a ~4.18s runtime build. Regenerate via `make build-node22-anchor-snapshot`.",
+            "generated embedded anchor snapshot is STALE (v8-pointer-compression={pc}): stored \
+             content provenance {stored:016x} != current {current:016x}; regenerate via \
+             `make build-node22-anchor-snapshot`.",
         ));
     }
-    v8_startup_snapshot_from_embedded_blob(committed)
-        .map_err(|error| format!("committed embedded anchor snapshot fails to parse: {error}"))?;
+    let stored_portable = embedded_blob_portable_provenance(generated)
+        .map_err(|error| format!("reading generated blob portable provenance: {error}"))?;
+    let current_portable = embedded_node22_snapshot_portable_provenance()
+        .map_err(|error| format!("computing current portable provenance: {error}"))?;
+    if stored_portable != current_portable {
+        return Err(format!(
+            "generated embedded anchor snapshot is not portable for this build \
+             (v8-pointer-compression={pc}): stored provenance {stored_portable:016x} != current \
+             {current_portable:016x}; regenerate via `make build-node22-anchor-snapshot`.",
+        ));
+    }
+    let stored_runtime_sources =
+        packaged_runtime_extension_sources_from_embedded_blob(generated)
+            .map_err(|error| format!("reading packaged runtime extension sources: {error}"))?;
+    let current_runtime_sources = collect_packaged_runtime_extension_sources()
+        .map_err(|error| format!("collecting current runtime extension sources: {error}"))?;
+    if stored_runtime_sources != current_runtime_sources {
+        return Err(format!(
+            "generated embedded anchor snapshot has a stale packaged runtime extension source \
+             table (v8-pointer-compression={pc}); regenerate via `make \
+             build-node22-anchor-snapshot`."
+        ));
+    }
+    v8_startup_snapshot_from_embedded_blob(generated)
+        .map_err(|error| format!("generated embedded anchor snapshot fails to parse: {error}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_snapshot_blob() -> Vec<u8> {
+        let mut blob = 0_u64.to_le_bytes().to_vec();
+        blob.extend_from_slice(&0_u64.to_le_bytes());
+        write_blob_bytes(&mut blob, b"snapshot");
+        write_blob_table(&mut blob, &[]);
+        write_blob_table(&mut blob, &[]);
+        write_blob_table(&mut blob, &[]);
+        blob
+    }
+
+    #[test]
+    fn embedded_snapshot_blob_parser_accepts_the_current_layout() {
+        let snapshot = v8_startup_snapshot_from_embedded_blob(&minimal_snapshot_blob())
+            .expect("current embedded snapshot layout should parse");
+
+        assert_eq!(snapshot.as_startup_snapshot(), b"snapshot");
+        assert!(snapshot.residual_lazy_js_sources().is_empty());
+        assert!(snapshot.residual_lazy_esm_sources().is_empty());
+    }
+
+    #[test]
+    fn embedded_snapshot_blob_exposes_packaged_runtime_sources() {
+        let mut blob = 0_u64.to_le_bytes().to_vec();
+        blob.extend_from_slice(&0_u64.to_le_bytes());
+        write_blob_bytes(&mut blob, b"snapshot");
+        write_blob_table(&mut blob, &[]);
+        write_blob_table(&mut blob, &[]);
+        write_blob_table(
+            &mut blob,
+            &[("ext:nimbus/packaged.js", "globalThis.packaged = true;")],
+        );
+
+        let sources = packaged_runtime_extension_sources_from_embedded_blob(&blob)
+            .expect("current embedded source-table layout should parse");
+
+        assert_eq!(
+            sources,
+            &[("ext:nimbus/packaged.js", "globalThis.packaged = true;")]
+        );
+    }
+
+    #[test]
+    fn generated_blob_packages_the_supported_runtime_source_union() {
+        let stored =
+            packaged_runtime_extension_sources_from_embedded_blob(EMBEDDED_NODE22_ANCHOR_SNAPSHOT)
+                .expect("generated embedded blob should contain the packaged runtime source table");
+        let current = collect_packaged_runtime_extension_sources()
+            .expect("supported runtime source union should load from the source checkout");
+
+        assert_eq!(stored, current);
+        assert!(!stored.is_empty());
+    }
+
+    #[test]
+    fn embedded_snapshot_blob_parser_rejects_trailing_legacy_tables() {
+        let mut blob = minimal_snapshot_blob();
+        write_blob_table(&mut blob, &[]);
+
+        let error = match v8_startup_snapshot_from_embedded_blob(&blob) {
+            Ok(_) => panic!("legacy replay tables must not be ignored"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn embedded_snapshot_blob_parser_rejects_impossible_table_count() {
+        let mut blob = 0_u64.to_le_bytes().to_vec();
+        blob.extend_from_slice(&0_u64.to_le_bytes());
+        write_blob_bytes(&mut blob, b"snapshot");
+        write_blob_len(&mut blob, usize::MAX);
+
+        let error = match v8_startup_snapshot_from_embedded_blob(&blob) {
+            Ok(_) => panic!("an impossible table count must fail before allocation"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("exceeds the remaining body"));
+    }
+
+    #[test]
+    fn source_free_snapshot_residuals_use_the_extension_source_provider() {
+        const LAZY_JS_SPECIFIER: &str = "ext:nimbus/source_free_service_lazy.js";
+        const LAZY_ESM_SPECIFIER: &str = "ext:nimbus/source_free_service_lazy.mjs";
+        const MISSING_PATH: &str =
+            "/nimbus-build-only-path-that-must-not-exist/service_snapshot.js";
+        let extension = Extension {
+            name: "nimbus_source_free_service_snapshot_test",
+            lazy_loaded_js_files: std::borrow::Cow::Owned(vec![
+                ExtensionFileSource::loaded_during_snapshot(LAZY_JS_SPECIFIER, MISSING_PATH),
+            ]),
+            lazy_loaded_esm_files: std::borrow::Cow::Owned(vec![
+                ExtensionFileSource::loaded_during_snapshot(LAZY_ESM_SPECIFIER, MISSING_PATH),
+            ]),
+            ..Default::default()
+        };
+        let provider: Rc<ExtensionSourceProvider> = Rc::new(|source| match source.specifier {
+            LAZY_JS_SPECIFIER => Some("globalThis.__nimbusLazyJs = 1;".to_string().into()),
+            LAZY_ESM_SPECIFIER => Some("export const nimbusLazyEsm = 1;".to_string().into()),
+            _ => None,
+        });
+
+        let (lazy_js, lazy_esm) = collect_startup_snapshot_extension_sources(
+            RuntimeCompatibilityTarget::Node22,
+            &[extension],
+            Some(provider.as_ref()),
+        )
+        .expect("the service snapshot must not open build-only paths when a provider is present");
+
+        assert_eq!(lazy_js[0].0, LAZY_JS_SPECIFIER);
+        assert!(lazy_js[0].1.contains("__nimbusLazyJs"));
+        assert_eq!(lazy_esm[0].0, LAZY_ESM_SPECIFIER);
+        assert!(lazy_esm[0].1.contains("nimbusLazyEsm"));
+    }
+
+    #[test]
+    fn source_free_snapshot_residuals_reject_a_packaged_provider_miss() {
+        const SPECIFIER: &str = "ext:nimbus/source_free_missing.js";
+        const MISSING_PATH: &str =
+            "/nimbus-build-only-path-that-must-not-exist/missing_service_snapshot.js";
+        let extension = Extension {
+            name: "nimbus_source_free_missing_snapshot_test",
+            lazy_loaded_js_files: std::borrow::Cow::Owned(vec![
+                ExtensionFileSource::loaded_during_snapshot(SPECIFIER, MISSING_PATH),
+            ]),
+            ..Default::default()
+        };
+        let provider: Rc<ExtensionSourceProvider> = Rc::new(|_| None);
+
+        let error = collect_startup_snapshot_extension_sources(
+            RuntimeCompatibilityTarget::Node22,
+            &[extension],
+            Some(provider.as_ref()),
+        )
+        .expect_err("a packaged provider miss must not fall back to a build-only path");
+
+        assert_eq!(
+            error.to_string(),
+            "runtime contract error: packaged runtime extension source provider is missing \
+             ext:nimbus/source_free_missing.js"
+        );
+    }
+
+    #[test]
+    fn portable_snapshot_provenance_does_not_open_a_build_only_path() {
+        let source = ExtensionFileSource::loaded_during_snapshot(
+            "ext:nimbus/missing.js",
+            "/nimbus-build-only-path-that-must-not-be-opened/missing.js",
+        );
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+        hash_snapshot_extension_source(&source, SnapshotProvenanceMode::Portable, &mut hasher)
+            .expect("portable provenance must not open a build-only source path");
+
+        assert_ne!(std::hash::Hasher::finish(&hasher), 0);
+    }
+
+    #[test]
+    fn content_snapshot_provenance_requires_a_build_only_source() {
+        let source = ExtensionFileSource::loaded_during_snapshot(
+            "ext:nimbus/missing.js",
+            "/nimbus-build-only-path-that-must-not-be-opened/missing.js",
+        );
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+        let error =
+            hash_snapshot_extension_source(&source, SnapshotProvenanceMode::Content, &mut hasher)
+                .expect_err(
+                    "content provenance must read a build-only source while the checkout exists",
+                );
+
+        assert!(error.to_string().contains("No such file or directory"));
+    }
+
+    #[test]
+    fn embedded_snapshot_blob_rejects_a_truncated_portable_header() {
+        let blob = 0_u64.to_le_bytes();
+
+        let error = embedded_blob_portable_provenance(&blob)
+            .expect_err("a missing portable provenance header must fail");
+
+        assert!(error.to_string().contains("portable provenance header"));
+    }
 }

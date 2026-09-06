@@ -159,7 +159,7 @@ impl RuntimeExecutor {
             if let Some(cancellation) = &job.cancellation {
                 cancellation.cancel();
             }
-            job.result_tx.send(Err(NimbusRuntimeError::Cancelled));
+            job.send_result(Err(NimbusRuntimeError::Cancelled));
         }
         let invocations_cancelled = self.inner.retirement.cancel_owner(&owner_id);
         let retirement = async {
@@ -242,7 +242,7 @@ impl RuntimeExecutor {
             if let Some(cancellation) = &job.cancellation {
                 cancellation.cancel();
             }
-            job.result_tx.send(Err(NimbusRuntimeError::Cancelled));
+            job.send_result(Err(NimbusRuntimeError::Cancelled));
         }
         let retirement = async {
             let acknowledgements = self

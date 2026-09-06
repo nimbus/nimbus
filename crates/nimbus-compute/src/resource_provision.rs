@@ -7,7 +7,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_network::{EndpointProtocol, NetworkTlsBehavior};
@@ -30,8 +29,6 @@ use crate::workload_provisioner::{
     WorkloadProvisioner,
 };
 use crate::workload_saga::sandbox_execution_provider_id;
-
-const SERVICE_PROVISION_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 /// Exact service definition plus its optional services-owned observation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,10 +173,9 @@ impl ComputeResourceProvisioner {
     /// Provision one service and retain compute ownership until its exact
     /// services projection is observed or the caller cancels its wait.
     ///
-    /// Each retry reopens durable saga truth through [`WorkloadProvisioner`].
-    /// Provider effects remain behind the existing capability dispatcher, and
-    /// the delay prevents an in-progress provider observation from becoming a
-    /// busy reconciliation loop.
+    /// The caller joins the provisioner's single tracked settlement channel.
+    /// Provider effects and bounded retries remain behind that existing
+    /// capability dispatcher, so this facade creates no second polling owner.
     pub async fn provision_sandbox_service_until_observed(
         &self,
         context: &TenantIsolationContext,
@@ -198,30 +194,12 @@ impl ComputeResourceProvisioner {
             context.tenant_id().clone(),
             nimbus_core::WorkloadId::new(service_name)?,
         );
-        loop {
-            tokio::select! {
-                _ = cancellation.cancelled() => {
-                    return Err(ComputeResourceProvisionError::Provision(Arc::new(
-                        WorkloadProvisionError::WaiterCancelled,
-                    )));
-                }
-                () = tokio::time::sleep(SERVICE_PROVISION_RETRY_DELAY) => {}
-            }
-            outcome = self
-                .provisioner
-                .resume(key.clone(), cancellation)
-                .await
-                .map_err(ComputeResourceProvisionError::Provision)?;
-            let snapshot = self.service_snapshot_for_outcome(
-                context.tenant_id(),
-                service_name,
-                &definition,
-                &outcome,
-            )?;
-            if outcome.projection() == WorkloadProjectionState::Projected {
-                return Ok(snapshot);
-            }
-        }
+        outcome = self
+            .provisioner
+            .resume_until_settled(key, cancellation)
+            .await
+            .map_err(ComputeResourceProvisionError::Provision)?;
+        self.service_snapshot_for_outcome(context.tenant_id(), service_name, &definition, &outcome)
     }
 
     async fn provision_sandbox_service_once(

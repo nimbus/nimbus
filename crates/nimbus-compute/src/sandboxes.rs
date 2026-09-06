@@ -19,6 +19,7 @@ use crate::pagination::{CollectionMetadataResponse, paginate_by_key};
 use crate::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use crate::state::{ComputeError, ComputeState};
 use crate::workload_provisioner::WorkloadProvisionCancellation;
+use crate::workload_saga::WorkloadTeardownCancellationToken;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -214,11 +215,25 @@ pub async fn stop_sandbox(
     tenant_context: &TenantIsolationContext,
     sandbox_id: &str,
 ) -> Result<SandboxResourceResponse, ComputeError> {
-    let snapshot = compute
-        .resource_retirer()?
-        .submit_sandbox_teardown(tenant_context, sandbox_id)
-        .await
-        .map_err(|error| error.into_compute_error())?;
+    let retirer = compute.resource_retirer()?;
+    let cancellation = WorkloadTeardownCancellationToken::new();
+    let retirement_cancellation = cancellation.clone();
+    let retirement_context = tenant_context.clone();
+    let retirement_sandbox_id = sandbox_id.to_owned();
+    let snapshot = crate::resource_retirement::await_public_retirement(
+        "sandbox stop",
+        &cancellation,
+        async move {
+            retirer
+                .submit_public_sandbox_teardown_until_terminal(
+                    &retirement_context,
+                    &retirement_sandbox_id,
+                    &retirement_cancellation,
+                )
+                .await
+        },
+    )
+    .await?;
     Ok(SandboxResourceResponse::from_snapshot(snapshot))
 }
 

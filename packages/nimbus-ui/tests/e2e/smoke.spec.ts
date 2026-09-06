@@ -2,7 +2,7 @@
 //
 // What this covers, in order:
 //   1. /ui/developer/        — Developer Overview tile envelopes
-//   2. /ui/operator/      — Operator System tile envelopes
+//   2. /ui/operator/      — Operator Nodes tile envelopes
 //   3. /ui/developer/services       — ScopeChip reads `TENANT <tenant>` and
 //                               the services table renders
 //   4. /ui/operator/services     — tenant-grouped sub-drawer renders
@@ -81,7 +81,14 @@ async function seedSmokeFixture(
             name: SMOKE_SERVICE_NAME,
             kind: "sandbox",
             state: "running",
+            sourceGeneration: "1",
+            attachmentId: "smoke-attachment",
+            generation: "1",
+            attachmentProviderId: "local",
+            observedPhase: "active",
             endpoints: [],
+            conditions: [],
+            cleanupState: "clear",
           },
         },
       },
@@ -126,17 +133,19 @@ test.describe("desktop UI smoke walk", () => {
     await expect(page.getByTestId("overview-events")).toBeVisible();
     await expect(page.getByTestId("overview-runs")).toBeVisible();
 
-    // 2. Operator System
+    // 2. Operator Nodes
     await page.goto(`${baseURL}/ui/operator/`);
-    await expect(page.getByTestId("page-admin-system")).toBeVisible();
-    await expect(page.getByTestId("system-overview")).toBeVisible();
+    await expect(page.getByTestId("page-operator-nodes")).toBeVisible();
+    await expect(page.getByTestId("nodes-hosted")).toBeVisible();
 
-    // 3. Developer Services — ScopeChip reads `TENANT <tenant>` and the
-    // services table renders. The tenant bootstrap auto-selects the only
-    // seeded tenant on the first developer-view navigation, so both
-    // envelopes are deterministic.
+    // 3. Developer Services — select the seeded tenant through the real
+    // tenant switcher, then assert the scoped service list.
     await page.goto(`${baseURL}/ui/developer/services`);
     await expect(page.getByTestId("page-services")).toBeVisible();
+    await page.getByTestId("tenant-selector-trigger").click();
+    await page
+      .getByTestId(`tenant-selector-option-${SMOKE_TENANT_ID}`)
+      .click();
     await expect(page.getByTestId("services-scope")).toContainText(
       new RegExp(SMOKE_TENANT_ID, "i"),
     );

@@ -6,8 +6,8 @@ use nimbus_network::{
     NetworkCapabilityRegistry, NetworkCapabilitySelectionError, NetworkCapabilitySelectionEvidence,
 };
 use nimbus_workloads::{
-    WorkloadProvisionSourceEvidence, WorkloadSagaRecord, WorkloadSagaStoreError,
-    WorkloadTeardownCommandMode,
+    DesiredWorkloadState, WorkloadProvisionSourceEvidence, WorkloadSagaRecord,
+    WorkloadSagaStoreError, WorkloadTeardownCommandMode,
 };
 use thiserror::Error;
 
@@ -69,10 +69,19 @@ impl WorkloadTeardownDispatcher {
         record: &WorkloadSagaRecord,
     ) -> Result<(), WorkloadTeardownDispatchError> {
         let admitted = record.active_intent().source();
-        let current = self
+        let current = match self
             .source_authority
             .current_source(record.key(), admitted.source_identity())
-            .await?;
+            .await
+        {
+            Ok(current) => current,
+            Err(WorkloadProvisionSourceAuthorityError::NotFound)
+                if durable_stopped_successor_authenticates_missing_source(record) =>
+            {
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
         if current != *admitted {
             return Err(WorkloadTeardownDispatchError::CurrentSourceMismatch {
                 admitted: Box::new(admitted.clone()),
@@ -138,6 +147,12 @@ impl WorkloadTeardownDispatcher {
             observation.into_outcome(),
         )?))
     }
+}
+
+fn durable_stopped_successor_authenticates_missing_source(record: &WorkloadSagaRecord) -> bool {
+    record
+        .successor_intent()
+        .is_some_and(|successor| successor.desired_state() == DesiredWorkloadState::Stopped)
 }
 
 #[cfg(test)]

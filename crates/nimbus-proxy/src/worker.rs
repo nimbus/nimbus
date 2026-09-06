@@ -242,6 +242,14 @@ impl PreparedWorkloadPep {
                 message: "egress proxy max_connections must be greater than 0".to_owned(),
             });
         }
+        for policy in [config.policy.as_ref(), config.global_ceiling.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            policy
+                .validate_for_supervisor_proxy()
+                .map_err(|message| EgressProxyError::OperationFailed { message })?;
+        }
         let listener =
             TcpListener::bind(config.bind_addr).map_err(|error| EgressProxyError::BindFailed {
                 address: config.bind_addr,
@@ -1436,6 +1444,8 @@ fn egress_protocol_scheme(protocol: EgressProtocol) -> &'static str {
         EgressProtocol::Tcp => "tcp",
         EgressProtocol::Http => "http",
         EgressProtocol::Https => "https",
+        EgressProtocol::Ws => "ws",
+        EgressProtocol::Wss => "wss",
     }
 }
 
@@ -1461,6 +1471,28 @@ fn render_pingora_downstream_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supervisor_proxy_rejects_runtime_only_websocket_policy() {
+        let policy = nimbus_egress::EgressPolicy::new([nimbus_egress::EgressRule::new(
+            "runtime-websocket",
+            EgressProtocol::Wss,
+            "events.example.com",
+            443,
+        )])
+        .compile()
+        .expect("the shared PDP should compile an observable runtime policy");
+
+        let error = match WorkloadPep::start(WorkloadPepConfig::new(policy)) {
+            Ok(_) => panic!("the supervisor proxy must reject a protocol it cannot observe"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("observable runtime gateway"),
+            "proxy rejection should explain the owning enforcement seam: {error}"
+        );
+    }
 
     #[test]
     fn disconnected_shutdown_channel_is_not_provider_absence_evidence() {

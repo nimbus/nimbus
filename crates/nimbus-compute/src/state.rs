@@ -40,6 +40,7 @@ use crate::config::node_services::NodeServicesConfig;
 use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::node_workloads::NodeWorkloadCoordinator;
+use crate::resource_retirement::ResourceRetirementSupervisor;
 use crate::runtime_manager::RuntimeManager;
 use crate::tenant_retirement::{TenantRetirementDriver, TenantRetirementRuntime};
 use crate::workload_projection::{WorkloadProjectionOrchestrator, WorkloadProjectionSink};
@@ -124,6 +125,7 @@ pub struct ComputeState {
     workload_provisioner: Option<Arc<WorkloadProvisioner>>,
     workload_restart_runtime: Option<Arc<WorkloadRestartRuntime>>,
     workload_teardown_runtime: Option<Arc<WorkloadTeardownRuntime>>,
+    resource_retirement_supervisor: Arc<ResourceRetirementSupervisor>,
     workload_startup_report: tokio::sync::OnceCell<WorkloadStartupRecoveryReport>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     control_plane: ControlPlaneConfig,
@@ -289,6 +291,7 @@ impl ComputeState {
             workload_provisioner,
             workload_restart_runtime,
             workload_teardown_runtime,
+            resource_retirement_supervisor: Arc::new(ResourceRetirementSupervisor::default()),
             workload_startup_report: tokio::sync::OnceCell::new(),
             system_convex_registry,
             control_plane,
@@ -347,6 +350,10 @@ impl ComputeState {
     /// retirement fails before source, store, or provider mutation.
     pub(crate) fn workload_teardown_runtime(&self) -> Option<Arc<WorkloadTeardownRuntime>> {
         self.workload_teardown_runtime.clone()
+    }
+
+    pub(crate) fn resource_retirement_supervisor(&self) -> Arc<ResourceRetirementSupervisor> {
+        Arc::clone(&self.resource_retirement_supervisor)
     }
 
     /// Establish complete durable workload truth before workload-capable

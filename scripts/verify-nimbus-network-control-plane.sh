@@ -21,15 +21,7 @@ SOURCE_CONTRACT_HELPER="scripts/verify-nimbus-network-source-contract.mjs"
 BIND_CENSUS_HELPER="scripts/verify-nimbus-network-bind-census.mjs"
 COMPOSITION_CENSUS_HELPER="scripts/verify-nimbus-network-composition-census.mjs"
 SOVEREIGNTY_TRIPWIRE_HELPER="${NIMBUS_NETWORK_VERIFY_SOVEREIGNTY_HELPER:-scripts/verify-nimbus-network-sovereignty-tripwire.py}"
-NNC52A_ATTACHMENT_ORDERING_HELPER="scripts/verify-nimbus-network-attachment-ordering.mjs"
-NNC52D_STARTUP_ORPHAN_HELPER="scripts/verify-nimbus-network-startup-orphan-reconciliation.mjs"
-NNC53_ATTACHMENT_READINESS_HELPER="scripts/verify-nimbus-network-attachment-readiness.mjs"
-NNC54_ATTACHMENT_CRASH_HELPER="scripts/verify-nimbus-network-attachment-crash-convergence.mjs"
-NNC54A_MACHINE_BATCH_HELPER="scripts/verify-nimbus-network-machine-forwarded-batch-convergence.mjs"
 COMPOSITION_CENSUS="${NIMBUS_NETWORK_VERIFY_COMPOSITION_CENSUS:-docs/private/plans/proof/nimbus-network-control-plane/nnc4.6f-production-network-authority-census.json}"
-COMPOSITION_CENSUS_SELF_TESTS="scripts/nimbus-network-control-plane/composition-census-self-tests.sh"
-BIND_EXEMPTION_SELF_TESTS="scripts/nimbus-network-control-plane/bind-exemption-self-tests.sh"
-SOVEREIGNTY_TRIPWIRE_SELF_TESTS="scripts/nimbus-network-control-plane/sovereignty-tripwire-self-tests.sh"
 NNC52A_ATTACHMENT_ORDERING_CONTRACT="scripts/nimbus-network-control-plane/attachment-ordering-contract.sh"
 NNC52D_STARTUP_ORPHAN_CONTRACT="scripts/nimbus-network-control-plane/startup-orphan-reconciliation-contract.sh"
 NNC53_ATTACHMENT_READINESS_CONTRACT="scripts/nimbus-network-control-plane/attachment-readiness-contract.sh"
@@ -1159,7 +1151,15 @@ verify_nnc81_process_harness_owner() {
             }
           }
 
-          const expected = ["nimbus-cli", "nimbus-kv", "nimbus-sandbox", "nimbus-server", "nimbus-testing"];
+          const expected = [
+            "nimbus-cli",
+            "nimbus-compute",
+            "nimbus-kv",
+            "nimbus-proxy",
+            "nimbus-sandbox",
+            "nimbus-server",
+            "nimbus-testing",
+          ];
           const consumers = metadata.packages.filter(pkg =>
             pkg.dependencies.some(dep => dep.name === "nimbus-process-harness"),
           );

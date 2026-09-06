@@ -23,7 +23,7 @@ impl<T: Sync> Lazy<T> {
     pub const INIT: Self = Lazy(Cell::new(MaybeUninit::uninit()), ONCE_INIT);
 
     #[inline(always)]
-    pub fn get<F>(&'static self, f: F) -> &T
+    pub fn get<F>(&'static self, f: F) -> &'static T
     where
         F: FnOnce() -> T,
     {

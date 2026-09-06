@@ -14,8 +14,8 @@ use oci_client::manifest::{OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MEDIA_TYPE};
 use tempfile::TempDir;
 
 use super::guest::{
-    guest_nimbus_archive_name, start_guest_nimbus_service_shell_script,
-    stop_guest_nimbus_service_shell_script,
+    guest_nimbus_archive_name, requires_ssh_guest_api_convergence,
+    start_guest_nimbus_service_shell_script, stop_guest_nimbus_service_shell_script,
 };
 use super::helper_env_guard::write_helper_stub;
 use super::helper_paths::{
@@ -36,7 +36,7 @@ use super::readiness::{
     secure_machine_runtime_root_for_owner, ssh_port_is_listening, wait_for_path,
     wait_for_ssh_ready,
 };
-use super::ssh::remote_shell_command;
+use super::ssh::{build_guest_management_ssh_command, remote_shell_command};
 use super::stop::{
     annotate_machine_start_error, cleanup_process, force_stop_pid, handle_start_machine_error,
     request_vmm_state_change, send_signal, stop_provider_machine, wait_for_pid_exit,

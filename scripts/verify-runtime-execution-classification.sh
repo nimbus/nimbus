@@ -27,9 +27,11 @@ EXECUTION_PLAN="crates/nimbus-runtime/src/execution_plan.rs"
 INVOCATION="crates/nimbus-runtime/src/runtime/invocation.rs"
 COOP_RUN="crates/nimbus-runtime/src/worker_loop/cooperative/run.rs"
 COOP_EXECUTION="crates/nimbus-runtime/src/worker_loop/cooperative/execution.rs"
+COOP_BACKEND="crates/nimbus-runtime/src/worker_loop/cooperative/backend.rs"
 COOP_TESTS="crates/nimbus-runtime/src/runtime/tests/cooperative.rs"
 HOST="crates/nimbus-runtime/src/host.rs"
-BOOTSTRAP_SOURCE="crates/nimbus-runtime/src/runtime/bootstrap/source.rs"
+BOOTSTRAP_CONTEXT_SOURCE="crates/nimbus-runtime/src/runtime/bootstrap/js/nimbus_context_contract.js"
+BOOTSTRAP_HOST_CALL_TRANSPORT="crates/nimbus-runtime/src/runtime/bootstrap/js/deno_host_call_transport.js"
 BOOTSTRAP_STATE="crates/nimbus-runtime/src/runtime/bootstrap/state.rs"
 OPS_SHARED="crates/nimbus-runtime/src/runtime/bootstrap/ops/shared.rs"
 HOST_BRIDGE_TESTS="crates/nimbus-runtime/src/runtime/tests/host_bridge.rs"
@@ -161,19 +163,22 @@ if [ -f "${PROOF}" ] &&
     'packages/codegen/src/planner/context_api.mjs' >/tmp/rec0-inventory-missing.txt &&
   contains 'pub struct RuntimeEfficiencyPlan' "${TENANT_EFFICIENCY}" &&
   contains 'fn runtime_host_work_class_for_job' "${ADMISSION}" &&
-  contains 'pub\(crate\) enum RuntimeAffinityKey' "${AFFINITY}" &&
-  contains 'struct RuntimePoolPartitionKey' "${WARM_POOL}" &&
+  contains_all "${AFFINITY}" \
+    'pub\(crate\) enum RuntimeRouteKey' \
+    'pub\(crate\) enum RuntimeReuseLocalityKey' >/tmp/rec0-current-affinity-missing.txt &&
+  contains 'struct V8RetainedAuthorityKey' "${WARM_POOL}" &&
   contains 'pub struct RuntimeHostState' "${HOST_STATE}"; then
   pass "inventory covers semantic, substrate, effect, budget, affinity, and enforcement seams"
 else
   fail "REC0 current-state inventory is incomplete" \
-    "$(cat /tmp/rec0-inventory-missing.txt 2>/dev/null)"
+    "$(cat /tmp/rec0-inventory-missing.txt 2>/dev/null) $(cat /tmp/rec0-current-affinity-missing.txt 2>/dev/null)"
 fi
 
 step 4 "Direct cooperative scheduler consumers were inventoried and are now removed"
 if [ -f "${INVOCATION}" ] &&
   [ -f "${COOP_RUN}" ] &&
   [ -f "${COOP_EXECUTION}" ] &&
+  [ -f "${COOP_BACKEND}" ] &&
   contains 'pub\(crate\) const fn is_convex_read_semantic_candidate' "${INVOCATION}" &&
   contains_all "${PROOF}" \
     'crates/nimbus-runtime/src/runtime/invocation.rs' \
@@ -435,10 +440,13 @@ if [ -f "${EXECUTION_PLAN}" ] &&
   contains_all "${EXECUTOR_INVOKE}" \
     'RuntimeExecutionPlan::for_invocation' \
     'execution_plan,' >/tmp/rec3-executor-invoke-missing.txt &&
+  contains_all "${COOP_BACKEND}" \
+    'fn permits_scheduler_admission' \
+    'execution_plan.permits_cooperative_scheduler_admission\(\)' >/tmp/rec3-coop-backend-missing.txt &&
   contains_all "${COOP_RUN}" \
-    'permits_cooperative_scheduler_admission' >/tmp/rec3-coop-run-missing.txt &&
+    'driver.permits_scheduler_admission' >/tmp/rec3-coop-run-missing.txt &&
   contains_all "${COOP_EXECUTION}" \
-    'permits_cooperative_scheduler_admission' \
+    'driver.permits_scheduler_admission' \
     'execution_plan: job.execution_plan.clone\(\)' >/tmp/rec3-coop-execution-missing.txt &&
   contains_all "${ADMISSION}" \
     'job.execution_plan.host_work_class\(\)' >/tmp/rec3-admission-missing.txt &&
@@ -446,7 +454,7 @@ if [ -f "${EXECUTION_PLAN}" ] &&
   pass "cooperative scheduler and host work-class admission consume RuntimeExecutionPlan"
 else
   fail "REC3 scheduler consumption is incomplete" \
-    "$(cat /tmp/rec3-plan-missing.txt 2>/dev/null) $(cat /tmp/rec3-worker-job-missing.txt 2>/dev/null) $(cat /tmp/rec3-executor-invoke-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-run-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-execution-missing.txt 2>/dev/null) $(cat /tmp/rec3-admission-missing.txt 2>/dev/null)"
+    "$(cat /tmp/rec3-plan-missing.txt 2>/dev/null) $(cat /tmp/rec3-worker-job-missing.txt 2>/dev/null) $(cat /tmp/rec3-executor-invoke-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-backend-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-run-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-execution-missing.txt 2>/dev/null) $(cat /tmp/rec3-admission-missing.txt 2>/dev/null)"
 fi
 
 step 16 "REC3 runtime negative and compatibility tests exist"
@@ -488,9 +496,9 @@ else
 fi
 
 step 18 "REC4 runtime context shape is request-kind capability aware"
-if [ -f "${BOOTSTRAP_SOURCE}" ] &&
+if [ -f "${BOOTSTRAP_CONTEXT_SOURCE}" ] &&
   [ -f "${CODEGEN_CONTEXT}" ] &&
-  contains_all "${BOOTSTRAP_SOURCE}" \
+  contains_all "${BOOTSTRAP_CONTEXT_SOURCE}" \
     'requestKind' \
     'capabilities' \
     'dbWrite' \
@@ -556,7 +564,7 @@ fi
 step 21 "REC5 waitUntil and warm-pool hot-path cleanup is present"
 if [ -f "${BOOTSTRAP_STATE}" ] &&
   [ -f "${OPS_SHARED}" ] &&
-  [ -f "${BOOTSTRAP_SOURCE}" ] &&
+  [ -f "${BOOTSTRAP_HOST_CALL_TRANSPORT}" ] &&
   [ -f "${V8_LIFECYCLE}" ] &&
   [ -f "${WARM_POOL}" ] &&
   [ -f "crates/nimbus-runtime/src/runtime/driver/invocation.rs" ] &&
@@ -570,13 +578,13 @@ if [ -f "${BOOTSTRAP_STATE}" ] &&
     'op_nimbus_runtime_wait_until_pending' \
     'RuntimeWaitUntilState' \
     'mark_pending\(\)' >/tmp/rec5-wait-op-missing.txt &&
-  contains_all "${BOOTSTRAP_SOURCE}" \
+  contains_all "${BOOTSTRAP_HOST_CALL_TRANSPORT}" \
     'op_nimbus_runtime_wait_until_pending' \
     'markPending\(\)' >/tmp/rec5-wait-js-missing.txt &&
   contains_all "crates/nimbus-runtime/src/runtime/driver/invocation.rs" \
     'take_runtime_wait_until_pending' \
     'begin_wait_until_phase' \
-    'RuntimePoolKind::WarmContextRecycle' >/tmp/rec5-invocation-hotpath-missing.txt; then
+    'RuntimePoolKind::WarmPool' >/tmp/rec5-invocation-hotpath-missing.txt; then
   if contains_all "${V8_LIFECYCLE}" \
     'prepare_warm_runtime_for_retention' \
     'reset_request_state\(\)' \
@@ -644,9 +652,11 @@ step 24 "REC5 final closeout keeps scheduler and host-admission ownership clean"
 if [ -f "${EXECUTION_PLAN}" ] &&
   [ -f "${COOP_RUN}" ] &&
   [ -f "${COOP_EXECUTION}" ] &&
+  [ -f "${COOP_BACKEND}" ] &&
   [ -f "${ADMISSION}" ] &&
-  contains 'permits_cooperative_scheduler_admission' "${COOP_RUN}" &&
-  contains 'permits_cooperative_scheduler_admission' "${COOP_EXECUTION}" &&
+  contains 'execution_plan.permits_cooperative_scheduler_admission\(\)' "${COOP_BACKEND}" &&
+  contains 'driver.permits_scheduler_admission' "${COOP_RUN}" &&
+  contains 'driver.permits_scheduler_admission' "${COOP_EXECUTION}" &&
   contains 'job.execution_plan.host_work_class\(\)' "${ADMISSION}" &&
   ! grep -R 'job.request.kind.is_convex_read_semantic_candidate' crates/nimbus-runtime/src/worker_loop >/dev/null 2>&1 &&
   ! grep -R 'allows_cooperative_multiplexing' crates/nimbus-runtime/src >/dev/null 2>&1; then

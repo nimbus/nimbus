@@ -46,7 +46,9 @@ pub struct SnapshotFingerprint {
     pub durable_head: u64,
     pub schema_table_count: usize,
     pub document_count: usize,
+    pub resource_path_binding_count: usize,
     pub scheduled_execution_count: usize,
+    pub trigger_delivery_cursor_sequence: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -135,7 +137,9 @@ pub fn snapshot_fingerprint(snapshot: &MaterializedJournalSnapshot) -> Result<Sn
         durable_head: snapshot.durable_head.0,
         schema_table_count: snapshot.schema.tables.len(),
         document_count: snapshot.documents.len(),
+        resource_path_binding_count: snapshot.resource_path_bindings.len(),
         scheduled_execution_count: snapshot.scheduled_execution_ids.len(),
+        trigger_delivery_cursor_sequence: snapshot.trigger_delivery_cursor.materialized_through.0,
     })
 }
 
@@ -340,6 +344,17 @@ fn locate_canonical_state_difference(
         }
     }
 
+    if left.resource_path_bindings() != right.resource_path_bindings() {
+        return Some(mismatch(
+            "materialized_snapshot_match",
+            left_scope,
+            right_scope,
+            "resource_path_bindings",
+            left.resource_path_bindings(),
+            right.resource_path_bindings(),
+        ));
+    }
+
     if left.scheduled_execution_ids() != right.scheduled_execution_ids() {
         return Some(mismatch(
             "materialized_snapshot_match",
@@ -348,6 +363,17 @@ fn locate_canonical_state_difference(
             "scheduled_execution_ids",
             left.scheduled_execution_ids(),
             right.scheduled_execution_ids(),
+        ));
+    }
+
+    if left.trigger_delivery_cursor() != right.trigger_delivery_cursor() {
+        return Some(mismatch(
+            "materialized_snapshot_match",
+            left_scope,
+            right_scope,
+            "trigger_delivery_cursor",
+            left.trigger_delivery_cursor(),
+            right.trigger_delivery_cursor(),
         ));
     }
 
@@ -460,14 +486,70 @@ where
 
 #[cfg(test)]
 mod tests {
+    use nimbus_core::{
+        DocumentId, DocumentLocator, DocumentPath, ResourcePathBinding, Schema, SequenceNumber,
+        TableName, TriggerDeliveryCursor,
+    };
+    use nimbus_storage::{MATERIALIZED_JOURNAL_SNAPSHOT_VERSION, MaterializedJournalSnapshot};
+
+    use super::{ConsistencyScope, compare_materialized_journal_snapshots};
+
+    fn empty_snapshot() -> MaterializedJournalSnapshot {
+        MaterializedJournalSnapshot {
+            version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
+            applied_sequence: SequenceNumber(0),
+            durable_head: SequenceNumber(0),
+            table_identities: Vec::new(),
+            schema: Schema::default(),
+            documents: Vec::new(),
+            resource_path_bindings: Vec::new(),
+            scheduled_execution_ids: Vec::new(),
+            trigger_delivery_cursor: TriggerDeliveryCursor::default(),
+        }
+    }
+
     #[test]
     fn materialized_position_golden_matches_shipped_graph() {
         let position = nimbus_storage::materialized_position_golden_fixture()
             .expect("materialized position fixture should compute");
-        assert_eq!(position.version(), 2);
+        assert_eq!(position.version(), 3);
         assert_eq!(
             position.state_digest(),
-            "cc10a2a6579d2df620010321813fa1ca2bc715288280c0d62a502b5281a7ca68"
+            "af6dfc9b7f93c73314ae70ff777d7b2f93bef82704b11d18c87a5bae9bee36f9"
         );
+    }
+
+    #[test]
+    fn snapshot_comparison_names_resource_binding_and_trigger_cursor_drift() {
+        let baseline = empty_snapshot();
+        let table = TableName::new("tasks").expect("table should be valid");
+        let id = DocumentId::from_key("task-1").expect("document id should be valid");
+        let mut with_binding = baseline.clone();
+        with_binding.resource_path_bindings = vec![ResourcePathBinding::new(
+            DocumentLocator::new(table, id.clone()),
+            DocumentPath::from_segments(["tasks", id.as_str()])
+                .expect("resource path should be valid"),
+        )];
+        let binding_mismatch = compare_materialized_journal_snapshots(
+            ConsistencyScope::AuthoritativeSnapshot,
+            &baseline,
+            ConsistencyScope::ShadowMaterializer,
+            &with_binding,
+        )
+        .expect("snapshot comparison should succeed")
+        .expect("binding drift should produce a mismatch");
+        assert_eq!(binding_mismatch.path, "resource_path_bindings");
+
+        let mut with_cursor = baseline.clone();
+        with_cursor.trigger_delivery_cursor = TriggerDeliveryCursor::new(SequenceNumber(1));
+        let cursor_mismatch = compare_materialized_journal_snapshots(
+            ConsistencyScope::AuthoritativeSnapshot,
+            &baseline,
+            ConsistencyScope::ShadowMaterializer,
+            &with_cursor,
+        )
+        .expect("snapshot comparison should succeed")
+        .expect("cursor drift should produce a mismatch");
+        assert_eq!(cursor_mismatch.path, "trigger_delivery_cursor");
     }
 }

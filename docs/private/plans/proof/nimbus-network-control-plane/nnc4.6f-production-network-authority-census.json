@@ -195,7 +195,7 @@
       "kind": "cli-staged-manager-claim",
       "symbol": "run_dev_command",
       "ordinal": 1,
-      "line": 123,
+      "line": 133,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -205,7 +205,7 @@
       "kind": "cli-complete-composition",
       "symbol": "resolve_dev_plan_inner",
       "ordinal": 1,
-      "line": 152,
+      "line": 162,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -515,7 +515,7 @@
       "kind": "local-node-root-resolver",
       "symbol": "network_root_from_start_command",
       "ordinal": 1,
-      "line": 832,
+      "line": 872,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"

@@ -2,12 +2,26 @@
 set -euo pipefail
 
 failures=0
+allow_pending_private_runtime=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINUX_DISTRIBUTION_CONTRACT_ENV="${NIMBUS_LINUX_DISTRIBUTION_CONTRACT_ENV:-${SCRIPT_DIR}/../packaging/linux-distribution-contract.env}"
-DEFAULT_NIMBUS_CRUN_VERSION="v1.27.1-nimbus.2"
-DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.27.1"
-DEFAULT_NIMBUS_LIBKRUN_VERSION="v1.18.1-nimbus.1"
-DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="1.18.1"
+DEFAULT_NIMBUS_CRUN_VERSION="v1.29.1-nimbus.2"
+DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.29.1"
+DEFAULT_NIMBUS_LIBKRUN_VERSION="v1.19.4-nimbus.3"
+DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="1.19.4"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --allow-pending-private-runtime)
+      allow_pending_private_runtime=true
+      shift
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 64
+      ;;
+  esac
+done
 
 if [[ -r "${LINUX_DISTRIBUTION_CONTRACT_ENV}" ]]; then
   # shellcheck disable=SC1090
@@ -33,6 +47,12 @@ compact_value() {
 
 mark_failure() {
   failures=$((failures + 1))
+}
+
+mark_private_runtime_failure() {
+  if [[ "${allow_pending_private_runtime}" != "true" ]]; then
+    mark_failure
+  fi
 }
 
 tuple_action() {
@@ -137,25 +157,25 @@ check_private_libkrun_stack() {
       print_line "nimbus.libkrun" "present path=${lib_root} version=${installed_version} expected=${EXPECTED_NIMBUS_LIBKRUN_VERSION}"
     else
       print_line "nimbus.libkrun" "mismatch path=${release_info} actual=${installed_version:-unknown} expected=${EXPECTED_NIMBUS_LIBKRUN_VERSION} $(tuple_action)"
-      mark_failure
+      mark_private_runtime_failure
     fi
   else
     print_line "nimbus.libkrun" "missing path=${release_info} expected=${EXPECTED_NIMBUS_LIBKRUN_VERSION} $(tuple_action)"
-    mark_failure
+    mark_private_runtime_failure
   fi
 
   if [[ -e "${lib_root}/${EXPECTED_LIBKRUN_SONAME}" ]]; then
     print_line "nimbus.libkrun.so" "present path=${lib_root}/${EXPECTED_LIBKRUN_SONAME} expected_soname=${EXPECTED_LIBKRUN_SONAME}"
   else
     print_line "nimbus.libkrun.so" "missing path=${lib_root}/${EXPECTED_LIBKRUN_SONAME} expected_soname=${EXPECTED_LIBKRUN_SONAME} $(tuple_action)"
-    mark_failure
+    mark_private_runtime_failure
   fi
 
   if [[ -e "${lib_root}/${EXPECTED_LIBKRUNFW_SONAME}" ]]; then
     print_line "nimbus.libkrunfw.so" "present path=${lib_root}/${EXPECTED_LIBKRUNFW_SONAME} expected_soname=${EXPECTED_LIBKRUNFW_SONAME}"
   else
     print_line "nimbus.libkrunfw.so" "missing path=${lib_root}/${EXPECTED_LIBKRUNFW_SONAME} expected_soname=${EXPECTED_LIBKRUNFW_SONAME} $(tuple_action)"
-    mark_failure
+    mark_private_runtime_failure
   fi
 
   if command -v nm >/dev/null 2>&1 && [[ -e "${lib_root}/${EXPECTED_LIBKRUN_SONAME}" ]]; then
@@ -165,11 +185,11 @@ check_private_libkrun_stack() {
       print_line "nimbus.libkrun.symbol" "present expected_symbol=${EXPECTED_LIBKRUN_ABI_SYMBOL}"
     else
       print_line "nimbus.libkrun.symbol" "missing expected_symbol=${EXPECTED_LIBKRUN_ABI_SYMBOL} $(tuple_action)"
-      mark_failure
+      mark_private_runtime_failure
     fi
   else
     print_line "nimbus.libkrun.symbol" "missing expected_symbol=${EXPECTED_LIBKRUN_ABI_SYMBOL} (nm or libkrun unavailable) $(tuple_action)"
-    mark_failure
+    mark_private_runtime_failure
   fi
 
   if [[ -x "${crun_path}" ]]; then
@@ -178,11 +198,11 @@ check_private_libkrun_stack() {
       print_line "nimbus.crun.version" "present expected=${EXPECTED_NIMBUS_CRUN_VERSION} upstream=${EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION} actual=$(compact_value "${crun_version}")"
     else
       print_line "nimbus.crun.version" "missing +LIBKRUN path=${crun_path} expected=${EXPECTED_NIMBUS_CRUN_VERSION} $(tuple_action)"
-      mark_failure
+      mark_private_runtime_failure
     fi
   else
     print_line "nimbus.crun.version" "missing path=${crun_path} expected=${EXPECTED_NIMBUS_CRUN_VERSION} $(tuple_action)"
-    mark_failure
+    mark_private_runtime_failure
   fi
 
   if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
@@ -190,11 +210,11 @@ check_private_libkrun_stack() {
       print_line "nimbus.crun.runpath" "present expected=${EXPECTED_CRUN_RUNPATH}"
     else
       print_line "nimbus.crun.runpath" "missing expected=${EXPECTED_CRUN_RUNPATH} $(tuple_action)"
-      mark_failure
+      mark_private_runtime_failure
     fi
   else
     print_line "nimbus.crun.runpath" "missing expected=${EXPECTED_CRUN_RUNPATH} (readelf or crun unavailable) $(tuple_action)"
-    mark_failure
+    mark_private_runtime_failure
   fi
 }
 
@@ -243,7 +263,20 @@ check_any_command "tool.cc" "cc" "gcc" "clang"
 check_command "runtime.conmon" "conmon"
 check_command "runtime.buildah" "buildah"
 check_command "runtime.system_crun" "crun"
-check_command "runtime.private_crun" "/usr/libexec/nimbus/crun"
+if [[ "$(id -u)" -eq 0 ]]; then
+  print_line "runtime.privilege" "root"
+elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  print_line "runtime.privilege" "noninteractive sudo available"
+else
+  print_line "runtime.privilege" "missing noninteractive sudo"
+  mark_failure
+fi
+if [[ "${allow_pending_private_runtime}" == "true" ]]; then
+  check_command "runtime.private_crun" "/usr/libexec/nimbus/crun" optional
+  print_line "runtime.private_gate" "pending install permitted for preflight"
+else
+  check_command "runtime.private_crun" "/usr/libexec/nimbus/crun"
+fi
 check_command "runtime.podman" "podman" optional
 check_any_command "runtime.init" "catatonit" "tini" "dumb-init"
 

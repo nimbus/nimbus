@@ -5,11 +5,11 @@ import { query } from "./_generated/server";
 export const list = query({
   args: {
     adapter: v.union(v.string(), v.null()),
-    state: v.union(v.string(), v.null()),
+    observedPhase: v.union(v.string(), v.null()),
     limit: v.union(v.number(), v.null()),
   },
   returns: v.array(v.any()),
-  handler: async (ctx, { adapter, state, limit }) => {
+  handler: async (ctx, { adapter, observedPhase, limit }) => {
     const boundedLimit =
       limit === null || !Number.isFinite(limit)
         ? 100
@@ -20,10 +20,12 @@ export const list = query({
         .withIndex("by_adapter", (q) => q.eq("adapter", adapter))
         .take(boundedLimit);
     }
-    if (state) {
+    if (observedPhase) {
       return await ctx.db
         .query("listeners")
-        .withIndex("by_state", (q) => q.eq("state", state))
+        .withIndex("by_observedPhase", (q) =>
+          q.eq("observedPhase", observedPhase),
+        )
         .take(boundedLimit);
     }
     return await ctx.db.query("listeners").take(boundedLimit);

@@ -33,13 +33,13 @@ make node-compat-refresh LANE=node22 DRY_RUN=1
 Compare a lane against an upstream Node tag without applying fixture changes:
 
 ```bash
-make node-compat-refresh LANE=node24 TAG=v24.16.0 COMPARE_UPSTREAM=1 SOURCE_ROOT=~/src/github.com/nodejs/node
+make node-compat-refresh LANE=node24 TAG=v24.20.0 COMPARE_UPSTREAM=1 SOURCE_ROOT=~/src/github.com/nodejs/node
 ```
 
 Apply a deliberate lane tag and fixture refresh:
 
 ```bash
-make node-compat-refresh LANE=node24 TAG=v24.16.0 APPLY=1 SOURCE_ROOT=~/src/github.com/nodejs/node
+make node-compat-refresh LANE=node24 TAG=v24.20.0 APPLY=1 SOURCE_ROOT=~/src/github.com/nodejs/node
 ```
 
 Run representative live Node test checks during the refresh when validating runtime

@@ -184,6 +184,7 @@ if ! REPORT_ROOT="$(node "${REPORT_ADAPTER}" init \
 fi
 
 SOURCE_BYTE_CAPTURED=0
+SOURCE_BYTE_CAPTURE_ATTEMPTED=0
 SERVER_PID=""
 SERVER_URL=""
 SERVER_LOG=""
@@ -287,6 +288,7 @@ cleanup_smoke_credentials() {
 }
 
 capture_source_byte_manifest() {
+  SOURCE_BYTE_CAPTURE_ATTEMPTED=1
   if ! node "${WORKSPACE_ADAPTER}" capture-source \
       --manifest "${CASE_MANIFEST}" \
       --repo-root "${REPO_ROOT}" \
@@ -500,6 +502,7 @@ finalize_examples_verification() {
   local lifetime_json=""
   local report_status=0
   local source_status="matched"
+  local source_evidence_ready=1
   local case_cleanup_report="passed"
   trap - EXIT INT TERM
   if [ "${#CASE_WORKER_PIDS[@]}" -gt 0 ] && ! stop_case_workers; then
@@ -515,19 +518,26 @@ finalize_examples_verification() {
   if [ -n "${CURRENT_CASE_NAME}" ] && [ "${CURRENT_CASE_RECORDED}" -eq 0 ]; then
     record_current_case "failed" "${run_status}" "${case_cleanup_report}" || final_status=1
   fi
-  if [ "${SOURCE_BYTE_CAPTURED}" -eq 0 ]; then
+  if [ "${SOURCE_BYTE_CAPTURED}" -eq 0 ] && [ "${SOURCE_BYTE_CAPTURE_ATTEMPTED}" -eq 0 ]; then
     capture_source_byte_manifest || final_status=1
   fi
-  if ! verify_source_byte_manifest; then
-    source_status="mismatched"
+  if [ "${SOURCE_BYTE_CAPTURED}" -eq 0 ]; then
+    source_evidence_ready=0
     final_status=1
-  fi
-  if ! node "${REPORT_ADAPTER}" stage-source \
-      --result-root "${REPORT_ROOT}" \
-      --source-before "${SOURCE_BYTE_SNAPSHOT}" \
-      --source-after "${SOURCE_BYTE_OBSERVED}" \
-      --source-status "${source_status}"; then
-    final_status=1
+    echo "examples verification report not written: source byte capture did not complete" >&2
+  else
+    if ! verify_source_byte_manifest; then
+      source_status="mismatched"
+      final_status=1
+    fi
+    if ! node "${REPORT_ADAPTER}" stage-source \
+        --result-root "${REPORT_ROOT}" \
+        --source-before "${SOURCE_BYTE_SNAPSHOT}" \
+        --source-after "${SOURCE_BYTE_OBSERVED}" \
+        --source-status "${source_status}"; then
+      source_evidence_ready=0
+      final_status=1
+    fi
   fi
   # A cleanup_failure must retain the original root and keep the run red.
   if lifetime_json="$(node "${LIFETIME_ADAPTER}" finalize \
@@ -540,10 +550,12 @@ finalize_examples_verification() {
   else
     lifetime_status=$?
   fi
-  if ! printf '%s' "${lifetime_json}" | node "${REPORT_ADAPTER}" finalize \
-      --result-root "${REPORT_ROOT}" \
-      --run-exit-code "${final_status}"; then
-    report_status=1
+  if [ "${source_evidence_ready}" -eq 1 ]; then
+    if ! printf '%s' "${lifetime_json}" | node "${REPORT_ADAPTER}" finalize \
+        --result-root "${REPORT_ROOT}" \
+        --run-exit-code "${final_status}"; then
+      report_status=1
+    fi
   fi
   if [ "${lifetime_status}" -ne 0 ]; then
     final_status="${lifetime_status}"
@@ -580,6 +592,7 @@ fail_at_cut after-run-root
 # inputs, boot behavior, smoke behavior, surfaces, and update semantics. The
 # runner copies only those inputs to a disposable workspace before codegen,
 # provisioning, boot, or smoke can write.
+capture_source_byte_manifest
 if ! node "${WORKSPACE_ADAPTER}" emit-shell \
     --manifest "${CASE_MANIFEST}" \
     --repo-root "${REPO_ROOT}" \
@@ -594,8 +607,6 @@ if [ "${#APPS[@]}" -ne 9 ]; then
   echo "case manifest emitted ${#APPS[@]} rows; expected 9" >&2
   exit 1
 fi
-
-capture_source_byte_manifest
 
 ensure_nimbus_binary() {
   if [ -x "${NIMBUS_BIN}" ]; then

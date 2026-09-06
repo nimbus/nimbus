@@ -658,6 +658,26 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn trigger_candidate_worker_running_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<bool> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.trigger_candidate_worker_running_for_testing()
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ensure_trigger_candidate_worker_started_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.ensure_trigger_candidate_worker_started();
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn arm_scheduler_recovery_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
         self.with_runtime_for_testing(tenant_id, |runtime| {
             runtime.mark_scheduler_recovery_pending()

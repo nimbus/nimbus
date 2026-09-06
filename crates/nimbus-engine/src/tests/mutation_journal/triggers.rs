@@ -308,6 +308,40 @@ async fn trigger_candidate_worker_pause_does_not_block_mutation_completion() {
 }
 
 #[tokio::test]
+async fn engine_quiesce_stops_the_trigger_candidate_worker() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("quiesce-trigger-worker", Engine::create_tenant);
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("start worker"))]),
+        )
+        .expect("mutation should start the trigger-candidate worker");
+
+    assert!(
+        engine
+            .trigger_candidate_worker_running_for_testing(&tenant_id)
+            .expect("trigger worker state should load"),
+        "commit publication must start the trigger-candidate worker"
+    );
+
+    engine.quiesce().await;
+
+    engine
+        .ensure_trigger_candidate_worker_started_for_testing(&tenant_id)
+        .expect("closed trigger worker should ignore a late start request");
+
+    assert!(
+        !engine
+            .trigger_candidate_worker_running_for_testing(&tenant_id)
+            .expect("trigger worker state should remain inspectable after quiesce"),
+        "quiesce must close and join the tenant-owned worker before it stops the committer"
+    );
+}
+
+#[tokio::test]
 async fn trigger_candidate_bootstrap_replays_commits_after_persisted_cursor() {
     let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");

@@ -23,14 +23,14 @@ are not ownership.
 Nimbus commits to:
 
 > Profile-derived runtime policy, authority-keyed warm isolate pools,
-> per-profile startup snapshots, module code cache, read-safe cooperative
+> Node startup snapshots, unsnapshotted Web construction, module code cache, read-safe cooperative
 > isolate scheduling, host-resource governance, and target-bounded pointer
 > compression, with live adaptive autoscaling promoted only through the
 > replay-gated PIR7L follow-on.
 
 The durable architecture is the one already converged in
 `profile-aware-isolate-runtime-plan.md`: profile-aware, authority-keyed,
-thread-affine warm isolate pools with bounded context reuse, startup snapshots,
+thread-affine warm isolate pools with bounded runtime reuse, Node startup snapshots,
 code-cache, LRU/tenant caps, cleanliness gates, and pressure-aware host safety.
 
 The final adjustment from the earlier PIR posture is pointer compression:
@@ -99,14 +99,16 @@ PIR6 proved node snapshot consumption and measured focused snapshot rows:
 | --- | ---: | --- |
 | Node22 hostless cooperative startup-snapshot cache | about 10.005 ms | about -95% from previous Node cold baseline |
 | Node22 setup-heavy startup-snapshot cache | about 10.362 ms | about -95% from previous Node cold baseline |
-| WebStandard hostless startup-snapshot cache | about 1.7965 ms | near-neutral |
-| WebStandard setup-heavy startup-snapshot cache | about 2.3096 ms | near-neutral |
+| WebStandard hostless lane then labeled startup-snapshot cache | about 1.7965 ms | near-neutral |
+| WebStandard setup-heavy lane then labeled startup-snapshot cache | about 2.3096 ms | near-neutral |
 
 Conclusion:
 
 - Startup snapshots are the main Node cold-start win.
-- Web snapshots are still useful for shape consistency and bootstrap ownership,
-  but they are not the main ROI source.
+- Those Web rows prove the runtime-pool lane, not snapshot restoration. Current
+  WebStandard construction is unsnapshotted because a Web snapshot conflicts
+  with the NodeFull shared read-only heap in the single pointer-compression
+  cage.
 - Snapshot construction must stay platform-built and must not capture tenant,
   request, host-call session, service grant, or permission-profile state.
 
@@ -131,7 +133,7 @@ Conclusion:
 PIR2 proved WebStandard `WarmContextRecycle` functionally, then rejected it as a
 default because it lost the benchmark.
 
-| Workload | Startup snapshot cache | Warm context recycle |
+| Workload | Web lane then labeled startup-snapshot cache | Warm context recycle |
 | --- | ---: | ---: |
 | setup-heavy | 2.3718 ms | 5.2941 ms |
 | hostless | 1.9633 ms | 4.9123 ms |
@@ -145,7 +147,8 @@ The phase trace attributes the dominant overhead to `create_realm`:
 
 Conclusion:
 
-- `WarmContextRecycle` stays internal/diagnostic, not a default.
+- `WarmContextRecycle` is rejected and removed from the product graph. Exact
+  source and benchmark evidence remain archived for repeatable experiments.
 - PIR4 proceeds only with isolate-level multiplexing and one request per live
   context/global object.
 - Any future attempt to revive context recycling needs a separate Deno/V8
@@ -198,8 +201,8 @@ The first implementation wave should compare:
 - Nimbus WebStandard exact-key `WarmPool`;
 - an OpenWorkers-style owner-keyed diagnostic path that never becomes a shipping
   authority key by itself;
-- Nimbus `StartupSnapshotCache`;
-- Nimbus `WarmContextRecycle` as an internal diagnostic row only.
+- Nimbus `StartupSnapshotCache`, with the requested pool kind and actual V8
+  construction mode recorded separately.
 
 Run those rows across hostless-trivial, setup-heavy large-module, async host-call,
 CPU-bound JIT-hot, multi-tenant Zipf, high authority-key fragmentation, and
@@ -217,11 +220,10 @@ First-wave calibration result, recorded in
 - Exact-key WebStandard warm pools and the OpenWorkers-style owner-keyed
   diagnostic path are in the same latency class. The benchmark evidence does
   not justify weakening Nimbus authority keys.
-- `StartupSnapshotCache` remains valuable for cold/fresh execution, but repeated
-  WebStandard warm work is slower than exact-key warm-pool rows in the
-  first-wave matrix.
-- `WarmContextRecycle` remains diagnostic only and should not be promoted as a
-  default WebStandard or NodeFull optimization path.
+- The WebStandard lane then labeled `StartupSnapshotCache` remains valuable for
+  cold or fresh execution, but it uses unsnapshotted construction and is slower
+  than exact-key warm-pool rows in the first-wave matrix.
+- The rejected context-recycle implementation is not part of the release graph.
 - Initial warm-hit attribution shows policy bookkeeping, execution-plan
   construction, admission, router dispatch, and integrity verification are
   microsecond or sub-microsecond scale in the hostless WebStandard warm row.
@@ -499,8 +501,8 @@ This is the key enterprise-trust boundary.
 | Area | WebStandard/WebLean | Deno/Node/NodeFull |
 | --- | --- | --- |
 | Pool topology | Thread-affine, owner/authority-keyed isolate pools. | Same topology, with separate partitions from WebStandard and from every permission/grant/construction mode. |
-| Reuse default | Warm isolate reuse with startup snapshot and module code cache. OpenWorkers-style context reset is internal/diagnostic unless future evidence beats the current snapshot-first result. | Warm runtime reuse is allowed only behind the same authority key. Do not copy the WebStandard reset Implementation into Node/Deno. Fresh realm or fresh isolate is the safe Adapter behavior whenever reset proof is incomplete. |
-| Reset proof | Clear globals, streams, callbacks, timers, host handles, pending tasks, and `waitUntil`; discard on any dirty signal. | Prove extension-JS replay, module maps, op state, async hooks, process-like globals, inspector/debug state, permission state, host-call sessions, timers, microtasks, shared-array-buffer/wasm stores, and module-loader/cache state. |
+| Reuse default | Exact-key warm-isolate reuse with unsnapshotted cold construction and module code cache. | Exact-key warm-runtime reuse over Node startup snapshots. |
+| Reset proof | Clear request state, streams, callbacks, timers, host handles, pending tasks, and `waitUntil`; discard on any dirty signal. | Prove module maps, op state, async hooks, process-like globals, inspector/debug state, permission state, host-call sessions, timers, microtasks, shared-array-buffer/wasm stores, and module-loader/cache state. |
 | Background work | Two-phase response/background completion on the owning thread. | Same, plus Deno/Node event-loop and op-state quiescence proof. |
 | Deletion rule | Timeout, abnormal termination, reset failure, dirty host handles, detached contexts, or pressure condemnation means no reuse. | Same rule, with additional discard on any unproven runtime state or Node/Deno compatibility-state dirtiness. |
 
@@ -545,14 +547,14 @@ Commitments:
 
 ### 3. Startup Snapshots As The Primary Cold-Start Lever
 
-Per-profile startup snapshots are the default cold-start lever, especially for
-Node profiles.
+Startup snapshots are the default Node cold-start lever. WebStandard remains
+unsnapshotted under the current shared-cage design.
 
 Commitments:
 
 - Node snapshot consumption stays wired through the bootstrap extension
   registry.
-- Web snapshots stay lean.
+- Do not restore Web snapshots without a separate shared-cage design and proof.
 - Snapshot artifacts remain platform-built process artifacts.
 - No tenant/user/request snapshot payload is admitted in this band.
 
@@ -631,15 +633,14 @@ Commitments:
 
 ## Architecture We Reject
 
-### Reject Fresh-Realm Context Recycling As Default
+### Reject Fresh-Realm Context Recycling
 
 Rejected because it lost to startup snapshots and because `create_realm`
 dominates the cost.
 
-Keep:
-
-- Internal/diagnostic `WarmContextRecycle`.
-- Safety tests and lifecycle invariants.
+Keep exact source patches, raw benchmark data, verdicts, and general safety
+invariants in the experiment archive. Do not keep the rejected product enum,
+execution branches, replay tables, or Deno realm APIs in the release graph.
 
 Reject:
 
@@ -982,7 +983,7 @@ Reject:
 
 ### WebStandard / WebLean
 
-- Startup snapshot cache: default.
+- Cold construction: unsnapshotted under the NodeFull shared-cage anchor.
 - Module code cache: enabled.
 - Warm pool: enabled and authority-keyed.
 - Cooperative read-safe scheduling: enabled where PIR4 allows.
@@ -994,7 +995,7 @@ Reject:
 - Startup snapshot: default and mandatory for cold-start posture.
 - Module code cache: enabled, secondary.
 - Warm pool: enabled and authority-keyed.
-- Context recycling: non-default/internal diagnostic only.
+- Context recycling: absent from the product graph; archived as a rejected experiment.
 - Pointer compression: target-bounded production default on Linux x64, macOS
   ARM64, and Linux ARM64 release builds through the published
   `ptrcomp+simdutf` assets. Windows remains non-ptrcomp until a separate proof
@@ -1060,10 +1061,11 @@ through `scripts/nimbus-release-rust-features.sh`.
 
 This decision is valid only while the following remain true:
 
-- `bash scripts/verify-profile-aware-isolate-runtime.sh` passes.
 - `bash scripts/verify-runtime-tenant-isolation.sh` passes.
+- `cargo test -p nimbus-runtime --lib` and the runtime benchmark compile pass.
 - PIR0/PIR2/PIR5/PIR6 proof artifacts retain exact benchmark/proof numbers.
-- Startup snapshot rows remain green for Web and Node.
+- Node startup-snapshot and Web unsnapshotted rows remain green with honest
+  construction-mode labels.
 - Code-cache partition tests remain green.
 - Cooperative read-safe scheduling tests remain green.
 - Host-resource budget tests cover `nimbus start`, `nimbus dev`, `nimbus node`,
@@ -1150,8 +1152,9 @@ PIR7M implementation acceptance:
 
 The PIR final architecture is therefore:
 
-> Benchmark-proven, profile-aware warm isolate pools with snapshots first,
-> code-cache second, context recycling rejected as default, host safety always
+> Benchmark-proven, profile-aware warm isolate pools with Node snapshots first,
+> Web construction unsnapshotted, code-cache second, context recycling removed
+> from the product graph, host safety always
 > on, and pointer compression promoted to a target-bounded production default
 > path once target gates are proven; live adaptive autoscaling is admitted only
 > through PIR7L after shadow, fairness, pressure, and rollback gates pass; public

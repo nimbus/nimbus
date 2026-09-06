@@ -139,7 +139,7 @@ fn run_post_pir_optimization_matrix(c: &mut Criterion) {
             for &pool_path in PostPirPoolPath::all() {
                 let benchmark_id = BenchmarkId::new(
                     format!("{}/{}", workload.label(), tenant_distribution.label()),
-                    pool_path.label(),
+                    pool_path.label_for_profile(BenchmarkProfile::WebStandard),
                 );
                 group.bench_with_input(
                     benchmark_id,
@@ -235,7 +235,6 @@ enum PostPirPoolPath {
     ExactKeyWarmPool,
     OpenWorkersOwnerKeyedDiagnostic,
     StartupSnapshotCache,
-    WarmContextRecycle,
 }
 
 impl PostPirPoolPath {
@@ -244,7 +243,6 @@ impl PostPirPoolPath {
             Self::ExactKeyWarmPool,
             Self::OpenWorkersOwnerKeyedDiagnostic,
             Self::StartupSnapshotCache,
-            Self::WarmContextRecycle,
         ]
     }
 
@@ -260,7 +258,13 @@ impl PostPirPoolPath {
             Self::ExactKeyWarmPool => "webstandard_exact_key_warm_pool",
             Self::OpenWorkersOwnerKeyedDiagnostic => "openworkers_owner_keyed_diagnostic",
             Self::StartupSnapshotCache => "startup_snapshot_cache",
-            Self::WarmContextRecycle => "warm_context_recycle_diagnostic",
+        }
+    }
+
+    fn label_for_profile(self, profile: BenchmarkProfile) -> &'static str {
+        match (self, profile.is_node_full()) {
+            (Self::StartupSnapshotCache, false) => "unsnapshotted_runtime_cache",
+            _ => self.label(),
         }
     }
 
@@ -268,7 +272,6 @@ impl PostPirPoolPath {
         match self {
             Self::ExactKeyWarmPool | Self::OpenWorkersOwnerKeyedDiagnostic => PoolMode::WarmPool,
             Self::StartupSnapshotCache => PoolMode::StartupSnapshotCache,
-            Self::WarmContextRecycle => PoolMode::WarmContextRecycle,
         }
     }
 
@@ -278,7 +281,7 @@ impl PostPirPoolPath {
     ) -> RuntimeRoutingAffinity {
         match self {
             Self::OpenWorkersOwnerKeyedDiagnostic => RuntimeRoutingAffinity::None,
-            Self::ExactKeyWarmPool | Self::StartupSnapshotCache | Self::WarmContextRecycle => {
+            Self::ExactKeyWarmPool | Self::StartupSnapshotCache => {
                 tenant_distribution.routing_affinity()
             }
         }
@@ -891,7 +894,8 @@ impl PostPirScenario {
             "{}/{}/{}",
             self.workload.label(),
             self.tenant_distribution.label(),
-            self.pool_path.label()
+            self.pool_path
+                .label_for_profile(BenchmarkProfile::WebStandard)
         );
         maybe_emit_post_pir_trace_record(
             path,
@@ -901,7 +905,9 @@ impl PostPirScenario {
                 benchmark_id: &benchmark_id,
                 profile: BenchmarkProfile::WebStandard.label(),
                 workload: self.workload.label(),
-                pool_path: self.pool_path.label(),
+                pool_path: self
+                    .pool_path
+                    .label_for_profile(BenchmarkProfile::WebStandard),
                 pool_kind: self.pool_path.pool_mode().label(),
                 routing_affinity: routing_affinity_label(
                     self.pool_path.routing_affinity(self.tenant_distribution),
@@ -1133,7 +1139,8 @@ impl PostPirFanoutScenario {
             "{}/{}/{}",
             self.workload.label(),
             self.shape.label(),
-            self.pool_path.label()
+            self.pool_path
+                .label_for_profile(BenchmarkProfile::WebStandard)
         );
         let rss_prime_delta_bytes = rss_before_bytes
             .zip(rss_after_prime_bytes)
@@ -1154,7 +1161,9 @@ impl PostPirFanoutScenario {
                 benchmark_id: &benchmark_id,
                 profile: BenchmarkProfile::WebStandard.label(),
                 workload: self.workload.label(),
-                pool_path: self.pool_path.label(),
+                pool_path: self
+                    .pool_path
+                    .label_for_profile(BenchmarkProfile::WebStandard),
                 pool_kind: self.pool_path.pool_mode().label(),
                 routing_affinity: routing_affinity_label(match self.pool_path {
                     PostPirPoolPath::OpenWorkersOwnerKeyedDiagnostic => {
@@ -1425,7 +1434,7 @@ fn run_post_pir_code_cache_matrix(c: &mut Criterion) {
         .iter()
         {
             let benchmark_id = BenchmarkId::new(
-                format!("{}/startup_snapshot_cache", workload.label()),
+                format!("{}/unsnapshotted_runtime_cache", workload.label()),
                 cache_state.label(),
             );
             group.bench_with_input(
@@ -2690,7 +2699,7 @@ impl PostPirCodeCacheScenario {
         sorted_latency_nanos.sort_unstable();
         let total_invocations = measured_iterations.saturating_add(1);
         let benchmark_id = format!(
-            "{}/startup_snapshot_cache/{}",
+            "{}/unsnapshotted_runtime_cache/{}",
             self.workload.label(),
             cache_state.label()
         );
@@ -2702,7 +2711,8 @@ impl PostPirCodeCacheScenario {
                 benchmark_id: &benchmark_id,
                 profile: BenchmarkProfile::WebStandard.label(),
                 workload: self.workload.label(),
-                pool_path: PostPirPoolPath::StartupSnapshotCache.label(),
+                pool_path: PostPirPoolPath::StartupSnapshotCache
+                    .label_for_profile(BenchmarkProfile::WebStandard),
                 pool_kind: PoolMode::StartupSnapshotCache.label(),
                 routing_affinity: routing_affinity_label(RuntimeRoutingAffinity::Tenant),
                 execution_model: execution_model_label(RuntimeExecutionModel::CooperativeLocker),
@@ -2826,7 +2836,7 @@ impl PostPirNodeLazyInitScenario {
                 benchmark_id: &benchmark_id,
                 profile: self.profile.label(),
                 workload: self.workload.label(),
-                pool_path: PostPirPoolPath::StartupSnapshotCache.label(),
+                pool_path: PostPirPoolPath::StartupSnapshotCache.label_for_profile(self.profile),
                 pool_kind: PoolMode::StartupSnapshotCache.label(),
                 routing_affinity: routing_affinity_label(RuntimeRoutingAffinity::Tenant),
                 execution_model: execution_model_label(RuntimeExecutionModel::CooperativeLocker),
@@ -2857,17 +2867,6 @@ impl PostPirNodeLazyInitScenario {
                 retained_runtime_pool_retirements: snapshot.retained_runtime_pool_retirements,
                 queue_wait_nanos_total: snapshot.queue_wait_nanos_total,
                 execution_nanos_total: snapshot.execution_nanos_total,
-                fresh_realm_creates: snapshot.fresh_realm_creates,
-                fresh_realm_create_nanos_total: snapshot.fresh_realm_create_nanos_total,
-                fresh_realm_bootstrap_installs: snapshot.fresh_realm_bootstrap_installs,
-                fresh_realm_bootstrap_install_nanos_total: snapshot
-                    .fresh_realm_bootstrap_install_nanos_total,
-                fresh_realm_bootstrap_finalizes: snapshot.fresh_realm_bootstrap_finalizes,
-                fresh_realm_bootstrap_finalize_nanos_total: snapshot
-                    .fresh_realm_bootstrap_finalize_nanos_total,
-                fresh_realm_bootstrap_resets: snapshot.fresh_realm_bootstrap_resets,
-                fresh_realm_bootstrap_reset_nanos_total: snapshot
-                    .fresh_realm_bootstrap_reset_nanos_total,
                 host_bridge_calls: snapshot.host_bridge_calls,
                 host_bridge_call_nanos_total: snapshot.host_bridge_call_nanos_total,
             },
@@ -3913,14 +3912,6 @@ struct PostPirNodeLazyInitTraceRecord<'a> {
     retained_runtime_pool_retirements: u64,
     queue_wait_nanos_total: u64,
     execution_nanos_total: u64,
-    fresh_realm_creates: u64,
-    fresh_realm_create_nanos_total: u64,
-    fresh_realm_bootstrap_installs: u64,
-    fresh_realm_bootstrap_install_nanos_total: u64,
-    fresh_realm_bootstrap_finalizes: u64,
-    fresh_realm_bootstrap_finalize_nanos_total: u64,
-    fresh_realm_bootstrap_resets: u64,
-    fresh_realm_bootstrap_reset_nanos_total: u64,
     host_bridge_calls: u64,
     host_bridge_call_nanos_total: u64,
 }

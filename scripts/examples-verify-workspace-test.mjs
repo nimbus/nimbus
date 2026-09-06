@@ -286,7 +286,7 @@ async function createSourceFixture() {
   const manifest = {
     schemaVersion: 1,
     sourceGuardPaths: ["package.json", "package-lock.json", "compose.yaml"],
-    ignoredAppPaths: [".nimbus", "node_modules", "dist", "functions/lib"],
+    ignoredAppPaths: [".env.local", ".nimbus", "node_modules", "dist", "functions/lib"],
     cases: Array.from({ length: 9 }, (_, index) => fixtureCase(index)),
   };
   const manifestPath = path.join(repoRoot, "scripts", "examples-verify-cases.json");
@@ -318,6 +318,20 @@ async function withSourceFixture(test) {
   } finally {
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
+}
+
+async function local_environment_is_ignored_but_undeclared_source_is_rejected() {
+  await withSourceFixture(async ({ repoRoot, manifestPath }) => {
+    const appRoot = path.join(repoRoot, "apps/case-0");
+    await fs.writeFile(path.join(appRoot, ".env.local"), "LOCAL_ONLY=fixture\n");
+    await loadValidatedManifest(manifestPath, repoRoot);
+
+    await fs.writeFile(path.join(appRoot, "undeclared.txt"), "must fail closed\n");
+    await assert.rejects(
+      loadValidatedManifest(manifestPath, repoRoot),
+      /input declaration mismatch.*undeclared\.txt/u,
+    );
+  });
 }
 
 async function dirty_source_bytes_survive_success() {
@@ -393,6 +407,7 @@ const tests = [
   generated_environment_reads_only_validated_nimbus_keys,
   all_nine_preparation_fixtures,
   external_package_vendor_replaces_same_version_symlink,
+  local_environment_is_ignored_but_undeclared_source_is_rejected,
   dirty_source_bytes_survive_success,
   dirty_source_bytes_survive_failure,
   staged_source_bytes_survive_failure,

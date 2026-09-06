@@ -2,8 +2,6 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROOF_DIR="${ROOT}/docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening"
-PLAN="${ROOT}/docs/private/plans/nimbus-sandbox-egress-launch-hardening-plan.md"
 
 passed=0
 failed=0
@@ -78,8 +76,8 @@ check_selh1() {
   require_grep SELH1 "file sink.*OCSF|OCSF.*file sink" "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh1-decisions.md" "Q3 file sink now and OCSF later recorded"
   require_grep SELH1 "NIMBUS_CRUN_VERSION.*NIMBUS_LIBKRUN_VERSION|nimbus-crun.*nimbus-libkrun" "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh1-decisions.md" "Q4 validated fork tuple source recorded"
   require_grep SELH1 "no blanket MITM|NO blanket MITM" "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh1-decisions.md" "P2.14 no blanket MITM recorded"
-  require_grep SELH1 "P2\\.14.*nimbus-proxy-pingora-plan\\.md.*nimbus-sandbox-egress-launch-hardening-plan\\.md" "docs/private/plans/nimbus-modernization-roadmap-plan-map.md" "P2.14 remains co-owned by K11P and SELH"
-  reject_grep SELH1 "SELH (now |does |provides |supports ).{0,80}HTTPS credential injection|HTTPS credential injection (is |now )supported by SELH" "docs/private/plans/nimbus-sandbox-egress-launch-hardening-plan.md" "SELH does not claim HTTPS credential injection support"
+  require_grep SELH1 "P2\\.14.*archive/nimbus-proxy-pingora-plan\\.md.*complete, archived" "docs/private/plans/nimbus-modernization-roadmap-plan-map.md" "P2.14 completed routing remains with archived K11P and the archived SELH decision gate"
+  reject_grep SELH1 "SELH (now |does |provides |supports ).{0,80}HTTPS credential injection|HTTPS credential injection (is |now )supported by SELH" "docs/private/plans/archive/nimbus-sandbox-egress-launch-hardening-plan.md" "SELH does not claim HTTPS credential injection support"
   reject_grep SELH1 "active.*archive/nimbus-egress-gateway-extraction-plan|archive/nimbus-egress-gateway-extraction-plan.*active implementation" "docs/private/plans/README.md" "active routing does not point back to archived NEG"
 }
 
@@ -97,7 +95,7 @@ check_selh3() {
   require_grep SELH3 "authorize_hostname_before_dns|pre_dns_authorize|PreDnsAuthorize" "crates/nimbus-proxy/src/worker.rs" "proxy performs hostname-only authorization before DNS"
   require_grep SELH3 "PreDnsAuthorize|PreDnsPolicy" "crates/nimbus-proxy/src/phase.rs" "phase order records pre-DNS authorization"
   require_grep SELH3 "authorize_hostname_without_resolved_ip|matches_l4_without_resolved_ip" "crates/nimbus-egress/src/policy.rs" "PDP exposes hostname-only precheck"
-  require_grep SELH3 "denied_hostname_does_not_resolve|policy_denied_hostname.*before_dns|allowed_hostname_invokes.*resolver|resolved_internal.*denies" "crates/nimbus-proxy/src/tests.rs" "proxy tests cover DNS precheck cases"
+  require_grep SELH3 "policy-denied hostnames must not invoke the resolver|egress_proxy_allowed_hostname_invokes_resolver_just_in_time|egress_proxy_resolved_internal_ip_still_denies_before_dial" "crates/nimbus-proxy/src/tests/dns_resolution.rs" "proxy tests cover DNS precheck cases"
   require_file SELH3 "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh3-dns-precheck.md" "DNS precheck proof exists"
 }
 
@@ -105,7 +103,7 @@ check_selh4() {
   require_grep SELH4 "AppendOnlyDecisionLogSink|DecisionLogFileSink|append-only" "crates/nimbus-proxy/src/decision_log.rs" "append-only decision log sink exists"
   require_grep SELH4 "with_decision_logger" "crates/nimbus-sandbox/src/backends/oci/egress.rs" "live OCI PEP build site injects a decision logger"
   reject_grep SELH4 "EgressProxyConfig::new\\(compiled\\)\\.with_bind_addr\\(bind_addr\\)" "crates/nimbus-sandbox/src/backends/oci/egress.rs" "live OCI PEP build site no longer uses the default noop logger"
-  require_grep SELH4 "allow.*exactly one|deny.*exactly one|DLP.*exactly one|redact" "crates/nimbus-proxy/src/tests.rs" "proxy tests cover one terminal event and redaction"
+  require_grep SELH4 "egress_proxy_audits_denied_request_with_one_redacted_record|egress_proxy_decision_logger_receives_redacted_allowed_request|egress_proxy_audits_dlp_deny_with_exactly_one_terminal_event" "crates/nimbus-proxy/src/tests/decision_log_phase.rs" "proxy tests cover one terminal event and redaction"
   require_grep SELH4 "live.*noop|noop.*live|decision_logger" "crates/nimbus-sandbox/src/backends/oci/egress.rs" "sandbox tests or code prove live path does not use noop"
   require_file SELH4 "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh4-decision-log-sink.md" "decision log proof exists"
 }
@@ -113,7 +111,8 @@ check_selh4() {
 check_selh5() {
   require_grep SELH5 "canonicalize_authority_host|canonical_host_result|HostAuthorityError" "crates/nimbus-egress/src/policy.rs" "policy path uses strict host authority canonicalization"
   require_grep SELH5 "canonicalize_authority_host|HostAuthorityError|nul|null" "crates/nimbus-proxy/src/request.rs" "proxy path rejects strict malformed authorities"
-  require_grep SELH5 "null|percent|userinfo|non-canonical|CONNECT.*HTTP|trailing dot|resolved-IP" "crates/nimbus-proxy/src/tests.rs" "proxy tests cover malformed authority and DNS/IP anchor"
+  require_grep SELH5 "percent|userinfo|null_byte|resolved_internal_ip" "crates/nimbus-proxy/src/tests/dns_resolution.rs" "proxy tests cover malformed authority and resolved-IP anchoring"
+  require_grep SELH5 "CONNECT.*HTTP|trailing_dot|numeric-IP CONNECT authority" "crates/nimbus-proxy/src/tests/connect_tunnel.rs" "proxy tests cover CONNECT authority canonicalization"
   require_grep SELH5 "host-plus-resolved-IP|host.*resolved IP|resolved-IP.*anchor|SNI.*not authority" "docs/private/operating/nimbus-egress-gateway.md" "operator docs state host plus resolved-IP authority"
   require_file SELH5 "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh5-authority-anchor.md" "authority anchor proof exists"
 }
@@ -138,7 +137,7 @@ check_selh7() {
 
 check_selh8() {
   for row in SELH0 SELH1 SELH2 SELH3 SELH4 SELH5 SELH6 SELH7 SELH8; do
-    require_grep SELH8 "\\| ${row} \\| done \\|" "docs/private/plans/nimbus-sandbox-egress-launch-hardening-plan.md" "${row} ledger row is done"
+    require_grep SELH8 "\\| ${row} \\| done \\|" "docs/private/plans/archive/nimbus-sandbox-egress-launch-hardening-plan.md" "${row} ledger row is done"
   done
   require_file SELH8 "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh8-closeout.md" "closeout proof exists"
   require_grep SELH8 "cargo fmt --all --check|make check|make clippy|make deny|verify-third-party-attribution" "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/selh8-closeout.md" "closeout proof records required commands"

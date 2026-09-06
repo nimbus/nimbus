@@ -49,6 +49,6 @@ impl EgressEnforcementPlan {
                 EGRESS_ENFORCEMENT_SCHEMA_VERSION, self.schema_version
             ));
         }
-        self.policy.compile()
+        self.policy.compile_for_supervisor_proxy()
     }
 }

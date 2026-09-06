@@ -21,13 +21,20 @@ live updates. It implements the full shared [`tasks` spec](../../specs/tasks.md)
 ## Running
 
 ```bash
-nimbus dev
+npm run build -w firebase-tasks
+nimbus dev --app-dir examples/firebase/tasks --no-open
 nimbus deploy [TARGET]
 ```
 
 `TARGET` is a URL or configured target name; omit it to use the local target.
 The Firestore project id is `demo`, which maps directly to the same-named
 Nimbus tenant.
+
+Open `http://127.0.0.1:3210/examples/firebase/tasks/dist/` to run the built
+browser app. It defaults to its page origin. Add `?server=<url>` only when
+Nimbus is at another origin. The browser's emulator token is accepted only by
+the loopback local-development policy that `nimbus dev` selects; production
+startup remains fail-closed without a configured application auth provider.
 
 `smoke.ts` requires Node.js >=22 <25 — it runs via `--experimental-strip-types
 --experimental-transform-types`, and Node 25 dropped `transform-types`.

@@ -25,10 +25,15 @@ complete.
   escalation behavior, cache limits, and focused acceptance results.
 - `imv6.md` records provider-root parity, fault recovery, hard session bounds,
   fixed metrics, operator controls, and external-provider qualification state.
-- `imv7-raw.json` is the final 36-coordinate matrix. `imv7-tail-raw.json`
-  retains the capacity-limited four-coordinate tail run.
+- `imv7-raw.json` is the final 36-coordinate full-verifier matrix.
+  `imv7-tail-raw.json` retains the capacity-limited four-coordinate tail run.
+- `imv7-candidate-raw.json` retains measured production-index latency and
+  resident bytes at the two decisive candidate rungs.
 - `imv7-performance.md` records the matched comparison, accepted verdict,
   measured margins, production memory result, and remaining uncertainty.
+- `verify-imv7-performance.py` validates the two performance artifacts.
+  `verify-imv7-performance-helper.sh` proves malformed, missing, censored,
+  slow, and high-memory candidate evidence fails closed.
 
 The execution baseline is
 `137cc632a1c8585545d200ea49f44bd236478175`. The baseline was clean before

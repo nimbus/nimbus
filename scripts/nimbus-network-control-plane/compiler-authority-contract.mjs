@@ -62,6 +62,8 @@ const generatedIncludeRoster = [
   { file: "firebase_grpc.rs", target: "google.r#type.rs" },
   { file: "firebase_grpc.rs", target: "google.rpc.rs" },
 ];
+const compilerTempRootVariable = "NIMBUS_NETWORK_COMPILER_TEMP_ROOT";
+const minimumCompilerTempBytes = 16n * 1024n * 1024n * 1024n;
 function argument(name, fallback = null) {
   const index = process.argv.indexOf(name);
   if (index < 0) return fallback;
@@ -94,6 +96,23 @@ function walk(directory, accept, excluded = new Set()) {
     else if (entry.isFile() && accept(full)) found.push(full);
   }
   return found;
+}
+
+function createCompilerWorkspace() {
+  const configured = process.env[compilerTempRootVariable];
+  const parent = configured ? path.resolve(configured) : os.tmpdir();
+  fs.mkdirSync(parent, { recursive: true });
+  const filesystem = fs.statfsSync(parent, { bigint: true });
+  const freeBytes = filesystem.bavail * filesystem.bsize;
+  if (freeBytes < minimumCompilerTempBytes) {
+    const freeGiB = Number(freeBytes / (1024n * 1024n * 1024n));
+    throw new Error(
+      `compiler authority scan needs at least 16 GiB free under ${parent}; ` +
+        `only ${freeGiB} GiB is available; set ${compilerTempRootVariable} ` +
+        "to a filesystem with sufficient space",
+    );
+  }
+  return fs.mkdtempSync(path.join(parent, "nimbus-network-compiler-"));
 }
 
 function relative(file) {
@@ -349,7 +368,7 @@ function productionTargetMatrix(identity) {
   });
 }
 
-function runStructuralScanner(root, exclusions, identity) {
+function runStructuralScanner(root, exclusions, identity, env = {}) {
   const arguments_ = [
     "run",
     "--quiet",
@@ -361,7 +380,7 @@ function runStructuralScanner(root, exclusions, identity) {
     root,
   ];
   for (const exclusion of exclusions) arguments_.push("--exclude", exclusion);
-  const result = cargoRun(identity, arguments_);
+  const result = cargoRun(identity, arguments_, { env });
   let scan;
   try {
     scan = JSON.parse(result.stdout);
@@ -386,7 +405,7 @@ function runStructuralScanner(root, exclusions, identity) {
   return scan;
 }
 
-function structuralScan(inventory, identity) {
+function structuralScan(inventory, identity, env = {}) {
   const exclusions = [];
   for (const exemption of inventory.non_production_exemptions ?? []) {
     if (exemption.mechanism !== "path-owned-test-module") continue;
@@ -394,7 +413,7 @@ function structuralScan(inventory, identity) {
       if (typeof file.path === "string") exclusions.push(file.path);
     }
   }
-  const scan = runStructuralScanner("crates", exclusions, identity);
+  const scan = runStructuralScanner("crates", exclusions, identity, env);
   const byKind = (kind) =>
     scan.boundaries
       .filter((entry) => entry.kind === kind)
@@ -416,8 +435,8 @@ function structuralScan(inventory, identity) {
   };
 }
 
-function generatedStructuralScan(outDirectory, identity) {
-  const scan = runStructuralScanner(outDirectory, [], identity);
+function generatedStructuralScan(outDirectory, identity, env) {
+  const scan = runStructuralScanner(outDirectory, [], identity, env);
   const findings = [];
   const coveredIncludes = [];
   const counts = {};
@@ -685,7 +704,7 @@ function readMirReports(directory, matrix) {
   });
 }
 
-function collectMir(temporary, matrix, identity) {
+function collectMir(temporary, matrix, identity, env) {
   for (const owner of matrix) {
     for (const target of owner.targets) {
       const file = mirFile(temporary, owner.package, target);
@@ -703,7 +722,7 @@ function collectMir(temporary, matrix, identity) {
           "--",
           `--emit=mir=${file}`,
         ],
-        { stdio: "inherit" },
+        { env, stdio: "inherit" },
       );
       if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
         throw new Error(
@@ -715,80 +734,73 @@ function collectMir(temporary, matrix, identity) {
   return readMirReports(temporary, matrix);
 }
 
-function collectGeneratedOutputs(identity) {
-  const targetDirectory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "nimbus-network-generated-"),
+function collectGeneratedOutputs(identity, env) {
+  const result = cargoRun(
+    identity,
+    [
+      "check",
+      "--locked",
+      "-p",
+      "nimbus-firebase",
+      "--all-features",
+      "--target",
+      identity.target,
+      "--message-format=json-render-diagnostics",
+    ],
+    { env },
   );
-  try {
-    const result = cargoRun(
-      identity,
-      [
-        "check",
-        "--locked",
-        "-p",
-        "nimbus-firebase",
-        "--all-features",
-        "--target",
-        identity.target,
-        "--message-format=json-render-diagnostics",
-      ],
-      { env: { CARGO_TARGET_DIR: targetDirectory } },
-    );
-    const outDirectories = new Set();
-    for (const line of result.stdout.split("\n")) {
-      if (!line.trim().startsWith("{")) continue;
-      let message;
-      try {
-        message = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (
-        message.reason === "build-script-executed" &&
-        String(message.package_id).includes("nimbus-firebase") &&
-        message.out_dir
-      ) {
-        outDirectories.add(message.out_dir);
-      }
+  const outDirectories = new Set();
+  for (const line of result.stdout.split("\n")) {
+    if (!line.trim().startsWith("{")) continue;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      continue;
     }
-    if (outDirectories.size !== 1) {
-      throw new Error(
-        `nimbus-firebase build produced ${outDirectories.size} current OUT_DIR values`,
-      );
+    if (
+      message.reason === "build-script-executed" &&
+      String(message.package_id).includes("nimbus-firebase") &&
+      message.out_dir
+    ) {
+      outDirectories.add(message.out_dir);
     }
-    const [outDirectory] = outDirectories;
-    const files = walk(outDirectory, (file) => file.endsWith(".rs")).sort();
-    const relativeFiles = files.map((file) =>
-      path.relative(outDirectory, file).split(path.sep).join("/"),
-    );
-    if (!compareObjects(relativeFiles, generatedOutputRoster)) {
-      throw new Error(
-        `nimbus-firebase generated roster differs: ${JSON.stringify(relativeFiles)}`,
-      );
-    }
-    const outputs = [];
-    for (const file of files) {
-      const source = fs.readFileSync(file, "utf8");
-      const relativeFile = path
-        .relative(outDirectory, file)
-        .split(path.sep)
-        .join("/");
-      outputs.push({
-        file: relativeFile,
-        bytes: Buffer.byteLength(source),
-        sha256: sha256(source),
-      });
-    }
-    const structural = generatedStructuralScan(outDirectory, identity);
-    return {
-      outputs,
-      scan_counts: structural.counts,
-      covered_includes: structural.coveredIncludes,
-      forbidden_findings: structural.findings,
-    };
-  } finally {
-    fs.rmSync(targetDirectory, { recursive: true, force: true });
   }
+  if (outDirectories.size !== 1) {
+    throw new Error(
+      `nimbus-firebase build produced ${outDirectories.size} current OUT_DIR values`,
+    );
+  }
+  const [outDirectory] = outDirectories;
+  const files = walk(outDirectory, (file) => file.endsWith(".rs")).sort();
+  const relativeFiles = files.map((file) =>
+    path.relative(outDirectory, file).split(path.sep).join("/"),
+  );
+  if (!compareObjects(relativeFiles, generatedOutputRoster)) {
+    throw new Error(
+      `nimbus-firebase generated roster differs: ${JSON.stringify(relativeFiles)}`,
+    );
+  }
+  const outputs = [];
+  for (const file of files) {
+    const source = fs.readFileSync(file, "utf8");
+    const relativeFile = path
+      .relative(outDirectory, file)
+      .split(path.sep)
+      .join("/");
+    outputs.push({
+      file: relativeFile,
+      bytes: Buffer.byteLength(source),
+      sha256: sha256(source),
+    });
+  }
+  const structural = generatedStructuralScan(outDirectory, identity, env);
+  return {
+    outputs,
+    scan_counts: structural.counts,
+    covered_includes: structural.coveredIncludes,
+    forbidden_findings: structural.findings,
+  };
 }
 
 function compilerConfiguration(identity) {
@@ -805,11 +817,12 @@ function compilerConfiguration(identity) {
 function collectReport(inventoryPath, inventoryText, inventory) {
   const identity = toolchainIdentity();
   const matrix = productionTargetMatrix(identity);
-  const temporary = fs.mkdtempSync(
-    path.join(os.tmpdir(), "nimbus-network-mir-"),
-  );
+  const temporary = createCompilerWorkspace();
+  const cargoEnvironment = {
+    CARGO_TARGET_DIR: path.join(temporary, "cargo-target"),
+  };
   try {
-    const packages = collectMir(temporary, matrix, identity);
+    const packages = collectMir(temporary, matrix, identity, cargoEnvironment);
     const aggregate = zeroCalls();
     for (const packageReport of packages)
       addCalls(aggregate, packageReport.calls);
@@ -827,8 +840,8 @@ function collectReport(inventoryPath, inventoryText, inventory) {
       aggregate_calls: aggregate,
       expected_calls: expectedCalls(inventory),
       expected_calls_by_package: expectedCallsByPackage(inventory),
-      source_boundaries: structuralScan(inventory, identity),
-      generated: collectGeneratedOutputs(identity),
+      source_boundaries: structuralScan(inventory, identity, cargoEnvironment),
+      generated: collectGeneratedOutputs(identity, cargoEnvironment),
     };
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });

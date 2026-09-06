@@ -31,9 +31,8 @@ pub use axes::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGuestSemantics, RuntimeJavaScriptEvaluationFormat,
-    RuntimeMemoryEnforcement, RuntimeModuleStateSemantics, RuntimeNodeFullRealmReusePolicy,
-    RuntimeNodeLtsLane, RuntimeNodeSupportPhase, RuntimePoolKind, RuntimeResetCapabilities,
-    RuntimeRoutingAffinity,
+    RuntimeMemoryEnforcement, RuntimeModuleStateSemantics, RuntimeNodeLtsLane,
+    RuntimeNodeSupportPhase, RuntimePoolKind, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 pub use controller_replay::{
     RuntimeControllerReplayAuthorityInput, RuntimeControllerReplayAuthorityKey,

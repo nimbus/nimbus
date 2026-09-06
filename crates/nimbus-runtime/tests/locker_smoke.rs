@@ -11,17 +11,24 @@ fn ensure_v8_init() {
     let _rt = deno_core::JsRuntime::new(Default::default());
 }
 
-#[test]
-fn unentered_isolate_is_send() {
-    ensure_v8_init();
-    let isolate = v8::Isolate::new_unentered(v8::CreateParams::default());
+fn new_unentered_isolate() -> v8::UnenteredIsolate {
+    // SAFETY: every test accesses values for this isolate only while its
+    // same-thread Locker is active.
+    unsafe { v8::Isolate::new_unentered(v8::CreateParams::default()) }
+}
 
-    // UnenteredIsolate implements Send — can be transferred across threads
+#[test]
+fn sendable_unentered_isolate_crosses_threads() {
+    ensure_v8_init();
+    // SAFETY: this isolate has no persistent handles, embedder slots,
+    // finalizers, weak handles, or external aliases. All later access and the
+    // final drop occur on the destination thread.
+    let isolate = unsafe { v8::SendableUnenteredIsolate::new_unchecked(new_unentered_isolate()) };
+
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        // Use it on the other thread
-        let mut iso = isolate;
-        let mut locker = v8::Locker::new(&mut iso);
+        let mut isolate = isolate;
+        let mut locker = v8::Locker::new(isolate.get_mut());
         let scope = pin!(v8::HandleScope::new(&mut *locker));
         let scope = &mut scope.init();
         let context = v8::Context::new(scope, Default::default());
@@ -45,7 +52,7 @@ fn unentered_isolate_is_send() {
 #[test]
 fn locker_provides_isolate_access() {
     ensure_v8_init();
-    let mut isolate = v8::Isolate::new_unentered(v8::CreateParams::default());
+    let mut isolate = new_unentered_isolate();
 
     let mut locker = v8::Locker::new(&mut isolate);
     let scope = pin!(v8::HandleScope::new(&mut *locker));
@@ -62,11 +69,15 @@ fn locker_provides_isolate_access() {
 #[test]
 fn sequential_lock_unlock_across_threads() {
     ensure_v8_init();
-    let mut isolate = v8::Isolate::new_unentered(v8::CreateParams::default());
+    // SAFETY: each lock cycle leaves no persistent handle or external alias.
+    // The wrapper and all isolate-owned state move together after the first
+    // Locker drops.
+    let mut isolate =
+        unsafe { v8::SendableUnenteredIsolate::new_unchecked(new_unentered_isolate()) };
 
     // Thread A: lock, execute, unlock
     {
-        let mut locker = v8::Locker::new(&mut isolate);
+        let mut locker = v8::Locker::new(isolate.get_mut());
         let scope = pin!(v8::HandleScope::new(&mut *locker));
         let scope = &mut scope.init();
         let context = v8::Context::new(scope, Default::default());
@@ -81,7 +92,7 @@ fn sequential_lock_unlock_across_threads() {
     // Send to thread B
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let mut locker = v8::Locker::new(&mut isolate);
+        let mut locker = v8::Locker::new(isolate.get_mut());
         let scope = pin!(v8::HandleScope::new(&mut *locker));
         let scope = &mut scope.init();
         let context = v8::Context::new(scope, Default::default());
@@ -105,7 +116,7 @@ fn sequential_lock_unlock_across_threads() {
 #[test]
 fn isolate_state_preserved_across_lock_cycles() {
     ensure_v8_init();
-    let mut isolate = v8::Isolate::new_unentered(v8::CreateParams::default());
+    let mut isolate = new_unentered_isolate();
 
     // Lock cycle 1: create a persistent context with a global variable
     let context_global;
@@ -258,8 +269,8 @@ fn two_jsruntimes_interleaved_raw_locker() {
     // alternating execution. This validates the cooperative scheduling
     // primitive that Phase 5 will build on.
     ensure_v8_init();
-    let mut iso_a = v8::Isolate::new_unentered(v8::CreateParams::default());
-    let mut iso_b = v8::Isolate::new_unentered(v8::CreateParams::default());
+    let mut iso_a = new_unentered_isolate();
+    let mut iso_b = new_unentered_isolate();
 
     fn exec(iso: &mut v8::UnenteredIsolate, expr: &str) -> i32 {
         let mut locker = v8::Locker::new(iso);

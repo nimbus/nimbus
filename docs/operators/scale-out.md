@@ -123,8 +123,12 @@ cp /var/lib/nimbus/data/demo.sqlite3     /tmp/move-demo/
 cp /var/lib/nimbus/data/demo.sqlite3-wal /tmp/move-demo/ 2>/dev/null || true
 cp /var/lib/nimbus/data/demo.sqlite3-shm /tmp/move-demo/ 2>/dev/null || true
 
-# Produce a single-tenant archive from the staged directory.
-nimbus backup create --data-dir /tmp/move-demo --out demo-move.json
+# Produce a single-tenant archive from the staged directory. Point the command
+# at the stopped source deployment's durable control plane.
+nimbus backup create \
+  --data-dir /tmp/move-demo \
+  --control-data-dir /var/lib/nimbus/control \
+  --out demo-move.json
 ```
 
 `nimbus backup create` writes one point-in-time archive per tenant it finds
@@ -134,7 +138,10 @@ target's data directory while the target server is stopped and the tenant is
 not already present there:
 
 ```bash
-nimbus backup restore --in demo-move.json --data-dir /var/lib/nimbus/data
+nimbus backup restore \
+  --in demo-move.json \
+  --data-dir /var/lib/nimbus/data \
+  --control-data-dir /var/lib/nimbus/control
 ```
 
 Restore creates the tenant, imports its state, and verifies the restored

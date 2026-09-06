@@ -1,11 +1,11 @@
 # Node.js Runtime Support Dashboard
 
-- Representative Node test checks: 0
+- Representative Node test checks: 5
 - Package/framework canary claims: 79
-- Package/framework canary checks: 99
-- Canary artifact bundles: 5
+- Package/framework canary checks: 101
+- Canary artifact bundles: 2
 - Oracle reports: 4
-- Inventory reports: 0
+- Inventory reports: 3
 
 ## Suite Status
 - source: `target/node-compat/status/status-summary.json`
@@ -14,15 +14,15 @@
 | Lane | Upstream | Role | Passed | Expected failure / known gap | Skipped / excluded | Classified total | Classified coverage count | Vendored | Unclassified | Pass rate |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | `legacy` | 919 | 3316 | 13 | 3329 | 4248 | 4248 | 0 | 21.6% |
-| `node22` | `v22.22.3` | `supported` | 2363 | 2365 | 20 | 2385 | 4748 | 4748 | 0 | 49.8% |
-| `node24` | `v24.16.0` | `default` | 2400 | 2750 | 48 | 2798 | 5198 | 5198 | 0 | 46.2% |
-| `node26` | `v26.2.0` | `current` | 2092 | 3432 | 54 | 3486 | 5578 | 5578 | 0 | 37.5% |
+| `node22` | `v22.23.2` | `supported` | 2362 | 2380 | 20 | 2400 | 4762 | 4762 | 0 | 49.6% |
+| `node24` | `v24.20.0` | `default` | 2397 | 3226 | 48 | 3274 | 5671 | 5671 | 0 | 42.3% |
+| `node26` | `v26.8.1` | `current` | 2090 | 3795 | 55 | 3850 | 5940 | 5940 | 0 | 35.2% |
 
 ### Evidence Tiers
 
 | Tier | Source | Primary count | Passed | Claims | Official denominator? |
 | --- | --- | ---: | ---: | ---: | --- |
-| `official` | `vendored_official_fixture_corpus` | 19772 fixture_count | 7774 | - | yes |
+| `official` | `vendored_official_fixture_corpus` | 20621 fixture_count | 7768 | - | yes |
 | `supplementary` | `node_compat_manifest_test_tier` | 7 fixture_count | - | - | no |
 | `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 26 fixture_count | - | - | no |
 | `canary` | `tests/runtime/node/canary-registry.json` | 37 active_canary_count | - | 79 | no |
@@ -36,12 +36,19 @@
 
 | Lane | Upstream | Vendored | Passed | Expected failure / known gap / skipped total | Classified coverage count | Unclassified | Path-owned passed | Rust-referenced passed | Rust-unreferenced expected / skipped | Rust-unreferenced unclassified | Passed reconstructability gap | Warnings |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| none | - | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `node22` | `v22.23.2` | 4762 | 2362 | 2400 | 4762 | 0 | 2362 | 2362 | 2400 | 0 | 0 | 0 |
+| `node24` | `v24.20.0` | 5671 | 2397 | 3274 | 5671 | 0 | 2397 | 2398 | 3273 | 0 | 0 | 0 |
+| `node26` | `v26.8.1` | 5940 | 2090 | 3850 | 5940 | 0 | 2090 | 2094 | 3846 | 0 | 0 | 0 |
 
 ## Representative Node Test Checks
 
 | API family | Check | Execution | Passed | Skipped | Failed | Missing | Lanes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| `core-semantics` | `assert-and-buffer-foundation` | Sequential | 26 | 0 | 2 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `loader-context` | `module-and-async-foundation` | Sequential | 30 | 0 | 0 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `networking` | `dns-net-foundation` | Sequential | 26 | 0 | 3 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `process-and-timing` | `process-foundation` | Sequential | 17 | 0 | 12 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `streams-and-local-io` | `os-tty-readline-foundation` | Sequential | 30 | 0 | 0 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 
 ## Package/Framework Canaries
 
@@ -53,12 +60,12 @@
 | `application-platform-file-path-roundtrip` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-platform-stream-timer` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-platform-crypto-fetch-http` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-express` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-express-middleware` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-express-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-fastify` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-fastify-hooks` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `application-networking-fastify-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-express` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-express-middleware` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-express-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-fastify` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-fastify-hooks` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `application-networking-fastify-error-handler` | `Application` | Support | Supported | Passed | node22, node24 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-networking-socket-io` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-networking-socket-io-websocket-events` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `application-networking-undici` | `Application` | Support | Supported | Passed | node22, node24 | node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
@@ -137,4 +144,4 @@
 | `node20` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v20.20.2` | `legacy/legacy_contract` |
 | `node22` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v22.23.1` | `supported/supported_contract` |
 | `node24` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v24.16.0` | `default/default_contract` |
-| `node26` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v26.0.0` | `current/current_contract` |
+| `node26` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v26.8.1` | `current/current_contract` |

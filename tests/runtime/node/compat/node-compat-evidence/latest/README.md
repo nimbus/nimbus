@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-07-10T18:59:53.275575+00:00`
+- evidence_generated_at: `2026-09-04T20:01:27.628894+00:00`
 - publish_root: `tests/runtime/node/compat/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -12,9 +12,9 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 | Lane | Upstream | Vendored test files | Documented passed | Unclassified | Pass rate |
 | --- | --- | ---: | ---: | ---: | ---: |
 | `node20` | `v20.20.2` | 4248 | 919 | 0 | 21.6% |
-| `node22` | `v22.22.3` | 4748 | 2363 | 0 | 49.8% |
-| `node24` | `v24.16.0` | 5198 | 2400 | 0 | 46.2% |
-| `node26` | `v26.2.0` | 5578 | 2092 | 0 | 37.5% |
+| `node22` | `v22.23.2` | 4762 | 2362 | 0 | 49.6% |
+| `node24` | `v24.20.0` | 5671 | 2397 | 0 | 42.3% |
+| `node26` | `v26.8.1` | 5940 | 2090 | 0 | 35.2% |
 
 ## Expectation Coverage
 
@@ -25,10 +25,10 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 
 ## Dashboard Coverage
 
-- representative Node test checks: 0
+- representative Node test checks: 5
 - package/framework canary claims: 79
-- package/framework canary checks: 99
-- canary artifact bundles: 5
+- package/framework canary checks: 101
+- canary artifact bundles: 2
 - oracle reports: 4
 - required canary gaps: 0
 

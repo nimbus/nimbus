@@ -68,7 +68,10 @@ pub(crate) use self::client::MachineApiClient;
 pub(crate) use self::command::MachineCommand;
 #[cfg(test)]
 pub(crate) use self::handlers::ensure_default_machine_api_client_started;
-pub(crate) use self::handlers::{require_default_machine_api_client, run_machine_command};
+pub(crate) use self::handlers::{
+    machine_command_requires_canonical_engine_authority, require_default_machine_api_client,
+    run_machine_command,
+};
 pub(crate) use self::network_composition::HostMachineNetworkAuthority;
 #[cfg(test)]
 pub(crate) use self::network_composition::HostMachineNetworkComposition;
@@ -107,9 +110,9 @@ use self::render::*;
 pub(crate) const DEFAULT_MACHINE_NAME: &str = "default";
 const MACHINE_PROVIDER_ENV: &str = "NIMBUS_MACHINE_PROVIDER";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/machine-os";
-const DEFAULT_NIMBUS_MACHINE_IMAGE_TAG: &str = "v0.1.30";
+const DEFAULT_NIMBUS_MACHINE_IMAGE_TAG: &str = "v0.1.45";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST: &str =
-    "sha256:f56553e212d2e077d8bedc1db902283f6e12315a621d6046b03d1cb43a0eb08d";
+    "sha256:e313a09b481b86de8cfe99cefdc1e9b631d65e96b3971eb300660f8ae92e1e9b";
 const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
 
 fn current_machine_release_tag() -> String {

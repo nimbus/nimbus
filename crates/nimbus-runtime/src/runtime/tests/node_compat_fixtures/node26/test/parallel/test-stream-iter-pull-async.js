@@ -41,14 +41,11 @@ async function testPullStatefulTransform() {
 }
 
 async function testPullWithAbortSignal() {
-  const ac = new AbortController();
-  ac.abort();
-
   async function* gen() {
     yield [new Uint8Array([1])];
   }
 
-  const result = pull(gen(), { signal: ac.signal });
+  const result = pull(gen(), { signal: AbortSignal.abort() });
   await assert.rejects(
     async () => {
       // eslint-disable-next-line no-unused-vars
@@ -156,6 +153,44 @@ async function testPullSignalAbortMidIteration() {
   await assert.rejects(() => iter.next(), { name: 'AbortError' });
 }
 
+async function testPullSignalAbortWhileSourceNextPending() {
+  const source = {
+    [Symbol.asyncIterator]() {
+      return {
+        async next() {
+          await new Promise(() => {});
+        },
+      };
+    },
+  };
+  const ac = new AbortController();
+  const iter = pull(source, { signal: ac.signal })[Symbol.asyncIterator]();
+  const next = iter.next();
+  ac.abort();
+  await assert.rejects(next, { name: 'AbortError' });
+}
+
+async function testPullSignalAbortWithTransformWhileSourceNextPending() {
+  const source = {
+    [Symbol.asyncIterator]() {
+      return {
+        async next() {
+          await new Promise(() => {});
+        },
+      };
+    },
+  };
+  const ac = new AbortController();
+  const iter = pull(
+    source,
+    (chunks) => chunks,
+    { signal: ac.signal },
+  )[Symbol.asyncIterator]();
+  const next = iter.next();
+  ac.abort();
+  await assert.rejects(next, { name: 'AbortError' });
+}
+
 // Pull consumer break (return()) cleans up transform signal
 async function testPullConsumerBreakCleanup() {
   let signalAborted = false;
@@ -233,6 +268,19 @@ async function testPullStatelessTransformFlush() {
   assert.strictEqual(data, 'data-TRAILER');
 }
 
+// Consecutive stateless transforms each receive a final flush signal after
+// upstream flush output has been processed.
+async function testPullConsecutiveStatelessTransformFlush() {
+  const enc = new TextEncoder();
+  const addAOnFlush = (chunks) => (chunks === null ?
+    [enc.encode('-A')] : chunks);
+  const addBOnFlush = (chunks) => (chunks === null ?
+    [enc.encode('-B')] : chunks);
+
+  const data = await text(pull(from('x'), addAOnFlush, addBOnFlush));
+  assert.strictEqual(data, 'x-A-B');
+}
+
 // Stateless transform flush error propagates
 async function testPullStatelessTransformFlushError() {
   const badFlush = (chunks) => {
@@ -245,6 +293,23 @@ async function testPullStatelessTransformFlushError() {
     // eslint-disable-next-line no-unused-vars
     for await (const _ of pull(from('hello'), badFlush)) { /* consume */ }
   }, { message: 'async flush boom' });
+}
+
+// An abort during an async flush must not be swallowed when the flush resolves
+// to null and therefore produces no final batch.
+async function testPullSignalAbortDuringAsyncFlush() {
+  const ac = new AbortController();
+  const reason = new Error('aborted during flush');
+  const transform = async (chunks) => {
+    if (chunks !== null) return chunks;
+    ac.abort(reason);
+    return null;
+  };
+
+  await assert.rejects(
+    () => text(pull(from('x'), transform, { signal: ac.signal })),
+    (error) => error === reason,
+  );
 }
 
 // Pull with a sync iterable source (not async)
@@ -310,7 +375,7 @@ async function testTransformReturnsArrayBuffer() {
 // pipeTo() accepts a string source directly (normalized via from())
 async function testPipeToStringSource() {
   const { pipeTo, push: pushFn, text: textFn } = require('stream/iter');
-  const { writer, readable } = pushFn({ highWaterMark: 10 });
+  const { writer, readable } = pushFn({ budget: 16384 });
   const consume = (async () => textFn(readable))();
   await pipeTo('hello-pipe', writer);
   const data = await consume;
@@ -351,13 +416,17 @@ async function testTransformOptionsNotShared() {
     testPullSourceError(),
     testTapCallbackError(),
     testPullSignalAbortMidIteration(),
+    testPullSignalAbortWhileSourceNextPending(),
+    testPullSignalAbortWithTransformWhileSourceNextPending(),
     testPullConsumerBreakCleanup(),
     testPullTransformReturnsPromise(),
     testPullTransformYieldsStrings(),
     testPullStatelessTransformError(),
     testPullStatefulTransformError(),
     testPullStatelessTransformFlush(),
+    testPullConsecutiveStatelessTransformFlush(),
     testPullStatelessTransformFlushError(),
+    testPullSignalAbortDuringAsyncFlush(),
     testPullWithSyncSource(),
     testPullStringSource(),
     testTransformReturnsSingleUint8Array(),

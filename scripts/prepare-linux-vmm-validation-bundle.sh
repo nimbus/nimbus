@@ -12,7 +12,7 @@ directories, and a write-back checklist so another Linux host can run the
 queue with minimal judgment.
 
 options:
-  --crun-source <path>         Upstream crun source checkout for diagnostics
+  --crun-source <path>         Optional upstream crun checkout for identity diagnostics
   --nimbus-crun-asset <path>   Released nimbus-crun binary to stage/install
   --nimbus-libkrun-archive <path>
                                Released nimbus-libkrun archive to stage/install
@@ -258,8 +258,8 @@ if [[ -n "${nimbus_libkrun_archive}" ]]; then
     exit 66
   fi
 fi
-if [[ -z "${crun_source}" && ( -z "${nimbus_crun_asset}" || -z "${nimbus_libkrun_archive}" ) ]]; then
-  echo "provide released --nimbus-crun-asset plus --nimbus-libkrun-archive, or --crun-source for source diagnostics" >&2
+if [[ -z "${nimbus_crun_asset}" || -z "${nimbus_libkrun_archive}" ]]; then
+  echo "provide released --nimbus-crun-asset plus --nimbus-libkrun-archive" >&2
   exit 64
 fi
 output_root="$(resolve_dir_path "${output_root}")"
@@ -316,7 +316,7 @@ session_env="${output_root}/session.env"
 readme_file="${output_root}/README.md"
 queue_runner="${commands_dir}/00-run-through-lh6.sh"
 lh1_script="${commands_dir}/01-lh1-host-preflight.sh"
-lh2_script="${commands_dir}/02-lh2-verify-crun-patch.sh"
+lh2_script="${commands_dir}/02-lh2-record-crun-source.sh"
 lh3_stage_script="${commands_dir}/03-lh3-build-stage-runtime.sh"
 lh3_install_script="${commands_dir}/04-lh3-install-private-runtime.sh"
 lh4_script="${commands_dir}/05-lh4-verify-runtime-separation.sh"
@@ -398,6 +398,12 @@ Or run the prepared sequence through:
 bash ${queue_runner}
 \`\`\`
 
+The queue runner re-executes through noninteractive \`sudo\` when necessary.
+This matches the system-service privilege boundary and keeps Buildah, crun,
+conmon, and their lifecycle commands in one namespace with access to
+\`/dev/kvm\`. When you run numbered commands separately, prefix each command
+with \`sudo -n\`.
+
 Important files:
 
 - session env: \`${session_env}\`
@@ -412,7 +418,11 @@ set -euo pipefail
 source ${session_env}
 
 echo "lh1.host_preflight.output=\${LH1_DIR}/check-vmm-host.txt"
-bash "\${REPO_ROOT}/scripts/check-vmm-host.sh" | tee "\${LH1_DIR}/check-vmm-host.txt"
+host_check_args=()
+if [[ -n "\${NIMBUS_CRUN_ASSET}" && -n "\${NIMBUS_LIBKRUN_ARCHIVE}" ]]; then
+  host_check_args+=(--allow-pending-private-runtime)
+fi
+bash "\${REPO_ROOT}/scripts/check-vmm-host.sh" "\${host_check_args[@]}" | tee "\${LH1_DIR}/check-vmm-host.txt"
 
 echo "lh1.package_versions.output=\${LH1_DIR}/collect-vmm-package-versions.txt"
 bash "\${REPO_ROOT}/scripts/collect-vmm-package-versions.sh" | tee "\${LH1_DIR}/collect-vmm-package-versions.txt"
@@ -425,12 +435,32 @@ set -euo pipefail
 source ${session_env}
 
 if [[ -z "\${CRUN_SOURCE}" ]]; then
-  echo "lh2.patch_verify=skipped (CRUN_SOURCE not set; using released runtime artifacts)"
+  echo "lh2.source_diagnostics=skipped (CRUN_SOURCE not set)"
   exit 0
 fi
 
-echo "lh2.patch_verify.output=\${LH2_DIR}/verify-crun-patch.txt"
-bash "\${REPO_ROOT}/scripts/verify-crun-patch.sh" "\${CRUN_SOURCE}" | tee "\${LH2_DIR}/verify-crun-patch.txt"
+if [[ ! -f "\${CRUN_SOURCE}/src/libcrun/handlers/krun.c" ]]; then
+  echo "expected upstream crun source under: \${CRUN_SOURCE}" >&2
+  exit 66
+fi
+
+source_root="\$(git -C "\${CRUN_SOURCE}" rev-parse --show-toplevel)"
+source_root="\$(cd "\${source_root}" && pwd -P)"
+requested_root="\$(cd "\${CRUN_SOURCE}" && pwd -P)"
+if [[ "\${source_root}" != "\${requested_root}" ]]; then
+  echo "crun source must be the Git worktree root: \${CRUN_SOURCE}" >&2
+  exit 66
+fi
+
+source_commit="\$(git -C "\${CRUN_SOURCE}" rev-parse --verify HEAD)"
+source_describe="\$(git -C "\${CRUN_SOURCE}" describe --always --dirty)"
+
+echo "lh2.source_diagnostics.output=\${LH2_DIR}/crun-source.txt"
+{
+  echo "source.path=\${CRUN_SOURCE}"
+  echo "source.commit=\${source_commit}"
+  echo "source.describe=\${source_describe}"
+} | tee "\${LH2_DIR}/crun-source.txt"
 EOF
 chmod 0755 "${lh2_script}"
 
@@ -440,23 +470,14 @@ set -euo pipefail
 source ${session_env}
 
 echo "lh3.build_stage.output=\${LH3_DIR}/build-stage-runtime.txt"
-if [[ -n "\${NIMBUS_CRUN_ASSET}" && -n "\${NIMBUS_LIBKRUN_ARCHIVE}" ]]; then
-  install -D -m 0755 "\${NIMBUS_CRUN_ASSET}" "\${STAGE_BINARY}"
-  tar -xzf "\${NIMBUS_LIBKRUN_ARCHIVE}" -C "\${STAGE_DIR}"
-  {
-    echo "stage.source=released-artifacts"
-    echo "stage.nimbus_crun_asset=\${NIMBUS_CRUN_ASSET}"
-    echo "stage.nimbus_libkrun_archive=\${NIMBUS_LIBKRUN_ARCHIVE}"
-    echo "stage.nimbus_libkrun_root=\${STAGE_DIR}"
-  } | tee "\${LH3_DIR}/build-stage-runtime.txt"
-elif [[ -n "\${CRUN_SOURCE}" ]]; then
-  bash "\${REPO_ROOT}/scripts/build-nimbus-crun.sh" \\
-    --source "\${CRUN_SOURCE}" \\
-    --output "\${STAGE_BINARY}" | tee "\${LH3_DIR}/build-stage-runtime.txt"
-else
-  echo "missing released runtime artifacts or CRUN_SOURCE" >&2
-  exit 64
-fi
+install -D -m 0755 "\${NIMBUS_CRUN_ASSET}" "\${STAGE_BINARY}"
+tar -xzf "\${NIMBUS_LIBKRUN_ARCHIVE}" -C "\${STAGE_DIR}"
+{
+  echo "stage.source=released-artifacts"
+  echo "stage.nimbus_crun_asset=\${NIMBUS_CRUN_ASSET}"
+  echo "stage.nimbus_libkrun_archive=\${NIMBUS_LIBKRUN_ARCHIVE}"
+  echo "stage.nimbus_libkrun_root=\${STAGE_DIR}"
+} | tee "\${LH3_DIR}/build-stage-runtime.txt"
 
 echo "lh3.stage_binary=\${STAGE_BINARY}" | tee -a "\${LH3_DIR}/build-stage-runtime.txt"
 "\${STAGE_BINARY}" --version | tee "\${LH3_DIR}/stage-runtime-version.txt"
@@ -468,27 +489,20 @@ cat > "${lh3_install_script}" <<EOF
 set -euo pipefail
 source ${session_env}
 
-echo "lh3.install.output=\${LH3_DIR}/install-private-runtime.txt"
-if [[ -n "\${NIMBUS_CRUN_ASSET}" && -n "\${NIMBUS_LIBKRUN_ARCHIVE}" ]]; then
-  sudo install -d /usr/libexec/nimbus
-  sudo tar -xzf "\${NIMBUS_LIBKRUN_ARCHIVE}" -C /usr/libexec/nimbus
-  sudo install -D -m 0755 "\${NIMBUS_CRUN_ASSET}" "\${INSTALL_PATH}"
-  {
-    echo "install.source=released-artifacts"
-    echo "install.nimbus_crun_asset=\${NIMBUS_CRUN_ASSET}"
-    echo "install.nimbus_libkrun_archive=\${NIMBUS_LIBKRUN_ARCHIVE}"
-    echo "install.path=\${INSTALL_PATH}"
-  } | tee "\${LH3_DIR}/install-private-runtime.txt"
-elif [[ -n "\${CRUN_SOURCE}" ]]; then
-  bash "\${REPO_ROOT}/scripts/build-nimbus-crun.sh" \\
-    --source "\${CRUN_SOURCE}" \\
-    --output "\${STAGE_BINARY}" \\
-    --install-path "\${INSTALL_PATH}" \\
-    --sudo-install | tee "\${LH3_DIR}/install-private-runtime.txt"
-else
-  echo "missing released runtime artifacts or CRUN_SOURCE" >&2
-  exit 64
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo -n -- bash "\$0" "\$@"
 fi
+
+echo "lh3.install.output=\${LH3_DIR}/install-private-runtime.txt"
+install -d /usr/libexec/nimbus
+tar -xzf "\${NIMBUS_LIBKRUN_ARCHIVE}" -C /usr/libexec/nimbus
+install -D -m 0755 "\${NIMBUS_CRUN_ASSET}" "\${INSTALL_PATH}"
+{
+  echo "install.source=released-artifacts"
+  echo "install.nimbus_crun_asset=\${NIMBUS_CRUN_ASSET}"
+  echo "install.nimbus_libkrun_archive=\${NIMBUS_LIBKRUN_ARCHIVE}"
+  echo "install.path=\${INSTALL_PATH}"
+} | tee "\${LH3_DIR}/install-private-runtime.txt"
 
 "\${INSTALL_PATH}" --version | tee "\${LH3_DIR}/install-runtime-version.txt"
 EOF
@@ -498,6 +512,9 @@ cat > "${lh4_script}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 source ${session_env}
+
+echo "lh4.host_post_install.output=\${LH4_DIR}/check-vmm-host-post-install.txt"
+bash "\${REPO_ROOT}/scripts/check-vmm-host.sh" | tee "\${LH4_DIR}/check-vmm-host-post-install.txt"
 
 echo "lh4.runtime_separation.output=\${LH4_DIR}/verify-runtime-separation.txt"
 bash "\${REPO_ROOT}/scripts/verify-runtime-separation.sh" \\
@@ -510,6 +527,10 @@ cat > "${lh5_rootfs_script}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 source ${session_env}
+
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo -n -- bash "\$0" "\$@"
+fi
 
 existing_name=""
 if buildah containers --format '{{.ContainerName}}' 2>/dev/null | grep -Fx "\${BUILDAH_NAME}" >/dev/null 2>&1; then
@@ -525,7 +546,17 @@ echo "lh5.buildah_from.output=\${LH5_DIR}/buildah-from.txt"
 buildah from --name "\${BUILDAH_NAME}" "\${IMAGE_REF}" | tee "\${LH5_DIR}/buildah-from.txt"
 
 echo "lh5.rootfs_file=\${ROOTFS_FILE}" | tee "\${LH5_DIR}/buildah-mount.txt"
-buildah mount "\${BUILDAH_NAME}" | tee "\${ROOTFS_FILE}" | tee -a "\${LH5_DIR}/buildah-mount.txt" >/dev/null
+mounted_rootfs="\$(buildah mount "\${BUILDAH_NAME}")"
+cleanup_mount() {
+  buildah umount "\${BUILDAH_NAME}" >/dev/null 2>&1 || true
+}
+trap cleanup_mount EXIT
+
+copied_rootfs="\${LH5_DIR}/rootfs"
+rm -rf "\${copied_rootfs}"
+mkdir -p "\${copied_rootfs}"
+cp -a "\${mounted_rootfs}/." "\${copied_rootfs}/"
+printf '%s\n' "\${copied_rootfs}" | tee "\${ROOTFS_FILE}" | tee -a "\${LH5_DIR}/buildah-mount.txt" >/dev/null
 
 buildah inspect "\${BUILDAH_NAME}" | tee "\${BUILDAH_INSPECT_FILE}" >/dev/null
 EOF
@@ -618,6 +649,9 @@ bash "\${COMMAND_FILE}" >"\${run_stdout}" 2>"\${run_stderr}" &
 run_wrapper_pid=\$!
 printf '%s\n' "\${run_wrapper_pid}" | tee "\${LH6_DIR}/run-conmon-wrapper.pid" >/dev/null
 
+echo "lh6.start_container.output=\${LH6_DIR}/start-container.txt"
+bash "\${START_CONTAINER}" 60 | tee "\${LH6_DIR}/start-container.txt"
+
 deadline=\$((SECONDS + 60))
 while (( SECONDS <= deadline )); do
   if curl -fsS "\${PROBE_URL}" >/dev/null 2>&1; then
@@ -648,8 +682,16 @@ chmod 0755 "${lh6_run_script}"
 cat > "${cleanup_script}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo -n -- bash "\$0" "\$@"
+fi
+
 source ${session_env}
 
+if "\${INSTALL_PATH}" state "\${DIRECT_CONTAINER_ID}" >/dev/null 2>&1; then
+  "\${INSTALL_PATH}" delete -f "\${DIRECT_CONTAINER_ID}"
+fi
 buildah umount "\${BUILDAH_NAME}" >/dev/null 2>&1 || true
 buildah rm "\${BUILDAH_NAME}" >/dev/null 2>&1 || true
 echo "cleanup.buildah_name=\${BUILDAH_NAME}"
@@ -659,6 +701,10 @@ chmod 0755 "${cleanup_script}"
 cat > "${queue_runner}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "\$(id -u)" -ne 0 ]]; then
+  exec sudo -n -- bash "\$0" "\$@"
+fi
 
 bash ${lh1_script}
 bash ${lh2_script}
@@ -686,7 +732,7 @@ LH1:
 - ${lh1_dir}/collect-vmm-package-versions.txt
 
 LH2:
-- ${lh2_dir}/verify-crun-patch.txt
+- ${lh2_dir}/crun-source.txt (when CRUN_SOURCE is set)
 
 LH3:
 - ${lh3_dir}/build-stage-runtime.txt
@@ -697,6 +743,7 @@ LH3:
 - install path: ${install_path}
 
 LH4:
+- ${lh4_dir}/check-vmm-host-post-install.txt
 - ${lh4_dir}/verify-runtime-separation.txt
 
 LH5:

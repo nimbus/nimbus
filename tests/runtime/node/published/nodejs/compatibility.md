@@ -11,9 +11,9 @@ Nimbus's Node.js runtime compatibility is evidence-backed and deliberately bound
 | Target | Public status | Release phase | Product default | Enterprise LTS | Upstream | Evidence policy |
 | --- | --- | --- | --- | --- | --- | --- |
 | Node20 | Supported Local Dev Only | EOL legacy | no | no | `v20.20.2` | legacy-grace regression only |
-| Node22 | Supported In Process | Maintenance LTS | no | yes | `v22.22.3` | lane-local LTS evidence |
-| Node24 | Supported In Process | Active LTS | yes | yes | `v24.16.0` | lane-local LTS evidence |
-| Node26 | Supported In Process | Current non-LTS | no | no | `v26.2.0` | Current non-LTS; promote to LTS support only after LTS and lane-local evidence |
+| Node22 | Supported In Process | Maintenance LTS | no | yes | `v22.23.2` | lane-local LTS evidence |
+| Node24 | Supported In Process | Active LTS | yes | yes | `v24.20.0` | lane-local LTS evidence |
+| Node26 | Supported In Process | Current non-LTS | no | no | `v26.8.1` | Current non-LTS; promote to LTS support only after LTS and lane-local evidence |
 
 Product default is a routing default, not an evidence priority.
 Node22 and Node24 are supported LTS targets with lane-local evidence.
@@ -77,7 +77,7 @@ See [shim and boundary inventory](reference/shims-and-boundaries.md) for source 
 ## Canary Summary
 
 - package/framework canary claims: `79`
-- package/framework canary checks: `99`
+- package/framework canary checks: `101`
 - diagnostic canary claims: `11`
 - required canary gaps: `0`
 

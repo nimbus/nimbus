@@ -65,12 +65,17 @@ optional = true
 
 [features]
 benchmark = ["brotli-decompressor/benchmark"]
+billing = []
 default = [
     "std",
 ]
 disable-timer = ["brotli-decompressor/disable-timer"]
+disallow_large_window_size = []
 external-literal-probability = []
 ffi-api = []
+float64 = []
+floating_point_context_mixing = []
+no-stdlib-ffi-binding = []
 pass-through-ffi-panics = []
 seccomp = ["brotli-decompressor/seccomp"]
 simd = []

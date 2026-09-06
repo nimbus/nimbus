@@ -24,15 +24,15 @@ fn main() {
     let pc = cfg!(feature = "v8-pointer-compression");
 
     if check {
-        // Validate the committed blob against the current binary's provenance (V8 version,
+        // Validate the generated blob against the current binary's provenance (V8 version,
         // pointer-compression feature, extension selection, op surface, bootstrap JS, schema) and
         // confirm it parses. NOT a byte-compare: V8 snapshots embed a random hash-seed and are not
         // byte-reproducible.
-        let committed = std::fs::read(&path)
-            .unwrap_or_else(|error| panic!("read committed blob {path}: {error}"));
-        match nimbus_runtime::check_committed_embedded_anchor_snapshot(&committed) {
+        let generated = std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("read generated blob {path}: {error}"));
+        match nimbus_runtime::check_generated_embedded_anchor_snapshot(&generated) {
             Ok(()) => eprintln!(
-                "OK: committed embedded anchor snapshot is live for this build \
+                "OK: generated embedded anchor snapshot is live for this build \
                  (provenance match + parses, v8-pointer-compression={pc}) at {path}"
             ),
             Err(message) => {

@@ -4,7 +4,9 @@
 //! cross-domain order: source/provision fence, stopped-successor persistence,
 //! restart settlement, exact five-capability teardown, and finalization.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nimbus_core::{Error, TenantId, WorkloadId};
@@ -21,6 +23,8 @@ use nimbus_workloads::{
     WorkloadSagaRevision, WorkloadSagaStoreError,
 };
 use thiserror::Error;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 use crate::state::{ComputeError, ComputeState};
 use crate::workload_network_plan::WorkloadNetworkPlanCompiler;
@@ -35,7 +39,9 @@ use crate::workload_saga::{
     WorkloadTeardownSubmissionError,
 };
 
-const SERVICE_RETIREMENT_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKLOAD_RETIREMENT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKLOAD_RETIREMENT_MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
+const PUBLIC_WORKLOAD_RETIREMENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Exact native service retirement response facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +72,7 @@ pub enum WorkloadTeardownDisposition {
 }
 
 /// Failure before native retirement can report truthful terminal state.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ComputeResourceRetirementError {
     #[error("retirement source policy failed: {0}")]
     Source(#[from] Error),
@@ -94,6 +100,8 @@ pub enum ComputeResourceRetirementError {
     ProvisionWithoutSaga,
     #[error("recorded teardown did not retain the exact stopped successor")]
     InvalidRecordedSuccessor,
+    #[error("retained resource retirement task ended before publishing a result: {0}")]
+    SupervisorTaskEnded(Arc<str>),
 }
 
 impl ComputeResourceRetirementError {
@@ -101,6 +109,171 @@ impl ComputeResourceRetirementError {
         match self {
             Self::Source(error) => ComputeError::from(error),
             other => ComputeError::from(Error::Internal(other.to_string())),
+        }
+    }
+}
+
+type RetainedResourceRetirementResult<T> = Result<T, ComputeResourceRetirementError>;
+
+struct InFlightResourceRetirement<T> {
+    completion: watch::Receiver<Option<RetainedResourceRetirementResult<T>>>,
+    _task: Option<JoinHandle<()>>,
+}
+
+type ResourceRetirementRegistry<T> =
+    Arc<Mutex<BTreeMap<WorkloadSagaKey, InFlightResourceRetirement<T>>>>;
+
+#[derive(Clone)]
+enum RetainedResourceRetirementOutcome {
+    Service(Box<SandboxServiceRetirementOutcome>),
+    Sandbox(Box<SandboxResourceSnapshot>),
+}
+
+/// Process-retained, exact-key owner for public resource retirement recovery.
+/// Public request cancellation detaches only its waiter. One task continues
+/// durable convergence for each service or standalone sandbox key.
+#[derive(Default)]
+pub(crate) struct ResourceRetirementSupervisor {
+    in_flight: ResourceRetirementRegistry<RetainedResourceRetirementOutcome>,
+}
+
+impl ResourceRetirementSupervisor {
+    async fn submit_service<F>(
+        &self,
+        key: WorkloadSagaKey,
+        cancellation: &WorkloadTeardownCancellationToken,
+        retirement: F,
+    ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceRetirementError>
+    where
+        F: Future<Output = RetainedResourceRetirementResult<SandboxServiceRetirementOutcome>>
+            + Send
+            + 'static,
+    {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_retirement());
+        }
+        let completion = track_retirement(&self.in_flight, key, async move {
+            retirement
+                .await
+                .map(Box::new)
+                .map(RetainedResourceRetirementOutcome::Service)
+        });
+        match wait_for_retirement_completion(completion, cancellation).await? {
+            RetainedResourceRetirementOutcome::Service(outcome) => Ok(*outcome),
+            RetainedResourceRetirementOutcome::Sandbox(_) => {
+                Err(ComputeResourceRetirementError::SupervisorTaskEnded(
+                    Arc::from("service retirement joined a standalone sandbox outcome"),
+                ))
+            }
+        }
+    }
+
+    async fn submit_sandbox<F>(
+        &self,
+        key: WorkloadSagaKey,
+        cancellation: &WorkloadTeardownCancellationToken,
+        retirement: F,
+    ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError>
+    where
+        F: Future<Output = RetainedResourceRetirementResult<SandboxResourceSnapshot>>
+            + Send
+            + 'static,
+    {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_retirement());
+        }
+        let completion = track_retirement(&self.in_flight, key, async move {
+            retirement
+                .await
+                .map(Box::new)
+                .map(RetainedResourceRetirementOutcome::Sandbox)
+        });
+        match wait_for_retirement_completion(completion, cancellation).await? {
+            RetainedResourceRetirementOutcome::Sandbox(outcome) => Ok(*outcome),
+            RetainedResourceRetirementOutcome::Service(_) => {
+                Err(ComputeResourceRetirementError::SupervisorTaskEnded(
+                    Arc::from("sandbox retirement joined a service outcome"),
+                ))
+            }
+        }
+    }
+}
+
+fn track_retirement<T, F>(
+    registry: &ResourceRetirementRegistry<T>,
+    key: WorkloadSagaKey,
+    retirement: F,
+) -> watch::Receiver<Option<RetainedResourceRetirementResult<T>>>
+where
+    T: Clone + Send + Sync + 'static,
+    F: Future<Output = RetainedResourceRetirementResult<T>> + Send + 'static,
+{
+    let mut in_flight = registry
+        .lock()
+        .expect("resource retirement supervisor lock should not be poisoned");
+    if let Some(existing) = in_flight.get(&key) {
+        return existing.completion.clone();
+    }
+
+    let (sender, receiver) = watch::channel(None);
+    in_flight.insert(
+        key.clone(),
+        InFlightResourceRetirement {
+            completion: receiver.clone(),
+            _task: None,
+        },
+    );
+    drop(in_flight);
+
+    let worker = tokio::spawn(retirement);
+    let retained = Arc::clone(registry);
+    let task_key = key.clone();
+    let supervisor = tokio::spawn(async move {
+        let result = match worker.await {
+            Ok(result) => result,
+            Err(error) => Err(ComputeResourceRetirementError::SupervisorTaskEnded(
+                Arc::from(error.to_string()),
+            )),
+        };
+        sender.send_replace(Some(result));
+        retained
+            .lock()
+            .expect("resource retirement supervisor lock should not be poisoned")
+            .remove(&task_key);
+    });
+    if let Some(entry) = registry
+        .lock()
+        .expect("resource retirement supervisor lock should not be poisoned")
+        .get_mut(&key)
+    {
+        entry._task = Some(supervisor);
+    }
+    receiver
+}
+
+async fn wait_for_retirement_completion<T>(
+    mut completion: watch::Receiver<Option<RetainedResourceRetirementResult<T>>>,
+    cancellation: &WorkloadTeardownCancellationToken,
+) -> Result<T, ComputeResourceRetirementError>
+where
+    T: Clone,
+{
+    loop {
+        if let Some(result) = completion.borrow().clone() {
+            return result;
+        }
+        if cancellation.is_cancelled() {
+            return Err(cancelled_retirement());
+        }
+        tokio::select! {
+            () = cancellation.cancelled() => return Err(cancelled_retirement()),
+            changed = completion.changed() => {
+                if changed.is_err() {
+                    return Err(ComputeResourceRetirementError::SupervisorTaskEnded(
+                        Arc::from("completion channel closed"),
+                    ));
+                }
+            }
         }
     }
 }
@@ -114,6 +287,7 @@ pub struct ComputeResourceRetirer {
     coordinator: Arc<WorkloadSagaCoordinator>,
     restart_runtime: Arc<WorkloadRestartRuntime>,
     teardown_runtime: Arc<WorkloadTeardownRuntime>,
+    supervisor: Arc<ResourceRetirementSupervisor>,
 }
 
 impl ComputeResourceRetirer {
@@ -123,6 +297,7 @@ impl ComputeResourceRetirer {
         coordinator: Arc<WorkloadSagaCoordinator>,
         restart_runtime: Arc<WorkloadRestartRuntime>,
         teardown_runtime: Arc<WorkloadTeardownRuntime>,
+        supervisor: Arc<ResourceRetirementSupervisor>,
     ) -> Self {
         Self {
             services,
@@ -130,6 +305,7 @@ impl ComputeResourceRetirer {
             coordinator,
             restart_runtime,
             teardown_runtime,
+            supervisor,
         }
     }
 
@@ -159,6 +335,7 @@ impl ComputeResourceRetirer {
         service_name: &str,
         cancellation: &WorkloadTeardownCancellationToken,
     ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceRetirementError> {
+        let mut retry_delay = WORKLOAD_RETIREMENT_INITIAL_RETRY_DELAY;
         loop {
             if cancellation.is_cancelled() {
                 return Err(cancelled_retirement());
@@ -173,9 +350,38 @@ impl ComputeResourceRetirer {
             }
             tokio::select! {
                 () = cancellation.cancelled() => return Err(cancelled_retirement()),
-                () = tokio::time::sleep(SERVICE_RETIREMENT_RETRY_DELAY) => {}
+                () = tokio::time::sleep(retry_delay) => {}
             }
+            retry_delay = next_retirement_retry_delay(retry_delay);
         }
+    }
+
+    pub(crate) async fn submit_public_service_teardown_until_terminal(
+        &self,
+        context: &TenantIsolationContext,
+        service_name: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceRetirementError> {
+        let key = workload_key(context.tenant_id(), service_name)?;
+        let owner = self.clone();
+        let owner_context = context.clone();
+        let owner_service_name = service_name.to_owned();
+        // Keep the complete teardown state machine off the public handler
+        // stack. The one-shot retirement future is large because it owns all
+        // durable recovery phases, and embedding it here by value can exhaust
+        // normal request-task stacks before the supervisor spawns it.
+        let retirement = Box::pin(async move {
+            owner
+                .submit_service_teardown_until_terminal(
+                    &owner_context,
+                    &owner_service_name,
+                    &WorkloadTeardownCancellationToken::new(),
+                )
+                .await
+        });
+        self.supervisor
+            .submit_service(key, cancellation, retirement)
+            .await
     }
 
     async fn submit_service_teardown_once(
@@ -254,6 +460,76 @@ impl ComputeResourceRetirer {
         context: &TenantIsolationContext,
         sandbox_id: &str,
     ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
+        self.submit_sandbox_teardown_once(
+            context,
+            sandbox_id,
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Retire one standalone sandbox and retain foreground ownership while
+    /// durable provision, restart, or teardown work reports a safe pending
+    /// state.
+    pub async fn submit_sandbox_teardown_until_terminal(
+        &self,
+        context: &TenantIsolationContext,
+        sandbox_id: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
+        let mut retry_delay = WORKLOAD_RETIREMENT_INITIAL_RETRY_DELAY;
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(cancelled_retirement());
+            }
+            match self
+                .submit_sandbox_teardown_once(context, sandbox_id, cancellation)
+                .await
+            {
+                Ok(snapshot) => return Ok(snapshot),
+                Err(error) if foreground_retirement_can_retry(&error) => {}
+                Err(error) => return Err(error),
+            }
+            tokio::select! {
+                () = cancellation.cancelled() => return Err(cancelled_retirement()),
+                () = tokio::time::sleep(retry_delay) => {}
+            }
+            retry_delay = next_retirement_retry_delay(retry_delay);
+        }
+    }
+
+    pub(crate) async fn submit_public_sandbox_teardown_until_terminal(
+        &self,
+        context: &TenantIsolationContext,
+        sandbox_id: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
+        let key = workload_key(context.tenant_id(), sandbox_id)?;
+        let owner = self.clone();
+        let owner_context = context.clone();
+        let owner_sandbox_id = sandbox_id.to_owned();
+        // Keep the complete teardown state machine off the public handler
+        // stack. See the service path above for the matching invariant.
+        let retirement = Box::pin(async move {
+            owner
+                .submit_sandbox_teardown_until_terminal(
+                    &owner_context,
+                    &owner_sandbox_id,
+                    &WorkloadTeardownCancellationToken::new(),
+                )
+                .await
+        });
+        self.supervisor
+            .submit_sandbox(key, cancellation, retirement)
+            .await
+    }
+
+    async fn submit_sandbox_teardown_once(
+        &self,
+        context: &TenantIsolationContext,
+        sandbox_id: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxResourceSnapshot, ComputeResourceRetirementError> {
         let snapshot = self
             .services
             .sandbox_resource_snapshot_for_tenant(context.tenant_id(), sandbox_id)?
@@ -309,9 +585,8 @@ impl ComputeResourceRetirer {
             self.release_unadvanced_retirement_claim(&key, &claim)?;
             return Err(error);
         }
-        let cancellation = WorkloadTeardownCancellationToken::new();
         let (claim, run) = self
-            .drive_recorded_teardown(&key, loaded, claim, joined_provision, &cancellation)
+            .drive_recorded_teardown(&key, loaded, claim, joined_provision, cancellation)
             .await?;
         authenticate_recorded_stop(&run)?;
         let snapshot = self
@@ -716,6 +991,7 @@ impl ComputeState {
             coordinator,
             restart_runtime,
             teardown_runtime,
+            self.resource_retirement_supervisor(),
         ))
     }
 }
@@ -729,6 +1005,91 @@ fn foreground_retirement_can_retry(error: &ComputeResourceRetirementError) -> bo
                 WorkloadTeardownRunDisposition::Waiting
             )
     )
+}
+
+fn next_retirement_retry_delay(current: Duration) -> Duration {
+    current
+        .saturating_mul(2)
+        .min(WORKLOAD_RETIREMENT_MAX_RETRY_DELAY)
+}
+
+pub(crate) async fn await_public_retirement<T>(
+    operation: &'static str,
+    cancellation: &WorkloadTeardownCancellationToken,
+    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>> + Send + 'static,
+) -> Result<T, ComputeError>
+where
+    T: Send + 'static,
+{
+    await_retirement_with_timeout(
+        operation,
+        cancellation,
+        retirement,
+        PUBLIC_WORKLOAD_RETIREMENT_TIMEOUT,
+    )
+    .await
+}
+
+async fn await_retirement_with_timeout<T>(
+    operation: &'static str,
+    cancellation: &WorkloadTeardownCancellationToken,
+    retirement: impl Future<Output = Result<T, ComputeResourceRetirementError>> + Send + 'static,
+    timeout: Duration,
+) -> Result<T, ComputeError>
+where
+    T: Send + 'static,
+{
+    let mut waiter = PublicRetirementWaiter::new(cancellation.clone(), tokio::spawn(retirement));
+    match tokio::time::timeout(timeout, &mut waiter.task).await {
+        Ok(Ok(result)) => {
+            waiter.armed = false;
+            result.map_err(ComputeResourceRetirementError::into_compute_error)
+        }
+        Ok(Err(error)) => {
+            waiter.armed = false;
+            Err(ComputeError::from(Error::Internal(format!(
+                "{operation} waiter task failed: {error}"
+            ))))
+        }
+        Err(_) => {
+            // Detach this bounded public waiter. The exact-key retirement
+            // supervisor, not this request task, owns durable convergence.
+            waiter.cancellation.cancel();
+            waiter.task.abort();
+            waiter.armed = false;
+            Err(ComputeError::from(Error::Transport(format!(
+                "{operation} remains pending after {timeout:?}; retry the request while Nimbus's single retained teardown supervisor continues recovery"
+            ))))
+        }
+    }
+}
+
+struct PublicRetirementWaiter<T> {
+    cancellation: WorkloadTeardownCancellationToken,
+    task: tokio::task::JoinHandle<Result<T, ComputeResourceRetirementError>>,
+    armed: bool,
+}
+
+impl<T> PublicRetirementWaiter<T> {
+    fn new(
+        cancellation: WorkloadTeardownCancellationToken,
+        task: tokio::task::JoinHandle<Result<T, ComputeResourceRetirementError>>,
+    ) -> Self {
+        Self {
+            cancellation,
+            task,
+            armed: true,
+        }
+    }
+}
+
+impl<T> Drop for PublicRetirementWaiter<T> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cancellation.cancel();
+            self.task.abort();
+        }
+    }
 }
 
 fn cancelled_retirement() -> ComputeResourceRetirementError {

@@ -159,11 +159,9 @@ impl Drop for RuntimeExecutorInner {
         self.shutdown.cancel();
         self.router.close();
         for queued_job in self.admission.drain_queued_jobs() {
-            queued_job
-                .result_tx
-                .send(Err(crate::error::NimbusRuntimeError::Contract(
-                    "runtime executor unexpectedly closed".to_string(),
-                )));
+            queued_job.send_result(Err(crate::error::NimbusRuntimeError::Contract(
+                "runtime executor unexpectedly closed".to_string(),
+            )));
         }
         let mut worker_handles = self
             .worker_handles

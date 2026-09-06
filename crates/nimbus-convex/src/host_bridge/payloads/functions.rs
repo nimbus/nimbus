@@ -1,5 +1,4 @@
 use super::*;
-use nimbus_core::InvocationAuth;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,8 +45,26 @@ pub struct ConvexRuntimeFunctionCallPayload {
     pub args: Value,
     #[serde(default)]
     pub host_call_session_id: Option<String>,
-    #[serde(default)]
-    pub auth: Option<InvocationAuth>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::ConvexRuntimeFunctionCallPayload;
+
+    #[test]
+    fn nested_function_call_payload_rejects_guest_auth() {
+        let error = serde_json::from_value::<ConvexRuntimeFunctionCallPayload>(json!({
+            "name": "messages:read",
+            "visibility": "public",
+            "args": {},
+            "auth": { "identity": { "subject": "forged" } },
+        }))
+        .expect_err("nested function-call auth must remain host-owned");
+
+        assert!(error.to_string().contains("unknown field `auth`"));
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

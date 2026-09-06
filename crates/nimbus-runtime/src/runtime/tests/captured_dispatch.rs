@@ -91,15 +91,14 @@ undefined"#,
     };
 
     // Host capture at "bundle load", before any guest handler body runs.
-    capture_invocation_targets(&mut locked, None, crate::RuntimeGuestSemantics::Host)
+    capture_invocation_targets(&mut locked, crate::RuntimeGuestSemantics::Host)
         .expect("capture should succeed");
 
     // The private slot must hold the SAME function object read back above —
     // reference identity, not merely a value that behaves the same way an
     // impostor could also reproduce.
     assert!(
-        captured_invoke_is(&mut locked, None, &real_invoke)
-            .expect("identity check should evaluate"),
+        captured_invoke_is(&mut locked, &real_invoke).expect("identity check should evaluate"),
         "captured __nimbusInvoke must be the exact function object installed by the bundle \
          (V8 strict reference equality), not merely a behaviorally-equivalent value"
     );
@@ -149,7 +148,6 @@ undefined"#,
     let captured = {
         let value = call_captured_invocation(
             &mut locked,
-            None,
             &request_json,
             crate::RuntimeGuestSemantics::Host,
             None,
@@ -174,7 +172,7 @@ undefined"#,
     // Identity check again, after the guest reassignment/delete/dispatch
     // sequence: the private slot itself was never touched by any of it.
     assert!(
-        captured_invoke_is(&mut locked, None, &real_invoke)
+        captured_invoke_is(&mut locked, &real_invoke)
             .expect("post-dispatch identity check should evaluate"),
         "captured __nimbusInvoke must still be the exact original function object after guest \
          reassignment, deletion, and dispatch"
@@ -216,96 +214,6 @@ pub(super) fn with_captured_dispatch_test_runtime(
     body(&mut locked);
 }
 
-/// A raw V8 realm with NONE of `install_bootstrap_in_realm`'s scripts run —
-/// in particular, none of `nimbus_guest_semantics.js`'s
-/// `Object.defineProperty(globalThis, "__nimbusBeginGuestInvocation", ...)`.
-/// The real bootstrap installs that hook as a non-configurable,
-/// non-writable, always-present no-op on every lane (including Host), so it
-/// can never be made absent or overridden on a normally-bootstrapped realm —
-/// exactly the guarantee the fix relies on in production. Findings 3a and 4
-/// need a realm where that guarantee has NOT (yet) been established, to
-/// exercise what `capture_invocation_targets`/`call_captured_invocation` do
-/// when it genuinely has not run — e.g. a future build/profile regression
-/// that drops the guest-semantics bootstrap script.
-pub(super) fn create_bare_realm(
-    runtime: &mut crate::backends::v8::embedder::JsRuntime,
-) -> crate::backends::v8::embedder::JsRealm {
-    runtime
-        .create_realm(crate::backends::v8::embedder::CreateRealmOptions {
-            module_loader: None,
-        })
-        .expect("bare realm should create")
-}
-
-pub(super) const CONVEX_DEFAULT_MISSING_BEGIN_HOOK_CASE: IsolatedRuntimeTestCase =
-    IsolatedRuntimeTestCase::new(
-        "runtime-captured-dispatch-convex-default-missing-begin-hook",
-        "cooperative-startup-snapshot",
-        "Band B-FIX HG5 BEGIN-HOOK FAIL-OPEN (3a): capture hard-fails a ConvexDefault realm that \
-         never had __nimbusBeginGuestInvocation installed, instead of silently loading without a \
-         determinism-reset hook",
-        "runtime::tests::captured_dispatch::convex_default_capture_requires_begin_guest_invocation_hook_subprocess",
-    );
-
-#[test]
-fn convex_default_capture_requires_begin_guest_invocation_hook() {
-    run_v8_sensitive_runtime_test_in_subprocess(CONVEX_DEFAULT_MISSING_BEGIN_HOOK_CASE);
-}
-
-#[test]
-#[ignore = "runs in a subprocess to isolate V8 isolate state"]
-fn convex_default_capture_requires_begin_guest_invocation_hook_subprocess() {
-    with_captured_dispatch_test_runtime(|locked| {
-        let realm = create_bare_realm(locked);
-
-        // Sanity: on a realm where the guest-semantics bootstrap never ran,
-        // the hook is genuinely absent, not merely reassigned.
-        let hook_is_undefined = {
-            let value = realm
-                .execute_script(
-                    locked.v8_isolate(),
-                    "check_begin_hook_absent.js",
-                    "typeof globalThis.__nimbusBeginGuestInvocation === \"undefined\"",
-                )
-                .expect("checking the begin hook's presence should evaluate");
-            deserialize_json_value(locked, value).expect("presence check should deserialize")
-        };
-        assert_eq!(
-            hook_is_undefined,
-            serde_json::json!(true),
-            "test setup invariant: a bare, un-bootstrapped realm must not have \
-             __nimbusBeginGuestInvocation installed"
-        );
-
-        // Install the invoke entrypoint but never the begin hook.
-        realm
-            .execute_script(
-                locked.v8_isolate(),
-                "install_invoke_only.js",
-                r#"globalThis.__nimbusInvoke = function () { return { ok: true }; };
-undefined"#,
-            )
-            .expect("installing invoke should succeed");
-
-        let error = capture_invocation_targets(
-            locked,
-            Some(&realm),
-            crate::RuntimeGuestSemantics::ConvexDefault,
-        )
-        .expect_err(
-            "capture must hard-fail a ConvexDefault realm that never had \
-             __nimbusBeginGuestInvocation installed",
-        );
-        let message = error.to_string();
-        assert!(
-            message.contains("__nimbusBeginGuestInvocation") && message.contains("ConvexDefault"),
-            "capture failure must name the missing hook and the lane that requires it: {message}"
-        );
-
-        crate::runtime::realm_lifecycle::destroy_fresh_realm(locked, realm);
-    });
-}
-
 pub(super) const NON_FUNCTION_ENTRYPOINT_CASE: IsolatedRuntimeTestCase =
     IsolatedRuntimeTestCase::new(
         "runtime-captured-dispatch-non-function-entrypoint",
@@ -336,7 +244,7 @@ fn capture_rejects_non_function_entrypoint_subprocess() {
 
         // Host guest-semantics: the ConvexDefault begin-hook requirement does
         // not apply, isolating this assertion to the non-function check.
-        let error = capture_invocation_targets(locked, None, crate::RuntimeGuestSemantics::Host)
+        let error = capture_invocation_targets(locked, crate::RuntimeGuestSemantics::Host)
             .expect_err(
                 "capture must hard-fail when globalThis.__nimbusInvoke is present but not a \
                  function",
@@ -347,94 +255,6 @@ fn capture_rejects_non_function_entrypoint_subprocess() {
                 && message.contains("is present but is not a function"),
             "capture failure must identify the offending global and why it was rejected: {message}"
         );
-    });
-}
-
-pub(super) const DETERMINISM_HOOK_SWALLOWED_CASE: IsolatedRuntimeTestCase =
-    IsolatedRuntimeTestCase::new(
-        "runtime-captured-dispatch-determinism-hook-swallowed",
-        "cooperative-startup-snapshot",
-        "Band B-FIX DETERMINISM-HOOK SWALLOWED (4): a faulting __nimbusBeginGuestInvocation aborts \
-         the invocation before __nimbusInvoke ever runs, instead of proceeding with a stale \
-         clock/PRNG",
-        "runtime::tests::captured_dispatch::determinism_hook_fault_aborts_before_invoke_runs_subprocess",
-    );
-
-#[test]
-fn determinism_hook_fault_aborts_before_invoke_runs() {
-    run_v8_sensitive_runtime_test_in_subprocess(DETERMINISM_HOOK_SWALLOWED_CASE);
-}
-
-#[test]
-#[ignore = "runs in a subprocess to isolate V8 isolate state"]
-fn determinism_hook_fault_aborts_before_invoke_runs_subprocess() {
-    with_captured_dispatch_test_runtime(|locked| {
-        // On a normally-bootstrapped realm, __nimbusBeginGuestInvocation is
-        // installed non-configurable/non-writable by nimbus_guest_semantics.js
-        // before any bundle code runs — a plain `globalThis.X = ...`
-        // reassignment there silently no-ops (non-strict-mode semantics: no
-        // throw, no change) rather than installing a faulting stub. A bare
-        // realm never had that bootstrap script run, so the FIRST definition
-        // of the name here genuinely takes effect, letting this test install
-        // a hook that actually throws.
-        let realm = create_bare_realm(locked);
-
-        realm
-            .execute_script(
-                locked.v8_isolate(),
-                "install_convex_default_bundle.js",
-                r#"globalThis.__nimbusInvokeCalled = false;
-globalThis.__nimbusBeginGuestInvocation = function () {
-  throw new Error("determinism hook boom");
-};
-globalThis.__nimbusInvoke = function () {
-  globalThis.__nimbusInvokeCalled = true;
-  return { ok: true };
-};
-undefined"#,
-            )
-            .expect("installing the ConvexDefault bundle should succeed");
-
-        capture_invocation_targets(
-            locked,
-            Some(&realm),
-            crate::RuntimeGuestSemantics::ConvexDefault,
-        )
-        .expect("capture should succeed: both hooks are present and callable");
-
-        let request_json =
-            r#"{"kind":"action","function_name":"messages:list","args":null}"#.to_string();
-        let error = call_captured_invocation(
-            locked,
-            Some(&realm),
-            &request_json,
-            crate::RuntimeGuestSemantics::ConvexDefault,
-            None,
-        )
-        .expect_err("a faulting determinism hook must abort dispatch, not run invoke anyway");
-        let message = error.to_string();
-        assert!(
-            message.contains("determinism hook boom"),
-            "the determinism-hook exception must propagate as the dispatch error: {message}"
-        );
-
-        let invoke_called = {
-            let value = realm
-                .execute_script(
-                    locked.v8_isolate(),
-                    "read_invoke_called.js",
-                    "globalThis.__nimbusInvokeCalled",
-                )
-                .expect("reading back the invoke-called flag should succeed");
-            deserialize_json_value(locked, value).expect("invoke-called flag should deserialize")
-        };
-        assert_eq!(
-            invoke_called,
-            serde_json::json!(false),
-            "__nimbusInvoke must never run when __nimbusBeginGuestInvocation faulted first"
-        );
-
-        crate::runtime::realm_lifecycle::destroy_fresh_realm(locked, realm);
     });
 }
 
@@ -464,7 +284,7 @@ fn execution_termination_during_request_allocation_classifies_as_terminated_subp
 undefined"#,
             )
             .expect("installing invoke should succeed");
-        capture_invocation_targets(locked, None, crate::RuntimeGuestSemantics::Host)
+        capture_invocation_targets(locked, crate::RuntimeGuestSemantics::Host)
             .expect("capture should succeed");
 
         // Simulate a watchdog/heap-limit trip that fires before dispatch ever
@@ -480,7 +300,6 @@ undefined"#,
             r#"{"kind":"action","function_name":"messages:list","args":null}"#.to_string();
         let error = call_captured_invocation(
             locked,
-            None,
             &request_json,
             crate::RuntimeGuestSemantics::Host,
             None,
@@ -536,14 +355,13 @@ fn ordinary_exception_preserves_stack_frame_subprocess() {
 undefined"#,
             )
             .expect("installing the exploding invoke entrypoint should succeed");
-        capture_invocation_targets(locked, None, crate::RuntimeGuestSemantics::Host)
+        capture_invocation_targets(locked, crate::RuntimeGuestSemantics::Host)
             .expect("capture should succeed");
 
         let request_json =
             r#"{"kind":"action","function_name":"messages:list","args":null}"#.to_string();
         let error = call_captured_invocation(
             locked,
-            None,
             &request_json,
             crate::RuntimeGuestSemantics::Host,
             None,

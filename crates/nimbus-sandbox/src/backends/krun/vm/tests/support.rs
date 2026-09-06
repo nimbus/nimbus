@@ -24,8 +24,8 @@ pub(super) use super::super::{
     KrunImageMetadata, KrunLaunchAuthority, KrunLifecycleLockTestProbe,
     KrunProviderFailureCleanupState, KrunRuntimeAbsenceProof, KrunSandboxBackend,
     KrunSandboxBackendConfig, KrunSandboxManifest, KrunStartMode, KrunStartPlan,
-    configured_stop_signal, configured_stop_timeout, desired_krun_vm_config, krun_vm_config_path,
-    parse_guest_user, published_endpoints, running_status, slugify, visible_published_endpoints,
+    configured_stop_signal, configured_stop_timeout, krun_vm_config_path, parse_guest_user,
+    published_endpoints, running_status, slugify, visible_published_endpoints,
 };
 pub(super) use crate::backend::{SandboxBackend, SandboxBackendKind};
 pub(super) use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
@@ -76,7 +76,7 @@ pub(super) fn materialize_plan_only_plan_fixture(
     backend: &KrunSandboxBackend,
     launch_plan: KrunStartPlan,
 ) -> crate::Result<crate::SandboxHandle> {
-    backend.materialize_krun_vm_config(&launch_plan.manifest)?;
+    backend.remove_untrusted_krun_vm_config(&launch_plan.manifest)?;
     let mut manifest = launch_plan.manifest;
     manifest.last_exit_code = None;
     manifest.shutdown_requested = false;

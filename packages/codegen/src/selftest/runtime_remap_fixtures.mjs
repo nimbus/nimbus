@@ -8,12 +8,7 @@ import {
 // Builds the same Function-constructor wrapper the runtime preamble uses, so the
 // integration cases exercise the real V8 line numbering rather than a mock.
 function compileHandler(source) {
-  return new Function(
-    "ctx",
-    "args",
-    "request",
-    "return (" + source + ")(ctx, args, request);",
-  );
+  return new Function("ctx", "args", "return (" + source + ")(ctx, args);");
 }
 
 async function runRuntimeRemapFixtures() {
@@ -25,7 +20,10 @@ async function runRuntimeRemapFixtures() {
     // The remap targets the topmost `<anonymous>:LINE:COL` body frame; the real
     // deno/node frame also carries an outer marker, exercised by case 3 below.
     error.stack = "Error: boom\n    at <anonymous>:5:9";
-    const out = nimbusRemapHandlerError(error, { module: "messages", line: 10 });
+    const out = nimbusRemapHandlerError(error, {
+      module: "messages",
+      line: 10,
+    });
     assert.ok(
       out.message.includes("messages:12"),
       `expected message to name messages:12, got: ${out.message}`,
@@ -55,14 +53,29 @@ async function runRuntimeRemapFixtures() {
   const invoke = compileHandler(throwingSource);
   const origin = { module: "messages", line: 1 };
 
+  const requestProbe = compileHandler(
+    "(_ctx, _args, request) => request === undefined",
+  );
+  assert.equal(
+    nimbusWrapRuntimeInvoke(requestProbe, [], {}, {}, origin),
+    true,
+    "the private invocation request must not reach guest handler parameters",
+  );
+
   // 3a. Success values pass through unchanged.
-  const ok = await nimbusWrapRuntimeInvoke(invoke, [], {}, { value: 42 }, {}, origin);
+  const ok = await nimbusWrapRuntimeInvoke(
+    invoke,
+    [],
+    {},
+    { value: 42 },
+    origin,
+  );
   assert.equal(ok, 42, "success value must be preserved");
 
   // 3b. Async rejection is remapped to the original throw line.
   let caught;
   try {
-    await nimbusWrapRuntimeInvoke(invoke, [], {}, { boom: true }, {}, origin);
+    await nimbusWrapRuntimeInvoke(invoke, [], {}, { boom: true }, origin);
   } catch (error) {
     caught = error;
   }
@@ -74,11 +87,18 @@ async function runRuntimeRemapFixtures() {
   assert.equal(caught.nimbusOriginalLocation, "messages:3");
 
   // 4. Integration: a synchronous throw (non-async handler) is also remapped.
-  const syncSource = "(ctx, args) => {\n" + '  throw new Error("sync boom");\n' + "}";
+  const syncSource =
+    "(ctx, args) => {\n" + '  throw new Error("sync boom");\n' + "}";
   const syncInvoke = compileHandler(syncSource);
   let syncCaught;
   try {
-    nimbusWrapRuntimeInvoke(syncInvoke, [], {}, {}, {}, { module: "users", line: 5 });
+    nimbusWrapRuntimeInvoke(
+      syncInvoke,
+      [],
+      {},
+      {},
+      { module: "users", line: 5 },
+    );
   } catch (error) {
     syncCaught = error;
   }
@@ -89,7 +109,7 @@ async function runRuntimeRemapFixtures() {
     `expected remapped location users:6, got: ${syncCaught.message}`,
   );
 
-  console.log("runtime remap fixtures: ok (4 cases)");
+  console.log("runtime remap fixtures: ok (5 cases)");
 }
 
 export { runRuntimeRemapFixtures };

@@ -2,7 +2,9 @@ use super::*;
 use crate::{
     PointInTimeRestoreTarget, RetentionGcConfig, RetentionParticipant, RetentionReadFloors,
 };
-use nimbus_core::{DocumentLocator, DocumentPath, ResourcePathBinding};
+use nimbus_core::{DocumentId, DocumentLocator, DocumentPath, ResourcePathBinding};
+
+use super::historical_fixtures::{historical_read_shape, indexed_rank_schema, ranked_document};
 
 #[derive(Default)]
 struct BlockingRetentionCommit {
@@ -121,6 +123,344 @@ fn assert_checkpoint_snapshot_sidecars(
 ) {
     assert_eq!(snapshot.resource_path_bindings, vec![binding.clone()]);
     assert_eq!(snapshot.trigger_delivery_cursor, cursor);
+}
+
+#[derive(Clone)]
+struct IndexedNonzeroBaseArchive {
+    archive: crate::PointInTimeRestoreArchive,
+    table: TableName,
+    table_id: TableId,
+    document_id: DocumentId,
+    base_document: Document,
+    target_document: Document,
+    schema: TableSchema,
+}
+
+fn indexed_nonzero_base_archive() -> IndexedNonzeroBaseArchive {
+    let clock = Arc::new(ManualWallClock::new(Timestamp(100)));
+    let source = TenantStore::create_in_memory_with_simulation(
+        clock.clone(),
+        Arc::new(crate::NoopFaultInjector),
+    )
+    .expect("PITR source should open");
+    let table = TableName::new("indexed_restore_tasks").expect("table name should be valid");
+    let (schema, _) = indexed_rank_schema(&table);
+    source
+        .replace_table_schema(&schema)
+        .expect("indexed schema should persist");
+
+    clock.set(Timestamp(200));
+    let document = ranked_document(&table, "base", 1);
+    let insert = source
+        .insert(&document)
+        .expect("base document should insert");
+    let table_id = insert.writes[0].table_id.clone();
+
+    clock.set(Timestamp(300));
+    source
+        .insert(&ranked_document(&table, "checkpoint filler", 10))
+        .expect("checkpoint filler should insert");
+    clock.set(Timestamp(400));
+    source
+        .insert(&ranked_document(&table, "tail filler", 11))
+        .expect("tail filler should insert");
+    clock.set(Timestamp(500));
+    let update = source
+        .update(
+            &table,
+            &document.id,
+            &serde_json::Map::from_iter([
+                ("title".to_string(), json!("target")),
+                ("rank".to_string(), json!(2)),
+            ]),
+        )
+        .expect("base document should update in the retained tail");
+
+    let config = RetentionGcConfig::new(2).expect("two-sequence window should build");
+    let summary = source
+        .compact_retained_history(config)
+        .expect("source history should compact");
+    assert_eq!(summary.after.confirmed_floor, SequenceNumber(3));
+    let archive = source
+        .export_point_in_time_restore_archive(
+            PointInTimeRestoreTarget::Sequence(update.sequence),
+            config,
+        )
+        .expect("nonzero-base archive should export");
+    assert_eq!(archive.base_snapshot.applied_sequence, SequenceNumber(3));
+    assert_eq!(archive.journal_tail.len(), 2);
+
+    let base_document = archive
+        .base_snapshot
+        .documents
+        .iter()
+        .find(|candidate| candidate.id == document.id)
+        .cloned()
+        .expect("base snapshot should contain the indexed document");
+    let target_document = archive
+        .journal_tail
+        .iter()
+        .flat_map(|record| &record.writes)
+        .filter(|write| write.doc_id == document.id)
+        .filter_map(|write| write.current.clone())
+        .next_back()
+        .expect("retained tail should contain the document update");
+
+    IndexedNonzeroBaseArchive {
+        archive,
+        table,
+        table_id,
+        document_id: document.id,
+        base_document,
+        target_document,
+        schema,
+    }
+}
+
+fn assert_redb_imported_history(store: &TenantStore, fixture: &IndexedNonzeroBaseArchive) {
+    let snapshot = store.read_snapshot().expect("redb snapshot should open");
+    assert_eq!(
+        snapshot
+            .export_materialized_journal_snapshot()
+            .expect("redb restored state should export")
+            .materialized_position()
+            .expect("redb restored position should compute"),
+        fixture.archive.target_position
+    );
+    for sequence in [SequenceNumber(3), SequenceNumber(4)] {
+        assert_eq!(
+            snapshot
+                .get_document_version_at(&fixture.table_id, &fixture.document_id, sequence)
+                .expect("redb base document version should read"),
+            Some(fixture.base_document.clone())
+        );
+        let shape =
+            historical_read_shape(&fixture.table, &fixture.table_id, &fixture.schema, sequence);
+        let documents = snapshot
+            .historical_index_scan_eq_cancellable(&shape, "by_rank", &json!(1), &mut || Ok(()))
+            .expect("redb base index version should read");
+        assert_eq!(documents, vec![fixture.base_document.clone()]);
+    }
+    assert_eq!(
+        snapshot
+            .get_document_version_at(&fixture.table_id, &fixture.document_id, SequenceNumber(5),)
+            .expect("redb target document version should read"),
+        Some(fixture.target_document.clone())
+    );
+    let target_shape = historical_read_shape(
+        &fixture.table,
+        &fixture.table_id,
+        &fixture.schema,
+        SequenceNumber(5),
+    );
+    assert_eq!(
+        snapshot
+            .historical_index_scan_eq_cancellable(&target_shape, "by_rank", &json!(2), &mut || Ok(
+                ()
+            ),)
+            .expect("redb target index version should read"),
+        vec![fixture.target_document.clone()]
+    );
+}
+
+fn assert_sqlite_imported_history(store: &SqliteTenantStore, fixture: &IndexedNonzeroBaseArchive) {
+    let snapshot = store.read_snapshot().expect("SQLite snapshot should open");
+    assert_eq!(
+        snapshot
+            .export_materialized_journal_snapshot()
+            .expect("SQLite restored state should export")
+            .materialized_position()
+            .expect("SQLite restored position should compute"),
+        fixture.archive.target_position
+    );
+    for sequence in [SequenceNumber(3), SequenceNumber(4)] {
+        assert_eq!(
+            snapshot
+                .get_document_version_at(
+                    &fixture.table,
+                    &fixture.table_id,
+                    &fixture.document_id,
+                    sequence,
+                )
+                .expect("SQLite base document version should read"),
+            Some(fixture.base_document.clone())
+        );
+        let shape =
+            historical_read_shape(&fixture.table, &fixture.table_id, &fixture.schema, sequence);
+        let documents = snapshot
+            .historical_index_scan_eq_cancellable(&shape, "by_rank", &json!(1), &mut || Ok(()))
+            .expect("SQLite base index version should read");
+        assert_eq!(documents, vec![fixture.base_document.clone()]);
+    }
+    assert_eq!(
+        snapshot
+            .get_document_version_at(
+                &fixture.table,
+                &fixture.table_id,
+                &fixture.document_id,
+                SequenceNumber(5),
+            )
+            .expect("SQLite target document version should read"),
+        Some(fixture.target_document.clone())
+    );
+    let target_shape = historical_read_shape(
+        &fixture.table,
+        &fixture.table_id,
+        &fixture.schema,
+        SequenceNumber(5),
+    );
+    assert_eq!(
+        snapshot
+            .historical_index_scan_eq_cancellable(&target_shape, "by_rank", &json!(2), &mut || Ok(
+                ()
+            ),)
+            .expect("SQLite target index version should read"),
+        vec![fixture.target_document.clone()]
+    );
+}
+
+fn assert_empty_import_target(snapshot: crate::MaterializedJournalSnapshot) {
+    assert_eq!(snapshot.applied_sequence, SequenceNumber(0));
+    assert_eq!(snapshot.durable_head, SequenceNumber(0));
+    assert!(snapshot.documents.is_empty());
+    assert!(snapshot.schema.tables.is_empty());
+    assert!(snapshot.table_identities.is_empty());
+}
+
+#[test]
+fn embedded_pitr_import_fault_rolls_back_and_same_archive_retries() {
+    let fixture = indexed_nonzero_base_archive();
+
+    let fault = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+        point: FaultPoint::JournalAppendBeforeDurableFlush,
+        visit: 1,
+    }]));
+    let redb = TenantStore::create_in_memory_with_simulation(
+        Arc::new(ManualWallClock::new(Timestamp(1_000))),
+        fault,
+    )
+    .expect("faulted redb restore target should open");
+    redb.import_point_in_time_restore_archive(&fixture.archive)
+        .expect_err("redb import fault should abort the complete state change");
+    assert_empty_import_target(
+        redb.export_materialized_journal_snapshot()
+            .expect("redb target snapshot should export"),
+    );
+    assert_eq!(
+        redb.retention_history_state(RetentionGcConfig::retain_all())
+            .expect("redb retention state should remain readable")
+            .physical_floor,
+        SequenceNumber(0)
+    );
+    assert_eq!(
+        redb.document_version_storage_diagnostic()
+            .expect("redb document-version diagnostic should read")
+            .version_count,
+        0
+    );
+    assert_eq!(
+        redb.index_version_storage_diagnostic()
+            .expect("redb index-version diagnostic should read")
+            .version_count,
+        0
+    );
+    redb.import_point_in_time_restore_archive(&fixture.archive)
+        .expect("the same redb archive should retry immediately");
+
+    let dir = tempdir().expect("temporary directory should create");
+    let fault = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+        point: FaultPoint::JournalAppendBeforeDurableFlush,
+        visit: 1,
+    }]));
+    let sqlite = SqliteTenantStore::open_with_simulation(
+        dir.path().join("faulted-import.sqlite3"),
+        Arc::new(ManualWallClock::new(Timestamp(1_000))),
+        fault,
+    )
+    .expect("faulted SQLite restore target should open");
+    sqlite
+        .import_point_in_time_restore_archive(&fixture.archive)
+        .expect_err("SQLite import fault should abort the complete state change");
+    assert_empty_import_target(
+        sqlite
+            .export_materialized_journal_snapshot()
+            .expect("SQLite target snapshot should export"),
+    );
+    assert_eq!(
+        sqlite
+            .retention_history_state(RetentionGcConfig::retain_all())
+            .expect("SQLite retention state should remain readable")
+            .physical_floor,
+        SequenceNumber(0)
+    );
+    assert_eq!(
+        sqlite
+            .document_version_storage_diagnostic()
+            .expect("SQLite document-version diagnostic should read")
+            .version_count,
+        0
+    );
+    assert_eq!(
+        sqlite
+            .index_version_storage_diagnostic()
+            .expect("SQLite index-version diagnostic should read")
+            .version_count,
+        0
+    );
+    sqlite
+        .import_point_in_time_restore_archive(&fixture.archive)
+        .expect("the same SQLite archive should retry immediately");
+
+    let fault = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+        point: FaultPoint::JournalAppendBeforeDurableFlush,
+        visit: 1,
+    }]));
+    let memory =
+        MemoryTenantStore::with_simulation(Arc::new(ManualWallClock::new(Timestamp(1_000))), fault);
+    memory
+        .import_point_in_time_restore_archive(&fixture.archive)
+        .expect_err("memory import fault should abort the complete state change");
+    assert_empty_import_target(
+        memory
+            .export_materialized_journal_snapshot()
+            .expect("memory target snapshot should export"),
+    );
+    assert_eq!(
+        memory
+            .retention_history_state(RetentionGcConfig::retain_all())
+            .expect("memory retention state should remain readable")
+            .physical_floor,
+        SequenceNumber(0)
+    );
+    memory
+        .import_point_in_time_restore_archive(&fixture.archive)
+        .expect("the same memory archive should retry immediately");
+}
+
+#[test]
+fn embedded_pitr_import_seeds_base_history_and_survives_restart() {
+    let fixture = indexed_nonzero_base_archive();
+    let dir = tempdir().expect("temporary directory should create");
+
+    let redb_path = dir.path().join("imported.redb");
+    let redb = TenantStore::open(&redb_path).expect("redb restore target should open");
+    redb.import_point_in_time_restore_archive(&fixture.archive)
+        .expect("redb archive should import");
+    assert_redb_imported_history(&redb, &fixture);
+    drop(redb);
+    let redb = TenantStore::open(&redb_path).expect("redb restore target should restart");
+    assert_redb_imported_history(&redb, &fixture);
+
+    let sqlite_path = dir.path().join("imported.sqlite3");
+    let sqlite = SqliteTenantStore::open(&sqlite_path).expect("SQLite restore target should open");
+    sqlite
+        .import_point_in_time_restore_archive(&fixture.archive)
+        .expect("SQLite archive should import");
+    assert_sqlite_imported_history(&sqlite, &fixture);
+    drop(sqlite);
+    let sqlite =
+        SqliteTenantStore::open(&sqlite_path).expect("SQLite restore target should restart");
+    assert_sqlite_imported_history(&sqlite, &fixture);
 }
 
 #[test]
@@ -524,6 +864,14 @@ fn memory_retention_checkpoint_survives_restart_and_restores_from_retained_check
     restored
         .import_point_in_time_restore_archive(&archive)
         .expect("nonzero memory base should restore");
+    assert_eq!(
+        restored
+            .export_materialized_journal_snapshot()
+            .expect("restored memory state should export")
+            .materialized_position()
+            .expect("restored memory position should compute"),
+        archive.target_position
+    );
     assert_eq!(
         restored
             .export_durable_journal_bootstrap()

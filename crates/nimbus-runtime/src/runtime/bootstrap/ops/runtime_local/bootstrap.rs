@@ -2,6 +2,7 @@ use crate::backends::v8::embedder::{JsErrorBox, OpState, op2};
 use crate::runtime::bootstrap::state::{
     InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract,
 };
+use serde::Serialize;
 
 use super::support::{capability_denied_error, runtime_target_triple};
 
@@ -9,6 +10,16 @@ use super::support::{capability_denied_error, runtime_target_triple};
 const SYNTHETIC_RUNTIME_EXEC_PATH: &str = r"C:\nimbus\runtime\node.exe";
 #[cfg(not(windows))]
 const SYNTHETIC_RUNTIME_EXEC_PATH: &str = "/nimbus/runtime/node";
+
+const DENO_COMPAT_VERSION: &str = "2.9.6";
+const TYPESCRIPT_COMPAT_VERSION: &str = "0.0.0-nimbus";
+
+#[derive(Serialize)]
+pub(in super::super) struct RuntimeVersions {
+    deno: &'static str,
+    v8: &'static str,
+    typescript: &'static str,
+}
 
 #[op2(fast)]
 pub(in super::super) fn op_bootstrap_color_depth(_state: &mut OpState) -> i32 {
@@ -89,6 +100,16 @@ pub(in super::super) fn op_nimbus_runtime_cwd(state: &mut OpState) -> String {
 #[string]
 pub(in super::super) fn op_nimbus_runtime_target_triple() -> String {
     runtime_target_triple()
+}
+
+#[op2]
+#[serde]
+pub(in super::super) fn op_nimbus_runtime_versions() -> RuntimeVersions {
+    RuntimeVersions {
+        deno: DENO_COMPAT_VERSION,
+        v8: deno_core::v8::VERSION_STRING,
+        typescript: TYPESCRIPT_COMPAT_VERSION,
+    }
 }
 
 #[op2(fast)]

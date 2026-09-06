@@ -271,16 +271,6 @@ impl ArmedOneShotDirectFaultInjector {
         })
     }
 
-    pub(super) fn new_on_visit(point: FaultPoint, fail_on_visit: u64) -> Arc<Self> {
-        Arc::new(Self {
-            point,
-            armed: AtomicBool::new(false),
-            failed: AtomicBool::new(false),
-            fail_on_visit,
-            visits_after_arm: std::sync::atomic::AtomicU64::new(0),
-        })
-    }
-
     pub(super) fn arm(&self) {
         self.armed.store(true, Ordering::Release);
     }

@@ -1,57 +1,25 @@
 use super::support::*;
 use super::*;
 
-/// M2 verification: prove that a compiled provider-assigned listener is
-/// allocated from the host-global port range and can be reused after release.
+/// M2 verification: prove that the ingress owner realizes provider-assigned
+/// listeners without the krun backend inventing a published host port.
 ///
 /// Creates a custom image with `EXPOSE 8080/tcp`, then:
 ///   1. provisions sandbox A with an explicit provider-assigned binding
-///   2. verifies it gets an auto-assigned host port from 15000+
-///   3. provisions sandbox B — verifies it gets a different host port
-///   4. stops sandbox A — verifies its port is released
-///   5. provisions sandbox C — verifies it reuses sandbox A's released port
+///   2. verifies the ingress owner records a nonzero host port
+///   3. provisions sandbox B and verifies its host port is distinct
+///   4. stops sandbox A and proves a later sandbox can bind and serve
 #[test]
-#[ignore = "requires a Linux host with KVM, buildah, conmon, and network access"]
-fn krun_backend_m2_auto_port_assignment_and_reuse() {
+#[ignore = "requires a Linux host with KVM, conmon, and a mounted BusyBox rootfs"]
+fn krun_backend_m2_provider_assigned_ingress_binding_and_cleanup() {
     let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
     let bundle_root = base_dir.join("autoport-bundles");
     let state_root = base_dir.join("autoport-state");
 
-    let mut config = smoke_backend_config(bundle_root, state_root.clone());
-    config.published_port_range = 15100..=15105;
-
-    let buildah = buildah_program();
-    run_host_command(&buildah, &["rm", "autoport-fixture"], true);
-    run_host_command(
-        &buildah,
-        &[
-            "from",
-            "--name",
-            "autoport-fixture",
-            "docker://busybox:latest",
-        ],
-        false,
-    );
-    run_host_command(
-        &buildah,
-        &["config", "--port", "8080/tcp", "autoport-fixture"],
-        false,
-    );
-    run_host_command(
-        &buildah,
-        &[
-            "commit",
-            "autoport-fixture",
-            "localhost/nimbus-autoport:latest",
-        ],
-        false,
-    );
-    run_host_command(&buildah, &["rm", "autoport-fixture"], true);
-
-    let backend = KrunSandboxBackend::new(config);
+    let backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root.clone()));
 
     let make_spec = |name: &str| {
-        let mut spec = image_spec(name, "localhost/nimbus-autoport:latest")
+        let mut spec = built_busybox_image_spec(name, &format!("nimbus-{name}"), "EXPOSE 8080/tcp")
             .with_port_binding(http_binding(0, 8080));
         spec.process = busybox_http_process(8080);
         spec
@@ -63,22 +31,19 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     assert!(!provisioned_a.ingress.is_empty());
     let handle_a = provisioned_a.handle;
     let teardown_a = provisioned_a.teardown;
-    let ingress_a = provisioned_a.ingress;
     let cleanup_a = CleanupGuard::new(backend.clone(), teardown_a.clone());
+    let ingress_a = provisioned_a.ingress;
 
     let ready_a = wait_for_ready(&backend, &handle_a.id, Duration::from_secs(30));
     assert_eq!(ready_a.status, SandboxStatus::Ready);
 
     assert!(
-        !ready_a.published_endpoints.is_empty(),
-        "sandbox A should have auto-assigned published endpoints"
+        ready_a.published_endpoints.is_empty(),
+        "the krun backend must not claim the ingress owner's assigned port"
     );
-    let port_a = ready_a.published_endpoints[0].address.port();
-    eprintln!("sandbox A auto-assigned host port: {port_a}");
-    assert!(
-        (15100..=15105).contains(&port_a),
-        "auto-assigned port should be in configured range, got: {port_a}"
-    );
+    let port_a = ingress_a.addresses()[0].port();
+    assert_ne!(port_a, 0, "the ingress owner must record its assigned port");
+    eprintln!("sandbox A ingress-owner assigned host port: {port_a}");
 
     let http_a = wait_for_http_response(port_a, Duration::from_secs(15));
     assert_httpish_response(
@@ -93,14 +58,15 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     assert!(!provisioned_b.ingress.is_empty());
     let handle_b = provisioned_b.handle;
     let teardown_b = provisioned_b.teardown;
-    let _ingress_b = provisioned_b.ingress;
     let cleanup_b = CleanupGuard::new(backend.clone(), teardown_b.clone());
+    let ingress_b = provisioned_b.ingress;
 
     let ready_b = wait_for_ready(&backend, &handle_b.id, Duration::from_secs(30));
     assert_eq!(ready_b.status, SandboxStatus::Ready);
 
-    let port_b = ready_b.published_endpoints[0].address.port();
-    eprintln!("sandbox B auto-assigned host port: {port_b}");
+    assert!(ready_b.published_endpoints.is_empty());
+    let port_b = ingress_b.addresses()[0].port();
+    eprintln!("sandbox B ingress-owner assigned host port: {port_b}");
     assert_ne!(
         port_a, port_b,
         "sandboxes A and B should get distinct host ports"
@@ -114,43 +80,43 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("sandbox B HTTP connectivity on port {port_b}: OK");
 
     // --- Stop A, verify port release ---
+    drop(ingress_a);
     retire_krun(&backend, &teardown_a).expect("exact teardown A should succeed");
     cleanup_a.disarm();
-    drop(ingress_a);
-    eprintln!("sandbox A stopped, port {port_a} should be released");
+    eprintln!("sandbox A stopped and released its ingress listener on port {port_a}");
 
-    // --- Sandbox C: should reuse A's released port ---
+    // --- Sandbox C: a later provider-assigned listener still binds and serves. ---
     let provisioned_c = provision_krun(&backend, &state_root, make_spec("autoport-c"), true)
         .expect("sandbox C should provision through every lifecycle phase");
     assert!(!provisioned_c.ingress.is_empty());
     let handle_c = provisioned_c.handle;
     let teardown_c = provisioned_c.teardown;
-    let _ingress_c = provisioned_c.ingress;
     let cleanup_c = CleanupGuard::new(backend.clone(), teardown_c.clone());
+    let ingress_c = provisioned_c.ingress;
 
     let ready_c = wait_for_ready(&backend, &handle_c.id, Duration::from_secs(30));
     assert_eq!(ready_c.status, SandboxStatus::Ready);
 
-    let port_c = ready_c.published_endpoints[0].address.port();
-    eprintln!("sandbox C auto-assigned host port: {port_c}");
-    assert_eq!(
-        port_a, port_c,
-        "sandbox C should reuse sandbox A's released port {port_a}, got: {port_c}"
-    );
+    assert!(ready_c.published_endpoints.is_empty());
+    let port_c = ingress_c.addresses()[0].port();
+    assert_ne!(port_c, 0, "the ingress owner must record its assigned port");
+    eprintln!("sandbox C ingress-owner assigned host port: {port_c}");
 
     let http_c = wait_for_http_response(port_c, Duration::from_secs(15));
     assert_httpish_response(
         &http_c,
-        &format!("sandbox C should respond via reused port {port_c}"),
+        &format!("sandbox C should respond via provider-assigned port {port_c}"),
     );
-    eprintln!("sandbox C HTTP connectivity on reused port {port_c}: OK");
+    eprintln!("sandbox C HTTP connectivity on provider-assigned port {port_c}: OK");
 
+    drop(ingress_b);
     retire_krun(&backend, &teardown_b).expect("exact teardown B should succeed");
     cleanup_b.disarm();
+    drop(ingress_c);
     retire_krun(&backend, &teardown_c).expect("exact teardown C should succeed");
     cleanup_c.disarm();
 
-    eprintln!("auto-port-assignment: all 3 sandboxes verified, port reuse confirmed");
+    eprintln!("provider-assigned ingress: all 3 sandboxes verified with exact cleanup");
 }
 
 /// M3 verification: prove execute-mode sandboxes remain `Starting` with no
@@ -159,7 +125,7 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
 #[ignore = "requires a Linux host with KVM, conmon, and a mounted rootfs"]
 fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
     let rootfs = env_path("NIMBUS_KRUN_SMOKE_ROOTFS");
-    let host_port: u16 = 18085;
+    let host_port = smoke_host_port(18085);
     let guest_port: u16 = 8085;
 
     let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
@@ -182,8 +148,8 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
     let teardown = provisioned.teardown;
-    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
+    let ingress = provisioned.ingress;
 
     assert_eq!(handle.status, SandboxStatus::Starting);
     assert!(
@@ -230,6 +196,7 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
         "expected HTTP response from readiness-gated sandbox",
     );
 
+    drop(ingress);
     retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }
@@ -241,7 +208,7 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
 #[ignore = "requires a Linux host with KVM, conmon, and a mounted rootfs"]
 fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
     let rootfs = env_path("NIMBUS_KRUN_SMOKE_ROOTFS");
-    let host_port: u16 = 18086;
+    let host_port = smoke_host_port(18086);
     let guest_port: u16 = 8086;
 
     let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
@@ -252,10 +219,15 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
     let liveness_script = format!(
         "/bin/busybox httpd -f -p {guest_port} & \
          HTTPD_PID=$!; \
-         sleep 2; \
-         kill $HTTPD_PID; \
-         sleep 3; \
-         /bin/busybox httpd -f -p {guest_port}"
+         echo nimbus-smoke-liveness:initial:$HTTPD_PID; \
+         /bin/busybox sleep 30; \
+         echo nimbus-smoke-liveness:stopping:$HTTPD_PID; \
+         /bin/busybox kill \"$HTTPD_PID\"; \
+         wait \"$HTTPD_PID\" 2>/dev/null || true; \
+         echo nimbus-smoke-liveness:stopped; \
+         /bin/busybox sleep 10; \
+         echo nimbus-smoke-liveness:restarting; \
+         exec /bin/busybox httpd -f -p {guest_port}"
     );
     let mut spec = rootfs_spec("m3-liveness-gate", rootfs);
     spec.process = SandboxProcessSpec::new([
@@ -271,8 +243,8 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
     let teardown = provisioned.teardown;
-    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
+    let ingress = provisioned.ingress;
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -287,20 +259,23 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
         &initial_http,
         "expected initial HTTP response before liveness regression",
     );
+    let runtime_pidfile =
+        container_state_dir(&state_root, &sandbox_tenant(), &handle.id).join("pidfile");
+    let runtime_pid_before = std::fs::read_to_string(&runtime_pidfile)
+        .expect("the live krun pidfile should be readable")
+        .trim()
+        .to_owned();
 
-    let not_ready_handle = wait_for_status(
-        &backend,
-        &handle.id,
-        SandboxStatus::NotReady,
-        Duration::from_secs(15),
-    );
+    // Provider inspection is read-only. The upper saga retains the earlier
+    // Ready phase and maps either backend Starting or NotReady to unavailable.
+    let unavailable_handle = wait_for_unavailable(&backend, &handle.id, Duration::from_secs(45));
     assert!(
-        not_ready_handle.published_endpoints.is_empty(),
+        unavailable_handle.published_endpoints.is_empty(),
         "execute-mode sandboxes should withdraw published endpoints when liveness probes fail"
     );
     wait_for_http_unreachable(host_port, Duration::from_secs(5));
 
-    let recovered_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));
+    let recovered_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(25));
     assert_eq!(recovered_handle.status, SandboxStatus::Ready);
     assert_eq!(recovered_handle.published_endpoints.len(), 1);
     assert_eq!(
@@ -313,7 +288,16 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
         &recovered_http,
         "expected HTTP response after liveness recovery",
     );
+    let runtime_pid_after = std::fs::read_to_string(&runtime_pidfile)
+        .expect("the recovered krun pidfile should be readable")
+        .trim()
+        .to_owned();
+    assert_eq!(
+        runtime_pid_before, runtime_pid_after,
+        "liveness recovery must not restart the VM runtime"
+    );
 
+    drop(ingress);
     retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }

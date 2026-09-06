@@ -28,9 +28,10 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
+import { ServicesLoaderError } from "../../components/service-loader-errors";
 import { useUiStore } from "../../store/ui-store";
 import { routeLoader, routeLoaderDeps } from "../../test/route-internals";
-import { Route, ServicesLoaderError, ServicesTable } from "./services";
+import { Route, ServicesTable } from "./services";
 
 type LoaderArgs = {
   deps: { activeTenant: string | null };

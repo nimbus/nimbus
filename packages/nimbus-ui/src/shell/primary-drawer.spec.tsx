@@ -45,6 +45,10 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: () => undefined,
 }));
 
+vi.mock("../hooks/use-tenant-list", () => ({
+  useTenantList: () => ({ kind: "loaded", tenants: [], reload: vi.fn() }),
+}));
+
 import { PrimaryDrawer } from "./primary-drawer";
 
 function setPathname(path: string) {

@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 
 use nimbus::Error;
 
-use super::{MachineConfigRecord, MachineLifecycle, MachineStateRecord};
+use super::{MACHINE_API_FORWARD_USER, MachineConfigRecord, MachineLifecycle, MachineStateRecord};
 
 pub(super) fn build_ssh_command(
     config: &MachineConfigRecord,
@@ -137,7 +137,7 @@ fn append_localhost_scp_options(command: &mut Command, identity_path: &Path, ssh
         .arg(ssh_port.to_string());
 }
 
-fn build_localhost_ssh_command(
+pub(super) fn build_guest_management_ssh_command(
     config: &MachineConfigRecord,
     ssh_port: u16,
 ) -> Result<Command, Error> {
@@ -155,12 +155,14 @@ fn build_localhost_ssh_command(
         )));
     }
 
+    // Machine config installs this identity for root, which also owns the
+    // forwarded API channel. User-facing SSH keeps the configured guest user.
     let mut command = Command::new("ssh");
     append_localhost_ssh_options(
         &mut command,
         identity_path,
         ssh_port,
-        &config.guest.ssh_user,
+        MACHINE_API_FORWARD_USER,
     );
     Ok(command)
 }
@@ -170,7 +172,7 @@ pub(super) fn run_guest_ssh_shell_capture(
     ssh_port: u16,
     remote_shell_script: &str,
 ) -> Result<String, Error> {
-    let output = build_localhost_ssh_command(config, ssh_port)?
+    let output = build_guest_management_ssh_command(config, ssh_port)?
         .arg(remote_shell_command(remote_shell_script))
         .stdin(Stdio::null())
         .output()
@@ -202,7 +204,7 @@ pub(super) fn stream_guest_file_over_ssh(
             source_path.display()
         ))
     })?;
-    let status = build_localhost_ssh_command(config, ssh_port)?
+    let status = build_guest_management_ssh_command(config, ssh_port)?
         .arg(remote_shell_command(remote_shell_script))
         .stdin(Stdio::from(input))
         .stdout(Stdio::null())
@@ -226,7 +228,7 @@ pub(super) fn run_silent_ssh_probe(
     config: &MachineConfigRecord,
     ssh_port: u16,
 ) -> Result<(), Error> {
-    let status = build_localhost_ssh_command(config, ssh_port)?
+    let status = build_guest_management_ssh_command(config, ssh_port)?
         .arg("true")
         .stdin(Stdio::null())
         .stdout(Stdio::null())

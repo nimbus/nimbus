@@ -1,5 +1,6 @@
-import { Monitor, Moon, Sun } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
+import { useId } from "react";
 import { cn } from "../lib/cn";
 import {
   PALETTES,
@@ -32,6 +33,7 @@ export function AppearanceSection() {
   const palette = useUiStore((s) => s.palette);
   const setPalette = useUiStore((s) => s.setPalette);
   const resolvedTheme = useUiStore((s) => s.theme);
+  const paletteGroupName = useId();
 
   return (
     <section
@@ -74,21 +76,28 @@ export function AppearanceSection() {
             {PALETTES.map((entry) => {
               const active = palette === entry.id;
               return (
-                <button
+                <label
                   key={entry.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => setPalette(entry.id)}
-                  data-testid={`appearance-palette-${entry.id}`}
                   data-active={active ? "true" : "false"}
                   className={cn(
-                    "group flex flex-col items-stretch gap-2 rounded-md border p-3 text-left transition-colors",
+                    "group relative flex cursor-pointer flex-col items-stretch gap-2 rounded-md border p-3 text-left transition-colors",
                     active
                       ? "border-brand bg-surface-2"
                       : "border-app hover:bg-surface-2",
                   )}
                 >
+                  <input
+                    type="radio"
+                    name={paletteGroupName}
+                    value={entry.id}
+                    checked={active}
+                    aria-checked={active}
+                    aria-label={entry.label}
+                    onChange={() => setPalette(entry.id)}
+                    data-testid={`appearance-palette-${entry.id}`}
+                    data-active={active ? "true" : "false"}
+                    className="absolute inset-0 z-10 m-0 h-full w-full cursor-pointer appearance-none rounded-md border-0 bg-transparent p-0"
+                  />
                   <PaletteSwatchRow
                     palette={entry.id}
                     resolvedTheme={resolvedTheme}
@@ -108,7 +117,7 @@ export function AppearanceSection() {
                     ) : null}
                   </div>
                   <p className="text-xs text-muted">{entry.description}</p>
-                </button>
+                </label>
               );
             })}
           </div>

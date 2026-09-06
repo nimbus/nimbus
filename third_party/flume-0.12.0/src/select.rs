@@ -2,13 +2,17 @@
 
 use crate::*;
 use spin1::Mutex as Spinlock;
-use std::{any::Any, marker::PhantomData};
+use std::{
+    any::Any,
+    marker::PhantomData,
+    thread::{self, Thread},
+};
 
 // A unique token corresponding to an event in a selector
 type Token = usize;
 
 struct SelectSignal(
-    thread::Thread,
+    Thread,
     Token,
     AtomicBool,
     Arc<Spinlock<VecDeque<Token>>>,

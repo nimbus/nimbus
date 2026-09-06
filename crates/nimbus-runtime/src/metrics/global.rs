@@ -40,25 +40,11 @@ pub(super) struct RuntimeGlobalCounters {
     bundle_module_load_nanos_total: AtomicU64,
     bundle_evaluations: AtomicU64,
     bundle_evaluation_nanos_total: AtomicU64,
-    fresh_realm_creates: AtomicU64,
-    fresh_realm_create_nanos_total: AtomicU64,
-    fresh_realm_bootstrap_installs: AtomicU64,
-    fresh_realm_bootstrap_install_nanos_total: AtomicU64,
-    fresh_realm_bootstrap_finalizes: AtomicU64,
-    fresh_realm_bootstrap_finalize_nanos_total: AtomicU64,
-    fresh_realm_bootstrap_resets: AtomicU64,
-    fresh_realm_bootstrap_reset_nanos_total: AtomicU64,
-    fresh_realm_invocation_scripts: AtomicU64,
-    fresh_realm_invocation_script_nanos_total: AtomicU64,
-    fresh_realm_promise_resolves: AtomicU64,
-    fresh_realm_promise_resolve_nanos_total: AtomicU64,
-    fresh_realm_deserializations: AtomicU64,
-    fresh_realm_deserialization_nanos_total: AtomicU64,
-    fresh_realm_destroys: AtomicU64,
-    fresh_realm_destroy_nanos_total: AtomicU64,
     runtime_pool_hits: AtomicU64,
     runtime_pool_misses: AtomicU64,
     runtime_pool_replacements: AtomicU64,
+    v8_startup_snapshot_runtime_constructions: AtomicU64,
+    v8_unsnapshotted_runtime_constructions: AtomicU64,
     started_invocations: AtomicU64,
     completed_invocations: AtomicU64,
     queue_wait_nanos_total: AtomicU64,
@@ -148,25 +134,11 @@ pub(super) struct RuntimeGlobalCountersSnapshot {
     pub bundle_module_load_nanos_total: u64,
     pub bundle_evaluations: u64,
     pub bundle_evaluation_nanos_total: u64,
-    pub fresh_realm_creates: u64,
-    pub fresh_realm_create_nanos_total: u64,
-    pub fresh_realm_bootstrap_installs: u64,
-    pub fresh_realm_bootstrap_install_nanos_total: u64,
-    pub fresh_realm_bootstrap_finalizes: u64,
-    pub fresh_realm_bootstrap_finalize_nanos_total: u64,
-    pub fresh_realm_bootstrap_resets: u64,
-    pub fresh_realm_bootstrap_reset_nanos_total: u64,
-    pub fresh_realm_invocation_scripts: u64,
-    pub fresh_realm_invocation_script_nanos_total: u64,
-    pub fresh_realm_promise_resolves: u64,
-    pub fresh_realm_promise_resolve_nanos_total: u64,
-    pub fresh_realm_deserializations: u64,
-    pub fresh_realm_deserialization_nanos_total: u64,
-    pub fresh_realm_destroys: u64,
-    pub fresh_realm_destroy_nanos_total: u64,
     pub runtime_pool_hits: u64,
     pub runtime_pool_misses: u64,
     pub runtime_pool_replacements: u64,
+    pub v8_startup_snapshot_runtime_constructions: u64,
+    pub v8_unsnapshotted_runtime_constructions: u64,
     pub started_invocations: u64,
     pub completed_invocations: u64,
     pub queue_wait_nanos_total: u64,
@@ -325,62 +297,6 @@ impl RuntimeGlobalCounters {
             .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
     }
 
-    pub(super) fn record_fresh_realm_create(&self, duration: Duration) {
-        self.fresh_realm_creates
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_create_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_fresh_realm_bootstrap_install(&self, duration: Duration) {
-        self.fresh_realm_bootstrap_installs
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_bootstrap_install_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_fresh_realm_bootstrap_finalize(&self, duration: Duration) {
-        self.fresh_realm_bootstrap_finalizes
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_bootstrap_finalize_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_fresh_realm_bootstrap_reset(&self, duration: Duration) {
-        self.fresh_realm_bootstrap_resets
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_bootstrap_reset_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_fresh_realm_invocation_script(&self, duration: Duration) {
-        self.fresh_realm_invocation_scripts
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_invocation_script_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
-        self.fresh_realm_promise_resolves
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_promise_resolve_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_fresh_realm_deserialization(&self, duration: Duration) {
-        self.fresh_realm_deserializations
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_deserialization_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
-    pub(super) fn record_fresh_realm_destroy(&self, duration: Duration) {
-        self.fresh_realm_destroys
-            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
-        self.fresh_realm_destroy_nanos_total
-            .fetch_add(duration_to_nanos(duration), DIAGNOSTIC_COUNTER_ORDERING);
-    }
-
     pub(super) fn record_runtime_pool_hit(&self) {
         self.runtime_pool_hits
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
@@ -393,6 +309,16 @@ impl RuntimeGlobalCounters {
 
     pub(super) fn record_runtime_pool_replacement(&self) {
         self.runtime_pool_replacements
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_v8_startup_snapshot_runtime_construction(&self) {
+        self.v8_startup_snapshot_runtime_constructions
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(super) fn record_v8_unsnapshotted_runtime_construction(&self) {
+        self.v8_unsnapshotted_runtime_constructions
             .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
@@ -748,54 +674,16 @@ impl RuntimeGlobalCounters {
             bundle_evaluation_nanos_total: self
                 .bundle_evaluation_nanos_total
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_creates: self.fresh_realm_creates.load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_create_nanos_total: self
-                .fresh_realm_create_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_bootstrap_installs: self
-                .fresh_realm_bootstrap_installs
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_bootstrap_install_nanos_total: self
-                .fresh_realm_bootstrap_install_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_bootstrap_finalizes: self
-                .fresh_realm_bootstrap_finalizes
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_bootstrap_finalize_nanos_total: self
-                .fresh_realm_bootstrap_finalize_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_bootstrap_resets: self
-                .fresh_realm_bootstrap_resets
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_bootstrap_reset_nanos_total: self
-                .fresh_realm_bootstrap_reset_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_invocation_scripts: self
-                .fresh_realm_invocation_scripts
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_invocation_script_nanos_total: self
-                .fresh_realm_invocation_script_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_promise_resolves: self
-                .fresh_realm_promise_resolves
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_promise_resolve_nanos_total: self
-                .fresh_realm_promise_resolve_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_deserializations: self
-                .fresh_realm_deserializations
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_deserialization_nanos_total: self
-                .fresh_realm_deserialization_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_destroys: self.fresh_realm_destroys.load(DIAGNOSTIC_COUNTER_ORDERING),
-            fresh_realm_destroy_nanos_total: self
-                .fresh_realm_destroy_nanos_total
-                .load(DIAGNOSTIC_COUNTER_ORDERING),
             runtime_pool_hits: self.runtime_pool_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
             runtime_pool_misses: self.runtime_pool_misses.load(DIAGNOSTIC_COUNTER_ORDERING),
             runtime_pool_replacements: self
                 .runtime_pool_replacements
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            v8_startup_snapshot_runtime_constructions: self
+                .v8_startup_snapshot_runtime_constructions
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            v8_unsnapshotted_runtime_constructions: self
+                .v8_unsnapshotted_runtime_constructions
                 .load(DIAGNOSTIC_COUNTER_ORDERING),
             started_invocations: self.started_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
             completed_invocations: self.completed_invocations.load(DIAGNOSTIC_COUNTER_ORDERING),
