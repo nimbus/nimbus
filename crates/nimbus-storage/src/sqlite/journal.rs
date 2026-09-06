@@ -14,7 +14,10 @@ use crate::sqlite::document_versions::{
 use crate::sqlite::index_versions::{
     record_index_versions_for_events_in_conn, record_index_versions_for_writes_in_conn,
 };
-use crate::store::{TRIGGER_DELIVERY_CURSOR_KEY, describe_materialized_position};
+use crate::store::{
+    TRIGGER_DELIVERY_CURSOR_KEY, snapshot_document_anchor_writes,
+    validate_point_in_time_archive_materialization,
+};
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
@@ -77,74 +80,25 @@ impl SqliteTenantStore {
         snapshot: &MaterializedJournalSnapshot,
     ) -> Result<()> {
         snapshot.validate()?;
-        self.ensure_materialized_journal_restore_target_is_empty()?;
         let _verification_update = self.materialized_verification.begin_update()?;
 
         let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
-        for identity in &snapshot.table_identities {
-            ensure_table_identity_in_conn(&conn, identity)?;
+        let staged = (|| -> Result<()> {
+            ensure_materialized_journal_restore_target_is_empty_in_conn(&conn)?;
+            restore_materialized_journal_snapshot_in_conn(self, &conn, snapshot)
+        })();
+        if let Err(error) = staged {
+            rollback_and_release_writer_connection(self, conn);
+            return Err(error);
         }
-        for table_schema in snapshot.schema.tables.values() {
-            conn.execute(
-                "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)",
-                params![table_schema.table.as_str(), serialize_json(table_schema)?],
-            )
-            .map_err(map_sqlite_error)?;
-        }
-        for document in &snapshot.documents {
-            let table_id = snapshot.default_table_id(&document.table)?;
-            cached_execute(
-                &conn,
-                "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    table_id.as_str(),
-                    document.id.to_string(),
-                    serialize_document_fields(document)?,
-                    serialize_document_typed_fields(document)?,
-                    document.creation_time.0,
-                    document.update_time.0,
-                ],
-            )?;
-        }
-        for execution_id in &snapshot.scheduled_execution_ids {
-            conn.execute(
-                "INSERT INTO scheduled_job_executions (execution_id) VALUES (?1)",
-                params![execution_id],
-            )
-            .map_err(map_sqlite_error)?;
-        }
-        for binding in &snapshot.resource_path_bindings {
-            upsert_resource_path_binding_in_conn(
-                &conn,
-                binding,
-                #[cfg(test)]
-                &self.path,
-            )?;
-        }
-        for table_schema in snapshot.schema.tables.values() {
-            create_sqlite_indexes_for_table_schema(&conn, table_schema)?;
-        }
-        put_metadata_in_conn(
-            &conn,
-            NEXT_SEQUENCE_KEY,
-            &encode_u64(snapshot.applied_sequence.0.saturating_add(1)),
-        )?;
-        put_metadata_in_conn(
-            &conn,
-            APPLIED_SEQUENCE_KEY,
-            &encode_u64(snapshot.applied_sequence.0),
-        )?;
-        put_metadata_in_conn(
-            &conn,
-            TRIGGER_DELIVERY_CURSOR_KEY,
-            &encode_u64(snapshot.trigger_delivery_cursor.materialized_through.0),
-        )?;
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
-        conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        if let Err(error) = conn.execute_batch("COMMIT").map_err(map_sqlite_error) {
+            rollback_and_release_writer_connection(self, conn);
+            return Err(error);
+        }
         #[cfg(any(test, feature = "test-hooks"))]
         observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         self.release_writer_connection(conn);
@@ -245,30 +199,125 @@ impl SqliteTenantStore {
         &self,
         archive: &PointInTimeRestoreArchive,
     ) -> Result<JournalProgress> {
-        archive.validate()?;
-        let progress = self.rebuild_materialized_journal_from_snapshot(
-            &archive.base_snapshot,
-            &archive.journal_tail,
-            Some(archive.target_sequence),
-        )?;
+        let checkpoint = validate_point_in_time_archive_materialization(archive)?;
+        let _verification_update = self.materialized_verification.begin_update()?;
+        let conn = self.acquire_writer_connection()?;
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(map_sqlite_error)?;
+
+        let staged = (|| -> Result<()> {
+            ensure_materialized_journal_restore_target_is_empty_in_conn(&conn)?;
+            restore_materialized_journal_snapshot_in_conn(self, &conn, &archive.base_snapshot)?;
+
+            let anchor_writes = snapshot_document_anchor_writes(&archive.base_snapshot)?;
+            let mut apply_context = SqliteBatchApplyContext::new();
+            record_document_versions_for_writes_in_conn(
+                &conn,
+                checkpoint.sequence(),
+                checkpoint.checkpoint_timestamp,
+                &anchor_writes,
+                &mut apply_context,
+                #[cfg(test)]
+                &self.path,
+            )?;
+            record_index_versions_for_writes_in_conn(
+                &conn,
+                checkpoint.sequence(),
+                &anchor_writes,
+                &mut apply_context,
+                #[cfg(test)]
+                &self.path,
+            )?;
+
+            for record in &archive.journal_tail {
+                cached_execute(
+                    &conn,
+                    "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
+                    params![record.sequence.0, serialize_tenant_event_record(record)?],
+                )?;
+            }
+            for record in &archive.journal_tail {
+                apply_durable_record_in_conn(
+                    &conn,
+                    record,
+                    &mut apply_context,
+                    #[cfg(test)]
+                    &self.path,
+                )?;
+            }
+            put_metadata_in_conn(
+                &conn,
+                NEXT_SEQUENCE_KEY,
+                &encode_u64(archive.target_sequence.0.saturating_add(1)),
+            )?;
+            put_metadata_in_conn(
+                &conn,
+                APPLIED_SEQUENCE_KEY,
+                &encode_u64(archive.target_sequence.0),
+            )?;
+            super::stage_imported_retention_checkpoint_in_conn(&conn, &checkpoint)?;
+            self.fault_injector.check_durable_records(
+                FaultPoint::JournalAppendBeforeDurableFlush,
+                &archive.journal_tail,
+            )?;
+            self.fault_injector
+                .check(FaultPoint::RetentionCheckpointBeforeCommit)?;
+            self.fault_injector.check_durable_records(
+                FaultPoint::StorageCommitBeforeVisibility,
+                &archive.journal_tail,
+            )?;
+            Ok(())
+        })();
+
+        if let Err(error) = staged {
+            rollback_and_release_writer_connection(self, conn);
+            return Err(error);
+        }
+
+        let floors = crate::RetentionReadFloors::new(
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+        );
+        #[cfg(any(test, feature = "test-hooks"))]
+        let commit_started = std::time::Instant::now();
+        if let Err(error) = self
+            .retention_floor
+            .publish_read_floors_with_commit(floors, || {
+                conn.execute_batch("COMMIT").map_err(map_sqlite_error)
+            })
+        {
+            rollback_and_release_writer_connection(self, conn);
+            return Err(error);
+        }
+        #[cfg(any(test, feature = "test-hooks"))]
+        observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
+        let schema_cache_result =
+            load_schema_from_conn(&conn).and_then(|schema| self.replace_cached_schema(schema));
+        self.release_writer_connection(conn);
+        schema_cache_result?;
         let restored_position = self
             .export_materialized_journal_snapshot()?
             .materialized_position()?;
-        if restored_position != archive.target_position {
-            return Err(Error::storage(
-                nimbus_core::StorageErrorKind::Corruption,
-                format!(
-                    "point-in-time restore position mismatch: restored {} expected {}",
-                    describe_materialized_position(&restored_position),
-                    describe_materialized_position(&archive.target_position)
-                ),
-            ));
-        }
-        self.install_imported_retention_checkpoint(&MaterializedRetentionCheckpoint::new(
-            archive.base_snapshot.clone(),
-            archive.base_checkpoint_timestamp,
-        )?)?;
-        Ok(progress)
+        crate::store::validate_restored_point_in_time_position(
+            &restored_position,
+            &archive.target_position,
+        )?;
+
+        self.fault_injector.check_durable_records(
+            FaultPoint::JournalFlushBeforeVisibility,
+            &archive.journal_tail,
+        )?;
+        self.fault_injector.check_durable_records(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &archive.journal_tail,
+        )?;
+        self.fault_injector
+            .check(FaultPoint::RetentionCheckpointAfterCommit)?;
+        Ok(JournalProgress {
+            durable_head: archive.target_sequence,
+            applied_head: archive.target_sequence,
+        })
     }
 
     pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
@@ -421,25 +470,137 @@ impl SqliteTenantStore {
         self.replay_durable_records_batch(&pending)?;
         self.journal_progress()
     }
+}
 
-    fn ensure_materialized_journal_restore_target_is_empty(&self) -> Result<()> {
-        let snapshot = self.read_snapshot()?;
-        let progress = snapshot.journal_progress()?;
-        if progress.durable_head.0 != 0
-            || progress.applied_head.0 != 0
-            || !snapshot.documents()?.is_empty()
-            || !snapshot.load_schema()?.tables.is_empty()
-            || !snapshot.table_identities()?.is_empty()
-            || !snapshot.scheduled_execution_ids()?.is_empty()
-            || !snapshot.scan_resource_path_bindings()?.is_empty()
-            || self.trigger_delivery_cursor()? != TriggerDeliveryCursor::default()
-        {
-            return Err(Error::Internal(
-                "materialized journal snapshot restore requires an empty tenant store".to_string(),
-            ));
-        }
-        Ok(())
+fn rollback_and_release_writer_connection(store: &SqliteTenantStore, conn: Connection) {
+    // Return the resident connection only after a clean rollback. A failed
+    // rollback drops it so the next writer opens a known-clean connection.
+    if conn.execute_batch("ROLLBACK").is_ok() {
+        store.release_writer_connection(conn);
     }
+}
+
+fn ensure_materialized_journal_restore_target_is_empty_in_conn(conn: &Connection) -> Result<()> {
+    let tables_have_rows = conn
+        .query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM documents
+                 UNION ALL SELECT 1 FROM document_versions
+                 UNION ALL SELECT 1 FROM index_versions
+                 UNION ALL SELECT 1 FROM table_catalog
+                 UNION ALL SELECT 1 FROM schemas
+                 UNION ALL SELECT 1 FROM commit_log
+                 UNION ALL SELECT 1 FROM scheduled_job_executions
+                 UNION ALL SELECT 1 FROM resource_path_bindings
+             )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(map_sqlite_error)?
+        != 0;
+    let metadata_u64 = |key| -> Result<Option<u64>> {
+        conn.query_row(
+            "SELECT value_blob FROM metadata WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .map(|bytes| decode_u64(bytes.as_slice()))
+        .transpose()
+    };
+    let journal_metadata_is_nondefault = metadata_u64(APPLIED_SEQUENCE_KEY)?.unwrap_or(0) != 0
+        || metadata_u64(NEXT_SEQUENCE_KEY)?.is_some_and(|next| next != 1)
+        || metadata_u64(TRIGGER_DELIVERY_CURSOR_KEY)?.unwrap_or(0) != 0;
+    let retention_metadata_exists = conn
+        .query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM metadata
+                 WHERE key IN (?1, ?2, ?3, ?4)
+             )",
+            params![
+                crate::retention::RETENTION_CHECKPOINT_METADATA_KEY,
+                crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY,
+                crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY,
+                crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(map_sqlite_error)?
+        != 0;
+    if tables_have_rows || journal_metadata_is_nondefault || retention_metadata_exists {
+        return Err(Error::Internal(
+            "materialized journal snapshot restore requires an empty tenant store".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn restore_materialized_journal_snapshot_in_conn(
+    _store: &SqliteTenantStore,
+    conn: &Connection,
+    snapshot: &MaterializedJournalSnapshot,
+) -> Result<()> {
+    for identity in &snapshot.table_identities {
+        ensure_table_identity_in_conn(conn, identity)?;
+    }
+    for table_schema in snapshot.schema.tables.values() {
+        conn.execute(
+            "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)",
+            params![table_schema.table.as_str(), serialize_json(table_schema)?],
+        )
+        .map_err(map_sqlite_error)?;
+    }
+    for document in &snapshot.documents {
+        let table_id = snapshot.default_table_id(&document.table)?;
+        cached_execute(
+            conn,
+            "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                table_id.as_str(),
+                document.id.to_string(),
+                serialize_document_fields(document)?,
+                serialize_document_typed_fields(document)?,
+                document.creation_time.0,
+                document.update_time.0,
+            ],
+        )?;
+    }
+    for execution_id in &snapshot.scheduled_execution_ids {
+        conn.execute(
+            "INSERT INTO scheduled_job_executions (execution_id) VALUES (?1)",
+            params![execution_id],
+        )
+        .map_err(map_sqlite_error)?;
+    }
+    for binding in &snapshot.resource_path_bindings {
+        upsert_resource_path_binding_in_conn(
+            conn,
+            binding,
+            #[cfg(test)]
+            &_store.path,
+        )?;
+    }
+    for table_schema in snapshot.schema.tables.values() {
+        create_sqlite_indexes_for_table_schema(conn, table_schema)?;
+    }
+    put_metadata_in_conn(
+        conn,
+        NEXT_SEQUENCE_KEY,
+        &encode_u64(snapshot.applied_sequence.0.saturating_add(1)),
+    )?;
+    put_metadata_in_conn(
+        conn,
+        APPLIED_SEQUENCE_KEY,
+        &encode_u64(snapshot.applied_sequence.0),
+    )?;
+    put_metadata_in_conn(
+        conn,
+        TRIGGER_DELIVERY_CURSOR_KEY,
+        &encode_u64(snapshot.trigger_delivery_cursor.materialized_through.0),
+    )?;
+    Ok(())
 }
 
 fn durable_record_changes_schema_cache(record: &TenantEventRecord) -> bool {

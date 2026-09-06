@@ -206,6 +206,9 @@ xdg_state_home="${proof_root}/state"
 xdg_data_home="${proof_root}/data"
 xdg_cache_home="${proof_root}/cache"
 runtime_root="${proof_root}/runtime"
+network_state_root="${proof_root}/network"
+engine_data_root="${proof_root}/engine-data"
+engine_control_root="${proof_root}/engine-control"
 
 mkdir -p \
   "${home_dir}" \
@@ -213,7 +216,10 @@ mkdir -p \
   "${xdg_state_home}" \
   "${xdg_data_home}" \
   "${xdg_cache_home}" \
-  "${runtime_root}"
+  "${runtime_root}" \
+  "${network_state_root}" \
+  "${engine_data_root}" \
+  "${engine_control_root}"
 
 summary_file="${output_dir}/summary.txt"
 : > "${summary_file}"
@@ -231,6 +237,9 @@ print_line "xdg.state_home" "${xdg_state_home}"
 print_line "xdg.data_home" "${xdg_data_home}"
 print_line "xdg.cache_home" "${xdg_cache_home}"
 print_line "runtime.root" "${runtime_root}"
+print_line "network.state_root" "${network_state_root}"
+print_line "engine.data_root" "${engine_data_root}"
+print_line "engine.control_root" "${engine_control_root}"
 print_line "cleanup.keep_machine" "${keep_machine}"
 
 base_cmd=(
@@ -241,6 +250,9 @@ base_cmd=(
   "XDG_DATA_HOME=${xdg_data_home}"
   "XDG_CACHE_HOME=${xdg_cache_home}"
   "NIMBUS_MACHINE_RUNTIME_ROOT=${runtime_root}"
+  "NIMBUS_NETWORK_STATE_DIR=${network_state_root}"
+  "NIMBUS_DATA_DIR=${engine_data_root}"
+  "NIMBUS_CONTROL_DATA_DIR=${engine_control_root}"
 )
 
 if [[ -n "${guest_binary_override}" ]]; then

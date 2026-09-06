@@ -296,7 +296,14 @@ fn fresh_process_krun_network_contenders_publish_one_result_per_operation() {
 #[test]
 fn fresh_process_interrupted_adoption_converges_and_replays_without_writes() {
     for (label, cut) in [
-        ("reserved", InterruptedAdoptionAllocatorCut::Reserved),
+        (
+            "launch-reserved",
+            InterruptedAdoptionAllocatorCut::LaunchReserved,
+        ),
+        (
+            "adoption-intent-reserved",
+            InterruptedAdoptionAllocatorCut::AdoptionIntentReserved,
+        ),
         ("adopted", InterruptedAdoptionAllocatorCut::Adopted),
         (
             "reservation-cleanup-pending",

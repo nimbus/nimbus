@@ -3,13 +3,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_network::{NetworkCapabilityRegistry, NetworkProviderId};
 use nimbus_workloads::{
-    ProposedWorkloadTeardownTransition, WorkloadProvisionSourceEvidence,
-    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceResourceVersion, WorkloadSagaPhase,
-    WorkloadTeardownDecision, WorkloadTeardownStep,
+    ProposedWorkloadTeardownTransition, WorkloadActivationIntent, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceResourceVersion,
+    WorkloadPublicationIntent, WorkloadSagaPhase, WorkloadTeardownDecision, WorkloadTeardownStep,
 };
 
 use super::*;
-use crate::workload_saga::recovery::tests::{teardown_record, teardown_success_evidence};
+use crate::workload_saga::recovery::tests::{
+    begin_teardown, finish_teardown, provision_record, running_intent, teardown_record,
+    teardown_success_evidence,
+};
 use crate::workload_saga::teardown_decision::materialize_teardown_candidate;
 use crate::workload_saga::teardown_test_support::{
     DurableTeardownStore, RecordingTeardownProvider, StaticSourceAuthority,
@@ -17,13 +20,45 @@ use crate::workload_saga::teardown_test_support::{
 };
 use crate::workload_saga::{
     ConfirmedWorkloadTeardownCommand, FinalIngressWithdrawalCapability,
-    IngressTeardownCapabilities, WorkloadSagaCoordinator, WorkloadTeardownCapabilityFuture,
-    WorkloadTeardownCapabilityRegistry, WorkloadTeardownExecuteOutcome,
-    WorkloadTeardownProviderObservation, WorkloadTeardownProviderOutcome,
+    IngressTeardownCapabilities, WorkloadProvisionSourceFuture, WorkloadSagaCoordinator,
+    WorkloadTeardownCapabilityFuture, WorkloadTeardownCapabilityRegistry,
+    WorkloadTeardownExecuteOutcome, WorkloadTeardownProviderObservation,
+    WorkloadTeardownProviderOutcome,
 };
+
+struct MissingSourceAuthority;
+
+impl WorkloadProvisionSourceAuthority for MissingSourceAuthority {
+    fn current_source<'a>(
+        &'a self,
+        _key: &'a nimbus_workloads::WorkloadSagaKey,
+        _identity: &'a nimbus_workloads::WorkloadProvisionSourceIdentity,
+    ) -> WorkloadProvisionSourceFuture<'a> {
+        Box::pin(async { Err(WorkloadProvisionSourceAuthorityError::NotFound) })
+    }
+}
 
 fn initial(label: &str) -> nimbus_workloads::WorkloadSagaRecord {
     teardown_record(label, WorkloadSagaPhase::WithdrawalCommitted)
+}
+
+fn running_successor(label: &str) -> nimbus_workloads::WorkloadSagaRecord {
+    let observed = provision_record(
+        label,
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let successor = running_intent(
+        label,
+        2,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    finish_teardown(
+        begin_teardown(&observed, successor),
+        WorkloadSagaPhase::WithdrawalCommitted,
+    )
 }
 
 async fn confirmed_execute(
@@ -77,6 +112,46 @@ async fn execute_reauthenticates_source_and_provider_reports() {
 
     assert!(result.is_some());
     assert_eq!(provider.calls().len(), 1);
+}
+
+#[tokio::test]
+async fn durable_stopped_successor_allows_cleanup_after_process_local_source_loss() {
+    let record = initial("teardown-dispatch-missing-source");
+    let confirmed = confirmed_execute(&record).await;
+    let provider = RecordingTeardownProvider::new(TeardownProviderBehavior::Succeed);
+    let dispatcher = WorkloadTeardownDispatcher::new(
+        Arc::new(MissingSourceAuthority),
+        provider_reports(),
+        Arc::new(teardown_capabilities(provider.clone())),
+    );
+
+    let result = dispatcher
+        .dispatch_confirmed(&confirmed)
+        .await
+        .expect("durable stopped successor should retain exact cleanup authority");
+
+    assert!(result.is_some());
+    assert_eq!(provider.calls().len(), 1);
+}
+
+#[tokio::test]
+async fn missing_source_with_running_successor_makes_zero_cleanup_calls() {
+    let record = running_successor("teardown-dispatch-missing-running-source");
+    let confirmed = confirmed_execute(&record).await;
+    let provider = RecordingTeardownProvider::new(TeardownProviderBehavior::Succeed);
+    let dispatcher = WorkloadTeardownDispatcher::new(
+        Arc::new(MissingSourceAuthority),
+        provider_reports(),
+        Arc::new(teardown_capabilities(provider.clone())),
+    );
+
+    assert!(matches!(
+        dispatcher.dispatch_confirmed(&confirmed).await,
+        Err(WorkloadTeardownDispatchError::Source(
+            WorkloadProvisionSourceAuthorityError::NotFound
+        ))
+    ));
+    assert!(provider.calls().is_empty());
 }
 
 #[tokio::test]

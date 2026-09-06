@@ -114,7 +114,7 @@ pub(crate) fn build_bundle_config(
     validate_resource_limits(&spec.resources)?;
     let compiled_egress = spec
         .egress
-        .compile()
+        .compile_for_supervisor_proxy()
         .map_err(|message| SandboxError::InvalidSpec { message })?;
     let egress_enforcement =
         EgressEnforcementPlan::supervisor_proxy(&compiled_egress, EgressReloadPolicy::LiveReload);
@@ -704,6 +704,27 @@ mod tests {
             error.to_string().contains("wildcards"),
             "bundle generation should expose the invalid egress policy error: {error}"
         );
+    }
+
+    #[test]
+    fn bundle_config_rejects_runtime_only_websocket_egress_policy() {
+        let spec = sample_spec().with_egress_policy(EgressPolicy::new([EgressRule::new(
+            "runtime-websocket",
+            EgressProtocol::Wss,
+            "events.example.com",
+            443,
+        )]));
+
+        let error = build_bundle_config(
+            "db",
+            &spec,
+            None,
+            None,
+            &crate::backends::container::bundle::ContainerBundleOptions::default(),
+        )
+        .expect_err("container bundles must reject ws/wss policy they cannot observe");
+
+        assert!(error.to_string().contains("observable runtime gateway"));
     }
 
     #[test]

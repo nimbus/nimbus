@@ -11,7 +11,7 @@ the command authorities.
 - Node.js 22 or 24 with npm for JavaScript work and Rust targets that embed
   the operator UI or JavaScript packages. These are the CI-supported Node
   lines. Do not use an unverified newer Node release for acceptance evidence.
-- `cargo-nextest` 0.9.138 for nextest-backed repository lanes.
+- `cargo-nextest` 0.9.143 for nextest-backed repository lanes.
 - Bash, Make, Git, and the ordinary native build tools for the host.
 
 Run `npm ci` after a fresh checkout or a lockfile change. Do not hand-edit

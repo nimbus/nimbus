@@ -106,14 +106,24 @@ grep -F "drill.probe_http_cmd=bash ${probe_http_script}" "${output_file}" >/dev/
 grep -F "drill.wait_for_http_cmd=bash ${wait_for_http_script}" "${output_file}" >/dev/null
 
 grep -F "/usr/libexec/nimbus/crun run --bundle ${bundle_dir} nimbus-http" "${command_file}" >/dev/null
+grep -F 'exec sudo -n -- "$0" "$@"' "${command_file}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun delete nimbus-http" "${command_file}" >/dev/null
 grep -F "printf '%s\\n' \"\${runtime_pid}\" > ${runtime_pidfile}" "${command_file}" >/dev/null
+grep -F 'if wait "${runtime_pid}"; then' "${command_file}" >/dev/null
 grep -F "printf '%s\\n' \"\${status}\" > ${exit_status_file}" "${command_file}" >/dev/null
-grep -F "bash ${command_file} &" "${start_script}" >/dev/null
+grep -F "bash ${command_file} </dev/null >>${stdout_log} 2>>${stderr_log} &" "${start_script}" >/dev/null
+grep -F 'exec sudo -n -- "$0" "$@"' "${start_script}" >/dev/null
+grep -F 'printf '\''launcher.pid=%s\n'\'' "${launcher_pid}"' "${start_script}" >/dev/null
 grep -F "exec curl -fsS ${probe_url}" "${probe_http_script}" >/dev/null
 grep -F "curl -fsS ${probe_url}" "${wait_for_http_script}" >/dev/null
 grep -F "cat ${exit_status_file}" "${show_exit_status_script}" >/dev/null
-grep -F "kill -TERM \"\${runtime_pid}\"" "${graceful_stop_script}" >/dev/null
-grep -F "kill -KILL \"\${runtime_pid}\"" "${force_stop_script}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun kill nimbus-http TERM" "${graceful_stop_script}" >/dev/null
+grep -F 'exec sudo -n -- "$0" "$@"' "${graceful_stop_script}" >/dev/null
+grep -F 'stop.escalation=KILL' "${graceful_stop_script}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun kill nimbus-http KILL" "${graceful_stop_script}" >/dev/null
+grep -F 'stop.result=forced' "${graceful_stop_script}" >/dev/null
+grep -F "/usr/libexec/nimbus/crun kill nimbus-http KILL" "${force_stop_script}" >/dev/null
+grep -F 'exec sudo -n -- "$0" "$@"' "${force_stop_script}" >/dev/null
 grep -F "PROBE_URL=${probe_url}" "${metadata_file}" >/dev/null
 
 echo "verified: direct krun drill helper generated ${command_file}"

@@ -196,6 +196,8 @@ fn walk_rust_sources(directory: &Path, files: &mut Vec<PathBuf>) -> std::io::Res
 fn is_convention_exempt(path: &str) -> bool {
     path == "crates/nimbus-testing"
         || path.starts_with("crates/nimbus-testing/")
+        || path == "crates/nimbus-process-harness"
+        || path.starts_with("crates/nimbus-process-harness/")
         || path.ends_with("/tests.rs")
         || path
             .split('/')

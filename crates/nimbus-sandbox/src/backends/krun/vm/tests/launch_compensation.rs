@@ -1333,13 +1333,15 @@ fn unpublished_manifest_compensation_retains_original_lifetime_through_cleanup()
 }
 
 #[test]
-fn vm_config_materialization_failure_compensates_unstarted_launch_batch() {
+fn vm_config_removal_failure_compensates_unstarted_launch_batch() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
     let state_root = config.network_state_root.clone();
     let backend = KrunSandboxBackend::new(config);
-    let missing_rootfs = temp_dir.path().join("missing-rootfs");
-    let spec = sample_spec_with_rootfs(&missing_rootfs).with_resource_limits(
+    let rootfs = temp_dir.path().join("rootfs");
+    fs::create_dir_all(rootfs.join(".krun_vm.json"))
+        .expect("an unremovable directory should occupy the sidecar path");
+    let spec = sample_spec_with_rootfs(&rootfs).with_resource_limits(
         SandboxResourceLimits::default()
             .with_cpu_count(2)
             .with_memory_limit_bytes(256 * 1024 * 1024),
@@ -1358,10 +1360,12 @@ fn vm_config_materialization_failure_compensates_unstarted_launch_batch() {
         .expect("the exact network envelope should reserve before materialization");
     let error = backend
         .prepare_provision_workload(&sandbox_id, &sample_execution_attempt_id(&sandbox_id))
-        .expect_err("vm config write should fail before bind");
+        .expect_err("vm config removal should fail before bind");
     assert!(
-        error.to_string().contains("failed to write krun vm config"),
-        "the materialization failure must remain primary: {error}"
+        error
+            .to_string()
+            .contains("failed to remove untrusted krun vm config"),
+        "the removal failure must remain primary: {error}"
     );
     let mut retained = backend
         .read_manifest(&sandbox_id)

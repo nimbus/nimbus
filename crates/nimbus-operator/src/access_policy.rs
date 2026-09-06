@@ -251,6 +251,7 @@ pub fn validate_origin(
     expected_port: Option<u16>,
     method: &Method,
     headers: &HeaderMap,
+    transport_origin_allowed: bool,
 ) -> Result<(), LocalServerPolicyError> {
     let Some(origin) = headers.get(header::ORIGIN) else {
         return Ok(());
@@ -277,7 +278,7 @@ pub fn validate_origin(
                 )
             }
         }
-        _ => is_loopback_origin(parsed, expected_port),
+        _ => is_loopback_origin(parsed, expected_port) || transport_origin_allowed,
     };
     if allowed {
         return Ok(());
@@ -494,6 +495,7 @@ mod tests {
                 Some(8080),
                 &Method::GET,
                 &headers,
+                false,
             )
             .is_err()
         );
@@ -507,11 +509,41 @@ mod tests {
             Some(8080),
             &Method::OPTIONS,
             &headers,
+            false,
         )
         .expect_err("origin should be rejected");
         assert_eq!(
             error.to_string(),
             "private network access preflight requires a loopback origin"
+        );
+    }
+
+    #[test]
+    fn validate_origin_accepts_a_transport_allowed_api_origin_but_not_ui() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://app.example.com"),
+        );
+
+        validate_origin(
+            LocalServerRouteFamily::NativeApi,
+            Some(8080),
+            &Method::GET,
+            &headers,
+            true,
+        )
+        .expect("an origin allowed by the transport policy should reach API handlers");
+        assert!(
+            validate_origin(
+                LocalServerRouteFamily::Ui,
+                Some(8080),
+                &Method::GET,
+                &headers,
+                true,
+            )
+            .is_err(),
+            "the operator UI must remain same-origin"
         );
     }
 }

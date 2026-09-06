@@ -19,13 +19,21 @@ The app implements the full shared [`tasks` spec](../../specs/tasks.md).
 ## Running
 
 ```bash
-nimbus dev
+npm run build -w nimbus-tasks
+nimbus dev --app-dir examples/nimbus/tasks --no-open
 nimbus deploy [TARGET]
 ```
 
 `TARGET` is a URL or configured target name; omit it to use the local target.
 Tenant creation in browser code is a local-development convenience. Provision
 tenants separately before deploying beyond your own environment.
+
+The native browser app uses the local operator session because the native API
+is an administrative surface. In a second terminal, run `nimbus auth url
+--open`, sign in, then open
+`http://127.0.0.1:3210/examples/nimbus/tasks/dist/` in the same browser. The
+built app defaults to its page origin. Add `?server=<url>` only when Nimbus is
+at a different origin.
 
 `smoke.ts` requires Node.js >=22 <25 (runs via `--experimental-strip-types`).
 

@@ -6,6 +6,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/bun-jsc-adapter-contract.sh
 source "${REPO_ROOT}/scripts/bun-jsc-adapter-contract.sh"
 BUN_REPO="${NIMBUS_BUN_REPO:-${HOME}/src/github.com/nimbus/bun}"
 EXPECTED_BUN_REF="${NIMBUS_BUN_EXPECTED_REF:-${BUN_JSC_ADAPTER_SOURCE_REF}}"
@@ -42,12 +43,31 @@ BUN_PROFILE="${NIMBUS_BUN_PROFILE:-${DEFAULT_BUN_PROFILE}}"
 BUN_ENABLE_SIMDUTF_NAMESPACE="${NIMBUS_BUN_ENABLE_SIMDUTF_NAMESPACE:-${DEFAULT_ENABLE_SIMDUTF_NAMESPACE}}"
 BUN_REQUIRE_SYMBOL_AUDIT="${NIMBUS_BUN_REQUIRE_SYMBOL_AUDIT:-${DEFAULT_REQUIRE_SYMBOL_AUDIT}}"
 BUN_REQUIRE_SHARED_ARTIFACT_AUDIT="${NIMBUS_BUN_REQUIRE_SHARED_ARTIFACT_AUDIT:-${DEFAULT_SHARED_ARTIFACT_AUDIT}}"
+RUNTIME_PREFLIGHT_ATTESTATION="${NIMBUS_BUN_RUNTIME_PREFLIGHT_ATTESTATION:-}"
 
 is_enabled() {
   case "${1}" in
     1 | true | TRUE | yes | YES | on | ON) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+verify_runtime_preflight_attestation() {
+  local attestation="${1}"
+  if [[ ! -f "${attestation}" ]]; then
+    printf 'missing Bun/JSC runtime preflight attestation: %s\n' "${attestation}" >&2
+    exit 1
+  fi
+
+  local expected_revision result revision
+  expected_revision="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  result="$(awk -F= '$1 == "result" { print $2; exit }' "${attestation}")"
+  revision="$(awk -F= '$1 == "nimbus.revision" { print $2; exit }' "${attestation}")"
+  if [[ "${result}" != passed || "${revision}" != "${expected_revision}" ]]; then
+    printf 'invalid Bun/JSC runtime preflight attestation: expected passed at %s, got result=%s revision=%s\n' \
+      "${expected_revision}" "${result:-missing}" "${revision:-missing}" >&2
+    exit 1
+  fi
 }
 
 reject_unsafe_linker_policy() {
@@ -260,6 +280,7 @@ if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}" && [[ -z "${BUN_WEBKIT_PATH:-}" 
     export BUN_WEBKIT_PATH="${HOME}/src/github.com/oven-sh/WebKit"
   fi
 fi
+WEBKIT_SOURCE="${BUN_WEBKIT_PATH:-vendor/WebKit}"
 
 if [[ -d /private/tmp ]] && ! is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}"; then
   BUN_BUILD_DIR="${NIMBUS_BUN_BUILD_DIR:-/private/tmp/nimbus-bun-shared-adapter-${BUN_PROFILE}}"
@@ -278,6 +299,8 @@ else
   fi
 fi
 SHARED_LIBRARY="${NIMBUS_BUN_EMBED_SHARED_LIBRARY:-${BUN_BUILD_DIR}/${SHARED_LIBRARY_BASENAME}}"
+SMOKE_LOADER="${BUN_BUILD_DIR}/nimbus-bun-embed-shared-loader.py"
+BUN_SHARED_SMOKE_TIMEOUT_SECONDS="${NIMBUS_BUN_SHARED_SMOKE_TIMEOUT_SECONDS:-120}"
 
 REQUIRED_EXPORTS=(
   "${BUN_JSC_ADAPTER_REQUIRED_EXPORTS[@]}"
@@ -304,10 +327,12 @@ printf 'Bun ref:     %s\n' "${EXPECTED_BUN_REF}"
 printf 'Bun rev:     %s\n' "${EXPECTED_BUN_REV}"
 printf 'Bun CLI:     %s\n' "${BUN_EXECUTABLE}"
 printf 'Bun profile: %s\n' "${BUN_PROFILE}"
+printf 'WebKit source: %s\n' "${WEBKIT_SOURCE}"
 printf 'Bun simdutf namespace enabled: %s\n' "${BUN_ENABLE_SIMDUTF_NAMESPACE}"
 printf 'Bun symbol audit required: %s\n\n' "${BUN_REQUIRE_SYMBOL_AUDIT}"
 printf 'Bun shared artifact audit required: %s\n' "${BUN_REQUIRE_SHARED_ARTIFACT_AUDIT}"
-printf 'Bun shared library: %s\n\n' "${SHARED_LIBRARY}"
+printf 'Bun shared library: %s\n' "${SHARED_LIBRARY}"
+printf 'Bun shared smoke timeout: %s seconds\n\n' "${BUN_SHARED_SMOKE_TIMEOUT_SECONDS}"
 
 if [[ ! -f "${BUN_REPO}/src/embed_probe/lib.rs" ]]; then
   printf 'missing Bun checkout: expected %s/src/embed_probe/lib.rs\n' "${BUN_REPO}" >&2
@@ -337,12 +362,26 @@ if [[ -n "${bun_status}" ]]; then
   exit 1
 fi
 
-printf '[1/11] Default no-link runtime contract\n'
-make verify-bun-jsc-runtime-contract
+# Every shared-adapter build below selects --webkit=local. Bun rejects
+# --embedder-shared with prebuilt WebKit because those archives are not PIC.
+bash "${REPO_ROOT}/scripts/verify-bun-webkit-source.sh" \
+  --bun-repo "${BUN_REPO}" \
+  --webkit-repo "${WEBKIT_SOURCE}"
 
-printf '\n[2/11] Linked adapter feature compile and no-shared-library unit contract\n'
-env -u NIMBUS_BUN_EMBED_LINK_ARGS -u NIMBUS_BUN_EMBED_SHARED_LIBRARY \
-  cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc
+if [[ -n "${RUNTIME_PREFLIGHT_ATTESTATION}" ]]; then
+  verify_runtime_preflight_attestation "${RUNTIME_PREFLIGHT_ATTESTATION}"
+  printf '[1/11] Default no-link runtime contract\n'
+  printf '  exact-revision preflight attestation: %s\n' "${RUNTIME_PREFLIGHT_ATTESTATION}"
+  printf '\n[2/11] Linked adapter feature compile and no-shared-library unit contract\n'
+  printf '  exact-revision preflight attestation: %s\n' "${RUNTIME_PREFLIGHT_ATTESTATION}"
+else
+  printf '[1/11] Default no-link runtime contract\n'
+  make verify-bun-jsc-runtime-contract
+
+  printf '\n[2/11] Linked adapter feature compile and no-shared-library unit contract\n'
+  env -u NIMBUS_BUN_EMBED_LINK_ARGS -u NIMBUS_BUN_EMBED_SHARED_LIBRARY \
+    cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib backends::bun_jsc
+fi
 
 printf '\n[3/11] Bun proof source exports\n'
 for export in "${REQUIRED_EXPORTS[@]}"; do
@@ -363,7 +402,7 @@ BUN_BUILD_ARGS=(
   "--embedder-shared=on"
   "--build-dir=${BUN_BUILD_DIR}"
   "--cache-dir=${BUN_CACHE_DIR}"
-  "--target=check-bun-embed-shared"
+  "--target=bun-embed-shared"
 )
 if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}"; then
   BUN_BUILD_ARGS+=("--simdutf-namespace=${BUN_SIMDUTF_NAMESPACE}")
@@ -374,6 +413,15 @@ if [[ ! -f "${SHARED_LIBRARY}" ]]; then
   printf 'missing Bun/JSC shared adapter artifact: %s\n' "${SHARED_LIBRARY}" >&2
   exit 1
 fi
+if [[ ! -f "${SMOKE_LOADER}" ]]; then
+  printf 'missing Bun/JSC shared adapter smoke loader: %s\n' "${SMOKE_LOADER}" >&2
+  exit 1
+fi
+
+python3 "${REPO_ROOT}/scripts/run_bun_jsc_shared_smoke.py" \
+  --timeout-seconds "${BUN_SHARED_SMOKE_TIMEOUT_SECONDS}" \
+  "${SMOKE_LOADER}" \
+  "${SHARED_LIBRARY}"
 
 printf '\n[6/11] Generated build graph safety policy\n'
 reject_unsafe_generated_build_graph "${BUN_BUILD_DIR}/build.ninja"
@@ -388,7 +436,8 @@ case "${host_triple}" in
       if [[ -x /opt/homebrew/opt/llvm@21/bin/clang++ ]]; then
         export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=/opt/homebrew/opt/llvm@21/bin/clang++
       else
-        export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
       fi
     fi
     ;;
@@ -397,7 +446,8 @@ case "${host_triple}" in
       if [[ -x /opt/homebrew/opt/llvm@21/bin/clang++ ]]; then
         export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/opt/homebrew/opt/llvm@21/bin/clang++
       else
-        export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$(command -v clang++ || command -v c++)"
+        export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER
       fi
     fi
     ;;
@@ -408,7 +458,8 @@ case "${host_triple}" in
       elif command -v clang++ >/dev/null 2>&1; then
         export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang++
       else
-        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$(command -v c++)"
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$(command -v c++)"
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
       fi
     fi
     if command -v ld.lld >/dev/null 2>&1; then
@@ -427,6 +478,10 @@ printf '\n[8/11] Bun embedder FFI and same-process V8+Bun/JSC proof\n'
 LINKED_CARGO_JOBS="${NIMBUS_BUN_LINKED_CARGO_JOBS:-1}"
 NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
   CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
+  cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --test \
+    bun_jsc_concurrent_init -- --nocapture
+NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
+  CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
   cargo test -p nimbus-runtime --features bun-jsc-linked-adapter --lib \
     backends::bun_jsc -- --nocapture
 NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
@@ -437,7 +492,7 @@ NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
 printf '\n[9/11] Server linked-lane diagnostics proof\n'
 NIMBUS_BUN_EMBED_SHARED_LIBRARY="${SHARED_LIBRARY}" \
   CARGO_BUILD_JOBS="${LINKED_CARGO_JOBS}" \
-  cargo test -p nimbus-server --features bun-jsc-linked-adapter \
+  cargo test -p nimbus-server --features bun-jsc-linked-adapter --lib \
     registry_and_license::registry::convex_registry_bun_jsc_lane_diagnostics_reflect_runtime_adapter_state \
     -- --nocapture
 

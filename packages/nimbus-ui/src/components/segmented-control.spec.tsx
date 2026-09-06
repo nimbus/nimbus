@@ -85,17 +85,20 @@ describe("SegmentedControl", () => {
   });
 
   it("ArrowRight/ArrowLeft move focus through the group", () => {
-    renderControl("light");
+    const harness = renderControl("light");
     const light = screen.getByTestId("mode-light");
     const dark = screen.getByTestId("mode-dark");
     const system = screen.getByTestId("mode-system");
     light.focus();
     fireEvent.keyDown(light, { key: "ArrowRight" });
     expect(document.activeElement).toBe(dark);
+    expect(harness.onChange).toHaveBeenLastCalledWith("dark");
     fireEvent.keyDown(dark, { key: "ArrowRight" });
     expect(document.activeElement).toBe(system);
+    expect(harness.onChange).toHaveBeenLastCalledWith("system");
     fireEvent.keyDown(system, { key: "ArrowLeft" });
     expect(document.activeElement).toBe(dark);
+    expect(harness.onChange).toHaveBeenLastCalledWith("dark");
   });
 
   it("ArrowRight wraps from the last segment to the first", () => {
@@ -108,15 +111,17 @@ describe("SegmentedControl", () => {
   });
 
   it("Home and End jump to the first and last segment", () => {
-    renderControl("dark");
+    const harness = renderControl("dark");
     const light = screen.getByTestId("mode-light");
     const dark = screen.getByTestId("mode-dark");
     const system = screen.getByTestId("mode-system");
     dark.focus();
     fireEvent.keyDown(dark, { key: "End" });
     expect(document.activeElement).toBe(system);
+    expect(harness.onChange).toHaveBeenLastCalledWith("system");
     fireEvent.keyDown(system, { key: "Home" });
     expect(document.activeElement).toBe(light);
+    expect(harness.onChange).toHaveBeenLastCalledWith("light");
   });
 
   it("Enter and Space on a focused segment commit the selection", () => {

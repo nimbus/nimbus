@@ -1,23 +1,47 @@
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-pub(super) fn build_cors_layer(configured_origins: &[String]) -> CorsLayer {
-    let mut allowed = std::collections::HashSet::new();
-    for origin in configured_origins {
-        match normalize_cors_origin(origin) {
-            Ok(normalized) => {
-                allowed.insert(normalized);
-            }
-            Err(reason) => {
-                // Fail closed: a bad entry grants nothing extra; the origin
-                // it was meant to allow will visibly fail CORS.
-                tracing::warn!(%origin, %reason, "ignoring invalid configured CORS origin");
+#[derive(Clone)]
+pub(crate) struct CorsOriginPolicy {
+    configured_origins: Arc<HashSet<String>>,
+}
+
+impl CorsOriginPolicy {
+    pub(crate) fn new(configured_origins: &[String]) -> Self {
+        let mut allowed = HashSet::new();
+        for origin in configured_origins {
+            match normalize_cors_origin(origin) {
+                Ok(normalized) => {
+                    allowed.insert(normalized);
+                }
+                Err(reason) => {
+                    // Fail closed: a bad entry grants nothing extra; the origin
+                    // it was meant to allow will visibly fail CORS.
+                    tracing::warn!(%origin, %reason, "ignoring invalid configured CORS origin");
+                }
             }
         }
+        Self {
+            configured_origins: Arc::new(allowed),
+        }
     }
+
+    pub(crate) fn allows(&self, origin: &HeaderValue) -> bool {
+        is_allowed_local_cors_origin(origin) || self.configured_allows(origin)
+    }
+
+    pub(crate) fn configured_allows(&self, origin: &HeaderValue) -> bool {
+        is_configured_cors_origin(origin, &self.configured_origins)
+    }
+}
+
+pub(super) fn build_cors_layer(origin_policy: CorsOriginPolicy) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(move |origin, _request_head| {
-            is_allowed_local_cors_origin(origin) || is_configured_cors_origin(origin, &allowed)
+            origin_policy.allows(origin)
         }))
         .allow_headers([
             header::ACCEPT,

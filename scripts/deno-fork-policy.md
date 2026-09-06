@@ -20,8 +20,8 @@ worktrees.
 
 | State | Repository | Tag | Peeled commit | Meaning |
 | --- | --- | --- | --- | --- |
-| consumed | `nimbus/deno` | `v2.9.3-nimbus.1` | `4f59b4246cb13003d8445449b73790ee8c12baab` | Nimbus Deno-family Cargo patch closure |
-| consumed | `nimbus/rusty_v8` | `v149.4.0-nimbus.10` | `f9457373150679d9db9eb577dcd3a687a3ec25ef` | V8 line declared by Deno 2.9.3 |
+| consumed | `nimbus/deno` | `v2.9.6-nimbus.5` | `95413e012ee9f73e7f652e1e7b1ad9e351b9a8df` | Deno 2.9.6 with the selected Locker, egress, Node heap-policy, lazy-ESM, packaged extension-source, and Node network and HTTP compatibility contracts |
+| consumed | `nimbus/rusty_v8` | `v150.4.0-nimbus.1` | `961a76d0cee88efdecfa9224c519fd153c404b51` | V8 150.4 line declared by Deno 2.9.6, with the Nimbus Locker bridge |
 | published, not consumed | `nimbus/rusty_v8` | `v150.2.0-nimbus.1` | `4786595e29679ee5ad9ba4925cdcd1cc83ab6448` | Forward-maintenance V8 150 line; awaits a compatible Deno V8 roll |
 
 The consumed rows are derived and verified from `Cargo.toml` and `Cargo.lock`;

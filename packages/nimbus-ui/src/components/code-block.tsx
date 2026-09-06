@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  createHighlighter,
-  type Highlighter,
+  createHighlighterCore,
+  type HighlighterCore,
   type ShikiTransformer,
-} from "shiki";
+} from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
 /** A per-identifier type hint (FSV8): 1-based line/col + the TS-compiler hover. */
@@ -62,13 +62,23 @@ const LANGS = [
   "bash",
 ] as const;
 
-let highlighterPromise: Promise<Highlighter> | null = null;
+let highlighterPromise: Promise<HighlighterCore> | null = null;
 
-function getHighlighter(): Promise<Highlighter> {
+function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
-      themes: [LIGHT_THEME, DARK_THEME],
-      langs: [...LANGS],
+    highlighterPromise = createHighlighterCore({
+      themes: [
+        import("@shikijs/themes/github-light"),
+        import("@shikijs/themes/github-dark"),
+      ],
+      langs: [
+        import("@shikijs/langs/typescript"),
+        import("@shikijs/langs/tsx"),
+        import("@shikijs/langs/javascript"),
+        import("@shikijs/langs/jsx"),
+        import("@shikijs/langs/json"),
+        import("@shikijs/langs/bash"),
+      ],
       // JS regex engine (no WASM) so highlighting works under the embedded
       // console's `script-src 'self'` CSP, which forbids wasm-unsafe-eval.
       engine: createJavaScriptRegexEngine(),
@@ -154,12 +164,12 @@ export function CodeBlock({
   }
 
   return (
-    // biome-ignore lint/security/noDangerouslySetInnerHtml: trusted shiki highlighter output built from source text
     <div
       ref={containerRef}
       // 1.5 leading, per DESIGN.md's code-block spec; `leading-5` was 1.667.
       className="nimbus-code h-full overflow-auto text-sm leading-[1.5]"
       data-testid={testid}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: Shiki escapes source text before it returns this highlighted markup.
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

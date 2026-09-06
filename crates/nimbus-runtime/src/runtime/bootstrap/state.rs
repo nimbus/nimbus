@@ -193,32 +193,6 @@ impl RuntimeWaitUntilState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RuntimeResourceTableSnapshot {
-    entries: BTreeMap<u32, String>,
-}
-
-impl RuntimeResourceTableSnapshot {
-    fn capture(state: &OpState) -> Self {
-        Self {
-            entries: state
-                .resource_table
-                .names()
-                .map(|(rid, name)| (rid, name.to_string()))
-                .collect(),
-        }
-    }
-
-    pub(crate) fn entries(&self) -> &BTreeMap<u32, String> {
-        &self.entries
-    }
-}
-
-#[derive(Clone, Debug)]
-struct RuntimeResourceTableBaseline {
-    snapshot: RuntimeResourceTableSnapshot,
-}
-
 #[derive(Clone)]
 pub(super) struct InstalledRuntimeCapabilityPolicy {
     pub(super) paths: RuntimePathPolicy,
@@ -610,7 +584,6 @@ pub(crate) fn reset_runtime_invocation_state(
 ) {
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
-    let resource_table_baseline = RuntimeResourceTableSnapshot::capture(&state);
     state.put(fresh_runtime_cancellation_state());
     state.put(permit);
     state.put(
@@ -624,21 +597,6 @@ pub(crate) fn reset_runtime_invocation_state(
             .unwrap_or_else(RuntimeInvocationExecutionPlanBinding::inactive),
     );
     state.put(RuntimeWaitUntilState::default());
-    state.put(RuntimeResourceTableBaseline {
-        snapshot: resource_table_baseline,
-    });
-}
-
-pub(crate) fn runtime_resource_table_delta(
-    runtime: &mut JsRuntime,
-) -> Option<(RuntimeResourceTableSnapshot, RuntimeResourceTableSnapshot)> {
-    let op_state = runtime.op_state();
-    let state = op_state.borrow();
-    let baseline = state
-        .try_borrow::<RuntimeResourceTableBaseline>()
-        .map(|baseline| baseline.snapshot.clone())?;
-    let current = RuntimeResourceTableSnapshot::capture(&state);
-    (baseline != current).then_some((baseline, current))
 }
 
 pub(crate) fn take_runtime_wait_until_pending(runtime: &mut JsRuntime) -> bool {

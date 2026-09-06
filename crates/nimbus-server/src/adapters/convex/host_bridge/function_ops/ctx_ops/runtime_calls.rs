@@ -101,7 +101,7 @@ impl ConvexHostBridge {
                 payload
                     .visibility
                     .unwrap_or(ConvexFunctionVisibility::Public),
-                payload.auth,
+                self.auth().cloned(),
                 cancellation,
             )
             .await;
@@ -130,7 +130,7 @@ impl ConvexHostBridge {
             payload
                 .visibility
                 .unwrap_or(ConvexFunctionVisibility::Public),
-            payload.auth,
+            self.auth().cloned(),
             cancellation,
         );
         encode_runtime_core_result(response)
@@ -207,7 +207,7 @@ impl ConvexHostBridge {
                 payload
                     .visibility
                     .unwrap_or(ConvexFunctionVisibility::Public),
-                payload.auth,
+                self.auth().cloned(),
                 cancellation,
             )
             .await;
@@ -236,7 +236,7 @@ impl ConvexHostBridge {
             payload
                 .visibility
                 .unwrap_or(ConvexFunctionVisibility::Public),
-            payload.auth,
+            self.auth().cloned(),
             cancellation,
         );
         encode_runtime_core_result(response)
@@ -257,7 +257,7 @@ impl ConvexHostBridge {
                 payload
                     .visibility
                     .unwrap_or(ConvexFunctionVisibility::Public),
-                payload.auth,
+                self.auth().cloned(),
                 cancellation,
             )
             .await;
@@ -286,7 +286,7 @@ impl ConvexHostBridge {
             payload
                 .visibility
                 .unwrap_or(ConvexFunctionVisibility::Public),
-            payload.auth,
+            self.auth().cloned(),
             cancellation,
         );
         encode_runtime_core_result(response)

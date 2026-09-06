@@ -2,14 +2,44 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use nimbus_runtime::{
     HostBridge, HostCallCancellation, HostCallOperation, HostCallRequest, InvocationKind,
     InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeLimits, RuntimeOwnerId,
-    RuntimeOwnerLeaseIssuer, RuntimePolicy,
+    RuntimeOwnerLease, RuntimeOwnerLeaseIssuer, RuntimePolicy,
 };
 use serde_json::{Value, json};
+
+const BUN_TEST_TENANT: &str = "bun-linked-adapter-proof";
+
+fn bun_test_owner() -> RuntimeOwnerLease {
+    static OWNER: OnceLock<RuntimeOwnerLease> = OnceLock::new();
+    OWNER
+        .get_or_init(|| {
+            let owner = RuntimeOwnerId::tenant(
+                "runtime-test:bun-linked-adapter-proof",
+                NonZeroU64::new(1).expect("test owner incarnation is nonzero"),
+                Some(BUN_TEST_TENANT),
+            )
+            .expect("Bun/JSC test runtime owner should build");
+            RuntimeOwnerLeaseIssuer.issue(owner).0
+        })
+        .clone()
+}
+
+fn invoke_bun_bundle_blocking(
+    runtime: &NimbusRuntime,
+    bundle: &RuntimeBundle,
+    request: &InvocationRequest,
+) -> nimbus_runtime::Result<Value> {
+    runtime.invoke_bundle_blocking_for_tenant_with_owner(
+        bundle,
+        request,
+        BUN_TEST_TENANT,
+        bun_test_owner(),
+    )
+}
 
 #[derive(Debug)]
 struct NoopHost;
@@ -199,9 +229,12 @@ globalThis.__nimbusInvoke = async function(request) {
         services: BTreeMap::new(),
     };
     assert_eq!(
-        bun_runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &bun_request)
-            .expect("linked Bun/JSC invocation should run after V8"),
+        invoke_bun_bundle_blocking(
+            &bun_runtime,
+            &RuntimeBundle::new(&bun_bundle_path),
+            &bun_request,
+        )
+        .expect("linked Bun/JSC invocation should run after V8"),
         json!({
             "status": "ok",
             "value": {
@@ -269,8 +302,7 @@ globalThis.__nimbusInvoke = async function(request) {
     };
 
     assert_eq!(
-        runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request,)
             .expect("linked Bun/JSC invocation should execute a use bun directive bundle"),
         json!({
             "status": "ok",
@@ -323,8 +355,7 @@ globalThis.__nimbusInvoke = async function(request) {
     };
 
     assert_eq!(
-        runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request,)
             .expect("linked Bun/JSC invocation should call HostBridge"),
         json!({
             "status": "ok",
@@ -350,6 +381,127 @@ globalThis.__nimbusInvoke = async function(request) {
 }
 
 #[test]
+fn bun_shared_adapter_uses_the_host_owned_invocation_kind_for_context_capabilities() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let bun_bundle_path = temp_dir.path().join("bun-query-write-wrapper.js");
+    std::fs::write(
+        &bun_bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function() {
+  const ctx = globalThis.__nimbusCreateContext({
+    request: { kind: "mutation" },
+    hostCallSessionId: "host-session",
+  });
+  try {
+    await ctx.db.insert("messages", { body: "must not commit" });
+    return { status: "error", error: "query write unexpectedly reached the host" };
+  } catch (error) {
+    return { status: "ok", value: String(error.message) };
+  }
+};
+"#,
+    )
+    .expect("Bun/JSC bundle should be written");
+
+    let host = Arc::new(RecordingHost::new(RecordingHostPolicy::AllowDocumentInsert));
+    let runtime = NimbusRuntime::with_policy(
+        host.clone(),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: json!({}),
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: BTreeMap::new(),
+    };
+
+    let response =
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect("query capability denial should remain guest-visible");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(
+        response["value"],
+        "Nimbus Bun/JSC ctx.db.insert is not available for query handlers"
+    );
+    assert!(
+        host.calls().is_empty(),
+        "a query write must be rejected before the host callback"
+    );
+}
+
+#[test]
+fn bun_shared_adapter_uses_a_cloned_host_owned_auth_identity() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let bun_bundle_path = temp_dir.path().join("bun-auth-wrapper.js");
+    std::fs::write(
+        &bun_bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function(request) {
+  request.auth.identity.subject = "forged";
+  const ctx = globalThis.__nimbusCreateContext({ request });
+  const first = await ctx.auth.getUserIdentity();
+  first.subject = "mutated-return";
+  return {
+    status: "ok",
+    value: {
+      user: await ctx.auth.getUserIdentity(),
+      verified: await ctx.auth.getVerifiedIdentity(),
+    },
+  };
+};
+"#,
+    )
+    .expect("Bun/JSC bundle should be written");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(NoopHost),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_bun_jsc())),
+        nimbus_runtime::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "auth:whoami".to_string(),
+        args: json!({}),
+        page_size: None,
+        cursor: None,
+        auth: Some(json!({
+            "identity": {
+                "tokenIdentifier": "issuer|user",
+                "subject": "user",
+            },
+            "verified_identity": {
+                "kind": "custom_jwt",
+                "tokenIdentifier": "issuer|user",
+            },
+            "throw_on_missing_identity": false,
+        })),
+        services: BTreeMap::new(),
+    };
+
+    assert_eq!(
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect("Bun/JSC auth context should use the trusted invocation request"),
+        json!({
+            "status": "ok",
+            "value": {
+                "user": {
+                    "tokenIdentifier": "issuer|user",
+                    "subject": "user",
+                },
+                "verified": {
+                    "kind": "custom_jwt",
+                    "tokenIdentifier": "issuer|user",
+                },
+            },
+        })
+    );
+}
+
+#[test]
 fn bun_shared_adapter_host_bridge_denials_are_guest_visible_without_tokens() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let bun_bundle_path = temp_dir.path().join("bun-host-denied-wrapper.js");
@@ -366,7 +518,7 @@ globalThis.__nimbusInvoke = async function() {
   } catch (error) {
     return {
       status: "error",
-      value: {
+      error: {
         code: error.nimbusHostError && error.nimbusHostError.code,
         message: String(error.message),
         rawTokenPresent: typeof globalThis.__nimbusHostToken !== "undefined",
@@ -393,14 +545,14 @@ globalThis.__nimbusInvoke = async function() {
         services: BTreeMap::new(),
     };
 
-    let response = runtime
-        .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
-        .expect("linked Bun/JSC invocation should report host denial to guest");
+    let response =
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect("linked Bun/JSC invocation should report host denial to guest");
     assert_eq!(response["status"], "error");
-    assert_eq!(response["value"]["code"], "host_bridge_denied");
-    assert_eq!(response["value"]["rawTokenPresent"], false);
+    assert_eq!(response["error"]["code"], "host_bridge_denied");
+    assert_eq!(response["error"]["rawTokenPresent"], false);
     assert!(
-        response["value"]["message"]
+        response["error"]["message"]
             .as_str()
             .expect("message should be a string")
             .contains("host policy denied Bun/JSC host call")
@@ -408,7 +560,7 @@ globalThis.__nimbusInvoke = async function() {
 }
 
 #[test]
-fn bun_shared_adapter_host_bridge_cancellation_is_guest_visible_without_tokens() {
+fn bun_shared_adapter_host_bridge_cancellation_is_terminal_even_when_guest_catches_error() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let bun_bundle_path = temp_dir.path().join("bun-host-cancelled-wrapper.js");
     std::fs::write(
@@ -424,7 +576,7 @@ globalThis.__nimbusInvoke = async function() {
   } catch (error) {
     return {
       status: "error",
-      value: {
+      error: {
         code: error.nimbusHostError && error.nimbusHostError.code,
         message: String(error.message),
         rawTokenPresent: typeof globalThis.__nimbusHostToken !== "undefined",
@@ -452,18 +604,13 @@ globalThis.__nimbusInvoke = async function() {
         services: BTreeMap::new(),
     };
 
-    let response = runtime
-        .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
-        .expect("linked Bun/JSC invocation should report host cancellation to guest");
-    assert_eq!(response["status"], "error");
-    assert_eq!(response["value"]["code"], "cancelled");
-    assert_eq!(response["value"]["rawTokenPresent"], false);
-    assert!(
-        response["value"]["message"]
-            .as_str()
-            .expect("message should be a string")
-            .contains("Bun/JSC host call was cancelled")
-    );
+    let error =
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect_err("host cancellation must terminate the linked Bun/JSC invocation");
+    assert!(matches!(
+        error,
+        nimbus_runtime::NimbusRuntimeError::Cancelled
+    ));
 
     let calls = host.calls();
     assert_eq!(calls.len(), 1);
@@ -488,7 +635,7 @@ globalThis.__nimbusInvoke = async function() {
   } catch (error) {
     return {
       status: "error",
-      value: {
+      error: {
         code: error.nimbusHostError && error.nimbusHostError.code,
         message: String(error.message),
         rawTokenPresent: typeof globalThis.__nimbusHostToken !== "undefined",
@@ -518,14 +665,14 @@ globalThis.__nimbusInvoke = async function() {
         services: BTreeMap::new(),
     };
 
-    let response = runtime
-        .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
-        .expect("linked Bun/JSC invocation should report forged context denial");
+    let response =
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
+            .expect("linked Bun/JSC invocation should report forged context denial");
     assert_eq!(response["status"], "error");
-    assert_eq!(response["value"]["code"], "host_bridge_denied");
-    assert_eq!(response["value"]["rawTokenPresent"], false);
+    assert_eq!(response["error"]["code"], "host_bridge_denied");
+    assert_eq!(response["error"]["rawTokenPresent"], false);
     assert!(
-        response["value"]["message"]
+        response["error"]["message"]
             .as_str()
             .expect("message should be a string")
             .contains("guest supplied tenant identity is not trusted")
@@ -568,8 +715,7 @@ globalThis.__nimbusInvoke = async function(request) {
     };
 
     assert_eq!(
-        runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
+        invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request,)
             .expect("linked Bun/JSC invocation should complete microtasks"),
         json!({ "status": "ok", "value": 42 })
     );
@@ -610,8 +756,7 @@ globalThis.__nimbusInvoke = async function() {
 
     for _ in 0..2 {
         assert_eq!(
-            runtime
-                .invoke_bundle_blocking(&RuntimeBundle::new(&bun_bundle_path), &request)
+            invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request,)
                 .expect("linked Bun/JSC invocation should use a fresh VM"),
             json!({ "status": "ok", "value": 1 })
         );

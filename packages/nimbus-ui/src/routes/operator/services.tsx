@@ -1,9 +1,9 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useCallback, useMemo } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
-import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
+import { AdminServicesLoaderError } from "../../components/service-loader-errors";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
@@ -28,39 +28,6 @@ export const Route = createFileRoute("/operator/services")({
   component: AdminServicesPage,
   errorComponent: AdminServicesLoaderError,
 });
-
-export function AdminServicesLoaderError({ error }: { error: Error }) {
-  const router = useRouter();
-  const reload = useCallback(() => {
-    void router.invalidate();
-  }, [router]);
-  return (
-    <section
-      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
-      data-testid="page-admin-services"
-    >
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
-        <EmptyState
-          title="Services endpoint unavailable"
-          body={
-            <>
-              The operator services query failed:{" "}
-              <span
-                className="font-mono text-default"
-                data-testid="storage-server-error"
-              >
-                {error.message}
-              </span>
-              . Retry once the backend is reachable.
-            </>
-          }
-          cta={{ label: "Retry", onClick: reload }}
-          testid="storage-server-error-envelope"
-        />
-      </div>
-    </section>
-  );
-}
 
 function AdminServicesPage() {
   const { services } = Route.useLoaderData();

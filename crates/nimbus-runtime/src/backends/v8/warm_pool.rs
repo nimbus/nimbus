@@ -8,7 +8,6 @@ use crate::limits::RuntimePoolKind;
 use crate::retained_state::{
     OwnerPartitionedPool, RetainedCheckout, RuntimeOwnerLease, RuntimeReuseAuthority,
 };
-use crate::runtime::realm_lease::{RuntimeRealmLeaseController, RuntimeRealmLeaseRetentionPolicy};
 use crate::runtime::{NimbusRuntime, RuntimeBundle};
 
 use super::{
@@ -34,7 +33,6 @@ pub(crate) struct WarmPoolEntry {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) boundary_maintenance: WarmRuntimeBoundaryMaintenance,
     lifecycle: RuntimeReuseLifecycle,
-    realm_lease_controller: RuntimeRealmLeaseController,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,11 +57,11 @@ impl V8RetainedAuthorityKey {
         let runtime_limits = policy.limits();
         Ok(Self {
             pool_authority: RuntimePoolAuthorityKey::exact(
-                RuntimePoolAuthorityFacts::for_realm_reuse(
+                RuntimePoolAuthorityFacts::for_retained_state(
                     runtime_profile,
                     policy.as_ref(),
                     bundle,
-                    construction_mode,
+                    construction_mode.as_str(),
                 )?,
             ),
             reuse_locality_key: runtime_reuse_locality_key(
@@ -81,7 +79,6 @@ pub(crate) struct ReusableV8Runtime {
     pub(crate) warm_reuse_count: usize,
     pub(crate) construction_mode: V8RuntimeConstructionMode,
     pub(crate) lifecycle: RuntimeReuseLifecycle,
-    pub(crate) realm_lease_controller: RuntimeRealmLeaseController,
     pub(crate) owner_lease: Option<RuntimeOwnerLease>,
 }
 
@@ -92,9 +89,6 @@ impl ReusableV8Runtime {
             warm_reuse_count: 0,
             construction_mode,
             lifecycle: RuntimeReuseLifecycle::bootstrapped_and_leased(),
-            realm_lease_controller: RuntimeRealmLeaseController::new(
-                RuntimeRealmLeaseRetentionPolicy::default(),
-            ),
             owner_lease: None,
         }
     }
@@ -174,7 +168,7 @@ impl V8WorkerRuntimePool {
         );
         match runtime_instance.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
-            RuntimePoolKind::WarmPool | RuntimePoolKind::WarmContextRecycle => {
+            RuntimePoolKind::WarmPool => {
                 let owner_lease = required_runtime_owner_lease(context)?.clone();
                 let authority_key = V8RetainedAuthorityKey::for_invocation(
                     runtime_instance,
@@ -199,7 +193,6 @@ impl V8WorkerRuntimePool {
                         reuse_count,
                         construction_mode,
                         mut lifecycle,
-                        realm_lease_controller,
                         ..
                     } = entry;
                     lifecycle.mark_leased();
@@ -215,7 +208,6 @@ impl V8WorkerRuntimePool {
                         warm_reuse_count: reuse_count,
                         construction_mode,
                         lifecycle,
-                        realm_lease_controller,
                         owner_lease: Some(retained_authority.owner_lease().clone()),
                     });
                 }
@@ -286,7 +278,7 @@ impl V8WorkerRuntimePool {
     ) {
         match runtime_instance.policy().limits().runtime_pool_kind {
             RuntimePoolKind::StartupSnapshotCache => {}
-            RuntimePoolKind::WarmPool | RuntimePoolKind::WarmContextRecycle => {
+            RuntimePoolKind::WarmPool => {
                 let Some(owner_lease) = runtime.owner_lease.take() else {
                     runtime.lifecycle.mark_condemned();
                     return;
@@ -369,7 +361,6 @@ impl V8WorkerRuntimePool {
                         construction_mode: runtime.construction_mode,
                         boundary_maintenance,
                         lifecycle: runtime.lifecycle,
-                        realm_lease_controller: runtime.realm_lease_controller,
                     },
                     authority,
                 ));
@@ -624,16 +615,16 @@ mod tests {
         )
     }
 
-    fn context_recycle_limits() -> RuntimeLimits {
+    fn warm_pool_limits() -> RuntimeLimits {
         RuntimeLimits {
-            runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+            runtime_pool_kind: RuntimePoolKind::WarmPool,
             ..RuntimeLimits::application_web_standard()
         }
     }
 
-    fn context_recycle_restricted_limits() -> RuntimeLimits {
+    fn warm_pool_restricted_limits() -> RuntimeLimits {
         RuntimeLimits {
-            runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
+            runtime_pool_kind: RuntimePoolKind::WarmPool,
             ..RuntimeLimits::restricted_code()
         }
     }
@@ -724,16 +715,16 @@ mod tests {
     }
 
     #[test]
-    fn context_recycle_partition_key_preserves_exact_service_grants() {
-        let mut db_limits = context_recycle_limits();
+    fn retained_partition_key_preserves_exact_service_grants() {
+        let mut db_limits = warm_pool_limits();
         db_limits.grants.service = vec!["db".to_string()];
         let db_runtime_owner = runtime_owner_for_limits(db_limits);
 
-        let mut cache_limits = context_recycle_limits();
+        let mut cache_limits = warm_pool_limits();
         cache_limits.grants.service = vec!["cache".to_string()];
         let cache_runtime_owner = runtime_owner_for_limits(cache_limits);
 
-        let bundle = RuntimeBundle::new("/tmp/nimbus-pir2-context-recycle-grants.mjs");
+        let bundle = RuntimeBundle::new("/tmp/nimbus-warm-pool-grants.mjs");
         let request = invocation_request("messages:list");
         let context = tenant_context(&request, "tenant-a", 1, "tenant-a");
         let construction_mode = V8RuntimeConstructionMode::for_compatibility_target(
@@ -756,15 +747,15 @@ mod tests {
         assert_ne!(db_key, cache_key);
         assert!(
             !db_key.matches_exact(&cache_key),
-            "WarmContextRecycle must partition retained runtimes by exact service grants"
+            "WarmPool must partition retained runtimes by exact service grants"
         );
     }
 
     #[test]
-    fn context_recycle_partition_key_rejects_authority_dimension_fuzz_cases() {
-        let base_owner = runtime_owner_for_limits(context_recycle_limits());
-        let base_bundle = RuntimeBundle::new("/tmp/nimbus-pir2-context-recycle-base.mjs");
-        let alt_bundle = RuntimeBundle::new("/tmp/nimbus-pir2-context-recycle-alt.mjs");
+    fn retained_partition_key_rejects_authority_dimension_fuzz_cases() {
+        let base_owner = runtime_owner_for_limits(warm_pool_limits());
+        let base_bundle = RuntimeBundle::new("/tmp/nimbus-warm-pool-base.mjs");
+        let alt_bundle = RuntimeBundle::new("/tmp/nimbus-warm-pool-alt.mjs");
         let list_request = invocation_request("messages:list");
         let send_request = invocation_request("messages:send");
         let tenant_a = tenant_context(&list_request, "tenant-a", 1, "tenant-a");
@@ -779,7 +770,7 @@ mod tests {
             construction_mode,
         );
 
-        let mut function_limits = context_recycle_limits();
+        let mut function_limits = warm_pool_limits();
         function_limits.routing_affinity = RuntimeRoutingAffinity::Function;
         let function_owner = runtime_owner_for_limits(function_limits);
         let function_list_context = tenant_context(&list_request, "tenant-a", 1, "tenant-a");
@@ -797,7 +788,7 @@ mod tests {
             construction_mode,
         );
 
-        let mut script_limits = context_recycle_limits();
+        let mut script_limits = warm_pool_limits();
         script_limits.routing_affinity = RuntimeRoutingAffinity::Script;
         let script_owner = runtime_owner_for_limits(script_limits);
         let script_base_key = partition_key(
@@ -813,7 +804,7 @@ mod tests {
             construction_mode,
         );
 
-        let restricted_owner = runtime_owner_for_limits(context_recycle_restricted_limits());
+        let restricted_owner = runtime_owner_for_limits(warm_pool_restricted_limits());
         let restricted_key = partition_key(
             &restricted_owner,
             &base_bundle,
@@ -821,11 +812,11 @@ mod tests {
             construction_mode,
         );
 
-        let mut db_limits = context_recycle_limits();
+        let mut db_limits = warm_pool_limits();
         db_limits.grants.service = vec!["db".to_string()];
         let db_owner = runtime_owner_for_limits(db_limits);
         let db_key = partition_key(&db_owner, &base_bundle, Some(&tenant_a), construction_mode);
-        let mut cache_limits = context_recycle_limits();
+        let mut cache_limits = warm_pool_limits();
         cache_limits.grants.service = vec!["cache".to_string()];
         let cache_owner = runtime_owner_for_limits(cache_limits);
         let cache_key = partition_key(
@@ -876,9 +867,9 @@ mod tests {
             ("script", script_base_key, script_alt_key),
             ("permission_profile", base_key.clone(), restricted_key),
             ("exact_service_grants", db_key, cache_key),
-            // Capability half: the partition key incorporates construction_mode, so two runtimes
-            // built with DIFFERENT modes never share a recycled context. Not tautological — this
-            // drops to equal (and fails) if the key ever stops keying on mode.
+            // The partition key incorporates construction_mode, so two runtimes built with
+            // different modes never share retained state. This becomes equal and fails if the
+            // key stops including construction mode.
             ("construction_mode", snapshotted_key, unsnapshotted_key),
         ];
 
@@ -889,7 +880,7 @@ mod tests {
             );
             assert!(
                 !left.matches_exact(&right),
-                "{dimension}: WarmContextRecycle must not reuse across authority dimensions"
+                "{dimension}: WarmPool must not reuse across authority dimensions"
             );
         }
     }

@@ -20,7 +20,7 @@ impl ContainerSandboxBackend {
 
     pub fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> Result<()> {
         let requested = egress
-            .compile()
+            .compile_for_supervisor_proxy()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
         let Some(manifest) = self.read_manifest(id)? else {
             return Err(SandboxError::NotFound {
@@ -59,14 +59,16 @@ impl ContainerSandboxBackend {
         }
 
         if let Some(pending) = manifest.egress_policy_reload.pending_attempt()? {
-            let durable = manifest.spec.egress.compile().map_err(|message| {
-                SandboxError::OperationFailed {
+            let durable = manifest
+                .spec
+                .egress
+                .compile_for_supervisor_proxy()
+                .map_err(|message| SandboxError::OperationFailed {
                     message: format!(
                         "durable egress policy for applying reload {pending:?} is invalid: \
-                         {message}"
+                             {message}"
                     ),
-                }
-            })?;
+                })?;
             self.ensure_reload_registration(&manifest, &durable)?;
             let receipt = self.egress_proxies.reconcile_authenticated_reload(
                 &manifest.spec.tenant_id,
@@ -167,17 +169,16 @@ impl ContainerSandboxBackend {
         let Some(attempt) = manifest.egress_policy_reload.active_attempt()? else {
             return Ok(());
         };
-        let durable =
-            manifest
-                .spec
-                .egress
-                .compile()
-                .map_err(|message| SandboxError::OperationFailed {
-                    message: format!(
-                        "stable durable egress policy for reload replay {attempt:?} is invalid: \
+        let durable = manifest
+            .spec
+            .egress
+            .compile_for_supervisor_proxy()
+            .map_err(|message| SandboxError::OperationFailed {
+                message: format!(
+                    "stable durable egress policy for reload replay {attempt:?} is invalid: \
                      {message}"
-                    ),
-                })?;
+                ),
+            })?;
         self.egress_proxies.reconcile_authenticated_reload(
             &manifest.spec.tenant_id,
             &manifest.handle.id,

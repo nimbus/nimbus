@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.600.0",
-    "@nimbus/dynamodb": "0.1.45"
+    "@nimbus/dynamodb": "0.1.46"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

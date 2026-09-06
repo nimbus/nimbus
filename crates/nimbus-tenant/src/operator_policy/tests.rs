@@ -10,7 +10,7 @@ use crate::{
     TenantImageAdmissionSource, TenantImageVerificationEvidence, TenantImageVerificationProvider,
     TenantImageVerificationRequest, TenantRuntimePolicyAdmission,
 };
-use nimbus_egress::EgressProtocol;
+use nimbus_egress::{EgressProtocol, EgressRequest};
 
 use super::*;
 
@@ -492,6 +492,80 @@ fn valid_policy_fixture_compiles_to_tenant_isolation_decision() {
     assert!(rendered.contains("runtime_admission: admit_in_process"));
     assert!(rendered.contains("storage_namespace: tenant-a"));
     assert!(rendered.contains("sandbox_egress: stripe-api"));
+}
+
+#[test]
+fn operator_policy_preserves_websocket_egress_protocol() {
+    let policy = parse_policy(
+        r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: runtime_function
+    name: "messages:stream"
+    network:
+      egress:
+        allow:
+          - name: events-websocket
+            protocol: wss
+            host: events.example.com
+            port: 443
+            methods:
+              - GET
+            path_prefixes:
+              - /events
+"#,
+    );
+    let evaluation = policy.evaluate().expect("policy should evaluate");
+    let decision = &evaluation.decisions[0].decision;
+
+    let websocket = decision.network().authorize_sandbox_egress(
+        &EgressRequest::new(EgressProtocol::Wss, "events.example.com", 443)
+            .with_http("GET", "/events/tenant-a"),
+    );
+    assert!(websocket.is_allowed(), "{websocket:?}");
+    assert_eq!(websocket.matched_rule(), Some("events-websocket"));
+
+    let ordinary_http = decision.network().authorize_sandbox_egress(
+        &EgressRequest::new(EgressProtocol::Https, "events.example.com", 443)
+            .with_http("GET", "/events/tenant-a"),
+    );
+    assert!(
+        !ordinary_http.is_allowed(),
+        "a WebSocket-only operator rule must not authorize ordinary HTTP"
+    );
+}
+
+#[test]
+fn operator_policy_rejects_websocket_protocol_for_proxy_routed_workload() {
+    let policy = parse_policy(
+        r#"
+schema_version: 1
+tenant: tenant-a
+workloads:
+  - kind: service
+    name: "event-consumer"
+    sandbox:
+      sandbox_id: "event-consumer-1"
+      backend: container
+    network:
+      egress:
+        allow:
+          - name: events-websocket
+            protocol: wss
+            host: events.example.com
+            port: 443
+"#,
+    );
+
+    let error = policy
+        .validate()
+        .expect_err("a proxy-routed workload must reject a protocol the proxy cannot observe");
+
+    assert!(
+        error.to_string().contains("observable runtime gateway"),
+        "validation should explain where ws/wss rules are enforceable: {error}"
+    );
 }
 
 #[test]

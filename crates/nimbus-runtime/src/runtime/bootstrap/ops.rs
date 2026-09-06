@@ -47,7 +47,7 @@ use self::runtime_local::{
     op_nimbus_runtime_shared_env_snapshot, op_nimbus_runtime_stat, op_nimbus_runtime_stat_sync,
     op_nimbus_runtime_symlink, op_nimbus_runtime_symlink_sync, op_nimbus_runtime_target_triple,
     op_nimbus_runtime_utime, op_nimbus_runtime_utime_sync, op_nimbus_runtime_validate_open_path,
-    op_set_raw,
+    op_nimbus_runtime_versions, op_set_raw,
 };
 use self::shared::{
     op_nimbus_runtime_contract, op_nimbus_runtime_host_call_session_id,
@@ -156,6 +156,7 @@ extension!(
         op_nimbus_runtime_cwd,
         op_nimbus_runtime_exec_path,
         op_nimbus_runtime_target_triple,
+        op_nimbus_runtime_versions,
         op_current_thread_cpu_usage,
         op_create_worker,
         op_host_terminate_worker,

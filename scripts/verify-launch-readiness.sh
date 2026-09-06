@@ -14,7 +14,7 @@
 #         public_bind_restart_does_not_retrip_freshness
 #   LR7:  rest_client_route_parity            (JS test, packages/nimbus)
 #   LR9:  backup_restore_round_trip
-#   LR12: node_workload_executor_converges_transient_unit   (Linux-gated)
+#   LR12: start_inspect_stop_roundtrip_against_session_systemd (Linux-gated)
 #
 # Checks are static/cheap (greps, file existence) plus `cargo fmt --check`.
 # Heavy gates (make check/clippy/test, npm test) live in phase completion
@@ -23,14 +23,16 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit 1
 
+PLAN="docs/private/plans/archive/launch-readiness-plan.md"
 PROOF_DIR="docs/private/plans/proof/launch-readiness"
-START_DIR="crates/nimbus-bin/src/start"
-BIN_SRC="crates/nimbus-bin/src"
-SERVER_SRC="crates/nimbus-server/src"
-ROUTER="crates/nimbus-server/src/router.rs"
-DEPLOY_RS="crates/nimbus-bin/src/deploy.rs"
+CLI_SRC="crates/nimbus-cli/src"
+START_DIR="${CLI_SRC}/start"
+BIN_SRC="${CLI_SRC}"
+MACHINE_API_SRC="crates/nimbus-cli/src/machine/api.rs"
+ROUTER_CORS="crates/nimbus-server/src/router/cors.rs"
+DEPLOY_RS="${CLI_SRC}/deploy.rs"
 REST_TS="packages/nimbus/src/rest.ts"
 PKG_SCRIPT="scripts/build-linux-release-packages.sh"
 UNIT_FILE="packaging/systemd/nimbus.service"
@@ -57,13 +59,17 @@ crates_grep() {
 }
 
 # --- 1. plan registration (LR0) ----------------------------------------------
-C="1. plan registered: AGENTS.md mentions launch-readiness; proof dir exists"
-if grep -q 'launch-readiness' AGENTS.md 2>/dev/null \
+C="1. archived plan and proof bundle are registered"
+# Backticks are literal status-document anchors.
+# shellcheck disable=SC2016
+if [[ -f "${PLAN}" ]] \
+  && grep -q '\*\*Status:\*\* `done`' "${PLAN}" \
   && [[ -d "${PROOF_DIR}" ]] \
-  && [[ -f "${PROOF_DIR}/README.md" ]]; then
+  && [[ -f "${PROOF_DIR}/README.md" ]] \
+  && grep -q 'archive/launch-readiness-plan.md' "${PROOF_DIR}/README.md"; then
   pass "${C}"
 else
-  fail "${C}" "missing AGENTS.md entry, ${PROOF_DIR}/, or its README.md"
+  fail "${C}" "missing archived plan, done status, proof bundle, or archive routing"
 fi
 
 # --- 2. boot.rs naming cleanup (LR1) ------------------------------------------
@@ -116,7 +122,7 @@ fi
 # --- 6. configurable CORS (LR5) --------------------------------------------------
 C="6. --cors-allow-origin on nimbus start; build_cors_layer accepts configured origins"
 if grep -rqE 'cors[-_]allow[-_]origin' "${BIN_SRC}" 2>/dev/null \
-  && grep -qE 'fn build_cors_layer\s*\([^)]' "${ROUTER}" 2>/dev/null; then
+  && grep -q 'fn build_cors_layer(origin_policy:' "${ROUTER_CORS}" 2>/dev/null; then
   pass "${C}"
 else
   fail "${C}" "CLI flag or parameterized build_cors_layer missing"
@@ -181,13 +187,15 @@ else
   fail "${C}" "missing ${PROOF_DIR}/lr11-distribution.md with recorded 200 evidence"
 fi
 
-# --- 13. reconciler production caller (LR12) ----------------------------------------------
-C="13. NodeWorkloadReconciler constructed in production bin/server code; Linux-gated test exists"
-if grep -rq 'NodeWorkloadReconciler' "${BIN_SRC}" "${SERVER_SRC}" 2>/dev/null \
-  && crates_grep 'node_workload_executor_converges_transient_unit'; then
+# --- 13. production systemd workload caller (LR12) ----------------------------------------
+C="13. managed-machine guest composes the production systemd backend; Linux-gated test exists"
+if grep -q 'SystemdTransientUnitBackend::linux_systemd_default' "${MACHINE_API_SRC}" \
+  && grep -q 'GuestNodeWorkloadService::new' "${MACHINE_API_SRC}" \
+  && crates_grep 'start_inspect_stop_roundtrip_against_session_systemd' \
+  && crates_grep 'failed_unit_is_observable_via_inspect'; then
   pass "${C}"
 else
-  fail "${C}" "no production NodeWorkloadReconciler caller or canonical LR12 test missing"
+  fail "${C}" "production machine API systemd composition or canonical live tests missing"
 fi
 
 # --- 14. formatting (always) -----------------------------------------------------------------

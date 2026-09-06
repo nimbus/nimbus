@@ -66,13 +66,7 @@ describe("msw handlers", () => {
       ["node20", "v8", "node20", "linked", "v8_isolate_heap_limit"],
       ["node22", "v8", "node22", "linked", "v8_isolate_heap_limit"],
       ["node24", "v8", "node24", "linked", "v8_isolate_heap_limit"],
-      [
-        "bun_jsc",
-        "bun_jsc",
-        "bun_jsc",
-        "not_linked",
-        "outer_quota_required",
-      ],
+      ["bun_jsc", "bun_jsc", "bun_jsc", "not_linked", "outer_quota_required"],
     ] as const;
     for (const [
       laneName,
@@ -99,7 +93,10 @@ describe("msw handlers", () => {
       "build_feature_disabled",
     );
     expect(bunLane?.execution_adapter_artifact?.expected?.source_ref).toBe(
-      "nimbus-bun-jsc-proof-main-20260709",
+      "bun-v1.4.2-nimbus.1",
     );
+    expect(
+      bunLane?.execution_adapter_artifact?.expected?.source_revision,
+    ).toBe("d6d4c5e39938b6c5ac243490a9230c26d52d737f");
   });
 });

@@ -24,14 +24,12 @@
 //! sabotages itself.
 //!
 //! This is the Rust-held / off-graph authority the plan mandates, realised with
-//! the mechanism deno_core/rusty_v8 actually expose per realm. deno_core does
-//! not surface a public Rust-side per-realm slot map (`OpState` is shared
-//! per-isolate, which would collide across the main realm and recycled fresh
-//! realms), so the authoritative reference is anchored to each realm's own
-//! global via a private symbol — the direct analogue of workerd's internal-field
-//! authority (`wrappable.h`), scoped and freed with the realm it belongs to.
+//! the mechanism deno_core/rusty_v8 expose for the main realm. The authoritative
+//! reference is anchored to the realm global through a private symbol — the
+//! direct analogue of workerd's internal-field authority (`wrappable.h`) — and
+//! is freed with the realm.
 
-use crate::backends::v8::embedder::{JsError, JsRealm, JsRuntime, v8};
+use crate::backends::v8::embedder::{JsError, JsRuntime, v8};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeGuestSemantics;
 use crate::runtime::classify::runtime_js_error;
@@ -151,11 +149,11 @@ fn capture_one(
     Ok(true)
 }
 
-/// Capture the trusted invocation entrypoints of `realm` (or the main realm when
-/// `realm` is `None`) off the guest-reachable graph. Call this exactly once per
-/// realm, immediately after the bundle evaluates and before any guest handler
-/// body executes. Idempotent and defensive: an entrypoint that is not installed
-/// on this lane is skipped, and re-capturing simply refreshes the private slot.
+/// Capture the trusted invocation entrypoints of the main realm off the
+/// guest-reachable graph. Call this exactly once after the bundle evaluates
+/// and before any guest handler body executes. Idempotent and defensive: an
+/// entrypoint that is not installed on this lane is skipped, and re-capturing
+/// simply refreshes the private slot.
 ///
 /// A global that IS present but is not callable is always a hard error
 /// (`read_global_function`/`capture_one`) — that is never legitimate
@@ -168,13 +166,9 @@ fn capture_one(
 /// a determinism reset (Band B-FIX HG5 BEGIN-HOOK FAIL-OPEN).
 pub(crate) fn capture_invocation_targets(
     runtime: &mut JsRuntime,
-    realm: Option<&JsRealm>,
     guest_semantics: RuntimeGuestSemantics,
 ) -> Result<()> {
-    let context = match realm {
-        Some(realm) => realm.context().clone(),
-        None => runtime.main_context(),
-    };
+    let context = runtime.main_context();
     let isolate = runtime.v8_isolate();
     v8::scope_with_context!(let scope, isolate, &context);
     let global = scope.get_current_context().global(scope);
@@ -210,13 +204,9 @@ pub(crate) fn capture_invocation_targets(
 #[cfg(test)]
 pub(crate) fn captured_invoke_is(
     runtime: &mut JsRuntime,
-    realm: Option<&JsRealm>,
     candidate: &v8::Global<v8::Function>,
 ) -> Result<bool> {
-    let context = match realm {
-        Some(realm) => realm.context().clone(),
-        None => runtime.main_context(),
-    };
+    let context = runtime.main_context();
     let isolate = runtime.v8_isolate();
     v8::scope_with_context!(let scope, isolate, &context);
     let global = scope.get_current_context().global(scope);
@@ -227,8 +217,8 @@ pub(crate) fn captured_invoke_is(
     Ok(captured.strict_equals(candidate.into()))
 }
 
-/// Call the captured invocation entrypoint of `realm` (or the main realm when
-/// `realm` is `None`) with `request_json`, returning the raw completion value
+/// Call the main realm's captured invocation entrypoint with `request_json`,
+/// returning the raw completion value
 /// (a promise for the async dispatchers) for the caller's existing
 /// resolve/event-loop plumbing — the exact shape `execute_script` returned, so
 /// downstream handling is unchanged.
@@ -237,7 +227,6 @@ pub(crate) fn captured_invoke_is(
 /// name, so a guest reassignment/deletion of the global cannot redirect it.
 pub(crate) fn call_captured_invocation(
     runtime: &mut JsRuntime,
-    realm: Option<&JsRealm>,
     request_json: &str,
     guest_semantics: RuntimeGuestSemantics,
     cloudflare_module_specifier: Option<&str>,
@@ -247,39 +236,18 @@ pub(crate) fn call_captured_invocation(
     // lookup, so a guest cannot hijack it; evaluating this trusted, host-built
     // specifier is safe and yields the namespace promise the entrypoint expects.
     //
-    // HG5 (Band B-FIX, CLOUDFLARE REALM ISOLATION): this import must run in
-    // the same realm as the captured entrypoint and the eventual dispatch.
-    // `JsRuntime::execute_script` always evaluates in deno_core's main realm
-    // regardless of which realm is logically "current" (it dispatches to
-    // `self.inner.main_realm` unconditionally), so calling it here would
-    // resolve and cache the worker module's singletons in the main realm
-    // even when a fresh/recycled `realm` is present, defeating fresh-realm
-    // isolation under `WarmContextRecycle`. Evaluate in `realm` explicitly
-    // whenever one is given, and only fall back to the runtime's own
-    // `execute_script` (main realm) when there is no realm at all.
     let module_namespace_promise = match cloudflare_module_specifier {
         Some(specifier) => {
             let specifier_json = serde_json::to_string(specifier)?;
             let source = format!("import({specifier_json})");
-            let result = match realm {
-                Some(realm) => realm.execute_script(
-                    runtime.v8_isolate(),
-                    "<nimbus-runtime:cloudflare-module-namespace>",
-                    source,
-                ),
-                None => {
-                    runtime.execute_script("<nimbus-runtime:cloudflare-module-namespace>", source)
-                }
-            };
+            let result =
+                runtime.execute_script("<nimbus-runtime:cloudflare-module-namespace>", source);
             Some(result.map_err(runtime_js_error)?)
         }
         None => None,
     };
 
-    let context = match realm {
-        Some(realm) => realm.context().clone(),
-        None => runtime.main_context(),
-    };
+    let context = runtime.main_context();
     let isolate = runtime.v8_isolate();
     v8::scope_with_context!(let scope, isolate, &context);
     let global = scope.get_current_context().global(scope);

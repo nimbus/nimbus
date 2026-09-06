@@ -53,6 +53,15 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   defects, embedded process fence, retention contract, erasure and scrub
   hardening). Review-driven refactor and cleanup work should route through
   this plan's band ledgers while it is active.
+- `storage-review-repairs-plan.md` - `active`. Owns the five confirmed findings
+  from the 2026-08-26 Opus 5 aggregate review: complete materialized identity,
+  atomic nonzero-base PITR import with MVCC anchors, and proof-gate repairs.
+  It preserves the closed Band SA ledger and does not act on rejected claims.
+- `release-readiness-2026-08-plan.md` - `active`. Owns the product-wide release
+  candidate audit, local application and protocol smoke matrix, macOS and Linux
+  host proof, desktop validation, repair triage, and the final GO or NO-GO
+  verdict. It consumes the storage-repair branch and routes public package
+  publication back to `distribution-plan.md`.
 - `archive/storage-metadata-retention-plan.md` - `complete, archived`
   (2026-08-26; PRs #313–#321). Delivered checkpoint-backed commit-log pruning,
   production MVCC compaction, bounded CDC and PITR history, fail-closed trimmed
@@ -74,6 +83,13 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
+- `runtime-strategy-lifecycle-plan.md` - `proposed`. Runs after release-readiness
+  U6 records the exact Nimbus, Deno, and rusty_v8 commits plus the controlled
+  replay-scaffolding A/B. It owns the permanent runtime-strategy lifecycle,
+  product-versus-lab separation, experiment archive, benchmark truth, and
+  future fork cleanup. It consumes the completed Node trust baseline in
+  `docs/private/plans/archive/node-lts-runtime-trust-plan.md`. RRC8 keeps
+  exclusive ownership until owner activation.
 - `wasi-agent-capabilities-plan.md` - `deferred`. Starts only after the Wasmtime
   component linker, NimbusFS binder, and HTTP-client binder exist. Owns the
   process primitive and WIT projection layer; it must not re-own filesystem or
@@ -216,6 +232,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `native-transport-evolution-plan.md` - `proposed`. Owns benchmark-driven
   Nimbus-native transport evolution without replacing the established WebSocket
   protocol by default.
+- `archive/connection-broker-plan.md` - `complete with 2026-08 corrective
+  erratum`. Owns host-held WebSocket residency, hibernation, metering, and the
+  runtime egress-policy parity contract. The erratum records that in-process
+  proxy-mediated transport was never product-wired; proxy-required rules fail
+  closed, and release-readiness RRC1 repaired the live WebSocket gateway path.
+  `ws`/`wss` policy is limited to observable in-process runtime gateways;
+  supervisor proxies enforce HTTP(S) authority policy and reject those rules.
 - `enterprise-crate-adoption-plan.md` - `proposed`. Owns the cross-workspace
   screen for mature Rust crates at commodity substrate seams: Sigstore artifact
   verification, DNS, OIDC/JWKS, OCI spec types, local-socket HTTP parsing,

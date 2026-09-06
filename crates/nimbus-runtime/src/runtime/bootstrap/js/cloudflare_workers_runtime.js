@@ -276,8 +276,8 @@ const __nimbusCloudflareWorkerSerializeResponse = async function __nimbusCloudfl
 };
 
 // HG0/HG5 (Band B-FIX, CAPTURE-ORDERING): this bootstrap runs before the guest
-// worker module ever loads (install_bootstrap_in_realm precedes
-// load_main_es_module_in_realm in driver/loading.rs), so this is the FIRST
+// worker module ever loads (bootstrap installation precedes
+// main-module loading in driver/loading.rs), so this is the FIRST
 // and only writer of this slot. Object.defineProperty with
 // configurable:false, writable:false closes the window a plain assignment
 // left open: once the guest worker module evaluates (and its microtasks

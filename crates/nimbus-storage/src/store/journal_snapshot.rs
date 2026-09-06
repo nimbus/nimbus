@@ -4,7 +4,8 @@ use std::time::Instant;
 use nimbus_core::{
     CommitSequence, CommitTimestamp, Document, Error, HistoricalReadErrorKind,
     HistoricalReadSnapshot, ReadTimestamp, ResourcePathBinding, Result, Schema, SequenceNumber,
-    TableId, TableName, TableState, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
+    TableId, TableName, TableState, TenantEventRecord, Timestamp, TriggerDeliveryCursor, WriteOp,
+    WriteOpType,
 };
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
@@ -25,13 +26,17 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
+use super::document_versions::record_document_versions_for_writes;
+use super::index_versions::record_index_versions_for_writes;
+use super::journal::apply_durable_record_in_write_txn;
 use super::journal::encode_u64;
 use super::schema_rewrite::durable_record_index_keys_in_write_txn;
 use super::table_catalog::{ensure_table_id_in_write_txn, export_table_identities_in_read_txn};
 use super::{
-    APPLIED_SEQUENCE_KEY, DOCUMENTS, EMPTY_TABLE_VALUE, INDEXES, JournalProgress, METADATA,
-    NEXT_SEQUENCE_KEY, SCHEDULED_JOB_EXECUTIONS, SCHEMAS, TenantReadSnapshot, TenantStore,
-    map_redb_error,
+    APPLIED_SEQUENCE_KEY, COLLECTION_GROUP_BINDINGS, COMMIT_LOG, DOCUMENT_VERSIONS, DOCUMENTS,
+    EMPTY_TABLE_VALUE, INDEX_VERSIONS, INDEXES, JournalProgress, METADATA, NEXT_SEQUENCE_KEY,
+    RESOURCE_PATH_BINDINGS, RESOURCE_PATH_LOOKUP, SCHEDULED_JOB_EXECUTIONS, SCHEMAS, TABLE_CATALOG,
+    TenantReadSnapshot, TenantStore, map_redb_error,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,7 +53,7 @@ pub struct MaterializedJournalSnapshot {
 }
 
 pub const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 4;
-pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 2;
+pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -226,6 +231,20 @@ impl MaterializedJournalSnapshot {
                 .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
         });
 
+        let mut resource_path_bindings = self.resource_path_bindings.clone();
+        resource_path_bindings.sort_by(|left, right| {
+            left.locator
+                .table
+                .as_str()
+                .cmp(right.locator.table.as_str())
+                .then_with(|| left.locator.id.as_str().cmp(right.locator.id.as_str()))
+                .then_with(|| {
+                    left.document_path
+                        .segments()
+                        .cmp(&right.document_path.segments())
+                })
+        });
+
         let mut scheduled_execution_ids = self.scheduled_execution_ids.clone();
         scheduled_execution_ids.sort_unstable();
 
@@ -234,7 +253,9 @@ impl MaterializedJournalSnapshot {
             table_identities,
             schema_tables,
             documents,
+            resource_path_bindings,
             scheduled_execution_ids,
+            self.trigger_delivery_cursor,
         ))
     }
 
@@ -271,7 +292,7 @@ impl PointInTimeRestoreArchive {
             .map_err(|error| Error::Serialization(error.to_string()))?;
         if header.version != POINT_IN_TIME_RESTORE_ARCHIVE_VERSION {
             let codec_context = (header.version < POINT_IN_TIME_RESTORE_ARCHIVE_VERSION).then_some(
-                "; this archive predates materialized-position digest codec version 2 and must be recreated with a current Nimbus binary",
+                "; this archive predates materialized-position digest codec version 3 and must be recreated with a current Nimbus binary",
             );
             return Err(Error::InvalidInput(format!(
                 "unsupported point-in-time restore archive version {} (this binary supports {}){}",
@@ -413,87 +434,11 @@ impl TenantStore {
         snapshot: &MaterializedJournalSnapshot,
     ) -> Result<()> {
         snapshot.validate()?;
-        self.ensure_materialized_journal_restore_target_is_empty()?;
         let _verification_update = self.materialized_verification.begin_update()?;
 
         let write_txn = self.db.begin_write().map_err(map_redb_error)?;
-        for identity in &snapshot.table_identities {
-            ensure_table_id_in_write_txn(&write_txn, identity)?;
-        }
-        {
-            let mut schema_table = write_txn.open_table(SCHEMAS).map_err(map_redb_error)?;
-            for table_schema in snapshot.schema.tables.values() {
-                let payload = rmp_serde::to_vec(table_schema)
-                    .map_err(|error| Error::Serialization(error.to_string()))?;
-                schema_table
-                    .insert(table_schema.table.as_str(), payload.as_slice())
-                    .map_err(map_redb_error)?;
-            }
-        }
-        {
-            let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
-            for document in &snapshot.documents {
-                let table_id = snapshot.default_table_id(&document.table)?;
-                let payload = encode_document_msgpack(document)
-                    .map_err(|error| Error::Serialization(error.to_string()))?;
-                let key = document_key(&table_id, &document.id);
-                documents
-                    .insert(key.as_slice(), payload.as_slice())
-                    .map_err(map_redb_error)?;
-            }
-        }
-        {
-            let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
-            for document in &snapshot.documents {
-                let Some(table_schema) = snapshot.schema.get_table(&document.table) else {
-                    continue;
-                };
-                for key in durable_record_index_keys_in_write_txn(
-                    &write_txn,
-                    document,
-                    table_schema,
-                    self.id_source.as_ref(),
-                )? {
-                    index_table
-                        .insert(key.as_slice(), EMPTY_TABLE_VALUE)
-                        .map_err(map_redb_error)?;
-                }
-            }
-        }
-        {
-            let mut executions = write_txn
-                .open_table(SCHEDULED_JOB_EXECUTIONS)
-                .map_err(map_redb_error)?;
-            for execution_id in &snapshot.scheduled_execution_ids {
-                executions
-                    .insert(execution_id.as_str(), EMPTY_TABLE_VALUE)
-                    .map_err(map_redb_error)?;
-            }
-        }
-        for binding in &snapshot.resource_path_bindings {
-            super::resource_paths::upsert_resource_path_binding_in_write_txn(&write_txn, binding)?;
-        }
-        {
-            let mut metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
-            metadata
-                .insert(
-                    NEXT_SEQUENCE_KEY,
-                    encode_u64(snapshot.applied_sequence.0.saturating_add(1)).as_slice(),
-                )
-                .map_err(map_redb_error)?;
-            metadata
-                .insert(
-                    APPLIED_SEQUENCE_KEY,
-                    encode_u64(snapshot.applied_sequence.0).as_slice(),
-                )
-                .map_err(map_redb_error)?;
-            metadata
-                .insert(
-                    super::TRIGGER_DELIVERY_CURSOR_KEY,
-                    encode_u64(snapshot.trigger_delivery_cursor.materialized_through.0).as_slice(),
-                )
-                .map_err(map_redb_error)?;
-        }
+        ensure_materialized_journal_restore_target_is_empty_in_write_txn(&write_txn)?;
+        restore_materialized_journal_snapshot_in_write_txn(self, &write_txn, snapshot)?;
         self.commit_write_txn(write_txn)?;
         Ok(())
     }
@@ -591,50 +536,300 @@ impl TenantStore {
         &self,
         archive: &PointInTimeRestoreArchive,
     ) -> Result<JournalProgress> {
-        archive.validate()?;
-        let progress = self.rebuild_materialized_journal_from_snapshot(
+        let checkpoint = validate_point_in_time_archive_materialization(archive)?;
+        let _verification_update = self.materialized_verification.begin_update()?;
+        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
+        ensure_materialized_journal_restore_target_is_empty_in_write_txn(&write_txn)?;
+        restore_materialized_journal_snapshot_in_write_txn(
+            self,
+            &write_txn,
             &archive.base_snapshot,
-            &archive.journal_tail,
-            Some(archive.target_sequence),
         )?;
+
+        let anchor_writes = snapshot_document_anchor_writes(&archive.base_snapshot)?;
+        record_document_versions_for_writes(
+            &write_txn,
+            checkpoint.sequence(),
+            checkpoint.checkpoint_timestamp,
+            &anchor_writes,
+        )?;
+        record_index_versions_for_writes(&write_txn, checkpoint.sequence(), &anchor_writes)?;
+
+        {
+            let mut log = write_txn.open_table(COMMIT_LOG).map_err(map_redb_error)?;
+            for record in &archive.journal_tail {
+                let payload = crate::commit_log::serialize_tenant_event_record(record)?;
+                log.insert(record.sequence.0, payload.as_slice())
+                    .map_err(map_redb_error)?;
+            }
+        }
+        for record in &archive.journal_tail {
+            apply_durable_record_in_write_txn(&write_txn, record)?;
+        }
+        {
+            let mut metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
+            metadata
+                .insert(
+                    NEXT_SEQUENCE_KEY,
+                    encode_u64(archive.target_sequence.0.saturating_add(1)).as_slice(),
+                )
+                .map_err(map_redb_error)?;
+            metadata
+                .insert(
+                    APPLIED_SEQUENCE_KEY,
+                    encode_u64(archive.target_sequence.0).as_slice(),
+                )
+                .map_err(map_redb_error)?;
+        }
+        crate::retention::stage_imported_retention_checkpoint_in_write_txn(
+            &write_txn,
+            &checkpoint,
+        )?;
+
+        self.fault_injector.check_durable_records(
+            crate::FaultPoint::JournalAppendBeforeDurableFlush,
+            &archive.journal_tail,
+        )?;
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionCheckpointBeforeCommit)?;
+        self.fault_injector.check_durable_records(
+            crate::FaultPoint::StorageCommitBeforeVisibility,
+            &archive.journal_tail,
+        )?;
+        let floors = crate::RetentionReadFloors::new(
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+            checkpoint.sequence(),
+        );
+        self.retention_floor
+            .publish_read_floors_with_commit(floors, || {
+                write_txn.commit().map_err(map_redb_error)
+            })?;
         let restored_position = self
             .export_materialized_journal_snapshot()?
             .materialized_position()?;
-        if restored_position != archive.target_position {
-            return Err(Error::storage(
-                nimbus_core::StorageErrorKind::Corruption,
-                format!(
-                    "point-in-time restore position mismatch: restored {} expected {}",
-                    describe_materialized_position(&restored_position),
-                    describe_materialized_position(&archive.target_position)
-                ),
-            ));
-        }
-        self.install_imported_retention_checkpoint(&MaterializedRetentionCheckpoint::new(
-            archive.base_snapshot.clone(),
-            archive.base_checkpoint_timestamp,
-        )?)?;
-        Ok(progress)
+        validate_restored_point_in_time_position(&restored_position, &archive.target_position)?;
+        self.fault_injector.check_durable_records(
+            crate::FaultPoint::JournalFlushBeforeVisibility,
+            &archive.journal_tail,
+        )?;
+        self.fault_injector.check_durable_records(
+            crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &archive.journal_tail,
+        )?;
+        self.fault_injector
+            .check(crate::FaultPoint::RetentionCheckpointAfterCommit)?;
+
+        Ok(JournalProgress {
+            durable_head: archive.target_sequence,
+            applied_head: archive.target_sequence,
+        })
+    }
+}
+
+fn ensure_materialized_journal_restore_target_is_empty_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+) -> Result<()> {
+    macro_rules! table_has_rows {
+        ($definition:expr) => {{
+            let table = write_txn.open_table($definition).map_err(map_redb_error)?;
+            table
+                .iter()
+                .map_err(map_redb_error)?
+                .next()
+                .transpose()
+                .map_err(map_redb_error)?
+                .is_some()
+        }};
     }
 
-    fn ensure_materialized_journal_restore_target_is_empty(&self) -> Result<()> {
-        let snapshot = self.read_snapshot()?;
-        let progress = snapshot.journal_progress()?;
-        if progress.durable_head.0 != 0
-            || progress.applied_head.0 != 0
-            || !snapshot.documents()?.is_empty()
-            || !snapshot.load_schema()?.tables.is_empty()
-            || !snapshot.table_identities()?.is_empty()
-            || !snapshot.scheduled_execution_ids()?.is_empty()
-            || !snapshot.scan_resource_path_bindings()?.is_empty()
-            || self.trigger_delivery_cursor()? != TriggerDeliveryCursor::default()
-        {
-            return Err(Error::Internal(
-                "materialized journal snapshot restore requires an empty tenant store".to_string(),
-            ));
-        }
-        Ok(())
+    let metadata_is_nonempty = {
+        let metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
+        let metadata_u64 = |key| -> Result<Option<u64>> {
+            metadata
+                .get(key)
+                .map_err(map_redb_error)?
+                .map(|value| super::journal::decode_u64(value.value()))
+                .transpose()
+        };
+        metadata_u64(APPLIED_SEQUENCE_KEY)?.unwrap_or(0) != 0
+            || metadata_u64(NEXT_SEQUENCE_KEY)?.is_some_and(|next| next != 1)
+            || metadata_u64(super::TRIGGER_DELIVERY_CURSOR_KEY)?.unwrap_or(0) != 0
+            || metadata
+                .get(crate::retention::RETENTION_CHECKPOINT_METADATA_KEY)
+                .map_err(map_redb_error)?
+                .is_some()
+            || metadata
+                .get(crate::retention::RETENTION_PHYSICAL_FLOOR_METADATA_KEY)
+                .map_err(map_redb_error)?
+                .is_some()
+            || metadata
+                .get(crate::retention::RETENTION_DOCUMENT_VERSION_FLOOR_METADATA_KEY)
+                .map_err(map_redb_error)?
+                .is_some()
+            || metadata
+                .get(crate::retention::RETENTION_INDEX_VERSION_FLOOR_METADATA_KEY)
+                .map_err(map_redb_error)?
+                .is_some()
+    };
+
+    if metadata_is_nonempty
+        || table_has_rows!(DOCUMENTS)
+        || table_has_rows!(DOCUMENT_VERSIONS)
+        || table_has_rows!(INDEXES)
+        || table_has_rows!(INDEX_VERSIONS)
+        || table_has_rows!(TABLE_CATALOG)
+        || table_has_rows!(SCHEMAS)
+        || table_has_rows!(COMMIT_LOG)
+        || table_has_rows!(SCHEDULED_JOB_EXECUTIONS)
+        || table_has_rows!(RESOURCE_PATH_BINDINGS)
+        || table_has_rows!(RESOURCE_PATH_LOOKUP)
+        || table_has_rows!(COLLECTION_GROUP_BINDINGS)
+    {
+        return Err(Error::Internal(
+            "materialized journal snapshot restore requires an empty tenant store".to_string(),
+        ));
     }
+    Ok(())
+}
+
+fn restore_materialized_journal_snapshot_in_write_txn(
+    store: &TenantStore,
+    write_txn: &redb::WriteTransaction,
+    snapshot: &MaterializedJournalSnapshot,
+) -> Result<()> {
+    for identity in &snapshot.table_identities {
+        ensure_table_id_in_write_txn(write_txn, identity)?;
+    }
+    {
+        let mut schema_table = write_txn.open_table(SCHEMAS).map_err(map_redb_error)?;
+        for table_schema in snapshot.schema.tables.values() {
+            let payload = rmp_serde::to_vec(table_schema)
+                .map_err(|error| Error::Serialization(error.to_string()))?;
+            schema_table
+                .insert(table_schema.table.as_str(), payload.as_slice())
+                .map_err(map_redb_error)?;
+        }
+    }
+    {
+        let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
+        for document in &snapshot.documents {
+            let table_id = snapshot.default_table_id(&document.table)?;
+            let payload = encode_document_msgpack(document)
+                .map_err(|error| Error::Serialization(error.to_string()))?;
+            let key = document_key(&table_id, &document.id);
+            documents
+                .insert(key.as_slice(), payload.as_slice())
+                .map_err(map_redb_error)?;
+        }
+    }
+    {
+        let mut index_table = write_txn.open_table(INDEXES).map_err(map_redb_error)?;
+        for document in &snapshot.documents {
+            let Some(table_schema) = snapshot.schema.get_table(&document.table) else {
+                continue;
+            };
+            for key in durable_record_index_keys_in_write_txn(
+                write_txn,
+                document,
+                table_schema,
+                store.id_source.as_ref(),
+            )? {
+                index_table
+                    .insert(key.as_slice(), EMPTY_TABLE_VALUE)
+                    .map_err(map_redb_error)?;
+            }
+        }
+    }
+    {
+        let mut executions = write_txn
+            .open_table(SCHEDULED_JOB_EXECUTIONS)
+            .map_err(map_redb_error)?;
+        for execution_id in &snapshot.scheduled_execution_ids {
+            executions
+                .insert(execution_id.as_str(), EMPTY_TABLE_VALUE)
+                .map_err(map_redb_error)?;
+        }
+    }
+    for binding in &snapshot.resource_path_bindings {
+        super::resource_paths::upsert_resource_path_binding_in_write_txn(write_txn, binding)?;
+    }
+    {
+        let mut metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
+        metadata
+            .insert(
+                NEXT_SEQUENCE_KEY,
+                encode_u64(snapshot.applied_sequence.0.saturating_add(1)).as_slice(),
+            )
+            .map_err(map_redb_error)?;
+        metadata
+            .insert(
+                APPLIED_SEQUENCE_KEY,
+                encode_u64(snapshot.applied_sequence.0).as_slice(),
+            )
+            .map_err(map_redb_error)?;
+        metadata
+            .insert(
+                super::TRIGGER_DELIVERY_CURSOR_KEY,
+                encode_u64(snapshot.trigger_delivery_cursor.materialized_through.0).as_slice(),
+            )
+            .map_err(map_redb_error)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn snapshot_document_anchor_writes(
+    snapshot: &MaterializedJournalSnapshot,
+) -> Result<Vec<WriteOp>> {
+    snapshot
+        .documents
+        .iter()
+        .map(|document| {
+            Ok(WriteOp {
+                table: document.table.clone(),
+                table_id: snapshot.default_table_id(&document.table)?,
+                op_type: WriteOpType::Insert,
+                doc_id: document.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(document.clone()),
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn validate_point_in_time_archive_materialization(
+    archive: &PointInTimeRestoreArchive,
+) -> Result<MaterializedRetentionCheckpoint> {
+    archive.validate()?;
+    let restored_position = materialized_position_after_rebuild(
+        &archive.base_snapshot,
+        &archive.journal_tail,
+        archive.target_sequence,
+    )?;
+    validate_restored_point_in_time_position(&restored_position, &archive.target_position)?;
+    MaterializedRetentionCheckpoint::new(
+        archive.base_snapshot.clone(),
+        archive.base_checkpoint_timestamp,
+    )
+}
+
+pub(crate) fn validate_restored_point_in_time_position(
+    restored_position: &MaterializedPosition,
+    expected_position: &MaterializedPosition,
+) -> Result<()> {
+    if restored_position != expected_position {
+        return Err(Error::storage(
+            nimbus_core::StorageErrorKind::Corruption,
+            format!(
+                "point-in-time restore position mismatch: restored {} expected {}",
+                describe_materialized_position(restored_position),
+                describe_materialized_position(expected_position)
+            ),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn resolve_point_in_time_target(

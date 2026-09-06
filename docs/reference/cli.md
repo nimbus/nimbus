@@ -309,7 +309,8 @@ master key (`bootstrap-master-key`), garbage-collection and erasure health
 (`gc-status`, `erasure-status`, `erasure-heal`), offline byte-plane backup and
 restore (`backup-object-store`, `restore-object-store`), and destructive
 per-tenant removal (`tenant rm`). The maintenance verbs are offline and fail
-closed while a server is running. See
+closed while a server is running. Commands that open tenant metadata accept
+`--control-data-dir <dir>` for split-root deployments. See
 [Object storage](/operators/object-storage/) for the operator runbook.
 
 ## nimbus token
@@ -336,7 +337,9 @@ nimbus backup restore --in <file> --data-dir ./data
 Offline whole-deployment backup and restore for the embedded providers
 (`--provider sqlite|redb`): one point-in-time archive per tenant in a
 single file, fingerprint-verified on restore. Run with the server
-stopped; restore requires a fresh data directory. See
+stopped; restore requires a fresh data directory. Pass
+`--control-data-dir <dir>` on each command when the deployment keeps its
+control plane outside `--data-dir`. See
 [Backup & restore](/operators/backup-restore/) for procedures, encrypted
 deployments, and external backends.
 

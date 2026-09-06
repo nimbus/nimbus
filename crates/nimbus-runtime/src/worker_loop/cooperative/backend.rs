@@ -208,7 +208,7 @@ impl CooperativeBackendDriver for V8LockerDriver {
         mut reusable_runtime: ReusableV8Runtime,
     ) {
         match policy.limits().runtime_pool_kind {
-            RuntimePoolKind::WarmPool | RuntimePoolKind::WarmContextRecycle => {
+            RuntimePoolKind::WarmPool => {
                 reusable_runtime.warm_reuse_count =
                     reusable_runtime.warm_reuse_count.saturating_add(1);
                 let runtime_instance = host.runtime_with_policy(policy);

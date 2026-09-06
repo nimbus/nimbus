@@ -18,7 +18,9 @@ pub(super) fn format_private_tsi_port_map(
         .map(|binding| {
             format!(
                 "{}:{}:{}",
-                bind_address, binding.host_port, binding.guest_port
+                bind_address,
+                private_tsi_upstream_port(binding),
+                binding.guest_port
             )
         })
         .collect::<Vec<_>>()
@@ -26,7 +28,11 @@ pub(super) fn format_private_tsi_port_map(
 }
 
 pub(super) const fn private_tsi_upstream_port(binding: &SandboxPortBinding) -> u16 {
-    binding.host_port
+    if binding.host_port == 0 {
+        binding.guest_port
+    } else {
+        binding.host_port
+    }
 }
 
 pub(super) fn private_tsi_readiness_endpoints(
@@ -84,6 +90,21 @@ mod tests {
         let binding = SandboxPortBinding::tcp("http", 18_080, 8_080);
 
         assert_eq!(private_tsi_upstream_port(&binding), 18_080);
+    }
+
+    #[test]
+    fn provider_assigned_publication_uses_the_guest_port_for_the_private_bridge() {
+        let binding = SandboxPortBinding::tcp("http", 0, 8_080);
+
+        assert_eq!(private_tsi_upstream_port(&binding), 8_080);
+        assert_eq!(
+            format_private_tsi_port_map(std::slice::from_ref(&binding), Ipv4Addr::UNSPECIFIED),
+            "0.0.0.0:8080:8080"
+        );
+        assert_eq!(
+            private_tsi_readiness_endpoints(&[binding], Ipv4Addr::new(10, 0, 0, 9))[0].address,
+            SocketAddr::from(([10, 0, 0, 9], 8_080))
+        );
     }
 
     #[test]

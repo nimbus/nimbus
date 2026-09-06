@@ -77,6 +77,32 @@ tar -tzf "${archive_path}" >"${tmp_root}/archive-entries.txt"
 grep -Fx "${evidence_sbom}" "${tmp_root}/archive-entries.txt" >/dev/null
 grep -Fx "${evidence_slsa}" "${tmp_root}/archive-entries.txt" >/dev/null
 
+alternate_repository="https://github.com/nimbus/bun"
+alternate_ref="codex/bun-v1.4.0-package-proof"
+alternate_revision="0123456789abcdef0123456789abcdef01234567"
+alternate_output="${tmp_root}/package-alternate-source"
+bash "${repo_root}/scripts/package-bun-jsc-adapter.sh" \
+  --output-dir "${alternate_output}" \
+  --shared-library "${fixture_library}" \
+  --nimbus-version v0.1.0 \
+  --adapter-version v0.1.0-bun-alternate-source \
+  --target-triple "${target_triple}" \
+  --bun-source-repository "${alternate_repository}" \
+  --bun-source-ref "${alternate_ref}" \
+  --bun-source-revision "${alternate_revision}" \
+  >"${tmp_root}/package-alternate-source.out"
+alternate_archive="$(awk -F= '$1 == "archive.path" { print $2 }' "${tmp_root}/package-alternate-source.out")"
+bash "${repo_root}/scripts/verify-bun-jsc-adapter-package.sh" \
+  --archive "${alternate_archive}" \
+  --target-triple "${target_triple}" \
+  --bun-source-repository "${alternate_repository}" \
+  --bun-source-ref "${alternate_ref}" \
+  --bun-source-revision "${alternate_revision}" \
+  --nm "${fake_nm}" \
+  >"${tmp_root}/verify-alternate-source.out"
+grep -F "verified: Bun/JSC adapter package archive matches manifest, checksum, SBOM/provenance" \
+  "${tmp_root}/verify-alternate-source.out" >/dev/null
+
 rewrite_checksums_for_extract() {
   local extract_dir="$1"
   (
@@ -276,4 +302,4 @@ fi
 grep -F "exports bundled native implementation symbols" \
   "${tmp_root}/leaked-native.out" >/dev/null
 
-printf 'verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, checksum subject spoofing, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, unsafe modes, wrong exports, and native leaks\n'
+printf 'verified: Bun/JSC adapter package helper accepts canonical and explicit source provenance with SBOM/provenance and rejects missing library, bad checksum, checksum subject spoofing, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, unsafe modes, wrong exports, and native leaks\n'

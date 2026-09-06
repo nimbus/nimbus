@@ -1,4 +1,3 @@
-use crate::backends::v8::embedder::JsRealm;
 use crate::backends::v8::embedder::JsRuntime;
 use crate::error::{NimbusRuntimeError, Result};
 
@@ -90,10 +89,6 @@ pub(crate) fn install_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     execute_runtime_scripts(runtime, BOOTSTRAP_SCRIPTS)
 }
 
-pub(crate) fn install_bootstrap_in_realm(runtime: &mut JsRuntime, realm: &JsRealm) -> Result<()> {
-    execute_realm_scripts(runtime, realm, BOOTSTRAP_SCRIPTS)
-}
-
 pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     // This stays as an intentional second step instead of being folded into
     // install_bootstrap(), because the snapshot path also executes
@@ -101,22 +96,8 @@ pub(crate) fn finalize_bootstrap(runtime: &mut JsRuntime) -> Result<()> {
     execute_runtime_script(runtime, FINALIZE_BOOTSTRAP_SCRIPT)
 }
 
-pub(crate) fn finalize_bootstrap_in_realm(runtime: &mut JsRuntime, realm: &JsRealm) -> Result<()> {
-    // Keep the realm path aligned with the main-context bootstrap contract: the
-    // finalize step stays separate so callers can snapshot or install sources
-    // before hiding bootstrap-only globals.
-    execute_realm_script(runtime, realm, FINALIZE_BOOTSTRAP_SCRIPT)
-}
-
 pub(crate) fn reset_bootstrap_invocation_state(runtime: &mut JsRuntime) -> Result<()> {
     execute_runtime_script(runtime, RESET_BOOTSTRAP_SCRIPT)
-}
-
-pub(crate) fn reset_bootstrap_invocation_state_in_realm(
-    runtime: &mut JsRuntime,
-    realm: &JsRealm,
-) -> Result<()> {
-    execute_realm_script(runtime, realm, RESET_BOOTSTRAP_SCRIPT)
 }
 
 fn execute_runtime_scripts(runtime: &mut JsRuntime, scripts: &[BootstrapScript]) -> Result<()> {
@@ -129,28 +110,6 @@ fn execute_runtime_scripts(runtime: &mut JsRuntime, scripts: &[BootstrapScript])
 fn execute_runtime_script(runtime: &mut JsRuntime, script: BootstrapScript) -> Result<()> {
     runtime
         .execute_script(script.name, script.source)
-        .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
-    Ok(())
-}
-
-fn execute_realm_scripts(
-    runtime: &mut JsRuntime,
-    realm: &JsRealm,
-    scripts: &[BootstrapScript],
-) -> Result<()> {
-    for script in scripts {
-        execute_realm_script(runtime, realm, *script)?;
-    }
-    Ok(())
-}
-
-fn execute_realm_script(
-    runtime: &mut JsRuntime,
-    realm: &JsRealm,
-    script: BootstrapScript,
-) -> Result<()> {
-    realm
-        .execute_script(runtime.v8_isolate(), script.name, script.source)
         .map_err(|error| NimbusRuntimeError::JavaScript(error.to_string()))?;
     Ok(())
 }

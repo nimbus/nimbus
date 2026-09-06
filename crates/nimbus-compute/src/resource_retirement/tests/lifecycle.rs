@@ -456,6 +456,45 @@ fn sandbox_stop_persists_then_observes_complete_teardown_order() {
     });
 }
 
+#[test]
+fn foreground_sandbox_stop_resumes_waiting_without_duplicate_effect() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.start_sandbox().await;
+        harness.reset_retirement_evidence();
+        harness
+            .teardown_provider
+            .wait_once_at(WorkloadTeardownStep::StopExecution);
+
+        let snapshot = harness
+            .retire
+            .submit_sandbox_teardown_until_terminal(
+                &harness.context,
+                SANDBOX_ID,
+                &WorkloadTeardownCancellationToken::new(),
+            )
+            .await
+            .expect("foreground sandbox retirement should resume a safe waiting result");
+
+        assert_eq!(
+            snapshot
+                .observation
+                .expect("terminal sandbox observation should remain truthful")
+                .handle
+                .status,
+            nimbus_sandbox::SandboxStatus::Stopped
+        );
+        assert_eq!(
+            harness.store.record(&key(SANDBOX_ID)).phase(),
+            WorkloadSagaPhase::Recorded
+        );
+        assert_waiting_step_was_inspected_without_duplicate_effect(
+            &harness.log.entries(),
+            WorkloadTeardownStep::StopExecution,
+        );
+    });
+}
+
 fn assert_terminal_network_successor(running: &WorkloadSagaRecord, stopped: &WorkloadSagaRecord) {
     let running = running.active_intent().network().compiled_plan().content();
     let stopped = stopped.active_intent().network().compiled_plan().content();

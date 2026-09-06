@@ -4,55 +4,28 @@ use super::*;
 /// M3 verification: prove image USER is finally applied inside the guest via
 /// the mounted nimbus guest helper, while the host-side VMM still runs as root.
 #[test]
-#[ignore = "requires a Linux host with KVM, buildah, conmon, and a built guest helper"]
+#[ignore = "requires a Linux host with KVM, conmon, a mounted BusyBox rootfs, and a built guest helper"]
 fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
-    let host_port: u16 = 18089;
+    let host_port = smoke_host_port(18089);
     let guest_port: u16 = 8089;
 
     let base_dir = env_path("NIMBUS_KRUN_SMOKE_WORKDIR");
     let bundle_root = base_dir.join("m3-user-bundles");
     let state_root = base_dir.join("m3-user-state");
 
-    let mut config = smoke_backend_config(bundle_root.clone(), state_root.clone());
-    config.guest_user_helper_root = env_path("NIMBUS_KRUN_GUEST_USER_HELPER_ROOT");
-
-    let buildah = buildah_program();
-    run_host_command(&buildah, &["rm", "m3-user-fixture"], true);
-    run_host_command(
-        &buildah,
-        &[
-            "from",
-            "--name",
-            "m3-user-fixture",
-            "docker://busybox:latest",
-        ],
-        false,
-    );
-    run_host_command(
-        &buildah,
-        &["config", "--user", "www-data", "m3-user-fixture"],
-        false,
-    );
-    run_host_command(
-        &buildah,
-        &[
-            "commit",
-            "m3-user-fixture",
-            "localhost/nimbus-m3-user-fixture:latest",
-        ],
-        false,
-    );
-    run_host_command(&buildah, &["rm", "m3-user-fixture"], true);
-
-    let backend = KrunSandboxBackend::new(config);
+    let backend = KrunSandboxBackend::new(smoke_backend_config(
+        bundle_root.clone(),
+        state_root.clone(),
+    ));
     let guest_script = format!(
-        "echo NIMBUS_UID=$(id -u) >&2; \
-         echo NIMBUS_GID=$(id -g) >&2; \
+        "echo NIMBUS_UID=$(/bin/busybox id -u) >&2; \
+         echo NIMBUS_GID=$(/bin/busybox id -g) >&2; \
          exec /bin/busybox httpd -f -p {guest_port}"
     );
-    let mut spec = image_spec(
+    let mut spec = built_busybox_image_spec(
         "m3-guest-user-switch",
-        "localhost/nimbus-m3-user-fixture:latest",
+        "nimbus-m3-user-fixture",
+        "USER www-data",
     )
     .with_port_binding(http_binding(host_port, guest_port));
     spec.process = SandboxProcessSpec::new([
@@ -67,8 +40,8 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
     let teardown = provisioned.teardown;
-    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
+    let ingress = provisioned.ingress;
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -124,6 +97,7 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         Some("/.nimbus/nimbus-guest-user-switch")
     );
 
+    drop(ingress);
     retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }

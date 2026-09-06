@@ -33,7 +33,12 @@ pub(super) async fn run_backup_object_store(
         .into());
     }
     let tenant = TenantId::new(command.tenant)?;
-    let engine = open_engine(&command.data_dir, command.provider).await?;
+    let engine = open_engine(
+        &command.data_dir,
+        command.control_data_dir.as_deref(),
+        command.provider,
+    )
+    .await?;
     let archive = engine.export_latest_point_in_time_restore_archive(&tenant)?;
     let archive_bytes = serde_json::to_vec(&archive)?;
     let roots = backup_roots_from_archive_or_local(&archive, &command.data_dir, &tenant).await?;
@@ -182,7 +187,12 @@ pub(super) async fn run_restore_object_store(
     let target = raw_local_leg_writable(&command.data_dir, &tenant)?;
     install_escrow_sidecar(&sidecar_path, escrow_bytes)?;
     let report = ObjectBackup::restore_bundle(target.as_ref(), &bundle, Some(&key_escrow)).await?;
-    let engine = open_engine(&command.data_dir, command.provider).await?;
+    let engine = open_engine(
+        &command.data_dir,
+        command.control_data_dir.as_deref(),
+        command.provider,
+    )
+    .await?;
     match engine.create_tenant(tenant.clone()) {
         // tenant-lifecycle: embedded-only
         Ok(()) | Err(NimbusError::AlreadyExists(_)) => {}
@@ -538,7 +548,15 @@ mod tests {
         // run raw-leg ciphertext end-to-end and escrow installs the
         // wrapped-DEK sidecar at restore.
         let source_dir = tempfile::tempdir().unwrap();
-        let engine = Arc::new(Engine::new(source_dir.path()).unwrap());
+        let data_dir = source_dir.path().join("data");
+        let control_data_dir = source_dir.path().join("control");
+        let engine = open_engine(
+            &data_dir,
+            Some(&control_data_dir),
+            ObjectStorageProvider::Sqlite,
+        )
+        .await
+        .unwrap();
         let tenant = TenantId::new("backup-tenant").unwrap();
         engine.create_tenant(tenant.clone()).unwrap();
         let resolver = ObjectStorageResolver::new(engine.clone());
@@ -552,7 +570,7 @@ mod tests {
 
         // Escrow = the tenant's wrapped-DEK sidecar bytes.
         let sidecar = std::fs::read(nimbus::KeyManifest::manifest_path(
-            &nimbus::object_blob_key_path(source_dir.path(), &tenant),
+            &nimbus::object_blob_key_path(&data_dir, &tenant),
         ))
         .unwrap();
         let escrow_file = source_dir.path().join("escrow.bin");
@@ -561,7 +579,8 @@ mod tests {
         let bundle_path = source_dir.path().join("backup.nobb");
         run_backup_object_store(BackupObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
-            data_dir: source_dir.path().to_path_buf(),
+            data_dir: data_dir.clone(),
+            control_data_dir: Some(control_data_dir.clone()),
             out: bundle_path.clone(),
             key_escrow_id: "backup-tenant".to_string(),
             key_escrow_file: escrow_file.clone(),
@@ -583,11 +602,12 @@ mod tests {
         // sidecar) is lost; the deployment's master key and layout survive.
         // The key-manifest provider identity records the master-key path, so
         // restore requires the same data-dir layout as the source.
-        std::fs::remove_dir_all(source_dir.path().join("object-blobs")).unwrap();
+        std::fs::remove_dir_all(data_dir.join("object-blobs")).unwrap();
 
         run_restore_object_store(RestoreObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
-            data_dir: source_dir.path().to_path_buf(),
+            data_dir: data_dir.clone(),
+            control_data_dir: Some(control_data_dir.clone()),
             input: bundle_path,
             key_escrow_id: "backup-tenant".to_string(),
             key_escrow_file: escrow_file,
@@ -598,7 +618,13 @@ mod tests {
 
         // The restored tenant READS its plaintext through the normal
         // encrypted composition — escrow made the ciphertext readable.
-        let engine = Arc::new(Engine::new(source_dir.path()).unwrap());
+        let engine = open_engine(
+            &data_dir,
+            Some(&control_data_dir),
+            ObjectStorageProvider::Sqlite,
+        )
+        .await
+        .unwrap();
         let resolver = ObjectStorageResolver::new(engine.clone());
         let restored = resolver.blob_store(&tenant).unwrap();
         assert_eq!(restored.get(&address).await.unwrap(), plaintext);
@@ -630,6 +656,7 @@ mod tests {
         let err = run_backup_object_store(BackupObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
             data_dir: dir.path().to_path_buf(),
+            control_data_dir: None,
             out: dir.path().join("backup.nobb"),
             key_escrow_id: "escrow-tenant".to_string(),
             key_escrow_file: escrow_file,
@@ -671,6 +698,7 @@ mod tests {
         run_backup_object_store(BackupObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
             data_dir: source_dir.path().to_path_buf(),
+            control_data_dir: None,
             out: bundle_path.clone(),
             key_escrow_id: "layout-tenant".to_string(),
             key_escrow_file: escrow_file.clone(),
@@ -691,6 +719,7 @@ mod tests {
         let err = run_restore_object_store(RestoreObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
             data_dir: target_dir.path().to_path_buf(),
+            control_data_dir: None,
             input: bundle_path,
             key_escrow_id: "layout-tenant".to_string(),
             key_escrow_file: escrow_file,
@@ -743,6 +772,7 @@ mod tests {
         let err = run_backup_object_store(BackupObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
             data_dir: dir.path().to_path_buf(),
+            control_data_dir: None,
             out: dir.path().join("backup.nobb"),
             key_escrow_id: "rekeyed-tenant".to_string(),
             key_escrow_file: escrow_file,
@@ -792,6 +822,7 @@ mod tests {
         let err = run_backup_object_store(BackupObjectStoreCommand {
             tenant: tenant_a.as_str().to_string(),
             data_dir: dir.path().to_path_buf(),
+            control_data_dir: None,
             out: dir.path().join("backup.nobb"),
             key_escrow_id: "empty-tenant".to_string(),
             key_escrow_file: escrow_file,
@@ -833,6 +864,7 @@ mod tests {
         run_backup_object_store(BackupObjectStoreCommand {
             tenant: tenant_a.as_str().to_string(),
             data_dir: dir.path().to_path_buf(),
+            control_data_dir: None,
             out: bundle_path.clone(),
             key_escrow_id: "bundle-tenant".to_string(),
             key_escrow_file: escrow_a,
@@ -868,6 +900,7 @@ mod tests {
         let err = run_restore_object_store(RestoreObjectStoreCommand {
             tenant: tenant_a.as_str().to_string(),
             data_dir: dir.path().to_path_buf(),
+            control_data_dir: None,
             input: bundle_path,
             key_escrow_id: "bundle-tenant".to_string(),
             key_escrow_file: sidecar_b_escrow,
@@ -913,6 +946,7 @@ mod tests {
         run_backup_object_store(BackupObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
             data_dir: dir.path().to_path_buf(),
+            control_data_dir: None,
             out: bundle_path.clone(),
             key_escrow_id: "symlink-tenant".to_string(),
             key_escrow_file: escrow_file.clone(),
@@ -931,6 +965,7 @@ mod tests {
         let err = run_restore_object_store(RestoreObjectStoreCommand {
             tenant: tenant.as_str().to_string(),
             data_dir: dir.path().to_path_buf(),
+            control_data_dir: None,
             input: bundle_path,
             key_escrow_id: "symlink-tenant".to_string(),
             key_escrow_file: escrow_file.clone(),

@@ -955,7 +955,7 @@
     {
       "id": "express",
       "package": "express",
-      "pinned_version": "4.19.2",
+      "pinned_version": "4.22.2",
       "status": "active",
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "express.mjs",
@@ -987,7 +987,7 @@
     {
       "id": "fastify",
       "package": "fastify",
-      "pinned_version": "4.28.1",
+      "pinned_version": "5.12.1",
       "status": "active",
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "fastify.mjs",
@@ -1019,7 +1019,7 @@
     {
       "id": "socket-io",
       "package": "socket.io",
-      "pinned_version": "4.7.5",
+      "pinned_version": "4.8.3",
       "status": "active",
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "socket-io.mjs",
@@ -1045,7 +1045,7 @@
     {
       "id": "undici",
       "package": "undici",
-      "pinned_version": "6.19.8",
+      "pinned_version": "6.28.0",
       "status": "active",
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "undici.mjs",
@@ -1072,7 +1072,7 @@
     {
       "id": "axios",
       "package": "axios",
-      "pinned_version": "1.7.7",
+      "pinned_version": "1.20.0",
       "status": "active",
       "root": "tests/runtime/node/networking-canaries",
       "bundle": "axios.mjs",
@@ -1514,7 +1514,7 @@
     {
       "id": "nanoid",
       "package": "nanoid",
-      "pinned_version": "5.1.11",
+      "pinned_version": "5.1.16",
       "status": "active",
       "root": "tests/runtime/node/sdk-canaries",
       "bundle": "nanoid.mjs",
@@ -1847,7 +1847,7 @@
     {
       "id": "host-heavy-sharp-native",
       "package": "sharp",
-      "pinned_version": "0.34.5",
+      "pinned_version": "0.35.4",
       "status": "active",
       "root": "tests/runtime/node/host-heavy-canaries",
       "bundle": "sharp-native.mjs",
@@ -1877,7 +1877,7 @@
     {
       "id": "host-heavy-esbuild-binary",
       "package": "esbuild",
-      "pinned_version": "0.28.0",
+      "pinned_version": "0.28.2",
       "status": "active",
       "root": "tests/runtime/node/host-heavy-canaries",
       "bundle": "esbuild-binary.mjs",
@@ -1976,7 +1976,7 @@
     {
       "id": "prisma",
       "package": "prisma",
-      "pinned_version": "7.8.0",
+      "pinned_version": "7.10.0",
       "status": "active",
       "root": "tests/runtime/node/tooling-canaries",
       "bundle": "prisma.mjs",
@@ -1999,7 +1999,7 @@
     {
       "id": "next",
       "package": "next",
-      "pinned_version": "16.2.6",
+      "pinned_version": "16.3.3",
       "status": "active",
       "root": "tests/runtime/node/tooling-canaries",
       "bundle": "next.mjs",

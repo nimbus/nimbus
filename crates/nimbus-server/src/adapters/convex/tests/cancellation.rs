@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::fixture::host_bridge_fixture;
+use super::fixture::{host_bridge_fixture, host_bridge_fixture_for_invocation};
 use super::*;
 
 #[test]
@@ -68,7 +68,10 @@ fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
         &cancellation,
     );
 
-    assert!(matches!(result, Err(NimbusRuntimeError::Cancelled)));
+    assert!(
+        matches!(&result, Err(NimbusRuntimeError::Cancelled)),
+        "unexpected cancellation result: {result:?}",
+    );
     let dependencies = bridge.snapshot_read_set().dependency_set();
     assert!(dependencies.tables.is_empty());
     assert!(dependencies.missing_tables.is_empty());
@@ -81,7 +84,8 @@ fn runtime_cancellable_db_get_short_circuits_before_dispatch() {
 
 #[test]
 fn runtime_cancellable_http_route_short_circuits_before_mutation_dispatch() {
-    let (_tempdir, engine, tenant_id, bridge) = host_bridge_fixture();
+    let (_tempdir, engine, tenant_id, bridge) =
+        host_bridge_fixture_for_invocation(InvocationKind::Action, "messages:send");
     let cancellation = HostCallCancellation::default();
     cancellation.cancel();
 
@@ -101,36 +105,16 @@ fn runtime_cancellable_http_route_short_circuits_before_mutation_dispatch() {
                         "body_bytes": [],
                         "body_text": ""
                     }
-                },
-                "route": {
-                    "name": "messages:send",
-                    "method": "POST",
-                    "path": "/messages",
-                    "plan": {
-                        "operation": {
-                            "type": "mutation",
-                            "mutation": {
-                                "type": "insert",
-                                "table": "messages",
-                                "fields": {
-                                    "body": "hello"
-                                }
-                            }
-                        },
-                        "response": {
-                            "kind": "json",
-                            "body": {
-                                "ok": true
-                            }
-                        }
-                    }
                 }
             }),
         ),
         &cancellation,
     );
 
-    assert!(matches!(result, Err(NimbusRuntimeError::Cancelled)));
+    assert!(
+        matches!(&result, Err(NimbusRuntimeError::Cancelled)),
+        "unexpected cancellation result: {result:?}",
+    );
     let documents = engine
         .query_documents(
             &tenant_id,

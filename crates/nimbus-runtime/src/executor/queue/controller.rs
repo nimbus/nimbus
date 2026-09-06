@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::error::Result;
+use crate::error::{NimbusRuntimeError, Result};
 
 use super::job::{RuntimeWorkerJob, RuntimeWorkerMessage};
 use super::router::RuntimeWorkerRouter;
@@ -32,10 +32,8 @@ pub(crate) struct RuntimeWorkerQueueController {
 }
 
 impl RuntimeWorkerQueueController {
-    fn fail_ready_job(ready_job: RuntimeWorkerJob) {
-        ready_job
-            .result_tx
-            .send(Err(RuntimeWorkerRouter::closed_error()));
+    fn fail_ready_job(ready_job: Box<RuntimeWorkerJob>, error: NimbusRuntimeError) {
+        (*ready_job).send_result(Err(error));
     }
 
     pub(super) fn new(
@@ -81,10 +79,11 @@ impl RuntimeWorkerQueue for RuntimeWorkerQueueController {
         ready_jobs: Vec<RuntimeWorkerJob>,
     ) {
         self.router.complete_worker_job(self.worker_id);
-        job.result_tx.send(result);
+        job.send_result(result);
         for ready_job in ready_jobs {
-            if let Err(ready_job) = self.router.dispatch_job_blocking(ready_job) {
-                Self::fail_ready_job(*ready_job);
+            if let Err(failure) = self.router.dispatch_job_blocking(ready_job) {
+                let (ready_job, error) = failure.into_parts();
+                Self::fail_ready_job(ready_job, error);
             }
         }
     }

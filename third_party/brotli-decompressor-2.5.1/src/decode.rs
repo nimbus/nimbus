@@ -3237,4 +3237,3 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
   SaveErrorCode!(s, result)
 }
-

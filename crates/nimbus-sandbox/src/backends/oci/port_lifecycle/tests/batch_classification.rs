@@ -255,3 +255,51 @@ fn separate_owner_terminal_publication_accepts_foreign_historical_provider_evide
         "attachment teardown must not rewrite or release separate-owner evidence"
     );
 }
+
+#[test]
+fn separate_owner_terminal_publication_accepts_provider_assigned_no_effect_authority() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000);
+    let tenant = tenant_id("tenant-separate-owner-provider-assigned");
+    let sandbox = SandboxId::new("separate-owner-provider-assigned");
+    let spec = crate::SandboxSpec::new(
+        tenant.clone(),
+        crate::SandboxOwnerSpec::standalone_named("separate-owner-provider-assigned"),
+        crate::SandboxBackendKind::Krun,
+        crate::SandboxRootSpec::rootfs("/separate-owner-provider-assigned"),
+        crate::SandboxProcessSpec::new(["/bin/true"]),
+    )
+    .with_port_binding(SandboxPortBinding::tcp("http", 0, 8080));
+    let plan = crate::provision::test_support::sandbox_provision_network_plan_fixture(
+        &spec,
+        &sandbox,
+        "separate-owner-provider-assigned",
+    );
+    let claim = new_launch_reservation_claim().expect("launch claim should mint");
+    let mut reserved = manager
+        .reserve_exact_provision_ports(&plan, None, &claim)
+        .expect("provider-assigned listener should reserve without a numeric port");
+    reserved
+        .confirm_manifest_published()
+        .expect("exact plan members should become durable");
+    manager
+        .release_never_bound_plan_members(
+            &reserved.published_leases,
+            &reserved.published_leases,
+            &reserved.reservation_claim,
+        )
+        .expect("the separate ingress owner should publish terminal no-effect authority");
+
+    let records = manager
+        .authenticate_separate_owner_publication_terminal(
+            &reserved.published_leases,
+            &tenant,
+            &reserved.published_bindings,
+            &reserved.published_leases,
+        )
+        .expect("attachment teardown should accept terminal provider-assigned authority");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].phase(), nimbus_network::PortLeasePhase::Released);
+    assert_eq!(records[0].reserved_port(), None);
+}

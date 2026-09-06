@@ -28,6 +28,7 @@ die() {
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
+# shellcheck source=scripts/bun-jsc-adapter-contract.sh
 source "${repo_root}/scripts/bun-jsc-adapter-contract.sh"
 
 archive_path=""
@@ -72,7 +73,6 @@ if [[ -z "${target_triple}" ]]; then
 fi
 platform="$(bun_jsc_adapter_platform_for_triple "${target_triple}")"
 [[ "${platform}" != "unsupported" ]] || die "unsupported target triple: ${target_triple}"
-library_basename="$(bun_jsc_adapter_library_basename_for_triple "${target_triple}")"
 
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-bun-jsc-installed-proof.XXXXXX")"
 extract_root="${tmp_root}/extract"
@@ -269,6 +269,7 @@ printf '\n[6/8] Server diagnostics see packaged linked state\n'
 run_linked_cargo_test \
   -p nimbus-server \
   --features bun-jsc-linked-adapter \
+  --lib \
   registry_and_license::registry::convex_registry_bun_jsc_lane_diagnostics_reflect_runtime_adapter_state \
   -- --nocapture
 

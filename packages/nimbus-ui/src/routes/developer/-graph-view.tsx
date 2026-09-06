@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { useApiRead } from "../../hooks/use-api-read";
@@ -19,7 +19,7 @@ const PAD = 28;
 const COL_W = NODE_W + COL_GAP_X;
 
 export function GraphView() {
-  const state = useApiRead<GraphData>("/api/console/graph", []);
+  const state = useApiRead<GraphData>("/api/console/graph");
 
   return (
     <div
@@ -47,13 +47,17 @@ export function GraphView() {
 }
 
 function GraphCanvas({ graph }: { graph: GraphData }) {
-  const navigate = useNavigate();
+  const router = useRouter();
 
   const layout = useMemo(() => {
-    const modules = Array.from(new Set(graph.nodes.map((n) => n.module))).sort();
+    const modules = Array.from(
+      new Set(graph.nodes.map((n) => n.module)),
+    ).sort();
     const byModule = new Map<string, GraphNode[]>();
     for (const module of modules) byModule.set(module, []);
-    for (const node of [...graph.nodes].sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const node of [...graph.nodes].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
       byModule.get(node.module)?.push(node);
     }
     const pos = new Map<string, { x: number; y: number }>();
@@ -75,8 +79,15 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
     return { modules, byModule, pos, width, height };
   }, [graph]);
 
+  const functionLocation = (id: string) =>
+    router.buildLocation({
+      to: "/developer/compute/$function",
+      params: { function: id },
+      search: { tab: "source" },
+    });
+
   const openFunction = (id: string) =>
-    navigate({
+    router.navigate({
       to: "/developer/compute/$function",
       params: { function: id },
       search: { tab: "source" },
@@ -150,29 +161,43 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
         const p = layout.pos.get(node.id);
         if (!p) return null;
         return (
-          <g
-            key={node.id}
-            transform={`translate(${p.x}, ${p.y})`}
-            data-testid={`graph-node-${node.id}`}
-            onClick={() => openFunction(node.id)}
-            style={{ cursor: "pointer" }}
-          >
-            <rect
-              width={NODE_W}
-              height={NODE_H}
-              rx="6"
-              fill="var(--nimbus-surface-2)"
-              stroke="var(--nimbus-border-strong)"
-            />
-            <text
-              x={10}
-              y={NODE_H / 2 + 4}
-              className="font-mono"
-              fontSize="12"
-              fill="var(--nimbus-text)"
+          <g key={node.id} transform={`translate(${p.x}, ${p.y})`}>
+            <a
+              href={functionLocation(node.id).href}
+              data-testid={`graph-node-${node.id}`}
+              aria-label={`Open ${node.name}`}
+              onClick={(event) => {
+                if (
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                void openFunction(node.id);
+              }}
+              style={{ cursor: "pointer" }}
             >
-              {node.name}
-            </text>
+              <rect
+                width={NODE_W}
+                height={NODE_H}
+                rx="6"
+                fill="var(--nimbus-surface-2)"
+                stroke="var(--nimbus-border-strong)"
+              />
+              <text
+                x={10}
+                y={NODE_H / 2 + 4}
+                className="font-mono"
+                fontSize="12"
+                fill="var(--nimbus-text)"
+              >
+                {node.name}
+              </text>
+            </a>
           </g>
         );
       })}

@@ -220,6 +220,12 @@ pub(super) fn requires_bootc_machine_config(config: &MachineConfigRecord) -> boo
         && machine_bootstrap_mode(config) == MachineBootstrapMode::BootcMachineConfig
 }
 
+pub(super) fn requires_ssh_guest_api_convergence(config: &MachineConfigRecord) -> bool {
+    cfg!(target_os = "macos")
+        && config.provider.uses_managed_applehv_guest()
+        && !requires_bootc_machine_config(config)
+}
+
 pub(super) struct GuestMachineApiProcesses<'a> {
     pub(super) vmm: &'a mut Option<Child>,
     pub(super) gvproxy: &'a mut Option<Child>,
@@ -238,12 +244,16 @@ pub(super) fn ensure_guest_machine_api_ready(
         return Ok(());
     }
 
-    stop_guest_machine_api(config, ssh_port)?;
-    if requires_host_guest_nimbus_sync(config) {
-        sync_guest_nimbus_binary(paths, config, ssh_port)?;
+    // The bootc guest consumes the mounted machine-config bundle before it
+    // signals readiness. Its baked service already has the current authority.
+    if requires_ssh_guest_api_convergence(config) {
+        stop_guest_machine_api(config, ssh_port)?;
+        if requires_host_guest_nimbus_sync(config) {
+            sync_guest_nimbus_binary(paths, config, ssh_port)?;
+        }
+        install_guest_machine_api_authority(config, forwarder_authority, ssh_port)?;
+        start_guest_machine_api(config, ssh_port)?;
     }
-    install_guest_machine_api_authority(config, forwarder_authority, ssh_port)?;
-    start_guest_machine_api(config, ssh_port)?;
 
     super::emit_machine_progress("Waiting for forwarded machine API");
     wait_for_machine_api_ready(

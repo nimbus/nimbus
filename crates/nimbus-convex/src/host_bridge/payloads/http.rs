@@ -4,7 +4,6 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub struct ConvexRuntimeHttpRouteInvokePayload {
     pub request: InvocationRequest,
-    pub route: ConvexHttpRouteDefinition,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

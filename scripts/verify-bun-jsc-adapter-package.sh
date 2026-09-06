@@ -14,6 +14,10 @@ Required:
 
 Optional:
   --target-triple <triple>     Expected target triple (default: rustc host triple)
+  --bun-source-repository <url>
+                                Expected Bun source repository (default: release contract)
+  --bun-source-ref <ref>        Expected Bun source ref (default: release contract)
+  --bun-source-revision <sha>   Expected Bun source commit (default: release contract)
   --nm <path>                  nm-compatible command for export audit (test hook)
   -h, --help                   Show this help text
 EOF
@@ -31,6 +35,9 @@ source "${repo_root}/scripts/bun-jsc-adapter-contract.sh"
 archive_path=""
 target_triple=""
 nm_bin="${NM_BIN:-nm}"
+expected_bun_source_repository="${BUN_JSC_ADAPTER_SOURCE_REPOSITORY}"
+expected_bun_source_ref="${BUN_JSC_ADAPTER_SOURCE_REF}"
+expected_bun_source_revision="${BUN_JSC_ADAPTER_SOURCE_REVISION}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -40,6 +47,18 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --target-triple)
       target_triple="${2:-}"
+      shift 2
+      ;;
+    --bun-source-repository)
+      expected_bun_source_repository="${2:-}"
+      shift 2
+      ;;
+    --bun-source-ref)
+      expected_bun_source_ref="${2:-}"
+      shift 2
+      ;;
+    --bun-source-revision)
+      expected_bun_source_revision="${2:-}"
       shift 2
       ;;
     --nm)
@@ -58,6 +77,9 @@ done
 
 [[ -n "${archive_path}" ]] || die "--archive is required"
 [[ -f "${archive_path}" ]] || die "adapter archive not found: ${archive_path}"
+[[ -n "${expected_bun_source_repository}" ]] || die "--bun-source-repository must be non-empty"
+[[ -n "${expected_bun_source_ref}" ]] || die "--bun-source-ref must be non-empty"
+[[ -n "${expected_bun_source_revision}" ]] || die "--bun-source-revision must be non-empty"
 command -v tar >/dev/null 2>&1 || die "tar is required"
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 command -v "${nm_bin}" >/dev/null 2>&1 || die "nm command not found: ${nm_bin}"
@@ -163,9 +185,9 @@ export BUN_JSC_ADAPTER_MEMORY_ENFORCEMENT
 export BUN_JSC_ADAPTER_LIFECYCLE
 export BUN_JSC_ADAPTER_MANIFEST_FILE
 export BUN_JSC_ADAPTER_README_FILE
-export BUN_JSC_ADAPTER_SOURCE_REPOSITORY
-export BUN_JSC_ADAPTER_SOURCE_REF
-export BUN_JSC_ADAPTER_SOURCE_REVISION
+export expected_bun_source_repository
+export expected_bun_source_ref
+export expected_bun_source_revision
 export BUN_JSC_ADAPTER_CHECKSUMS_FILE
 export target_triple
 export platform
@@ -207,9 +229,9 @@ if unknown:
 expected = {
     "schema_version": int(os.environ["BUN_JSC_ADAPTER_SCHEMA_VERSION"]),
     "kind": os.environ["BUN_JSC_ADAPTER_KIND"],
-    "bun_source_repository": os.environ["BUN_JSC_ADAPTER_SOURCE_REPOSITORY"],
-    "bun_source_ref": os.environ["BUN_JSC_ADAPTER_SOURCE_REF"],
-    "bun_source_revision": os.environ["BUN_JSC_ADAPTER_SOURCE_REVISION"],
+    "bun_source_repository": os.environ["expected_bun_source_repository"],
+    "bun_source_ref": os.environ["expected_bun_source_ref"],
+    "bun_source_revision": os.environ["expected_bun_source_revision"],
     "target_triple": os.environ["target_triple"],
     "platform": os.environ["platform"],
     "library": os.environ["library_basename"],

@@ -16,12 +16,12 @@ import { useMemo, useState } from "react";
 
 import { cn } from "../lib/cn";
 import {
+  collectAllPaths,
   type FolderNode,
   type FunctionLeaf,
   type FunctionTree,
-  type ModuleNode,
-  collectAllPaths,
   filterFunctionTree,
+  type ModuleNode,
 } from "./function-tree";
 
 // Leaf icon by function kind (query reads, mutation writes, action runs,

@@ -29,7 +29,7 @@ fn ci_or_local_duration(local: Duration, ci: Duration) -> Duration {
 fn host_start_timeout() -> Duration {
     duration_ms_env_or(
         "NIMBUS_EXECUTOR_HOST_START_TIMEOUT_MS",
-        ci_or_local_duration(Duration::from_secs(15), Duration::from_secs(60)),
+        ci_or_local_duration(Duration::from_secs(30), Duration::from_secs(60)),
     )
 }
 

@@ -27,12 +27,13 @@ use crate::adapters::http_mount::{
 use crate::config::transport::TransportConfig;
 use crate::license::LicenseState;
 use crate::local_server::{
-    LocalServerAccessPolicy, LocalServerSecurityState, origin_allowlist_middleware,
-    route_family_gate_middleware, server_access_extract_middleware,
+    LocalServerAccessPolicy, LocalServerOriginPolicy, LocalServerSecurityState,
+    origin_allowlist_middleware, route_family_gate_middleware, server_access_extract_middleware,
 };
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::state::{AppState, AppStateConfig};
 use crate::tenant::TenantIsolationMode;
+use crate::workload_boot::ServerWorkloadBootPlan;
 use crate::workload_composition::{ServerWorkloadComposition, ServerWorkloadProfile};
 use crate::{http, ws};
 use nimbus_auth::ApplicationAuthVerifier;
@@ -42,6 +43,7 @@ use nimbus_services::ServiceManager;
 
 mod cors;
 
+pub(crate) use self::cors::CorsOriginPolicy;
 use self::cors::build_cors_layer;
 
 pub use cors::normalize_cors_origin;
@@ -51,6 +53,7 @@ pub(crate) use cors::{is_allowed_local_cors_origin, is_configured_cors_origin};
 /// Canonical public option bundle for building a Nimbus HTTP/WebSocket router.
 pub struct RouterOptions {
     workload: ServerWorkloadProfile,
+    workload_boot_plan: Option<ServerWorkloadBootPlan>,
     deployment: DeploymentConfig,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -64,6 +67,7 @@ impl RouterOptions {
         let service_manager = composition.service_manager();
         Self {
             workload: ServerWorkloadProfile::managed(composition),
+            workload_boot_plan: None,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: NodeServicesConfig::default().with_service_manager(service_manager),
@@ -78,6 +82,7 @@ impl RouterOptions {
     pub fn protocol_only(engine: Arc<Engine>) -> Self {
         Self {
             workload: ServerWorkloadProfile::protocol_only(engine),
+            workload_boot_plan: None,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: NodeServicesConfig::default(),
@@ -88,6 +93,14 @@ impl RouterOptions {
 
     pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
         self.deployment = self.deployment.with_convex(convex_registry);
+        self
+    }
+
+    /// Submit exact declared services after durable recovery and before the
+    /// listener begins serving requests.
+    pub(crate) fn with_workload_boot_plan(mut self, plan: ServerWorkloadBootPlan) -> Self {
+        self.require_managed("a server workload boot plan");
+        self.workload_boot_plan = Some(plan);
         self
     }
 
@@ -204,6 +217,12 @@ impl RouterOptions {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_listen_addr(mut self, listen_addr: std::net::SocketAddr) -> Self {
+        self.transport = self.transport.with_listen_addr(listen_addr);
+        self
+    }
+
     pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
         self.runtime = self.runtime.with_runtime_host_resource_budget(budget);
         self
@@ -257,6 +276,7 @@ impl RouterOptions {
 
     pub(crate) fn into_build_config(self) -> RouterBuildConfig {
         let mut config = RouterBuildConfig::from_workload(self.workload);
+        config.workload_boot_plan = self.workload_boot_plan;
         config.deployment = self.deployment;
         config
             .control_plane
@@ -278,6 +298,7 @@ impl RouterOptions {
 
 pub(crate) struct RouterBuildConfig {
     workload: ServerWorkloadProfile,
+    workload_boot_plan: Option<ServerWorkloadBootPlan>,
     deployment: DeploymentConfig,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -287,6 +308,7 @@ pub(crate) struct RouterBuildConfig {
 
 pub(crate) struct PreparedRouterState {
     state: Arc<AppState>,
+    workload_boot_plan: Option<ServerWorkloadBootPlan>,
     cloud_functions_http_enabled: bool,
     cors_allowed_origins: Vec<String>,
 }
@@ -300,6 +322,7 @@ impl RouterBuildConfig {
     fn from_workload(workload: ServerWorkloadProfile) -> Self {
         Self {
             workload,
+            workload_boot_plan: None,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::build_default(),
             node_services: NodeServicesConfig::default(),
@@ -484,19 +507,21 @@ impl RouterBuildConfig {
     /// managed-workload recovery attempt are complete. No listener is served
     /// before this method returns.
     pub(crate) async fn prepare_for_serving(self) -> nimbus_core::Result<PreparedRouterState> {
-        self.prepare_system_tenant().await?;
-        let prepared = self.into_state();
-        prepared
-            .state
-            .prepare_workload_lifecycle()
+        Box::pin(self.prepare_system_tenant()).await?;
+        let mut prepared = self.into_state();
+        Box::pin(prepared.state.prepare_workload_lifecycle())
             .await
             .map_err(|error| nimbus_core::Error::Internal(error.to_string()))?;
+        if let Some(plan) = prepared.workload_boot_plan.take() {
+            Box::pin(plan.apply(&prepared.state)).await?;
+        }
         Ok(prepared)
     }
 
     fn into_state(self) -> PreparedRouterState {
         let RouterBuildConfig {
             workload,
+            workload_boot_plan,
             deployment,
             control_plane,
             node_services,
@@ -543,6 +568,7 @@ impl RouterBuildConfig {
         }));
         PreparedRouterState {
             state,
+            workload_boot_plan,
             cloud_functions_http_enabled,
             cors_allowed_origins,
         }
@@ -551,6 +577,7 @@ impl RouterBuildConfig {
     fn build_prepared(prepared: PreparedRouterState) -> Router {
         let PreparedRouterState {
             state,
+            workload_boot_plan: _,
             cloud_functions_http_enabled,
             cors_allowed_origins,
         } = prepared;
@@ -602,6 +629,9 @@ impl RouterBuildConfig {
 
         let local_admin_policy = LocalServerAccessPolicy::standard(state.clone());
         let deploy_admin_policy = LocalServerAccessPolicy::deploy(state.clone());
+        let cors_origin_policy = CorsOriginPolicy::new(&cors_allowed_origins);
+        let origin_allowlist_policy =
+            LocalServerOriginPolicy::new(state.clone(), cors_origin_policy.clone());
 
         let router = build_public_router()
             .merge(build_ui_router().route_layer(middleware::from_fn(http::ui_csp_middleware)))
@@ -638,15 +668,19 @@ impl RouterBuildConfig {
             ],
         );
         router
-            .layer(build_cors_layer(&cors_allowed_origins))
+            .layer(build_cors_layer(cors_origin_policy))
             .layer(middleware::from_fn_with_state(
-                state.clone(),
+                origin_allowlist_policy,
                 origin_allowlist_middleware,
             ))
             .with_state(state)
     }
 
     pub(crate) fn build(self) -> Router {
+        assert!(
+            self.workload_boot_plan.is_none(),
+            "a server workload boot plan requires asynchronous serving preparation"
+        );
         Self::build_prepared(self.into_state())
     }
 

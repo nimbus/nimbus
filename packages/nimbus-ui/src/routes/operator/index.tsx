@@ -55,7 +55,7 @@ function NodesPage() {
   });
   const listeners = useQuery(api.listeners.list, {
     adapter: null,
-    state: null,
+    observedPhase: null,
     limit: 100,
   });
 

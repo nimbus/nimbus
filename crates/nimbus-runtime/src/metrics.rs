@@ -70,25 +70,11 @@ pub struct RuntimeMetricsSnapshot {
     pub bundle_module_load_nanos_total: u64,
     pub bundle_evaluations: u64,
     pub bundle_evaluation_nanos_total: u64,
-    pub fresh_realm_creates: u64,
-    pub fresh_realm_create_nanos_total: u64,
-    pub fresh_realm_bootstrap_installs: u64,
-    pub fresh_realm_bootstrap_install_nanos_total: u64,
-    pub fresh_realm_bootstrap_finalizes: u64,
-    pub fresh_realm_bootstrap_finalize_nanos_total: u64,
-    pub fresh_realm_bootstrap_resets: u64,
-    pub fresh_realm_bootstrap_reset_nanos_total: u64,
-    pub fresh_realm_invocation_scripts: u64,
-    pub fresh_realm_invocation_script_nanos_total: u64,
-    pub fresh_realm_promise_resolves: u64,
-    pub fresh_realm_promise_resolve_nanos_total: u64,
-    pub fresh_realm_deserializations: u64,
-    pub fresh_realm_deserialization_nanos_total: u64,
-    pub fresh_realm_destroys: u64,
-    pub fresh_realm_destroy_nanos_total: u64,
     pub runtime_pool_hits: u64,
     pub runtime_pool_misses: u64,
     pub runtime_pool_replacements: u64,
+    pub v8_startup_snapshot_runtime_constructions: u64,
+    pub v8_unsnapshotted_runtime_constructions: u64,
     pub started_invocations: u64,
     pub completed_invocations: u64,
     pub queue_wait_nanos_total: u64,
@@ -428,38 +414,6 @@ impl RuntimeMetrics {
         self.global.record_bundle_evaluation(duration);
     }
 
-    pub fn record_fresh_realm_create(&self, duration: Duration) {
-        self.global.record_fresh_realm_create(duration);
-    }
-
-    pub fn record_fresh_realm_bootstrap_install(&self, duration: Duration) {
-        self.global.record_fresh_realm_bootstrap_install(duration);
-    }
-
-    pub fn record_fresh_realm_bootstrap_finalize(&self, duration: Duration) {
-        self.global.record_fresh_realm_bootstrap_finalize(duration);
-    }
-
-    pub fn record_fresh_realm_bootstrap_reset(&self, duration: Duration) {
-        self.global.record_fresh_realm_bootstrap_reset(duration);
-    }
-
-    pub fn record_fresh_realm_invocation_script(&self, duration: Duration) {
-        self.global.record_fresh_realm_invocation_script(duration);
-    }
-
-    pub fn record_fresh_realm_promise_resolve(&self, duration: Duration) {
-        self.global.record_fresh_realm_promise_resolve(duration);
-    }
-
-    pub fn record_fresh_realm_deserialization(&self, duration: Duration) {
-        self.global.record_fresh_realm_deserialization(duration);
-    }
-
-    pub fn record_fresh_realm_destroy(&self, duration: Duration) {
-        self.global.record_fresh_realm_destroy(duration);
-    }
-
     pub fn record_runtime_pool_hit(&self) {
         self.global.record_runtime_pool_hit();
     }
@@ -478,6 +432,15 @@ impl RuntimeMetrics {
 
     pub fn record_runtime_pool_replacement(&self) {
         self.global.record_runtime_pool_replacement();
+    }
+
+    pub(crate) fn record_v8_startup_snapshot_runtime_construction(&self) {
+        self.global
+            .record_v8_startup_snapshot_runtime_construction();
+    }
+
+    pub(crate) fn record_v8_unsnapshotted_runtime_construction(&self) {
+        self.global.record_v8_unsnapshotted_runtime_construction();
     }
 
     pub fn record_profile_runtime_pool_replacement(&self, profile: Option<RuntimeProfile>) {
@@ -673,28 +636,12 @@ impl RuntimeMetrics {
             bundle_module_load_nanos_total: global.bundle_module_load_nanos_total,
             bundle_evaluations: global.bundle_evaluations,
             bundle_evaluation_nanos_total: global.bundle_evaluation_nanos_total,
-            fresh_realm_creates: global.fresh_realm_creates,
-            fresh_realm_create_nanos_total: global.fresh_realm_create_nanos_total,
-            fresh_realm_bootstrap_installs: global.fresh_realm_bootstrap_installs,
-            fresh_realm_bootstrap_install_nanos_total: global
-                .fresh_realm_bootstrap_install_nanos_total,
-            fresh_realm_bootstrap_finalizes: global.fresh_realm_bootstrap_finalizes,
-            fresh_realm_bootstrap_finalize_nanos_total: global
-                .fresh_realm_bootstrap_finalize_nanos_total,
-            fresh_realm_bootstrap_resets: global.fresh_realm_bootstrap_resets,
-            fresh_realm_bootstrap_reset_nanos_total: global.fresh_realm_bootstrap_reset_nanos_total,
-            fresh_realm_invocation_scripts: global.fresh_realm_invocation_scripts,
-            fresh_realm_invocation_script_nanos_total: global
-                .fresh_realm_invocation_script_nanos_total,
-            fresh_realm_promise_resolves: global.fresh_realm_promise_resolves,
-            fresh_realm_promise_resolve_nanos_total: global.fresh_realm_promise_resolve_nanos_total,
-            fresh_realm_deserializations: global.fresh_realm_deserializations,
-            fresh_realm_deserialization_nanos_total: global.fresh_realm_deserialization_nanos_total,
-            fresh_realm_destroys: global.fresh_realm_destroys,
-            fresh_realm_destroy_nanos_total: global.fresh_realm_destroy_nanos_total,
             runtime_pool_hits: global.runtime_pool_hits,
             runtime_pool_misses: global.runtime_pool_misses,
             runtime_pool_replacements: global.runtime_pool_replacements,
+            v8_startup_snapshot_runtime_constructions: global
+                .v8_startup_snapshot_runtime_constructions,
+            v8_unsnapshotted_runtime_constructions: global.v8_unsnapshotted_runtime_constructions,
             started_invocations: global.started_invocations,
             completed_invocations: global.completed_invocations,
             queue_wait_nanos_total: global.queue_wait_nanos_total,
@@ -1143,18 +1090,12 @@ mod tests {
         metrics.record_bundle_integrity_verify(Duration::from_millis(20));
         metrics.record_bundle_module_load(Duration::from_millis(6));
         metrics.record_bundle_evaluation(Duration::from_millis(7));
-        metrics.record_fresh_realm_create(Duration::from_millis(8));
-        metrics.record_fresh_realm_bootstrap_install(Duration::from_millis(9));
-        metrics.record_fresh_realm_bootstrap_finalize(Duration::from_millis(10));
-        metrics.record_fresh_realm_bootstrap_reset(Duration::from_millis(11));
-        metrics.record_fresh_realm_invocation_script(Duration::from_millis(12));
-        metrics.record_fresh_realm_promise_resolve(Duration::from_millis(13));
-        metrics.record_fresh_realm_deserialization(Duration::from_millis(14));
-        metrics.record_fresh_realm_destroy(Duration::from_millis(15));
         metrics.decrement_retained_runtime_pool_entries();
         metrics.record_runtime_pool_miss();
         metrics.record_runtime_pool_hit();
         metrics.record_runtime_pool_replacement();
+        metrics.record_v8_startup_snapshot_runtime_construction();
+        metrics.record_v8_unsnapshotted_runtime_construction();
         metrics.record_timeout();
         metrics.record_rejected_invocation_for_tenant(None);
         metrics.record_queued_canceled_invocation();
@@ -1214,25 +1155,11 @@ mod tests {
                 bundle_module_load_nanos_total: 6_000_000,
                 bundle_evaluations: 1,
                 bundle_evaluation_nanos_total: 7_000_000,
-                fresh_realm_creates: 1,
-                fresh_realm_create_nanos_total: 8_000_000,
-                fresh_realm_bootstrap_installs: 1,
-                fresh_realm_bootstrap_install_nanos_total: 9_000_000,
-                fresh_realm_bootstrap_finalizes: 1,
-                fresh_realm_bootstrap_finalize_nanos_total: 10_000_000,
-                fresh_realm_bootstrap_resets: 1,
-                fresh_realm_bootstrap_reset_nanos_total: 11_000_000,
-                fresh_realm_invocation_scripts: 1,
-                fresh_realm_invocation_script_nanos_total: 12_000_000,
-                fresh_realm_promise_resolves: 1,
-                fresh_realm_promise_resolve_nanos_total: 13_000_000,
-                fresh_realm_deserializations: 1,
-                fresh_realm_deserialization_nanos_total: 14_000_000,
-                fresh_realm_destroys: 1,
-                fresh_realm_destroy_nanos_total: 15_000_000,
                 runtime_pool_hits: 1,
                 runtime_pool_misses: 1,
                 runtime_pool_replacements: 1,
+                v8_startup_snapshot_runtime_constructions: 1,
+                v8_unsnapshotted_runtime_constructions: 1,
                 started_invocations: 1,
                 completed_invocations: 1,
                 queue_wait_nanos_total: 1_000_000,

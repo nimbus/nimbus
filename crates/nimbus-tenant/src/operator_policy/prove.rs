@@ -194,7 +194,10 @@ fn prove_broad_egress(
     let workload_key = workload.key();
     for rule in &workload.network.egress.allow {
         let mut reasons = Vec::new();
-        if matches!(rule.protocol, EgressProtocol::Http | EgressProtocol::Https) {
+        if matches!(
+            rule.protocol,
+            EgressProtocol::Http | EgressProtocol::Https | EgressProtocol::Ws | EgressProtocol::Wss
+        ) {
             if rule.methods.is_empty() {
                 reasons.push("all HTTP methods");
             }

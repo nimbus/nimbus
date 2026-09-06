@@ -13,8 +13,7 @@ pub(crate) use self::isolation::{
 };
 pub(crate) use self::owners::runtime_owner_lease_for_test;
 pub(crate) use self::profiles::{
-    bounded_fairness_runtime_test_limits, cooperative_context_recycle_runtime_test_limits,
-    cooperative_startup_snapshot_runtime_test_limits,
+    bounded_fairness_runtime_test_limits, cooperative_startup_snapshot_runtime_test_limits,
     cooperative_startup_snapshot_runtime_test_policy, cooperative_warm_pool_runtime_test_limits,
     cooperative_warm_pool_runtime_test_policy, product_default_runtime_test_limits,
     product_default_runtime_test_policy, run_to_completion_snapshot_runtime_test_limits,

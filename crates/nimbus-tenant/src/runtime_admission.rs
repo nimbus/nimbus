@@ -186,7 +186,12 @@ pub(super) fn validate_production_in_process_untrusted_policy(
     limits: &nimbus_runtime::RuntimeLimits,
 ) -> std::result::Result<(), ProductionRuntimePolicyRejection> {
     match limits.backend_kind {
-        RuntimeBackendKind::V8 | RuntimeBackendKind::BunJsc => {}
+        RuntimeBackendKind::V8 => {}
+        RuntimeBackendKind::BunJsc => {
+            return Err(ProductionRuntimePolicyRejection::microvm_service(
+                "uses the Bun/JSC backend before a dedicated process, cgroup, or microVM memory boundary is configured; a fresh in-process VM does not protect other tenants or the Nimbus control plane from an out-of-memory termination",
+            ));
+        }
         RuntimeBackendKind::Wasmtime => {
             return Err(ProductionRuntimePolicyRejection::wasm_capability_sandbox(
                 "uses Wasmtime backend before production WASM capability admission is enabled",

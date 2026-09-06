@@ -187,18 +187,18 @@ pub(crate) fn enable_and_arm_nodefull_anchor() {
     install_nodefull_anchor(Arc::new(AnchorNoopHost));
 }
 
-/// VERIFICATION ENTRY POINT (not a diagnostic): force-install the COMMITTED embedded anchor snapshot
+/// VERIFICATION ENTRY POINT (not a diagnostic): force-install the generated embedded anchor snapshot
 /// (the cfg-selected `.bin` feature-off / `.pc.bin` feature-on) and construct a NodeFull isolate from
 /// it on the current thread. This is the ONLY way to exercise the EMBEDDED anchor install under the
 /// pointer-compression cage in a test — the cfg(test) cage oracle cannot, because its snapshot carries
-/// a test-only extension, so its provenance mismatches the committed production blob and it falls back
+/// a test-only extension, so its provenance mismatches the generated production blob and it falls back
 /// to a runtime build. Called from the `tests/embedded_anchor.rs` integration test, which links
 /// NON-cfg(test) nimbus-runtime, so `try_embedded` computes the production provenance, matches the
-/// committed blob, and the anchor installs FROM it (the serving path). Returns `Err` if the blob fails
+/// generated blob, and the anchor installs FROM it (the serving path). Returns `Err` if the blob fails
 /// provenance/parse; a V8 read-only-heap incompatibility would abort (V8_Fatal) — the very failure the
 /// embedding must not have. Under the cage, this isolate is the first installer (NodeFull superset),
 /// so `assert_cage_install_ordering` records it and stays silent.
-pub fn smoke_install_committed_embedded_anchor() -> std::result::Result<(), String> {
+pub fn smoke_install_generated_embedded_anchor() -> std::result::Result<(), String> {
     let snapshot = crate::backends::v8::try_embedded_node22_anchor_snapshot(
         crate::backends::v8::EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
     )

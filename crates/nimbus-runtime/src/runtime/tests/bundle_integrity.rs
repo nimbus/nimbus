@@ -1,8 +1,8 @@
 use super::*;
 use crate::backends::v8::V8RuntimeConstructionMode;
 use crate::limits::{
-    RuntimeBundleContentKind, RuntimeExecutionModel, RuntimeMemoryEnforcement, RuntimeMode,
-    RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimePreset, RuntimeRoutingAffinity,
+    RuntimeBundleContentKind, RuntimeMemoryEnforcement, RuntimeMode, RuntimePreset,
+    RuntimeRoutingAffinity,
 };
 use crate::test_support::{RuntimeReproCase, product_default_runtime_test_policy};
 
@@ -494,11 +494,6 @@ fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
     node_mode_limits.mode = RuntimeMode::Privileged;
     let mut node_preset_limits = node_limits.clone();
     node_preset_limits.preset = RuntimePreset::Tooling;
-    let mut node_pool_limits = node_limits.clone();
-    node_pool_limits.execution_model = RuntimeExecutionModel::CooperativeLocker;
-    node_pool_limits.runtime_pool_kind = RuntimePoolKind::WarmContextRecycle;
-    node_pool_limits.node_full_realm_reuse_policy =
-        RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority;
     let mut node_memory_limits = node_limits.clone();
     node_memory_limits.memory_enforcement = RuntimeMemoryEnforcement::OuterQuotaRequired;
     node_memory_limits.max_heap_mb += 1;
@@ -520,7 +515,6 @@ fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
     let node_run_cache = bundle.module_code_cache(&node_run_limits, startup_snapshot);
     let node_mode_cache = bundle.module_code_cache(&node_mode_limits, startup_snapshot);
     let node_preset_cache = bundle.module_code_cache(&node_preset_limits, startup_snapshot);
-    let node_pool_cache = bundle.module_code_cache(&node_pool_limits, startup_snapshot);
     let node_memory_cache = bundle.module_code_cache(&node_memory_limits, startup_snapshot);
     let node_routing_cache = bundle.module_code_cache(&node_routing_limits, startup_snapshot);
     let node_timeout_cache = bundle.module_code_cache(&node_timeout_limits, startup_snapshot);
@@ -538,7 +532,6 @@ fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
         ("node22-run-grant", &node_run_cache),
         ("node22-mode", &node_mode_cache),
         ("node22-preset", &node_preset_cache),
-        ("node22-pool-policy", &node_pool_cache),
         ("node22-memory-policy", &node_memory_cache),
         ("node22-routing-policy", &node_routing_cache),
         ("node22-timeout-policy", &node_timeout_cache),

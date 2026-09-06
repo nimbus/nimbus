@@ -934,7 +934,7 @@ impl EgressProxyRegistry {
         // generation) runs outside the registry lock so one slow start cannot
         // stall reload/readiness/stop for every other sandbox.
         let compiled = policy
-            .compile()
+            .compile_for_supervisor_proxy()
             .map_err(|message| SandboxError::InvalidSpec { message })
             .map_err(|error| {
                 self.compensate_pep_pre_adoption_failure(
@@ -1216,7 +1216,7 @@ impl EgressProxyRegistry {
         policy: &EgressPolicy,
     ) -> Result<()> {
         let compiled = policy
-            .compile()
+            .compile_for_supervisor_proxy()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
         let workload_id = Self::workload_id(tenant_id, id)?;
         let evidence = self

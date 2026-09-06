@@ -243,12 +243,20 @@ function validateExemptionPolicy(inventory) {
   const testSupport = exemptions.filter(
     (entry) => entry.mechanism === "test-support-crate",
   );
+  const testSupportPrefixes = testSupport
+    .map((entry) => entry.path_prefix)
+    .sort();
+  const requiredTestSupportPrefixes = [
+    "crates/nimbus-process-harness/",
+    "crates/nimbus-testing/",
+  ];
   if (
-    testSupport.length !== 1 ||
-    testSupport[0].path_prefix !== "crates/nimbus-testing/"
+    JSON.stringify(testSupportPrefixes) !==
+    JSON.stringify(requiredTestSupportPrefixes)
   ) {
     errors.push(
-      "bind inventory test-support exemption must be exactly crates/nimbus-testing/",
+      "bind inventory test-support exemptions must be exactly " +
+        requiredTestSupportPrefixes.join(", "),
     );
   }
 }

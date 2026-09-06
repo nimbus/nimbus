@@ -121,6 +121,9 @@ pub(crate) async fn serve_tls(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> io::Result<()> {
     let acceptor = TlsAcceptor::from(server_config);
+    if *shutdown_rx.borrow() {
+        return Ok(());
+    }
     loop {
         let accepted = tokio::select! {
             accepted = listener.accept() => accepted,

@@ -17,8 +17,8 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
-import { Route } from "./compute_.runs_.$runId";
 import { routeLoader } from "../../test/route-internals";
+import { Route } from "./compute_.runs_.$runId";
 
 type LoaderArgs = { params: { runId: string } };
 type LoaderResult = {

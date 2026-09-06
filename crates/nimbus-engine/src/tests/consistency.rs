@@ -21,12 +21,15 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
 ) {
     let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    let engine =
-        Engine::new_with_embedded_provider(data_dir.path(), backend).expect("engine should create");
+    let engine = Arc::new(
+        Engine::new_with_embedded_provider(data_dir.path(), backend).expect("engine should create"),
+    );
     engine
         .create_tenant(tenant_id.clone())
         .expect("tenant should create");
-    drop(engine);
+    engine.quiesce().await;
+    drop_engine_sync(engine).await;
+    wait_for_embedded_tenant_unlock(data_dir.path(), &tenant_id, backend).await;
 
     let document = nimbus_core::Document::new(
         tasks_table(),

@@ -1,11 +1,15 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::backends::{RuntimeBackend, RuntimeBackendFactory, RuntimeBackendInvocation};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::host::HostCallCancellation;
-use crate::limits::{RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterState};
+use crate::limits::{
+    RuntimeExecutionAdapterArtifactDiagnostics, RuntimeExecutionAdapterState, RuntimeLimits,
+};
 
 mod adapter;
 mod contract;
@@ -85,7 +89,7 @@ impl BunJscRuntimeBackend {
 impl RuntimeBackend for BunJscRuntimeBackend {
     fn invoke<'a>(
         &'a mut self,
-        invocation: RuntimeBackendInvocation,
+        mut invocation: RuntimeBackendInvocation,
     ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + 'a>> {
         let retained_owner_admission = crate::retained_state::validate_retained_state_admission(
             &invocation.policy,
@@ -111,15 +115,34 @@ impl RuntimeBackend for BunJscRuntimeBackend {
             if !matches!(adapter_state, RuntimeExecutionAdapterState::Linked) {
                 return self.execution_adapter.invoke(invocation, pool_policy).await;
             }
-            reject_unenforced_linked_execution_timeout(&invocation)?;
+            let deadline = BunJscExecutionDeadline::from_limits(invocation.policy.limits())?;
+            let cancellation = invocation.cancellation.clone().unwrap_or_default();
+            invocation.cancellation = Some(cancellation.clone());
+            let deadline_triggered = Arc::new(AtomicBool::new(false));
+            let deadline_triggered_for_watchdog = Arc::clone(&deadline_triggered);
+            let deadline_cancellation = cancellation.clone();
+            let deadline_registration = invocation.watchdog.register_timeout(
+                Instant::now() + deadline.duration,
+                move || {
+                    deadline_triggered_for_watchdog.store(true, Ordering::SeqCst);
+                    deadline_cancellation.cancel();
+                },
+            )?;
 
             self.pool.begin_invocation();
             self.pool.acknowledge(BunJscLifecycleAck::BootstrapReady)?;
             self.pool.acknowledge(BunJscLifecycleAck::GuestEntered)?;
             let result = self.execution_adapter.invoke(invocation, pool_policy).await;
-            if matches!(result, Err(NimbusRuntimeError::Cancelled)) {
+            deadline_registration.disarm().await;
+            let deadline_triggered = deadline_triggered.load(Ordering::SeqCst);
+            if matches!(result, Err(NimbusRuntimeError::Cancelled)) || deadline_triggered {
                 self.pool.request_cancellation()?;
             }
+            let result = if deadline_triggered {
+                Err(deadline.error())
+            } else {
+                result
+            };
             let teardown = (|| {
                 self.pool.acknowledge(BunJscLifecycleAck::Terminated)?;
                 self.pool
@@ -156,15 +179,54 @@ fn scaffold_contract_error_message(error: NimbusRuntimeError) -> String {
     }
 }
 
-fn reject_unenforced_linked_execution_timeout(invocation: &RuntimeBackendInvocation) -> Result<()> {
-    let execution_timeout = invocation.policy.limits().execution_timeout;
-    let system_timeout = invocation.policy.limits().system_timeout;
-    if execution_timeout.is_zero() && system_timeout.is_zero() {
-        return Ok(());
+#[derive(Clone, Copy, Debug)]
+enum BunJscExecutionDeadlineKind {
+    Execution,
+    System,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BunJscExecutionDeadline {
+    duration: Duration,
+    kind: BunJscExecutionDeadlineKind,
+}
+
+impl BunJscExecutionDeadline {
+    fn from_limits(limits: &RuntimeLimits) -> Result<Self> {
+        let execution = limits.execution_timeout;
+        let system = limits.system_timeout;
+        match (execution.is_zero(), system.is_zero()) {
+            (true, true) => Err(NimbusRuntimeError::Contract(
+                "Bun/JSC linked execution requires a non-zero execution_timeout or system_timeout"
+                    .to_string(),
+            )),
+            (false, true) => Ok(Self {
+                duration: execution,
+                kind: BunJscExecutionDeadlineKind::Execution,
+            }),
+            (true, false) => Ok(Self {
+                duration: system,
+                kind: BunJscExecutionDeadlineKind::System,
+            }),
+            (false, false) if system <= execution => Ok(Self {
+                duration: system,
+                kind: BunJscExecutionDeadlineKind::System,
+            }),
+            (false, false) => Ok(Self {
+                duration: execution,
+                kind: BunJscExecutionDeadlineKind::Execution,
+            }),
+        }
     }
-    Err(NimbusRuntimeError::Contract(format!(
-        "Bun/JSC linked execution cannot enforce execution_timeout {execution_timeout:?} or system_timeout {system_timeout:?}; use a V8-backed policy or an explicit no-timeout Bun/JSC policy"
-    )))
+
+    fn error(self) -> NimbusRuntimeError {
+        match self.kind {
+            BunJscExecutionDeadlineKind::Execution => {
+                NimbusRuntimeError::ExecutionTimeout(self.duration)
+            }
+            BunJscExecutionDeadlineKind::System => NimbusRuntimeError::SystemTimeout(self.duration),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -487,7 +549,7 @@ mod tests {
                 .as_ref()
                 .expect("expected Bun/JSC artifact contract should be present")
                 .source_ref,
-            "nimbus-bun-jsc-proof-main-20260709"
+            "bun-v1.4.2-nimbus.1"
         );
         assert!(diagnostics.manifest.is_none());
     }
@@ -529,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn bun_jsc_linked_backend_rejects_timeout_policy_before_guest_entry() {
+    fn bun_jsc_linked_backend_rejects_unbounded_policy_before_guest_entry() {
         #[derive(Debug, Default)]
         struct PanicIfInvokedAdapterFactory;
 
@@ -552,11 +614,11 @@ mod tests {
                 _invocation: RuntimeBackendInvocation,
                 _pool_policy: BunJscPoolPolicy,
             ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>> {
-                panic!("timeout-enforced Bun/JSC invocation must not enter the adapter")
+                panic!("unbounded Bun/JSC invocation must not enter the adapter")
             }
         }
 
-        let policy = bun_policy();
+        let policy = bun_no_timeout_policy();
         let mut backend =
             BunJscRuntimeBackend::with_execution_adapter_factory(&PanicIfInvokedAdapterFactory);
         let error = tokio::runtime::Builder::new_current_thread()
@@ -564,12 +626,12 @@ mod tests {
             .build()
             .expect("test runtime should build")
             .block_on(backend.invoke(bun_invocation(policy)))
-            .expect_err("linked Bun/JSC execution should fail closed without timeout enforcement");
+            .expect_err("linked Bun/JSC execution should reject an unbounded policy");
 
         assert!(
             error
                 .to_string()
-                .contains("Bun/JSC linked execution cannot enforce execution_timeout"),
+                .contains("requires a non-zero execution_timeout or system_timeout"),
             "unexpected error: {error}"
         );
         assert_eq!(
@@ -583,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn bun_jsc_runtime_backend_dispatches_through_no_timeout_linked_adapter_seam() {
+    fn bun_jsc_runtime_backend_dispatches_through_linked_adapter_seam() {
         #[derive(Debug, Default)]
         struct FakeLinkedExecutionAdapterFactory;
 
@@ -615,7 +677,7 @@ mod tests {
             }
         }
 
-        let policy = bun_no_timeout_policy();
+        let policy = bun_policy();
         let mut backend = BunJscRuntimeBackend::with_execution_adapter_factory(
             &FakeLinkedExecutionAdapterFactory,
         );
@@ -629,7 +691,7 @@ mod tests {
             .build()
             .expect("test runtime should build")
             .block_on(backend.invoke(bun_invocation(policy)))
-            .expect("fake linked adapter should run for an explicit no-timeout policy");
+            .expect("fake linked adapter should run under the bounded default policy");
         assert_eq!(result, json!({ "adapter": "linked" }));
     }
 
@@ -713,7 +775,7 @@ mod tests {
             }
         }
 
-        let policy = bun_no_timeout_policy();
+        let policy = bun_policy();
         let mut backend =
             BunJscRuntimeBackend::with_execution_adapter_factory(&CancellingAdapterFactory);
         let error = tokio::runtime::Builder::new_current_thread()
@@ -734,19 +796,81 @@ mod tests {
         assert_eq!(metrics.teardown_completions, 1);
     }
 
+    #[test]
+    fn bun_jsc_linked_backend_enforces_execution_deadline() {
+        #[derive(Debug, Default)]
+        struct LateSuccessAdapterFactory;
+
+        impl BunJscExecutionAdapterFactory for LateSuccessAdapterFactory {
+            fn create(&self) -> Box<dyn BunJscExecutionAdapter> {
+                Box::new(LateSuccessAdapter)
+            }
+        }
+
+        #[derive(Debug)]
+        struct LateSuccessAdapter;
+
+        impl BunJscExecutionAdapter for LateSuccessAdapter {
+            fn state(&self) -> RuntimeExecutionAdapterState {
+                RuntimeExecutionAdapterState::Linked
+            }
+
+            fn invoke<'a>(
+                &'a mut self,
+                invocation: RuntimeBackendInvocation,
+                _pool_policy: BunJscPoolPolicy,
+            ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>> {
+                Box::pin(async move {
+                    invocation
+                        .cancellation
+                        .expect("linked execution must receive a cancellation token")
+                        .cancelled()
+                        .await;
+                    Ok(json!({ "late": "success" }))
+                })
+            }
+        }
+
+        let timeout = Duration::from_millis(10);
+        let mut limits = RuntimeLimits::application_bun_jsc();
+        limits.execution_timeout = timeout;
+        limits.system_timeout = Duration::from_secs(1);
+        let policy = Arc::new(crate::limits::RuntimePolicy::new(limits));
+        let mut backend =
+            BunJscRuntimeBackend::with_execution_adapter_factory(&LateSuccessAdapterFactory);
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(backend.invoke(bun_invocation(policy)))
+            .expect_err("execution deadline should cancel the linked adapter");
+
+        assert!(
+            matches!(error, NimbusRuntimeError::ExecutionTimeout(actual) if actual == timeout),
+            "unexpected deadline error: {error}"
+        );
+        assert_eq!(
+            backend.pool.lifecycle_state(),
+            BunJscLifecycleState::TeardownComplete
+        );
+        let metrics = backend.pool.metrics_snapshot();
+        assert_eq!(metrics.cancellation_requests, 1);
+        assert_eq!(metrics.teardown_completions, 1);
+    }
+
     #[cfg(feature = "bun-jsc-linked-adapter")]
     #[test]
     fn bun_jsc_linked_adapter_feature_names_reproducible_bun_source() {
         let contract = linked::BUN_JSC_LINKED_ADAPTER_SOURCE_CONTRACT;
         assert_eq!(contract.repository, "https://github.com/nimbus/bun");
-        assert_eq!(contract.source_ref, "nimbus-bun-jsc-proof-main-20260709");
+        assert_eq!(contract.source_ref, "bun-v1.4.2-nimbus.1");
         assert_eq!(
             contract.git_revision,
-            "cc0a59c301ac2f56e94102c4ad16c3f085821409"
+            "d6d4c5e39938b6c5ac243490a9230c26d52d737f"
         );
         assert_eq!(contract.proof_target, "check-bun-embed-shared");
         assert_eq!(contract.simdutf_namespace, "nimbus_bun_simdutf");
-        assert_eq!(contract.required_exports.len(), 11);
+        assert_eq!(contract.required_exports.len(), 12);
         assert!(
             contract
                 .required_exports
@@ -766,6 +890,11 @@ mod tests {
             contract
                 .required_exports
                 .contains(&"nimbus_bun_embed_invoke_program_wrapper_json_with_host_bridge")
+        );
+        assert!(
+            contract
+                .required_exports
+                .contains(&"nimbus_bun_embed_take_pending_response")
         );
     }
 
@@ -959,7 +1088,7 @@ globalThis.__nimbusInvoke = async function(request) {
             })
         );
 
-        let bun_policy = bun_no_timeout_policy();
+        let bun_policy = bun_policy();
         let bun_request = InvocationRequest {
             kind: InvocationKind::Query,
             function_name: "messages:bunProof".to_string(),

@@ -1,4 +1,4 @@
-nextest-version = { required = "0.9.138" }
+nextest-version = { required = "0.9.143" }
 
 [test-groups]
 serial-fixed-port = { max-threads = 1 }
@@ -10,6 +10,15 @@ runtime-v8-global = { max-threads = 1 }
 retries = 0
 fail-fast = false
 slow-timeout = { period = "45s", terminate-after = 3 }
+# Fail any test whose descendant keeps a captured output handle open after the
+# default 100-millisecond grace period.
+leak-timeout = { period = "100ms", result = "fail" }
+
+# A local macOS run reproduces nextest-rs/nextest#1469 without a child process.
+# Keep the hard failure and give the runner five seconds to observe pipe closure.
+[[profile.default.overrides]]
+platform = { host = 'cfg(target_os = "macos")' }
+leak-timeout = { period = "5s", result = "fail" }
 
 [[profile.default.overrides]]
 filter = 'test(/listener_rejects_non_loopback_bind/)'
@@ -18,6 +27,14 @@ test-group = 'serial-fixed-port'
 [[profile.default.overrides]]
 filter = 'test(/^(tests::)?(postgres|mysql|libsql)_/) or test(/^(tests::)?(postgres_provider|mysql_provider|libsql_replica_provider)::/)'
 test-group = 'external-provider'
+
+# This retained differential runs 16 deterministic, 32-step scenarios against
+# a real libSQL service. A healthy local run takes about one minute. Keep a
+# bounded 270-second liveness limit without applying the workspace-wide
+# 135-second limit to the complete corpus.
+[[profile.default.overrides]]
+filter = 'package(nimbus-engine) and test(/^tests::libsql_replica_provider::ppsc::libsql_ppsc_seeded_journal_differential$/)'
+slow-timeout = { period = "90s", terminate-after = 3 }
 
 [[profile.default.overrides]]
 filter = 'test(/verification_harness_(required|nightly)_/)'
@@ -28,9 +45,22 @@ slow-timeout = { period = "15m", terminate-after = 2 }
 filter = 'package(nimbus-runtime) and test(/backends::v8::|runtime::tests::pool_reuse::isol_|runtime::tests::verification_harness::|runtime::tests::snapshot_lifecycle::|runtime::tests::warm_pool::/)'
 test-group = 'runtime-v8-global'
 
-# These matrices launch synchronized child-process fleets and perform durable
-# recovery work inside one test. Run each without unrelated workspace load so
-# their existing semantic checkpoint bounds remain meaningful.
+# This test enforces wall-clock budgets for embedded storage operations. Give
+# it the runner while it measures so unrelated CPU and I/O load cannot decide
+# whether the regression gate passes.
+[[profile.default.overrides]]
+filter = 'package(nimbus-storage) and test(redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_pitr_and_gc)'
+threads-required = "num-test-threads"
+
+# This test measures bounded failure with a real wall-clock deadline. Give it
+# the runner so unrelated workspace load cannot consume its deadline.
+[[profile.default.overrides]]
+filter = 'test(exact_guest_teardown_accept_fails_within_its_deadline_when_a_call_is_missing)'
+threads-required = "num-test-threads"
+
+# These matrices launch synchronized child-process fleets. Each test also
+# recovers durable state. Run each without unrelated workspace load so its
+# semantic checkpoint bounds remain meaningful.
 [[profile.default.overrides]]
 filter = 'test(/fresh_process_network_teardown_(?:container|krun)_recovers_every_durable_checkpoint|fresh_process_(?:container|krun)_network_contenders_publish_one_result_per_operation|fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff|fresh_process_restart_reopens_engine/)'
 threads-required = "num-test-threads"
@@ -47,9 +77,9 @@ retries = { backoff = "fixed", count = 2, delay = "1s" }
 flaky-result = "fail"
 
 [profile.ci-nightly.junit]
-# Flake detection parses ONLY JUnit <flakyFailure>/<flakyError> elements —
-# the documented stable markers for fail-then-pass-on-retry (libtest JSON's
-# flaky fields are undocumented/experimental).
+# Flake detection reads only JUnit <flakyFailure>/<flakyError> elements.
+# These elements are the documented stable markers for a failed first attempt
+# that passes on retry. The libtest JSON flaky fields are experimental.
 path = "junit.xml"
 
 [profile.ci-runtime]
@@ -73,9 +103,8 @@ slow-timeout = { period = "30m", terminate-after = 1 }
 
 [profile.coverage]
 inherits = "default"
-# Coverage shards run llvm-instrumented binaries, which are several times
-# slower than the ones `default`'s 45s bound was calibrated against. Keep the
-# shape of that bound -- a genuinely hung test must still be terminated -- but
-# scale the period so instrumentation overhead alone cannot kill a healthy
-# test and report it as a coverage-lane failure.
+# LLVM instrumentation makes coverage binaries slower than default binaries.
+# The default profile uses a 45-second bound. Keep the same termination count,
+# but allow 180 seconds for instrumentation. This profile still terminates a
+# test that does not make progress.
 slow-timeout = { period = "180s", terminate-after = 3 }

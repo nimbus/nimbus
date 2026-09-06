@@ -139,6 +139,47 @@ async fn system_shutdown_endpoint_stops_live_server() {
 }
 
 #[tokio::test]
+async fn shutdown_handle_stops_live_server() {
+    let temp = tempdir().expect("tempdir should build");
+    let service = Arc::new(
+        nimbus_engine::Engine::new(temp.path().join("data")).expect("service should initialize"),
+    );
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("listener should bind");
+    let address = listener
+        .local_addr()
+        .expect("listener address should resolve");
+    let options = ServeOptions::reconstruct_direct(service.clone())
+        .expect("test server network authority should reconstruct once");
+    let shutdown = options.shutdown_handle();
+    let server_task = tokio::spawn(serve(listener, options));
+    let client = reqwest::Client::new();
+    wait_for_condition(
+        "shutdown-handle test server should answer health checks",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || async {
+            client
+                .get(format!("http://{address}/health"))
+                .send()
+                .await
+                .map(|response| response.status().is_success())
+                .unwrap_or(false)
+        },
+    )
+    .await;
+
+    shutdown.request_shutdown();
+    tokio::time::timeout(Duration::from_secs(5), server_task)
+        .await
+        .expect("server should exit after a handle requests shutdown")
+        .expect("server task should join")
+        .expect("handle-requested shutdown should be graceful");
+    service.quiesce().await;
+}
+
+#[tokio::test]
 async fn system_shutdown_endpoint_rejects_missing_and_invalid_credentials() {
     let temp = tempdir().expect("tempdir should build");
     let paths = sample_paths(temp.path());

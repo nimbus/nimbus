@@ -10,8 +10,7 @@ use super::{
     RuntimeBackendTrustTier, RuntimeBundleContentKind, RuntimeCompatibilityTarget,
     RuntimeExecutionModel, RuntimeGrants, RuntimeGuestSemantics, RuntimeJavaScriptEvaluationFormat,
     RuntimeLanguage, RuntimeMemoryEnforcement, RuntimeMode, RuntimeModuleStateSemantics,
-    RuntimeNodeFullRealmReusePolicy, RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities,
-    RuntimeRoutingAffinity,
+    RuntimePoolKind, RuntimePreset, RuntimeResetCapabilities, RuntimeRoutingAffinity,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -32,7 +31,6 @@ pub struct RuntimeLimits {
     pub grants: RuntimeGrants,
     pub service_capability_enabled: bool,
     pub runtime_pool_kind: RuntimePoolKind,
-    pub node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy,
     pub memory_enforcement: RuntimeMemoryEnforcement,
     pub routing_affinity: RuntimeRoutingAffinity,
     pub routing_affinity_max_entries: usize,
@@ -281,7 +279,6 @@ impl RuntimeLimits {
                 RuntimeModuleStateSemantics::WarmPerBundle
             }
             RuntimePoolKind::StartupSnapshotCache
-            | RuntimePoolKind::WarmContextRecycle
             | RuntimePoolKind::BunJscFreshDiscard
             | RuntimePoolKind::PrecompiledModuleCache
             | RuntimePoolKind::RetainedStorePool => RuntimeModuleStateSemantics::FreshPerInvocation,
@@ -298,7 +295,6 @@ impl RuntimeLimits {
                 }
             }
             RuntimePoolKind::StartupSnapshotCache
-            | RuntimePoolKind::WarmContextRecycle
             | RuntimePoolKind::BunJscFreshDiscard
             | RuntimePoolKind::PrecompiledModuleCache
             | RuntimePoolKind::RetainedStorePool => RuntimeResetCapabilities {
@@ -387,13 +383,12 @@ impl RuntimeLimits {
         validate_mode_grant_ceiling(self.mode, &grants);
 
         // WarmPool requires CooperativeLocker — fail fast.
-        if matches!(
-            self.runtime_pool_kind,
-            RuntimePoolKind::WarmPool | RuntimePoolKind::WarmContextRecycle
-        ) && !matches!(
-            self.execution_model,
-            RuntimeExecutionModel::CooperativeLocker
-        ) {
+        if matches!(self.runtime_pool_kind, RuntimePoolKind::WarmPool)
+            && !matches!(
+                self.execution_model,
+                RuntimeExecutionModel::CooperativeLocker
+            )
+        {
             panic!(
                 "{:?} requires CooperativeLocker execution model, \
                  got {:?}",
@@ -433,7 +428,6 @@ impl RuntimeLimits {
             grants,
             service_capability_enabled: self.service_capability_enabled,
             runtime_pool_kind: self.runtime_pool_kind,
-            node_full_realm_reuse_policy: self.node_full_realm_reuse_policy,
             memory_enforcement: self.memory_enforcement,
             routing_affinity: self.routing_affinity,
             routing_affinity_max_entries: self.routing_affinity_max_entries.max(1),
@@ -505,7 +499,6 @@ impl Default for RuntimeLimits {
             grants: RuntimeGrants::application_web_standard(),
             service_capability_enabled: false,
             runtime_pool_kind: RuntimePoolKind::WarmPool,
-            node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy::Unproven,
             memory_enforcement: RuntimeMemoryEnforcement::V8IsolateHeapLimit,
             routing_affinity: RuntimeRoutingAffinity::Tenant,
             routing_affinity_max_entries,

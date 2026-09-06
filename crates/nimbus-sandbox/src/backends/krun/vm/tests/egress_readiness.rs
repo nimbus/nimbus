@@ -211,6 +211,15 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
     let attachment_before_missing_pep_inspection =
         fs::read(&manifest.network_layout.status_path).expect("attachment status should read");
     let pin_effects_before_missing_pep_inspection = pin_provider.apply_count();
+    assert!(matches!(
+        backend
+            .inspect_provision_network_attachment(
+                &manifest.handle.id,
+                &manifest.execution_attempt_id
+            )
+            .expect("the live attachment with a missing PEP should inspect without replay"),
+        crate::SandboxProvisionPhaseObservation::InProgress { .. }
+    ));
     let launch_error = backend
         .require_authenticated_egress_readiness(&manifest)
         .expect_err("the exact pre-spawn gate must reject the missing PEP dependency");

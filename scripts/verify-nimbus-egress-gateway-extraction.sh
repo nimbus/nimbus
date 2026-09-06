@@ -59,9 +59,9 @@ fi
 if { if [ "${PLAN_PATH}" = "docs/private/plans/nimbus-egress-gateway-extraction-plan.md" ]; then
     contains docs/private/plans/README.md 'nimbus-egress-gateway-extraction-plan\.md'
   else
-    ! contains docs/private/plans/README.md 'nimbus-egress-gateway-extraction-plan\.md' \
+      ! contains docs/private/plans/README.md 'nimbus-egress-gateway-extraction-plan\.md' \
       && contains "${PLAN_PATH}" 'Archived' \
-      && contains docs/private/plans/nimbus-modernization-roadmap-plan-map.md 'archived NEG plan remains evidence'
+      && contains docs/private/plans/nimbus-modernization-roadmap-plan-map.md 'NEG plan remains evidence'
   fi; }; then
   pass "routing entries keep NEG in the active index only while active, and preserve archived evidence after closeout"
 else
@@ -123,16 +123,17 @@ if [ -d crates/nimbus-proxy ] \
   && contains crates/nimbus-proxy/Cargo.toml '^nimbus-egress[[:space:]]*=' \
   && contains crates/nimbus-proxy/Cargo.toml '^nimbus-core[[:space:]]*=' \
   && ! rg -q '^nimbus-proxy[[:space:]]*=' crates/nimbus-egress/Cargo.toml 2>/dev/null \
-  && rg_contains '\bEgressProxy\b' crates/nimbus-proxy/src \
+  && rg_contains '\bEgressEngine\b' crates/nimbus-proxy/src \
+  && rg_contains '\bWorkloadPep\b' crates/nimbus-proxy/src \
   && ! rg -q '\bSandboxEgressProxy\b' crates scripts --glob '!verify-nimbus-egress-gateway-extraction.sh' \
   && rg_contains 'policy_generation|PolicyGeneration' crates/nimbus-proxy/src \
   && rg_contains 'last_known_good|LastKnownGood' crates/nimbus-proxy/src \
   && rg_contains 'Dns|DNS|alias_chain|AliasChain' crates/nimbus-proxy/src \
   && rg_contains 'pool.*key|PoolKey' crates/nimbus-proxy/src \
   && rg_contains 'canonical|Canonical' crates/nimbus-proxy/src; then
-  pass "NEG2 PEP crate owns EgressProxy, readiness/reload, DNS state, canonicalization, and pool identity"
+  pass "NEG2 PEP crate owns EgressEngine, WorkloadPep, readiness/reload, DNS state, canonicalization, and pool identity"
 else
-  fail "NEG2 PEP crate owns EgressProxy, readiness/reload, DNS state, canonicalization, and pool identity"
+  fail "NEG2 PEP crate owns EgressEngine, WorkloadPep, readiness/reload, DNS state, canonicalization, and pool identity"
 fi
 
 if contains crates/nimbus-runtime/src/egress.rs '\btrait EgressGateway\b' \

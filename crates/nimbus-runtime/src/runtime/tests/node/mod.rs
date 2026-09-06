@@ -2150,6 +2150,11 @@ fn node_compat_fixture_requires_runtime_self_exec(test_relative_path: &str) -> b
         )
 }
 
+fn set_node_compat_fixture_timeout(limits: &mut RuntimeLimits, timeout: Duration) {
+    limits.execution_timeout = timeout;
+    limits.system_timeout = timeout;
+}
+
 fn runtime_limits_for_node_compat_fixture(
     test_relative_path: &str,
     lane: Option<NodeCompatLane>,
@@ -2176,7 +2181,7 @@ fn runtime_limits_for_node_compat_fixture(
         // within the same semantic contract but legitimately run longer than
         // the default 30s application budget inside the embedded compat
         // harness.
-        limits.execution_timeout = Duration::from_secs(120);
+        set_node_compat_fixture_timeout(&mut limits, Duration::from_secs(120));
     }
     if test_relative_path == "test/parallel/test-async-hooks-fatal-error.js" {
         // This fixture validates ten process.execPath child runtimes that each
@@ -2184,7 +2189,7 @@ fn runtime_limits_for_node_compat_fixture(
         // bounded but slower than native Node process startup, so give this
         // fixture a finite slow-spawn evidence budget without changing the
         // application preset.
-        limits.execution_timeout = Duration::from_secs(60);
+        set_node_compat_fixture_timeout(&mut limits, Duration::from_secs(60));
     }
     if matches!(
         test_relative_path,
@@ -2193,7 +2198,7 @@ fn runtime_limits_for_node_compat_fixture(
     ) {
         // These official fixtures run broad WebCrypto matrices; keep a finite
         // fixture-only evidence budget so the official assertions can complete.
-        limits.execution_timeout = Duration::from_secs(120);
+        set_node_compat_fixture_timeout(&mut limits, Duration::from_secs(120));
     }
     if test_relative_path == "test/parallel/test-vm-access-process-env.js" {
         // The fixture asserts a vm context can read `process.env.PATH`, which
@@ -2288,6 +2293,10 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         Duration::from_secs(120)
     );
     assert_eq!(
+        nested_runner_limits.system_timeout,
+        Duration::from_secs(120)
+    );
+    assert_eq!(
         node_compat_fixture_wall_clock_timeout(&nested_runner_limits),
         Duration::from_secs(125),
         "long-running subprocess fixtures still have a finite wall-clock budget",
@@ -2301,6 +2310,11 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         async_hooks_fatal_error_limits.execution_timeout,
         Duration::from_secs(60),
         "the async-hooks fatal spawn matrix gets a finite slow-spawn budget",
+    );
+    assert_eq!(
+        async_hooks_fatal_error_limits.system_timeout,
+        Duration::from_secs(60),
+        "both independent watchdogs use the fixture-specific budget",
     );
     assert_eq!(
         node_compat_fixture_wall_clock_timeout(&async_hooks_fatal_error_limits),
@@ -2317,6 +2331,11 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         "the broad WebCrypto wrap/unwrap matrix gets a finite slow-fixture budget in each lane",
     );
     assert_eq!(
+        node22_webcrypto_wrap_unwrap_limits.system_timeout,
+        Duration::from_secs(120),
+        "both independent watchdogs use the fixture-specific budget",
+    );
+    assert_eq!(
         node_compat_fixture_wall_clock_timeout(&node22_webcrypto_wrap_unwrap_limits),
         Duration::from_secs(125),
     );
@@ -2329,6 +2348,11 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         node24_webcrypto_wrap_unwrap_limits.execution_timeout,
         Duration::from_secs(120),
         "the broad WebCrypto wrap/unwrap matrix gets a finite slow-fixture budget in each lane",
+    );
+    assert_eq!(
+        node24_webcrypto_wrap_unwrap_limits.system_timeout,
+        Duration::from_secs(120),
+        "both independent watchdogs use the fixture-specific budget",
     );
     assert_eq!(
         node_compat_fixture_wall_clock_timeout(&node24_webcrypto_wrap_unwrap_limits),
@@ -2345,6 +2369,11 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         "the broad WebCrypto sign/verify matrix gets a finite slow-fixture budget in each lane",
     );
     assert_eq!(
+        node22_webcrypto_sign_verify_limits.system_timeout,
+        Duration::from_secs(120),
+        "both independent watchdogs use the fixture-specific budget",
+    );
+    assert_eq!(
         node_compat_fixture_wall_clock_timeout(&node22_webcrypto_sign_verify_limits),
         Duration::from_secs(125),
     );
@@ -2357,6 +2386,11 @@ fn node_compat_harness_wall_clock_timeout_tracks_fixture_runtime_budget() {
         node24_webcrypto_sign_verify_limits.execution_timeout,
         Duration::from_secs(120),
         "the broad WebCrypto sign/verify matrix gets a finite slow-fixture budget in each lane",
+    );
+    assert_eq!(
+        node24_webcrypto_sign_verify_limits.system_timeout,
+        Duration::from_secs(120),
+        "both independent watchdogs use the fixture-specific budget",
     );
     assert_eq!(
         node_compat_fixture_wall_clock_timeout(&node24_webcrypto_sign_verify_limits),
@@ -2476,6 +2510,74 @@ assert.strictEqual(typeof common.isInsideDirWithUnusualChars, 'boolean');
         None,
     )
     .expect("node_compat common fixture platform booleans should execute");
+}
+
+#[test]
+fn node20_gcm_implicit_short_tag_is_silent_without_pending_deprecation() {
+    execute_upstream_node_compat_test_with_extra_files(
+        "test/parallel/test-nimbus-crypto-gcm-implicit-short-tag-silent.js",
+        r#"'use strict';
+
+const assert = require('assert');
+const { createDecipheriv } = require('crypto');
+
+let dep0182Warnings = 0;
+process.on('warning', (warning) => {
+  if (warning.code === 'DEP0182') dep0182Warnings++;
+});
+
+createDecipheriv('aes-128-gcm', Buffer.alloc(16), Buffer.alloc(12))
+  .setAuthTag(Buffer.alloc(12));
+
+setImmediate(() => assert.strictEqual(dep0182Warnings, 0));
+"#,
+        &[],
+        false,
+        Some(NodeCompatLane::Node20),
+        None,
+        None,
+    )
+    .expect("Node20 should accept an implicit short GCM tag without a default warning");
+}
+
+#[test]
+fn node24_invalid_gcm_tag_does_not_consume_implicit_short_tag_warning() {
+    execute_upstream_node_compat_test_with_extra_files(
+        "test/parallel/test-nimbus-crypto-gcm-invalid-tag-warning-order.js",
+        r#"'use strict';
+
+const assert = require('assert');
+const { createDecipheriv } = require('crypto');
+
+let dep0182Warnings = 0;
+process.on('warning', (warning) => {
+  if (warning.code === 'DEP0182') dep0182Warnings++;
+});
+
+const invalid = createDecipheriv(
+  'aes-128-gcm',
+  Buffer.alloc(16),
+  Buffer.alloc(12),
+);
+assert.throws(
+  () => invalid.setAuthTag(Buffer.alloc(17)),
+  /Invalid authentication tag length: 17/,
+);
+
+setImmediate(() => {
+  assert.strictEqual(dep0182Warnings, 0);
+  createDecipheriv('aes-128-gcm', Buffer.alloc(16), Buffer.alloc(12))
+    .setAuthTag(Buffer.alloc(12));
+  setImmediate(() => assert.strictEqual(dep0182Warnings, 1));
+});
+"#,
+        &[],
+        false,
+        Some(NodeCompatLane::Node24),
+        None,
+        None,
+    )
+    .expect("Node24 should warn only after accepting a valid implicit short GCM tag");
 }
 
 fn execute_manifested_node_compat_test(

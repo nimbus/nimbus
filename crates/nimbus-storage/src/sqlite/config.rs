@@ -883,7 +883,7 @@ impl SqliteTenantStore {
     /// CI runners) must wait for a returned connection instead of
     /// failing a correct operation; sustained exhaustion still fails
     /// closed with a typed error after the bounded wait.
-    fn acquire_read_connection(&self) -> Result<PooledSqliteConnection> {
+    pub(super) fn acquire_read_connection(&self) -> Result<PooledSqliteConnection> {
         let deadline = std::time::Instant::now() + READ_POOL_WAIT;
         loop {
             let cached = self.lock_read_connections()?.pop();

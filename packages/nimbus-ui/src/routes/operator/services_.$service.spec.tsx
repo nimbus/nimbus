@@ -35,13 +35,9 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
-import {
-  AdminServiceDetailLoaderError,
-  isTab,
-  Route,
-  TABS,
-} from "./services_.$service";
+import { AdminServiceDetailLoaderError } from "../../components/service-loader-errors";
 import { routeLoader } from "../../test/route-internals";
+import { isTab, Route, TABS } from "./services_.$service";
 
 type LoaderArgs = { params: { service: string } };
 type LoaderResult = {

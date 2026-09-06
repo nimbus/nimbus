@@ -6,11 +6,11 @@ export const list = query({
   args: {
     machineId: v.union(v.string(), v.null()),
     serviceId: v.union(v.string(), v.null()),
-    state: v.union(v.string(), v.null()),
+    observedPhase: v.union(v.string(), v.null()),
     limit: v.union(v.number(), v.null()),
   },
   returns: v.array(v.any()),
-  handler: async (ctx, { machineId, serviceId, state, limit }) => {
+  handler: async (ctx, { machineId, serviceId, observedPhase, limit }) => {
     const boundedLimit =
       limit === null || !Number.isFinite(limit)
         ? 100
@@ -27,10 +27,12 @@ export const list = query({
         .withIndex("by_serviceId", (q) => q.eq("serviceId", serviceId))
         .take(boundedLimit);
     }
-    if (state) {
+    if (observedPhase) {
       return await ctx.db
         .query("ports")
-        .withIndex("by_state", (q) => q.eq("state", state))
+        .withIndex("by_observedPhase", (q) =>
+          q.eq("observedPhase", observedPhase),
+        )
         .take(boundedLimit);
     }
     return await ctx.db.query("ports").take(boundedLimit);

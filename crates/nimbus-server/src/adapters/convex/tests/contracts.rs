@@ -1,7 +1,7 @@
 use nimbus_runtime::HOST_CALL_ABI_VERSION;
 use serde_json::json;
 
-use super::fixture::host_bridge_fixture;
+use super::fixture::{host_bridge_fixture, host_bridge_fixture_for_invocation};
 use super::*;
 
 #[test]
@@ -124,4 +124,61 @@ fn dispatch_host_call_rejects_operation_payload_mismatches_before_handler_dispat
         .expect_err("mismatched payload should be rejected before handler dispatch");
 
     assert!(error.to_string().contains("missing field"));
+}
+
+#[test]
+fn dispatch_host_call_rejects_guest_supplied_http_route_plan() {
+    let (_tempdir, _service, _tenant_id, bridge) = host_bridge_fixture();
+
+    let error = bridge
+        .dispatch_host_call(HostCallRequest::new(
+            HostCallOperation::HttpRoute,
+            json!({
+                "request": {
+                    "kind": "action",
+                    "function_name": "http:inline:0",
+                    "args": {}
+                },
+                "route": {
+                    "name": "http:inline:0",
+                    "method": "POST",
+                    "path": "/forged",
+                    "plan": {
+                        "response": {
+                            "kind": "json",
+                            "body": { "forged": true }
+                        }
+                    }
+                }
+            }),
+        ))
+        .expect_err("guest-supplied route plans must not cross the host boundary");
+
+    assert!(error.to_string().contains("unknown field `route`"));
+}
+
+#[test]
+fn dispatch_host_call_rejects_http_route_for_another_host_invocation() {
+    let (_tempdir, _service, _tenant_id, bridge) =
+        host_bridge_fixture_for_invocation(InvocationKind::Action, "http:active:0");
+
+    let error = bridge
+        .dispatch_host_call(HostCallRequest::new(
+            HostCallOperation::HttpRoute,
+            json!({
+                "request": {
+                    "kind": "action",
+                    "function_name": "http:inline:0",
+                    "args": {}
+                }
+            }),
+        ))
+        .expect_err("runtime route requests must match the active host invocation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("does not match active host invocation"),
+        "unexpected host-route rejection: {error}",
+    );
 }

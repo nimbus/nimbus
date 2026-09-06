@@ -19,7 +19,7 @@ use crate::watchdog::WatchdogTimer;
 use super::admission::{RuntimeExecutorAdmissionDecision, SharedInvocationPermit};
 use super::facade::{BLOCKING_RESULT_POLL_INTERVAL, RuntimeExecutor};
 use super::lifecycle::run_invocation_lifecycle;
-use super::queue::{RuntimeWorkerJob, RuntimeWorkerResultSender, RuntimeWorkerRouter};
+use super::queue::{RuntimeWorkerJob, RuntimeWorkerResultSender};
 
 pub struct RuntimeInvocationResponse {
     response: Value,
@@ -137,7 +137,7 @@ impl RuntimeExecutor {
         self.inner
             .router
             .dispatch_job_blocking(job)
-            .map_err(|_| RuntimeWorkerRouter::closed_error())
+            .map_err(|failure| failure.into_error())
     }
 
     fn finish_canceled_queued_job_with_policy(policy: &RuntimePolicy, job: RuntimeWorkerJob) {
@@ -149,7 +149,7 @@ impl RuntimeExecutor {
                     .as_ref()
                     .and_then(HostCallCancellation::cause),
             );
-        job.result_tx.send(Err(NimbusRuntimeError::Cancelled));
+        job.send_result(Err(NimbusRuntimeError::Cancelled));
     }
 
     fn register_queued_cancellation_listener(

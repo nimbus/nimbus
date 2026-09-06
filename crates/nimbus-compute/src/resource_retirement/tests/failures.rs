@@ -177,6 +177,85 @@ fn pre_cancelled_foreground_stop_makes_zero_source_store_or_provider_mutation() 
 }
 
 #[test]
+fn public_stop_retries_join_one_retained_recovery_supervisor() {
+    run_async_test(async {
+        const TEST_DEADLINE: std::time::Duration = std::time::Duration::from_millis(10);
+        let registry = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_starts = starts.clone();
+        let cancellation = WorkloadTeardownCancellationToken::new();
+        let (release_recovery, wait_for_release) = tokio::sync::oneshot::channel();
+        let (recovery_started, started) = tokio::sync::oneshot::channel();
+        let (recovery_finished, finished) = tokio::sync::oneshot::channel();
+        let completion = super::super::track_retirement(&registry, key(SERVICE_NAME), async move {
+            worker_starts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            recovery_started
+                .send(())
+                .expect("test should retain the recovery-start observer");
+            wait_for_release
+                .await
+                .expect("test should release retained recovery");
+            recovery_finished
+                .send(())
+                .expect("test should retain the recovery-finished observer");
+            Ok(())
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), started)
+            .await
+            .expect("retained recovery should start")
+            .expect("retained recovery should report its start");
+        let waiter_cancellation = cancellation.clone();
+
+        let error = super::super::await_retirement_with_timeout(
+            "test stop",
+            &cancellation,
+            async move {
+                super::super::wait_for_retirement_completion(completion, &waiter_cancellation).await
+            },
+            TEST_DEADLINE,
+        )
+        .await
+        .expect_err("a public stop waiter must not remain attached past its deadline");
+
+        assert!(
+            cancellation.is_cancelled(),
+            "the public deadline must cancel its bounded waiter"
+        );
+        assert!(matches!(
+            error,
+            crate::state::ComputeError::Core(nimbus_core::Error::Transport(message))
+                if message.contains("test stop remains pending")
+                    && message.contains("retry the request")
+        ));
+
+        let duplicate_starts = starts.clone();
+        let retry_completion =
+            super::super::track_retirement(&registry, key(SERVICE_NAME), async move {
+                duplicate_starts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            });
+        release_recovery
+            .send(())
+            .expect("retained recovery should remain alive after the deadline");
+        super::super::wait_for_retirement_completion(
+            retry_completion,
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await
+        .expect("the retry should join retained recovery");
+        tokio::time::timeout(std::time::Duration::from_secs(1), finished)
+            .await
+            .expect("retained recovery should finish after release")
+            .expect("retained recovery should report completion");
+        assert_eq!(
+            starts.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "a public retry must join the exact retained owner instead of spawning another supervisor"
+        );
+    });
+}
+
+#[test]
 fn foreground_stop_does_not_retry_cleanup_pending() {
     run_async_test(async {
         let harness = RetirementHarness::new();

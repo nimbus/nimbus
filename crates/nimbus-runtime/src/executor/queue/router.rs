@@ -50,6 +50,25 @@ struct WorkerAssignment {
     last_assigned_sequence: u64,
 }
 
+pub(in crate::executor) struct RuntimeWorkerDispatchError {
+    job: Box<RuntimeWorkerJob>,
+    error: NimbusRuntimeError,
+}
+
+impl RuntimeWorkerDispatchError {
+    fn new(job: Box<RuntimeWorkerJob>, error: NimbusRuntimeError) -> Self {
+        Self { job, error }
+    }
+
+    pub(in crate::executor) fn into_error(self) -> NimbusRuntimeError {
+        self.error
+    }
+
+    pub(in crate::executor) fn into_parts(self) -> (Box<RuntimeWorkerJob>, NimbusRuntimeError) {
+        (self.job, self.error)
+    }
+}
+
 impl WorkerDispatchQueue {
     fn new(
         sender: mpsc::Sender<RuntimeWorkerMessage>,
@@ -308,7 +327,7 @@ impl RuntimeWorkerRouter {
     pub(in crate::executor) fn dispatch_job_blocking(
         &self,
         job: RuntimeWorkerJob,
-    ) -> std::result::Result<(), Box<RuntimeWorkerJob>> {
+    ) -> std::result::Result<(), RuntimeWorkerDispatchError> {
         let started_at = Instant::now();
         let result = self.dispatch_job_blocking_inner(job);
         self.metrics
@@ -319,10 +338,15 @@ impl RuntimeWorkerRouter {
     fn dispatch_job_blocking_inner(
         &self,
         job: RuntimeWorkerJob,
-    ) -> std::result::Result<(), Box<RuntimeWorkerJob>> {
+    ) -> std::result::Result<(), RuntimeWorkerDispatchError> {
         let affinity_key = match self.affinity_key(&job) {
             Ok(affinity_key) => affinity_key,
-            Err(_) => return Err(Box::new(job)),
+            Err(error) => {
+                if let Some(dispatch_handle) = &job.dispatch_handle {
+                    dispatch_handle.rollback_dispatch();
+                }
+                return Err(RuntimeWorkerDispatchError::new(Box::new(job), error));
+            }
         };
         let owner_id = job
             .context
@@ -336,11 +360,11 @@ impl RuntimeWorkerRouter {
         let dispatch_handle = job.dispatch_handle.clone();
         let sender = match self.dispatch_sender(selection.worker_id) {
             Ok(sender) => sender,
-            Err(_) => {
+            Err(error) => {
                 if let Some(dispatch_handle) = dispatch_handle {
                     dispatch_handle.rollback_dispatch();
                 }
-                return Err(Box::new(job));
+                return Err(RuntimeWorkerDispatchError::new(Box::new(job), error));
             }
         };
         // Account for the assignment before enqueueing so a very fast worker
@@ -358,12 +382,13 @@ impl RuntimeWorkerRouter {
                 if let Some(dispatch_handle) = dispatch_handle {
                     dispatch_handle.rollback_dispatch();
                 }
-                match error.0 {
+                let job = match error.0 {
                     RuntimeWorkerMessage::Job(job) => job,
                     RuntimeWorkerMessage::Control(_) => {
                         unreachable!("job dispatch cannot return a control message")
                     }
-                }
+                };
+                RuntimeWorkerDispatchError::new(job, Self::closed_error())
             })?;
         self.record_route(selection.strategy);
         self.workers[selection.worker_id].activity_signal.notify();
@@ -528,6 +553,22 @@ mod tests {
             router.workers[0].load.load(Ordering::SeqCst),
             0,
             "failed dispatch should roll back the pre-send worker assignment",
+        );
+    }
+
+    #[test]
+    fn blocking_dispatch_preserves_affinity_errors() {
+        let metrics = Arc::new(RuntimeMetrics::default());
+        let (router, _queues) =
+            RuntimeWorkerRouter::new(1, 1, metrics, RuntimeRoutingAffinity::Tenant, 1);
+
+        let failure = router
+            .dispatch_job_blocking(sample_job())
+            .expect_err("tenant affinity without a tenant should fail");
+        let error = failure.into_error();
+        assert!(
+            matches!(error, NimbusRuntimeError::Contract(ref message) if message.contains("routing affinity Tenant requires a tenant label")),
+            "blocking dispatch should preserve the locality error, got {error}",
         );
     }
 }

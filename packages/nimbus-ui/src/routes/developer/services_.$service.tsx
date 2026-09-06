@@ -12,6 +12,7 @@ import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
+import { ServiceDetailLoaderError } from "../../components/service-loader-errors";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
@@ -66,41 +67,6 @@ export const Route = createFileRoute("/developer/services_/$service")({
   errorComponent: ServiceDetailLoaderError,
   component: ServiceDetailPage,
 });
-
-export function ServiceDetailLoaderError({
-  error,
-  reset,
-}: {
-  error: Error;
-  reset: () => void;
-}) {
-  return (
-    <section
-      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
-      data-testid="page-service-detail"
-    >
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
-        <EmptyState
-          title="Service detail unavailable"
-          body={
-            <>
-              The service-detail query failed:{" "}
-              <span
-                className="font-mono text-default"
-                data-testid="storage-server-error"
-              >
-                {error.message}
-              </span>
-              . Retry once the backend is reachable.
-            </>
-          }
-          cta={{ label: "Retry", onClick: reset }}
-          testid="storage-server-error-envelope"
-        />
-      </div>
-    </section>
-  );
-}
 
 function isTab(value: unknown): value is DetailTab {
   return (

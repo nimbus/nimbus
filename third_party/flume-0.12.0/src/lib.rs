@@ -51,9 +51,10 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Weak,
     },
-    thread,
     time::{Duration, Instant},
 };
+#[cfg(feature = "spin")]
+use std::thread;
 
 /// An error that may be emitted when attempting to send a value into a channel on a sender when
 /// all receivers are dropped.
@@ -314,6 +315,7 @@ impl<T, S: ?Sized + Signal> Hook<T, S> {
         (ret, self.signal())
     }
 
+    #[cfg(any(feature = "async", feature = "select"))]
     pub fn is_empty(&self) -> bool {
         self.lock().map(|s| s.is_none()).unwrap_or(true)
     }
@@ -322,6 +324,7 @@ impl<T, S: ?Sized + Signal> Hook<T, S> {
         self.lock().unwrap().take()
     }
 
+    #[cfg(any(feature = "async", feature = "select"))]
     pub fn trigger(signal: S) -> Arc<Self>
     where
         S: Sized,
@@ -333,6 +336,7 @@ impl<T, S: ?Sized + Signal> Hook<T, S> {
         &self.1
     }
 
+    #[cfg(any(feature = "async", feature = "select"))]
     pub fn fire_nothing(&self) -> bool {
         self.signal().fire()
     }
@@ -461,6 +465,7 @@ impl<T> Chan<T> {
         }
     }
 
+    #[cfg(any(feature = "async", feature = "select"))]
     fn try_wake_receiver_if_pending(&mut self) {
         if !self.queue.is_empty() {
             while Some(false) == self.waiting.pop_front().map(|s| s.fire_nothing()) {}

@@ -12,6 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-install-helper.XXXXXX")"
 trap 'rm -rf "${output_dir}"' EXIT
 testable_install_sh="${output_dir}/install-lib.sh"
+testable_verify_install_sh="${output_dir}/verify-install-lib.sh"
 
 test_count=0
 fail_count=0
@@ -53,6 +54,7 @@ else
 fi
 
 sed '$d' "${repo_root}/scripts/install.sh" > "${testable_install_sh}"
+sed '$d' "${repo_root}/scripts/verify-install.sh" > "${testable_verify_install_sh}"
 
 # Check POSIX sh compatibility for install.sh
 if command -v dash >/dev/null 2>&1; then
@@ -209,6 +211,59 @@ else
   pass "verify_file_checksum rejects checksum subject spoofing"
 fi
 
+# --- Release document preservation -----------------------------------------
+
+echo ""
+echo "Checking release document preservation..."
+
+release_documents_archive="${output_dir}/release-documents-archive"
+release_documents_prefix="${output_dir}/release-documents-prefix"
+mkdir -p "${release_documents_archive}"
+printf 'license\n' > "${release_documents_archive}/LICENSE"
+printf 'readme\n' > "${release_documents_archive}/README.md"
+
+if sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    maybe_sudo() { "$@"; }
+    install_nimbus_release_documents "$3"
+    nimbus_release_documents_present
+    cmp "$3/LICENSE" "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
+    cmp "$3/README.md" "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
+  ' sh "${testable_install_sh}" "${release_documents_prefix}" "${release_documents_archive}" \
+    > "${output_dir}/release-documents-install.txt" 2>&1; then
+  pass "direct installer preserves release license and README"
+else
+  fail "direct installer preserves release license and README"
+fi
+
+rm -f "${release_documents_prefix}/share/doc/nimbus/README.md"
+if sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    PLATFORM="linux"
+    ! nimbus_release_payload_present
+  ' sh "${testable_install_sh}" "${release_documents_prefix}"; then
+  pass "same-version payload predicate rejects a partial document install"
+else
+  fail "same-version payload predicate rejects a partial document install"
+fi
+
+release_documents_incomplete="${output_dir}/release-documents-incomplete"
+mkdir -p "${release_documents_incomplete}"
+printf 'license\n' > "${release_documents_incomplete}/LICENSE"
+if sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    maybe_sudo() { "$@"; }
+    install_nimbus_release_documents "$3"
+  ' sh "${testable_install_sh}" "${output_dir}/release-documents-reject-prefix" "${release_documents_incomplete}" \
+    > "${output_dir}/release-documents-reject.txt" 2>&1; then
+  fail "direct installer rejects archives without required release documents"
+else
+  pass "direct installer rejects archives without required release documents"
+fi
+
 # --- Bun/JSC adapter installer hardening ------------------------------------
 
 echo ""
@@ -285,15 +340,15 @@ manifest_path.write_text(json.dumps({
     "adapter_version": "v0.1.0-bun-proof-main-20260525",
     "nimbus_version": "v0.1.0",
     "bun_source_repository": "https://github.com/nimbus/bun",
-    "bun_source_ref": "nimbus-bun-jsc-proof-main-20260709",
-    "bun_source_revision": "cc0a59c301ac2f56e94102c4ad16c3f085821409",
+    "bun_source_ref": "bun-v1.4.2-nimbus.1",
+    "bun_source_revision": "d6d4c5e39938b6c5ac243490a9230c26d52d737f",
     "target_triple": "x86_64-unknown-linux-gnu",
     "platform": "linux",
     "library": "libnimbus_bun_jsc_embedder.so",
     "library_sha256": library_sha,
     "abi": {
         "name": "nimbus-bun-jsc-embedder",
-        "version": 1,
+        "version": 3,
         "required_exports": required_exports,
     },
     "memory_enforcement": "outer_quota_required",
@@ -309,7 +364,7 @@ sbom_path.write_text(json.dumps({
     "bomFormat": "CycloneDX",
     "components": [
         {"name": "libnimbus_bun_jsc_embedder.so", "hashes": [{"alg": "SHA-256", "content": library_sha}]},
-        {"name": "bun", "version": "nimbus-bun-jsc-proof-main-20260709"},
+        {"name": "bun", "version": "bun-v1.4.2-nimbus.1"},
     ],
 }, separators=(",", ":")) + "\n")
 
@@ -336,6 +391,7 @@ mkdir -p "${mock_bun_jsc_tools}"
 {
   printf '#!/bin/sh\n'
   printf 'while IFS= read -r symbol; do\n'
+  # shellcheck disable=SC2016 # Emit a child script that expands $symbol.
   printf '  printf '\''0000000000000000 T %%s\\n'\'' "$symbol"\n'
   printf 'done <<'\''SYMS'\''\n'
   cat "${required_exports_file}"
@@ -448,10 +504,10 @@ case "\$last_arg" in
     printf '{"tag_name":"v0.1.14"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-crun/releases/latest)
-    printf '{"tag_name":"v1.27.1-nimbus.2"}'
+    printf '{"tag_name":"v1.29.1-nimbus.2"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-libkrun/releases/latest)
-    printf '{"tag_name":"v1.18.1-nimbus.1"}'
+    printf '{"tag_name":"v1.19.4-nimbus.3"}'
     ;;
   *)
     exit 97
@@ -473,8 +529,8 @@ if PATH="${mock_linux_bin}:$PATH" GITHUB_TOKEN=test-token \
   else
     pass "Linux dry-run avoids fork latest lookups"
   fi
-  if grep -q "nimbus-crun: v1.27.1-nimbus.2 (upstream 1.27.1)" "${output_dir}/linux-dry-run.txt" &&
-     grep -q "nimbus-libkrun: v1.18.1-nimbus.1 (upstream 1.18.1)" "${output_dir}/linux-dry-run.txt"; then
+  if grep -q "nimbus-crun: v1.29.1-nimbus.2 (upstream 1.29.1)" "${output_dir}/linux-dry-run.txt" &&
+     grep -q "nimbus-libkrun: v1.19.4-nimbus.3 (upstream 1.19.4)" "${output_dir}/linux-dry-run.txt"; then
     pass "Linux dry-run uses validated VMM tuple"
   else
     fail "Linux dry-run uses validated VMM tuple"
@@ -526,7 +582,7 @@ EOF
 chmod +x "${mock_macos_bin}/curl"
 
 if PATH="${mock_macos_bin}:$PATH" \
-    sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --libkrun-version v1.18.1-nimbus.1 --prefix /tmp/custom \
+    sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --libkrun-version v1.19.4-nimbus.3 --prefix /tmp/custom \
     > "${output_dir}/macos-dry-run.txt" 2>&1; then
   if [ ! -s "${macos_curl_log}" ]; then
     pass "macOS dry-run avoids GitHub API lookup"
@@ -544,9 +600,9 @@ else
 fi
 
 # The current-version fast path must not touch the network when every bundled
-# helper is already present. This keeps repeated installs useful in offline or
-# flaky-network environments and proves the helper-presence predicate is checked
-# before any checksum/archive download.
+# helper and release document is already present. This keeps repeated installs
+# useful in offline or flaky-network environments and proves the payload
+# predicate is checked before any checksum/archive download.
 macos_fast_path_prefix="${output_dir}/macos-fast-path-prefix"
 macos_fast_path_download_log="${output_dir}/macos-fast-path-downloads.log"
 if sh -c '
@@ -557,10 +613,12 @@ if sh -c '
     ARCH="arm64"
     DRY_RUN=""
     DOWNLOAD_LOG="$3"
-    mkdir -p "${NIMBUS_PREFIX}/libexec"
+    mkdir -p "${NIMBUS_PREFIX}/libexec" "${NIMBUS_PREFIX}/share/doc/nimbus"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
     chmod +x "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    printf "license\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
+    printf "readme\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
     get_installed_nimbus_version() { printf "%s\n" "${NIMBUS_VERSION}"; }
     download_to_file() {
       printf "%s\n" "$1" >> "${DOWNLOAD_LOG}"
@@ -571,12 +629,258 @@ if sh -c '
     > "${output_dir}/macos-fast-path.txt" 2>&1; then
   if [ ! -s "${macos_fast_path_download_log}" ] && \
       grep -q "already installed" "${output_dir}/macos-fast-path.txt"; then
-    pass "macOS current install with bundled helpers skips without network"
+    pass "macOS current install with complete release payload skips without network"
   else
-    fail "macOS current install with bundled helpers skips without network"
+    fail "macOS current install with complete release payload skips without network"
   fi
 else
-  fail "macOS current install with bundled helpers exits successfully"
+  fail "macOS current install with complete release payload exits successfully"
+fi
+
+# A direct install owns its requested prefix. A current binary from another
+# channel on PATH must not suppress that install, while both standalone and
+# inline verification must accept a valid custom-prefix payload without
+# requiring that prefix to be on PATH.
+custom_prefix="${output_dir}/macos-custom-prefix"
+mkdir -p "${custom_prefix}/bin" "${custom_prefix}/libexec" "${custom_prefix}/share/doc/nimbus"
+cat > "${custom_prefix}/bin/nimbus" <<'EOF'
+#!/bin/sh
+printf 'nimbus 0.1.14\n'
+EOF
+printf '#!/bin/sh\n' > "${custom_prefix}/libexec/gvproxy"
+printf '#!/bin/sh\n' > "${custom_prefix}/libexec/vfkit"
+printf 'license\n' > "${custom_prefix}/share/doc/nimbus/LICENSE"
+printf 'readme\n' > "${custom_prefix}/share/doc/nimbus/README.md"
+chmod +x "${custom_prefix}/bin/nimbus" "${custom_prefix}/libexec/gvproxy" "${custom_prefix}/libexec/vfkit"
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" NIMBUS_PREFIX="${custom_prefix}" \
+    bash "${repo_root}/scripts/verify-install.sh" \
+    > "${output_dir}/macos-custom-prefix-standalone.txt" 2>&1 &&
+   grep -Fq "present path=${custom_prefix}/bin/nimbus version=nimbus 0.1.14" \
+     "${output_dir}/macos-custom-prefix-standalone.txt"; then
+  pass "macOS standalone verification accepts a direct custom-prefix payload"
+else
+  fail "macOS standalone verification accepts a direct custom-prefix payload"
+fi
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" sh -c '
+    . "$1"
+    PLATFORM="darwin"
+    NIMBUS_PREFIX="$2"
+    verify_installation_inline
+  ' sh "${testable_install_sh}" "${custom_prefix}" \
+    > "${output_dir}/macos-custom-prefix-inline.txt" 2>&1 &&
+   grep -Fq "present path=${custom_prefix}/bin/nimbus" \
+     "${output_dir}/macos-custom-prefix-inline.txt"; then
+  pass "macOS inline verification accepts a direct custom-prefix payload"
+else
+  fail "macOS inline verification accepts a direct custom-prefix payload"
+fi
+
+linux_package_prefix="${output_dir}/linux-package-prefix"
+mkdir -p "${linux_package_prefix}/bin" "${linux_package_prefix}/share/doc/nimbus"
+cp "${custom_prefix}/bin/nimbus" "${linux_package_prefix}/bin/nimbus"
+cp "${custom_prefix}/share/doc/nimbus/LICENSE" "${linux_package_prefix}/share/doc/nimbus/LICENSE"
+cp "${custom_prefix}/share/doc/nimbus/README.md" "${linux_package_prefix}/share/doc/nimbus/README.md"
+if NIMBUS_PREFIX="${linux_package_prefix}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/share/doc/nimbus/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/share/doc/nimbus/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${linux_package_prefix}" \
+    > "${output_dir}/linux-package-doc-layout.txt" 2>&1; then
+  pass "standalone verification resolves the DEB/RPM release-document layout"
+else
+  fail "standalone verification resolves the DEB/RPM release-document layout"
+fi
+
+brew_root="${output_dir}/homebrew"
+cask_root="${brew_root}/Caskroom/nimbus/0.1.46"
+empty_prefix="${output_dir}/empty-prefix"
+mkdir -p "${brew_root}/bin" "${cask_root}" "${empty_prefix}"
+cask_root="$(cd "${cask_root}" && pwd)"
+cp "${custom_prefix}/bin/nimbus" "${cask_root}/nimbus"
+cp "${custom_prefix}/share/doc/nimbus/LICENSE" "${cask_root}/LICENSE"
+cp "${custom_prefix}/share/doc/nimbus/README.md" "${cask_root}/README.md"
+ln -s "../Caskroom/nimbus/0.1.46/nimbus" "${brew_root}/bin/nimbus"
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${empty_prefix}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${cask_root}" \
+    > "${output_dir}/homebrew-cask-doc-layout.txt" 2>&1; then
+  pass "standalone verification resolves Homebrew Cask release documents"
+else
+  fail "standalone verification resolves Homebrew Cask release documents"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${empty_prefix}" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$3"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' sh "${testable_install_sh}" "${cask_root}" "${empty_prefix}" \
+    > "${output_dir}/homebrew-cask-inline-doc-layout.txt" 2>&1; then
+  pass "inline verification resolves Homebrew Cask release documents"
+else
+  fail "inline verification resolves Homebrew Cask release documents"
+fi
+
+stale_docs_prefix="${output_dir}/stale-docs-prefix"
+mkdir -p "${stale_docs_prefix}/share/doc/nimbus"
+printf 'stale license\n' > "${stale_docs_prefix}/share/doc/nimbus/LICENSE"
+printf 'stale readme\n' > "${stale_docs_prefix}/share/doc/nimbus/README.md"
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${stale_docs_prefix}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${cask_root}" \
+    > "${output_dir}/stale-prefix-doc-layout.txt" 2>&1; then
+  pass "standalone verification ignores documents outside the selected binary channel"
+else
+  fail "standalone verification ignores documents outside the selected binary channel"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$3"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' sh "${testable_install_sh}" "${cask_root}" "${stale_docs_prefix}" \
+    > "${output_dir}/stale-prefix-inline-doc-layout.txt" 2>&1; then
+  pass "inline verification ignores documents outside the selected binary channel"
+else
+  fail "inline verification ignores documents outside the selected binary channel"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${brew_root}" bash -c '
+    . "$1"
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$2/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$2/README.md" ]
+  ' bash "${testable_verify_install_sh}" "${cask_root}" \
+    > "${output_dir}/homebrew-prefix-symlink-doc-layout.txt" 2>&1 &&
+   PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    [ -z "$(get_installed_nimbus_version)" ]
+    [ "$(resolve_nimbus_release_document LICENSE)" = "$3/LICENSE" ]
+    [ "$(resolve_nimbus_release_document README.md)" = "$3/README.md" ]
+  ' sh "${testable_install_sh}" "${brew_root}" "${cask_root}"; then
+  pass "Homebrew prefix symlink remains package-manager-owned"
+else
+  fail "Homebrew prefix symlink remains package-manager-owned"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+      . "$1"
+      NIMBUS_PREFIX="$2"
+      NIMBUS_VERSION="v0.1.46"
+      DRY_RUN=1
+      ! (download_and_install_nimbus)
+    ' sh "${testable_install_sh}" "${brew_root}" \
+    > "${output_dir}/homebrew-symlink-install-refusal.txt" 2>&1 &&
+   grep -Fq "refusing to replace package-manager-owned symlink" \
+     "${output_dir}/homebrew-symlink-install-refusal.txt"; then
+  pass "direct installer refuses a package-manager-owned symlink"
+else
+  fail "direct installer refuses a package-manager-owned symlink"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    uninstall_macos
+    [ -L "$NIMBUS_PREFIX/bin/nimbus" ]
+  ' sh "${testable_install_sh}" "${brew_root}" \
+    > "${output_dir}/homebrew-symlink-uninstall-preservation.txt" 2>&1; then
+  pass "direct uninstaller preserves a package-manager-owned symlink"
+else
+  fail "direct uninstaller preserves a package-manager-owned symlink"
+fi
+
+linux_package_root="${output_dir}/linux-package-uninstall-prefix"
+mkdir -p "${linux_package_root}/bin" "${linux_package_root}/share/doc/nimbus"
+ln -s "/opt/nimbus/bin/nimbus" "${linux_package_root}/bin/nimbus"
+printf 'package license\n' > "${linux_package_root}/share/doc/nimbus/LICENSE"
+printf 'package readme\n' > "${linux_package_root}/share/doc/nimbus/README.md"
+
+if PATH="/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    uninstall_linux
+    [ -L "$NIMBUS_PREFIX/bin/nimbus" ]
+    [ -f "$NIMBUS_PREFIX/share/doc/nimbus/LICENSE" ]
+    [ -f "$NIMBUS_PREFIX/share/doc/nimbus/README.md" ]
+  ' sh "${testable_install_sh}" "${linux_package_root}" \
+    > "${output_dir}/linux-symlink-uninstall-preservation.txt" 2>&1 &&
+   grep -Fq "Use the owning package manager" \
+     "${output_dir}/linux-symlink-uninstall-preservation.txt"; then
+  pass "Linux direct uninstaller preserves a package-manager-owned payload"
+else
+  fail "Linux direct uninstaller preserves a package-manager-owned payload"
+fi
+
+incomplete_prefix="${output_dir}/incomplete-prefix"
+mkdir -p "${incomplete_prefix}/bin" "${incomplete_prefix}/libexec"
+cp "${custom_prefix}/bin/nimbus" "${incomplete_prefix}/bin/nimbus"
+cp "${custom_prefix}/libexec/gvproxy" "${incomplete_prefix}/libexec/gvproxy"
+cp "${custom_prefix}/libexec/vfkit" "${incomplete_prefix}/libexec/vfkit"
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" NIMBUS_PREFIX="${incomplete_prefix}" \
+    bash "${repo_root}/scripts/verify-install.sh" \
+    > "${output_dir}/missing-docs-standalone.txt" 2>&1; then
+  fail "standalone verification rejects a prefix-owned binary without release documents"
+elif grep -Fq "nimbus.LICENSE         missing" "${output_dir}/missing-docs-standalone.txt" &&
+     grep -Fq "nimbus.README.md       missing" "${output_dir}/missing-docs-standalone.txt" &&
+     grep -Fq "result                 unsupported" "${output_dir}/missing-docs-standalone.txt"; then
+  pass "standalone verification rejects a prefix-owned binary without release documents"
+else
+  fail "standalone verification rejects a prefix-owned binary without release documents"
+fi
+
+if PATH="${mock_macos_bin}:/usr/bin:/bin" sh -c '
+    . "$1"
+    PLATFORM="darwin"
+    NIMBUS_PREFIX="$2"
+    ! verify_installation_inline
+  ' sh "${testable_install_sh}" "${incomplete_prefix}" \
+    > "${output_dir}/missing-docs-inline.txt" 2>&1 &&
+   grep -Fq "nimbus.LICENSE         missing" "${output_dir}/missing-docs-inline.txt" &&
+   grep -Fq "nimbus.README.md       missing" "${output_dir}/missing-docs-inline.txt" &&
+   grep -Fq "result                 unsupported" "${output_dir}/missing-docs-inline.txt"; then
+  pass "inline verification rejects a prefix-owned binary without release documents"
+else
+  fail "inline verification rejects a prefix-owned binary without release documents"
+fi
+
+if PATH="${brew_root}/bin:/usr/bin:/bin" NIMBUS_PREFIX="${incomplete_prefix}" bash -c '
+    . "$1"
+    ! resolve_nimbus_release_document LICENSE
+    ! resolve_nimbus_release_document README.md
+  ' bash "${testable_verify_install_sh}" &&
+   PATH="${brew_root}/bin:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    ! resolve_nimbus_release_document LICENSE
+    ! resolve_nimbus_release_document README.md
+  ' sh "${testable_install_sh}" "${incomplete_prefix}"; then
+  pass "prefix-owned verification cannot borrow documents from a PATH channel"
+else
+  fail "prefix-owned verification cannot borrow documents from a PATH channel"
+fi
+
+foreign_path_bin="${output_dir}/foreign-path-bin"
+mkdir -p "${foreign_path_bin}"
+cp "${custom_prefix}/bin/nimbus" "${foreign_path_bin}/nimbus"
+if PATH="${foreign_path_bin}:/usr/bin:/bin" sh -c '
+    . "$1"
+    NIMBUS_PREFIX="$2"
+    [ -z "$(get_installed_nimbus_version)" ]
+  ' sh "${testable_install_sh}" "${empty_prefix}"; then
+  pass "direct installer ignores a foreign-channel nimbus on PATH"
+else
+  fail "direct installer ignores a foreign-channel nimbus on PATH"
 fi
 
 macos_uninstall_prefix="${output_dir}/macos-uninstall-prefix"
@@ -584,22 +888,26 @@ if sh -c '
     . "$1"
     NIMBUS_PREFIX="$2"
     DRY_RUN=""
-    mkdir -p "${NIMBUS_PREFIX}/bin" "${NIMBUS_PREFIX}/libexec"
+    mkdir -p "${NIMBUS_PREFIX}/bin" "${NIMBUS_PREFIX}/libexec" "${NIMBUS_PREFIX}/share/doc/nimbus"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/bin/nimbus"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
     chmod +x "${NIMBUS_PREFIX}/bin/nimbus" "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    printf "license\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
+    printf "readme\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
     check_cmd() { return 1; }
     maybe_sudo() { "$@"; }
     uninstall_macos
     [ ! -e "${NIMBUS_PREFIX}/bin/nimbus" ] &&
       [ ! -e "${NIMBUS_PREFIX}/libexec/gvproxy" ] &&
-      [ ! -e "${NIMBUS_PREFIX}/libexec/vfkit" ]
+      [ ! -e "${NIMBUS_PREFIX}/libexec/vfkit" ] &&
+      [ ! -e "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE" ] &&
+      [ ! -e "${NIMBUS_PREFIX}/share/doc/nimbus/README.md" ]
   ' sh "${testable_install_sh}" "${macos_uninstall_prefix}" \
     > "${output_dir}/macos-uninstall.txt" 2>&1; then
-  pass "macOS uninstall removes direct-install bundled helpers"
+  pass "macOS uninstall removes direct-install bundled helpers and documents"
 else
-  fail "macOS uninstall removes direct-install bundled helpers"
+  fail "macOS uninstall removes direct-install bundled helpers and documents"
 fi
 
 # --- Dry run output ---------------------------------------------------------
@@ -608,7 +916,7 @@ echo ""
 echo "Checking dry-run output..."
 
 # Use a mock version to avoid GitHub API calls
-if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.27.1-nimbus.2 --libkrun-version v1.18.1-nimbus.1 \
+if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.29.1-nimbus.2 --libkrun-version v1.19.4-nimbus.3 \
     > "${output_dir}/dry-run.txt" 2>&1; then
 
   if grep -q "Install Plan" "${output_dir}/dry-run.txt"; then
@@ -733,6 +1041,13 @@ if grep -q "nimbus-bun-jsc" "${output_dir}/verify.txt"; then
   pass "verify-install.sh reports optional Bun/JSC adapter state"
 else
   fail "verify-install.sh reports optional Bun/JSC adapter state"
+fi
+
+if grep -q "nimbus.LICENSE" "${output_dir}/verify.txt" &&
+   grep -q "nimbus.README.md" "${output_dir}/verify.txt"; then
+  pass "verify-install.sh reports required release documents"
+else
+  fail "verify-install.sh reports required release documents"
 fi
 
 # --- Uninstall dry-run ------------------------------------------------------

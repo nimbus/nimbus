@@ -25,8 +25,8 @@ listener is left on.
 local-only placement, and a per-deployment master key that is created on
 first use. The erasure-coded leg and cloud placement targets are opt-in
 through environment variables, and the operator command surface documented
-here is bounded — backup, restore, erasure healing, and tenant removal are
-offline maintenance that require the server to be stopped.
+here is bounded — placement changes, backup, restore, erasure healing, and
+tenant removal are offline maintenance that require the server to be stopped.
 
 ## How the byte plane is laid out
 
@@ -70,13 +70,15 @@ it, every encrypted object and every byte-plane backup is unreadable.
 
 ## Set a tenant placement policy
 
-`set-placement` persists the engine placement policy for one tenant. Run it
-against the deployment's data directory:
+`set-placement` persists the engine placement policy for one tenant. Stop the
+server first. Run it against the deployment's data directory and pass
+`--control-data-dir` when the deployment keeps its control plane elsewhere:
 
 ```bash
 # Keep a tenant's objects on the local byte plane only.
 nimbus object-storage set-placement \
   --data-dir ./data \
+  --control-data-dir ./control \
   --tenant acme \
   --mode local
 ```
@@ -200,6 +202,7 @@ cp ./data/object-blobs/acme/blob-key.nimbus-enc ./acme-escrow.bin
 # Stop the server, then export the tenant's objects.
 nimbus object-storage backup-object-store \
   --data-dir ./data \
+  --control-data-dir ./control \
   --tenant acme \
   --out backups/acme-objects.nobb \
   --key-escrow-id acme \
@@ -217,6 +220,7 @@ Restore reinstalls the escrowed key and the objects into a data directory:
 nimbus object-storage restore-object-store \
   --in backups/acme-objects.nobb \
   --data-dir ./data \
+  --control-data-dir ./control \
   --tenant acme \
   --key-escrow-id acme \
   --key-escrow-file ./acme-escrow.bin
@@ -240,13 +244,21 @@ destructive and offline: it takes exclusive ownership of the byte-plane leg
 
 ```bash
 # Stop the server first.
-nimbus object-storage tenant rm --data-dir ./data --tenant acme --yes
+nimbus object-storage tenant rm \
+  --data-dir ./data \
+  --control-data-dir ./control \
+  --tenant acme \
+  --yes
 ```
 
 The command removes the tenant from the control plane and unlinks its local
 byte-plane trees (the pack root, or every erasure drive tree). Objects that a
 placement policy wrote to an external cloud store are not deleted from that
 store. A partially completed removal is safe to re-run.
+
+For `set-placement`, `backup-object-store`, `restore-object-store`, and
+`tenant rm`, omit `--control-data-dir` when the control plane uses the default
+location inside `--data-dir`.
 
 ## Environment configuration
 

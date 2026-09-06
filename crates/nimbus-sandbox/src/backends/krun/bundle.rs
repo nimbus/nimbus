@@ -12,7 +12,7 @@ use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
 
-use super::ingress::format_private_tsi_port_map;
+use super::ingress::{format_private_tsi_port_map, private_tsi_upstream_port};
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
@@ -274,7 +274,7 @@ pub(crate) fn build_bundle_config(
     // itself is enforced at the host by the per-sandbox egress PEP (see
     // `EgressProxyRegistry`); the guest is never handed a cooperative copy of it.
     spec.egress
-        .compile()
+        .compile_for_supervisor_proxy()
         .map_err(|message| SandboxError::InvalidSpec { message })?;
     let process_env = process_env(
         spec,
@@ -292,6 +292,15 @@ pub(crate) fn build_bundle_config(
         "run.oci.handler".to_owned(),
         Value::String("krun".to_owned()),
     );
+    if let Some(cpu_count) = spec.resources.cpu_count {
+        annotations.insert("krun.cpus".to_owned(), Value::String(cpu_count.to_string()));
+    }
+    if let Some(ram_mib) = krun_ram_mib(&spec.resources)? {
+        annotations.insert(
+            "krun.ram_mib".to_owned(),
+            Value::String(ram_mib.to_string()),
+        );
+    }
     if !spec.port_bindings.is_empty() {
         annotations.insert(
             "krun.port_map".to_owned(),
@@ -518,11 +527,27 @@ fn validate_resource_limits(resources: &SandboxResourceLimits) -> Result<()> {
 
     if resources.cpu_count.is_some() && resources.memory_limit_bytes.is_none() {
         return Err(SandboxError::InvalidSpec {
-            message: "krun sandbox cpu_count requires memory_limit_bytes so crun can materialize /.krun_vm.json".to_owned(),
+            message: "krun sandbox cpu_count requires memory_limit_bytes".to_owned(),
         });
     }
 
+    krun_ram_mib(resources)?;
+
     Ok(())
+}
+
+fn krun_ram_mib(resources: &SandboxResourceLimits) -> Result<Option<u32>> {
+    let Some(memory_limit_bytes) = resources.memory_limit_bytes else {
+        return Ok(None);
+    };
+    let ram_mib = memory_limit_bytes.div_ceil(1024 * 1024);
+    u32::try_from(ram_mib)
+        .map(Some)
+        .map_err(|_| SandboxError::InvalidSpec {
+            message: format!(
+                "krun sandbox memory_limit_bytes {memory_limit_bytes} exceeds the maximum supported MiB range"
+            ),
+        })
 }
 
 fn build_linux_resources(resources: &SandboxResourceLimits) -> Option<Value> {
@@ -549,14 +574,6 @@ fn validate_port_bindings(port_bindings: &[SandboxPortBinding]) -> Result<()> {
                 message: format!("duplicate sandbox port binding name: {}", port_binding.name),
             });
         }
-        if port_binding.host_port == 0 {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "krun sandbox host_port must be greater than zero for binding {}",
-                    port_binding.name
-                ),
-            });
-        }
         if port_binding.guest_port == 0 {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
@@ -565,11 +582,12 @@ fn validate_port_bindings(port_bindings: &[SandboxPortBinding]) -> Result<()> {
                 ),
             });
         }
-        if !private_tsi_ports.insert(port_binding.host_port) {
+        let private_tsi_port = private_tsi_upstream_port(port_binding);
+        if !private_tsi_ports.insert(private_tsi_port) {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
                     "duplicate krun private TSI bridge port: {}",
-                    port_binding.host_port
+                    private_tsi_port
                 ),
             });
         }
@@ -950,6 +968,21 @@ mod tests {
     }
 
     #[test]
+    fn bundle_config_rejects_runtime_only_websocket_egress_policy() {
+        let spec = sample_spec().with_egress_policy(EgressPolicy::new([EgressRule::new(
+            "runtime-websocket",
+            EgressProtocol::Wss,
+            "events.example.com",
+            443,
+        )]));
+
+        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
+            .expect_err("krun bundles must reject ws/wss policy the proxy cannot observe");
+
+        assert!(error.to_string().contains("observable runtime gateway"));
+    }
+
+    #[test]
     fn bundle_config_sets_explicit_krun_capabilities() {
         let spec = sample_spec();
         let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
@@ -1299,6 +1332,22 @@ mod tests {
             config["linux"]["resources"]["memory"]["limit"],
             256 * 1024 * 1024
         );
+        assert_eq!(config["annotations"]["krun.ram_mib"], "256");
+    }
+
+    #[test]
+    fn bundle_config_sets_krun_cpu_and_rounded_ram_annotations() {
+        let spec = sample_spec().with_resource_limits(
+            SandboxResourceLimits::default()
+                .with_cpu_count(2)
+                .with_memory_limit_bytes(256 * 1024 * 1024 + 1),
+        );
+
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
+            .expect("bundle config should build with VM resource limits");
+
+        assert_eq!(config["annotations"]["krun.cpus"], "2");
+        assert_eq!(config["annotations"]["krun.ram_mib"], "257");
     }
 
     #[test]
@@ -1318,18 +1367,18 @@ mod tests {
     }
 
     #[test]
-    fn bundle_config_rejects_zero_host_port() {
+    fn bundle_config_accepts_provider_assigned_host_port() {
         let spec = sample_spec_with_rootfs(Path::new("/srv/rootfs"))
-            .with_port_binding(SandboxPortBinding::tcp("invalid-host", 0, 8080));
+            .with_port_binding(SandboxPortBinding::tcp("provider-assigned", 0, 8080));
 
-        let error = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
-            .expect_err("zero host ports should be rejected");
+        let config = build_bundle_config("nimbus-db", &spec, None, &KrunBundleOptions::default())
+            .expect("the ingress owner assigns the external host port later");
 
         assert!(
-            error
-                .to_string()
-                .contains("host_port must be greater than zero"),
-            "expected actionable host port validation error, got: {error}"
+            config["annotations"]["krun.port_map"]
+                .as_str()
+                .expect("port map should be a string")
+                .ends_with("0.0.0.0:8080:8080")
         );
     }
 
@@ -1377,6 +1426,36 @@ mod tests {
             error
                 .to_string()
                 .contains("duplicate krun private TSI bridge port: 18080"),
+            "expected actionable private TSI port validation error, got: {error}"
+        );
+    }
+
+    #[test]
+    fn bundle_config_rejects_duplicate_provider_assigned_private_bridge_ports() {
+        let spec = SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            SandboxOwnerSpec::service("duplicate-provider-assigned-private-port"),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
+            SandboxProcessSpec::new(["/usr/bin/service"]),
+        )
+        .with_port_bindings([
+            SandboxPortBinding::tcp("first", 0, 8_080),
+            SandboxPortBinding::tcp("second", 0, 8_080),
+        ]);
+
+        let error = build_bundle_config(
+            "duplicate-provider-assigned-private-port",
+            &spec,
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect_err("one private namespace cannot bind the same wildcard port twice");
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate krun private TSI bridge port: 8080"),
             "expected actionable private TSI port validation error, got: {error}"
         );
     }

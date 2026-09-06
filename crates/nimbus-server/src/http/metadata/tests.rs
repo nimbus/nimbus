@@ -128,7 +128,9 @@ fn consistency_report(mismatches: Vec<ConsistencyMismatch>) -> ConsistencyVerifi
         durable_head: 3,
         schema_table_count: 1,
         document_count: 3,
+        resource_path_binding_count: 0,
         scheduled_execution_count: 0,
+        trigger_delivery_cursor_sequence: 0,
     };
     let root = VerificationRootFingerprint {
         version: MATERIALIZED_POSITION_VERSION,

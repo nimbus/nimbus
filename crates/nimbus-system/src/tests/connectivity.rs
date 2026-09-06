@@ -31,7 +31,8 @@ use crate::keys::{
 use crate::records::{
     SystemConnectivityObservationError, SystemPortListenerObservation,
     SystemPublishedEndpointObservation, SystemServiceConnectivityObservation,
-    record_port_listener_observation_async, record_service_connectivity_observation_async,
+    claim_server_listener_projection_async, record_port_listener_observation_async,
+    record_service_connectivity_observation_async,
 };
 use crate::schema::{SystemTable, system_table_schemas};
 use crate::system_tenant_id;
@@ -401,6 +402,107 @@ async fn listener_address_movement_preserves_stable_listener_and_port_documents(
     );
     assert_eq!(listener_document.fields["cleanupState"], json!("clear"));
     assert_eq!(port_document.fields["hostPort"], json!(28_080));
+}
+
+#[tokio::test]
+async fn server_listener_projection_replaces_only_the_prior_server_incarnation() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let generation = NetworkResourceGeneration::new(7);
+    let stale_main_id = ListenerId::for_workload_listener("server:stale", "main:http");
+    let stale_s3_id = ListenerId::for_workload_listener("server:stale", "s3");
+    let machine_id = ListenerId::for_workload_listener("managed-machine:dev", "ssh");
+    let stale = [
+        listener(None, stale_main_id.clone(), generation, 18_080),
+        listener(None, stale_s3_id.clone(), generation, 19_000),
+    ];
+    for observation in &stale {
+        record_port_listener_observation_async(&engine, observation)
+            .await
+            .expect("prior observation should project");
+    }
+    record_port_listener_observation_async(
+        &engine,
+        &listener(None, machine_id.clone(), generation, 22_022).with_machine_id("dev"),
+    )
+    .await
+    .expect("machine observation should project");
+
+    let current_main_id = ListenerId::for_workload_listener("server:current", "main:http");
+    let current_s3_id = ListenerId::for_workload_listener("server:current", "s3");
+    let current = [
+        listener(None, current_main_id.clone(), generation, 28_080),
+        listener(None, current_s3_id.clone(), generation, 29_000),
+    ];
+    claim_server_listener_projection_async(&engine, "server:current")
+        .await
+        .expect("current server incarnation should claim the inventory");
+    let runtime = SystemConnectivityProjectionRuntime::new(&engine);
+    runtime.project_server_listeners("server:current", current.clone());
+    wait_for_listener_address(
+        &engine,
+        &DocumentId::from_key(listener_document_id(&current_s3_id))
+            .expect("current listener id should parse"),
+        "127.0.0.1:29000",
+    )
+    .await;
+    crate::records::replace_server_port_listener_observations_async(
+        &engine,
+        "server:current",
+        &current,
+    )
+    .await
+    .expect("repeating the complete current inventory should be idempotent");
+    crate::records::replace_server_port_listener_observations_async(
+        &engine,
+        "server:stale",
+        &stale,
+    )
+    .await
+    .expect("a superseded server projection should retire without changing current rows");
+
+    let system_tenant = system_tenant_id().expect("system tenant should parse");
+    let listeners = engine
+        .list_documents_async(system_tenant.clone(), table_name(SystemTable::Listeners))
+        .await
+        .expect("listener inventory should list");
+    let ports = engine
+        .list_documents_async(system_tenant.clone(), table_name(SystemTable::Ports))
+        .await
+        .expect("port inventory should list");
+    assert_eq!(
+        listeners.len(),
+        3,
+        "two current server rows plus one machine row"
+    );
+    assert_eq!(
+        ports.len(),
+        3,
+        "two current server rows plus one machine row"
+    );
+    for stale_id in [stale_main_id, stale_s3_id] {
+        assert!(
+            engine
+                .get_document_async(
+                    system_tenant.clone(),
+                    table_name(SystemTable::Listeners),
+                    DocumentId::from_key(listener_document_id(&stale_id))
+                        .expect("stale listener id should parse"),
+                )
+                .await
+                .is_err(),
+            "the earlier server incarnation must leave the current inventory",
+        );
+    }
+    engine
+        .get_document_async(
+            system_tenant,
+            table_name(SystemTable::Listeners),
+            DocumentId::from_key(listener_document_id(&machine_id))
+                .expect("machine listener id should parse"),
+        )
+        .await
+        .expect("server replacement must preserve machine-owned listeners");
 }
 
 #[tokio::test]

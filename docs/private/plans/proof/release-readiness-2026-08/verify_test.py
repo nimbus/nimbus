@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+import contextlib
+import importlib.util
+import io
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+VERIFY_PATH = Path(__file__).with_name("verify.py")
+SPEC = importlib.util.spec_from_file_location("release_readiness_verify", VERIFY_PATH)
+assert SPEC is not None and SPEC.loader is not None
+VERIFY = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(VERIFY)
+
+CANDIDATE = {
+    "nimbus": "1" * 40,
+    "desktop": "2" * 40,
+    "deno": "3" * 40,
+    "main": "4" * 40,
+}
+DEFAULT_MATRIX = object()
+
+
+class ReleaseReadinessVerifierTests(unittest.TestCase):
+    def run_verifier(
+        self,
+        *,
+        proof_revisions: tuple[str, ...] = (
+            CANDIDATE["nimbus"],
+            CANDIDATE["desktop"],
+            CANDIDATE["deno"],
+            CANDIDATE["main"],
+        ),
+        header_revisions: tuple[str, ...] = (),
+        blocked_conditions: tuple[str, ...] = (),
+        proof_text: str | None = None,
+        candidate: dict[str, str] | None = None,
+        matrix_value: object = DEFAULT_MATRIX,
+        matrix_text: str | None = None,
+    ) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            proof = root / "proof.md"
+            if proof_text is None:
+                proof_text = (
+                    "# Proof\n\n"
+                    + "\n".join(header_revisions)
+                    + "\n\n## Bound evidence\n\n"
+                    + "\n".join(proof_revisions)
+                    + "\n\n## Unrelated evidence\n"
+                )
+            proof.write_text(proof_text, encoding="utf-8")
+            conditions = []
+            for condition_id in VERIFY.EXPECTED_IDS:
+                if condition_id in blocked_conditions:
+                    conditions.append({"id": condition_id, "state": "blocked"})
+                else:
+                    conditions.append(
+                        {
+                            "id": condition_id,
+                            "state": "pass",
+                            "evidence": {
+                                "path": "proof.md",
+                                "anchor": "## Bound evidence",
+                            },
+                        }
+                    )
+            matrix = root / "matrix.json"
+            if matrix_value is DEFAULT_MATRIX:
+                matrix_value = {
+                    "schemaVersion": 1,
+                    "candidate": CANDIDATE if candidate is None else candidate,
+                    "conditions": conditions,
+                }
+            matrix.write_text(
+                json.dumps(matrix_value) if matrix_text is None else matrix_text,
+                encoding="utf-8",
+            )
+            previous_argv = sys.argv
+            output = io.StringIO()
+            try:
+                sys.argv = [str(VERIFY_PATH), str(matrix)]
+                with contextlib.redirect_stdout(output):
+                    status = VERIFY.main()
+            finally:
+                sys.argv = previous_argv
+            return status, output.getvalue()
+
+    def test_exact_candidate_bound_proof_has_no_structural_error(self) -> None:
+        status, output = self.run_verifier()
+        self.assertEqual(status, 0)
+        self.assertNotIn("ERROR:", output)
+        self.assertIn("0 structural errors", output)
+
+    def test_stale_pass_proof_is_rejected(self) -> None:
+        status, output = self.run_verifier(
+            proof_revisions=(CANDIDATE["desktop"], CANDIDATE["deno"], CANDIDATE["main"])
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_candidate_mention_outside_anchor_does_not_bind_evidence(self) -> None:
+        status, output = self.run_verifier(
+            proof_revisions=(
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+            ),
+            header_revisions=(CANDIDATE["nimbus"],),
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_html_comment_heading_does_not_bind_evidence(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "<!--",
+                "## Bound evidence",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "-->",
+                "",
+                "## Bound evidence",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_html_block_content_cannot_supply_candidate_binding(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "<!--",
+                CANDIDATE["nimbus"],
+                "-->",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_inline_and_container_html_comments_cannot_supply_candidate_binding(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                f"Visible text <!-- {CANDIDATE['nimbus']} -->",
+                "Visible text <!--",
+                CANDIDATE["desktop"],
+                "-->",
+                f"> Visible text <!-- {CANDIDATE['deno']} -->",
+                f"- Visible text <!-- {CANDIDATE['main']} -->",
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        for key in ("nimbus", "desktop", "deno", "main"):
+            self.assertIn(f"evidence is not bound to the {key} candidate", output)
+
+    def test_html_comment_syntax_inside_a_fence_remains_visible_evidence(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "```text",
+                f"<!-- {CANDIDATE['nimbus']} -->",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "```",
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertEqual(status, 0)
+        self.assertIn("0 structural errors", output)
+
+    def test_fenced_headings_do_not_create_or_truncate_evidence_sections(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "```text",
+                "## Bound evidence",
+                "fake",
+                "```",
+                "",
+                "## Bound evidence",
+                "",
+                "```sh",
+                "# make ci",
+                "```",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertEqual(status, 0)
+        self.assertIn("0 structural errors", output)
+
+    def test_list_item_fence_does_not_create_an_evidence_heading(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "- ```text",
+                "  ## Bound evidence",
+                "  fake",
+                "  ```",
+                "",
+                "## Bound evidence",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertEqual(status, 0)
+        self.assertIn("0 structural errors", output)
+
+    def test_indented_code_heading_does_not_bind_evidence(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "    ## Bound evidence",
+                f"    {CANDIDATE['nimbus']}",
+                "",
+                "## Bound evidence",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_mixed_tab_indentation_does_not_create_an_evidence_heading(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                " \t## Bound evidence",
+                f" \t{CANDIDATE['nimbus']}",
+                "",
+                "## Bound evidence",
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+                "## Unrelated evidence",
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_unclosed_fence_fails_closed_before_unrelated_candidate_shas(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "",
+                "````text",
+                "proof output",
+                "```",
+                "",
+                "## Unrelated evidence",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence proof has an unterminated Markdown fence", output)
+
+    def test_backtick_in_fence_info_string_does_not_hide_peer_heading(self) -> None:
+        proof_text = "\n".join(
+            (
+                "# Proof",
+                "",
+                "## Bound evidence",
+                "```text`not-a-fence",
+                "",
+                "## Unrelated evidence",
+                CANDIDATE["nimbus"],
+                CANDIDATE["desktop"],
+                CANDIDATE["deno"],
+                CANDIDATE["main"],
+                "",
+            )
+        )
+        status, output = self.run_verifier(proof_text=proof_text)
+        self.assertNotEqual(status, 0)
+        self.assertIn("evidence is not bound to the nimbus candidate", output)
+
+    def test_blocked_row_requires_no_candidate_binding(self) -> None:
+        status, output = self.run_verifier(blocked_conditions=("tenant_lifecycle",))
+        self.assertNotEqual(status, 0)
+        self.assertIn("tenant_lifecycle: blocked", output)
+        self.assertIn("0 structural errors", output)
+        self.assertNotIn("tenant_lifecycle: evidence is not bound", output)
+
+    def test_desktop_pass_requires_exact_desktop_revision(self) -> None:
+        status, output = self.run_verifier(
+            proof_revisions=(CANDIDATE["nimbus"], CANDIDATE["deno"], CANDIDATE["main"])
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("desktop_app: evidence is not bound to the desktop candidate", output)
+
+    def test_dependency_security_pass_requires_exact_desktop_revision(self) -> None:
+        status, output = self.run_verifier(
+            proof_revisions=(CANDIDATE["nimbus"], CANDIDATE["deno"], CANDIDATE["main"])
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn(
+            "security_dependencies: evidence is not bound to the desktop candidate",
+            output,
+        )
+
+    def test_candidate_revisions_must_be_full_lowercase_shas(self) -> None:
+        malformed = dict(CANDIDATE)
+        malformed["nimbus"] = "abc"
+        status, output = self.run_verifier(candidate=malformed)
+        self.assertNotEqual(status, 0)
+        self.assertIn("candidate.nimbus must be a full lowercase commit SHA", output)
+
+    def test_matrix_root_must_be_an_object(self) -> None:
+        for matrix_value in ([], None, "matrix", 1):
+            with self.subTest(matrix_value=matrix_value):
+                status, output = self.run_verifier(matrix_value=matrix_value)
+                self.assertNotEqual(status, 0)
+                self.assertIn("matrix error: root must be an object", output)
+
+    def test_schema_version_must_be_an_integer(self) -> None:
+        for schema_version in (True, 1.0):
+            with self.subTest(schema_version=schema_version):
+                status, output = self.run_verifier(
+                    matrix_value={
+                        "schemaVersion": schema_version,
+                        "candidate": CANDIDATE,
+                        "conditions": [],
+                    }
+                )
+                self.assertNotEqual(status, 0)
+                self.assertIn("schemaVersion must equal 1", output)
+
+    def test_duplicate_object_keys_are_rejected(self) -> None:
+        status, output = self.run_verifier(
+            matrix_text='{"schemaVersion": 1, "schemaVersion": 1}'
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("matrix error: duplicate object key 'schemaVersion'", output)
+
+    def test_non_string_condition_id_fails_without_a_traceback(self) -> None:
+        conditions = [
+            {
+                "id": condition_id,
+                "state": "pass",
+                "evidence": {"path": "proof.md", "anchor": "## Bound evidence"},
+            }
+            for condition_id in VERIFY.EXPECTED_IDS
+        ]
+        conditions[0]["id"] = []
+        status, output = self.run_verifier(
+            matrix_value={
+                "schemaVersion": 1,
+                "candidate": CANDIDATE,
+                "conditions": conditions,
+            }
+        )
+        self.assertNotEqual(status, 0)
+        self.assertIn("[]: condition ID must be a string", output)
+        self.assertIn("structural errors", output)
+
+
+if __name__ == "__main__":
+    unittest.main()

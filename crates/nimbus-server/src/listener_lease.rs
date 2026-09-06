@@ -751,6 +751,10 @@ impl ServerListenerLeaseAuthority {
                 .is_ok()
     }
 
+    pub(crate) fn incarnation(&self) -> &str {
+        self.incarnation.as_ref()
+    }
+
     pub(crate) fn prepare_main(
         &self,
         requested_addr: SocketAddr,

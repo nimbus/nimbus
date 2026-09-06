@@ -224,7 +224,10 @@ impl KrunSandboxBackend {
             Some(manifest.network_layout.netns_path.as_path()),
             &options,
         )?;
-        self.materialize_krun_vm_config(&manifest)?;
+        // crun gives OCI annotations precedence for CPU and RAM. Remove any
+        // image-supplied sidecar so it cannot select a guest kernel or other
+        // VMM settings outside the authenticated Nimbus specification.
+        self.remove_untrusted_krun_vm_config(&manifest)?;
         manifest.provision_prepared = true;
         self.write_manifest(&manifest)?;
         Ok(manifest.handle)
@@ -360,7 +363,9 @@ impl KrunSandboxBackend {
         if persisted == *candidate
             && matches!(
                 persisted.launch_authority,
-                KrunLaunchAuthority::Reserved { .. } | KrunLaunchAuthority::Adopted { .. }
+                KrunLaunchAuthority::Reserved { .. }
+                    | KrunLaunchAuthority::Adopting { .. }
+                    | KrunLaunchAuthority::Adopted { .. }
             )
         {
             return Ok(());
@@ -371,6 +376,39 @@ impl KrunSandboxBackend {
                 candidate.handle.id
             ),
         })
+    }
+
+    pub(super) fn resume_provision_attachment_adoption(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+        reservation_claim: &nimbus_network::NetworkReservationClaim,
+    ) -> Result<()> {
+        match &manifest.launch_authority {
+            KrunLaunchAuthority::Reserved { .. } => {
+                self.mark_attachment_adopting(manifest)?;
+                self.persist_effect_barrier(manifest, "krun provision attachment-adoption intent")?;
+            }
+            KrunLaunchAuthority::Adopting { .. } => {}
+            KrunLaunchAuthority::Adopted {
+                reservation_claim: retained,
+            } if retained == reservation_claim => return Ok(()),
+            authority => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "krun provision attachment for {} cannot resume from launch authority {authority:?}",
+                        manifest.handle.id
+                    ),
+                });
+            }
+        }
+        let attachment_id = manifest.require_network_config()?.attachment_id.clone();
+        self.segment_allocator.adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &attachment_id,
+            reservation_claim,
+        )?;
+        manifest.mark_adopted()?;
+        self.persist_effect_barrier(manifest, "krun provision adopted attachment authority")
     }
 
     /// Attach the private network and start its PEP without publishing ingress.
@@ -454,25 +492,7 @@ impl KrunSandboxBackend {
             });
         }
         self.require_never_bound_provision_attachment(&manifest, &reservation_claim)?;
-        self.mark_attachment_adopting(&mut manifest)?;
-        self.persist_effect_barrier(&manifest, "krun provision attachment-adoption intent")?;
-        let attachment_id = manifest
-            .network_config
-            .as_ref()
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: format!(
-                    "krun provision attachment for {sandbox_id} lacks reserved network config"
-                ),
-            })?
-            .attachment_id
-            .clone();
-        self.segment_allocator.adopt_reserved_attachment(
-            &manifest.spec.tenant_id,
-            &attachment_id,
-            &reservation_claim,
-        )?;
-        manifest.mark_adopted()?;
-        self.persist_effect_barrier(&manifest, "krun provision adopted attachment authority")?;
+        self.resume_provision_attachment_adoption(&mut manifest, &reservation_claim)?;
         self.configure_network(
             &manifest,
             AttachmentAttachAuthority::FreshLaunch(&reservation_claim),
@@ -510,7 +530,27 @@ impl KrunSandboxBackend {
                 OciAttachmentReadinessFailure::PepNotReady(
                     EgressReadinessFailure::MissingRegistration,
                 ),
-            ) if manifest.launch_authority == KrunLaunchAuthority::ProviderOwned => {
+            ) if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned
+                && matches!(
+                    manifest.launch_authority,
+                    KrunLaunchAuthority::Reserved { .. }
+                        | KrunLaunchAuthority::Adopting { .. }
+                        | KrunLaunchAuthority::Adopted { .. }
+                        | KrunLaunchAuthority::ProviderOwned
+                ) =>
+            {
+                Ok(SandboxProvisionPhaseObservation::Absent { evidence })
+            }
+            OciAttachmentBaseReadinessState::NotReady(
+                OciAttachmentReadinessFailure::MissingDurableAuthority,
+            ) if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned
+                && matches!(
+                    manifest.launch_authority,
+                    KrunLaunchAuthority::Reserved { .. }
+                        | KrunLaunchAuthority::Adopting { .. }
+                        | KrunLaunchAuthority::Adopted { .. }
+                ) =>
+            {
                 Ok(SandboxProvisionPhaseObservation::Absent { evidence })
             }
             OciAttachmentBaseReadinessState::NotReady(_) => {

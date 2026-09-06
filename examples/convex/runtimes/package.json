@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "convex": "*",
-    "nanoid": "^3.3.12"
+    "nanoid": "^3.3.18"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

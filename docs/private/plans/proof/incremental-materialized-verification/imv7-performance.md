@@ -18,6 +18,14 @@ baseline. They do not change materialized verification, its benchmark, or the
 measured workload. The measurement was not relabeled or repeated. On the
 rebased head, the fixed verifier reports `Summary: 16 passed, 0 failed`.
 
+SRR4 adds a focused production-candidate measurement based on `78ff3586a`.
+The benchmark source has SHA-256
+`4d7724e513137e4b185410f8718cee774125d6fa7d78393e8d09c6e17ba9a3fe`.
+The new artifact has SHA-256
+`a4040747788f0719f6b9c09417e3f5fd74fdcdbbf5750d9c14a7e3d23958b935`.
+It measures the production `MaterializedVerificationIndex`, not the earlier
+prototype treap.
+
 The first command ran the complete matrix:
 
 ```bash
@@ -40,6 +48,19 @@ for all four churn coordinates. The final `imv7-raw.json` mechanically joins
 the 32-row checkpoint and the four-row tail. It keeps the write-overhead arm
 from the first command. The retained tail file makes the split reproducible.
 
+The focused command measured the production candidate at both decisive rungs:
+
+```bash
+cargo bench -p nimbus-engine --bench materialized-verification -- \
+  --candidate-only \
+  --output docs/private/plans/proof/incremental-materialized-verification/imv7-candidate-raw.json
+```
+
+Each candidate sample applies 0.1% churn to the production index with 1 KiB
+values and then reads the root. Each rung has 21 raw samples. The report reads
+retained bytes from `MaterializedVerificationIndex::resident_bytes` after the
+samples. It does not use a prototype node-size constant.
+
 The final JSON contains 36 unique coordinates. They are the exact product of
 three document counts, three payload sizes, and four churn levels. Twenty-seven
 coordinates reached their requested churn state. Five retained bounded churn
@@ -50,21 +71,28 @@ Nine did not start because setup was incomplete. Both gate rungs reached their
 exact requested states. Capacity-limited 8 KiB stress rows do not enter the
 verdict.
 
-Each completed full-verifier row has three fresh-process samples. Each
-candidate row has 21 root-comparison samples. The full sample limit is 60
-seconds below one million documents and 15 seconds at one million documents.
-A timeout is a censored lower bound, not a measured completion. The one-minute
-verification interval and all IMV2 thresholds remain unchanged.
+Each completed full-verifier row has three fresh-process samples. The legacy
+matrix candidate rows have 21 timer-amortized prototype root comparisons. They
+remain historical diagnostics and do not satisfy the final candidate gate.
+The full sample limit is 60 seconds below one million documents and 15 seconds
+at one million documents. A timeout is a censored lower bound, not a measured
+completion.
+
+The absolute candidate limits use the approved service targets. The
+100,000-document rung must finish within the 1-second full-verifier threshold.
+The 1,000,000-document rung must finish within the 60-second repeated-check
+interval. Each rung must retain at most 192 bytes per leaf in total production
+index storage. A slow full verifier cannot make these limits pass.
 
 ## Ratified gate
 
 | Condition | Final measurement | Limit | Result |
 |---|---:|---:|---|
 | 1. Full verifier at 100,000 documents, 1 KiB, 0.1% churn | 13.537241 s p95; 3,149.28125 MiB p95 extra RSS | 1 s p95; 256 MiB | Pass: both limits are exceeded. |
-| 2. Candidate speedup at 100,000 documents, 0.1% churn | 1 ns p95 root comparison; 13,537,241,000 times faster | At least 5 times | Pass. |
-| 3. Candidate speedup at 1,000,000 documents, 0.1% churn | 1 ns p95 root comparison; full p95 is at least 15 s | At least 10 times | Pass with a 15,000,000,000-times censored lower bound. |
-| 4. Active-session write effect | Throughput -1.517947%; p99 commit latency +0.693269% | Absolute change at most 5% for each | Pass. |
-| 5. Resident index bytes per leaf | 160 prototype bytes | At most 192 bytes | Pass with 32 bytes of headroom. |
+| 2. Production candidate at 100,000 documents, 1 KiB, 0.1% churn | 2.871625 ms p95 | At most 1 s p95 | Pass with 997.128375 ms of headroom. |
+| 3. Production candidate at 1,000,000 documents, 1 KiB, 0.1% churn | 35.753750 ms p95 | At most 60 s p95 | Pass with 59.964246250 s of headroom. |
+| 4. Active-session write effect | Throughput -1.517947%; p99 commit latency +0.693269% | Throughput loss at most 5%; p99 increase at most 5% | Pass. |
+| 5. Production index resident bytes | 14,800,072 at 100,000 leaves; 148,000,072 at 1,000,000 leaves | 19,200,000; 192,000,000 | Pass with 4,399,928 and 43,999,928 bytes of headroom. |
 
 The condition 1 latency measured margin is 12.537241 seconds, or 1,253.7241%,
 over the limit. The p95 extra-RSS measured margin is 2,893.28125 MiB, or
@@ -79,18 +107,17 @@ The throughput result has 3.482053 percentage points of headroom to its
 absolute limit. The p99 latency result has 4.306731 percentage points of
 headroom.
 
-## Comparison with IMV2
+## Diagnostic comparison with IMV2
 
 The matched IMV2 decisive full-verifier p95 was 9.157025750 seconds. The final
 value is 47.834476% higher. IMV2 p95 extra RSS was 2,430.40625 MiB. The final
 value is 29.578388% higher. Both results remain far beyond condition 1.
 Therefore, the continuation decision does not change.
 
-The IMV2 prototype comparison was 4 ns p95 at the decisive rung. The final
-comparison is 1 ns p95. These timer-amortized comparisons show the order of
-magnitude only. They do not claim that an engine request completes in one
-nanosecond. The required speedups are 5 times and 10 times, and both final
-margins are more than one billion times.
+The measured production candidate is approximately 4,714 times faster at
+100,000 documents. The 15-second censored lower bound is approximately 419
+times the candidate p95 at one million documents. These relative values are
+diagnostic only. The gate uses the absolute candidate limits above.
 
 The IMV2 write arm changed throughput by -1.435864% and p99 commit latency by
 +1.711999%. The final changes are -1.517947% and +0.693269%. All four values
@@ -98,9 +125,11 @@ are within the ratified 5% bounds.
 
 ## Production memory evidence
 
-The benchmark prototype reports 160 bytes per leaf: 144 bytes for one node
-and 16 bytes of conservative allocator metadata. Production memory evidence
-comes from the ignored generated-history test, not from that prototype:
+The focused artifact reports 14,800,072 resident bytes at 100,000 leaves and
+148,000,072 bytes at one million leaves. Both values round to 149 bytes per
+leaf. The measurement uses the production index's retained vector capacities.
+The ignored generated-history test independently reports the same million-leaf
+value:
 
 ```text
 verification_root leaves=1000000 max_depth=55 \
@@ -108,8 +137,9 @@ resident_bytes_per_leaf=149 budgeted_bytes_per_leaf=164
 test verification_root_million_leaf_depth_and_memory_meet_imv2_limits ... ok
 ```
 
-The production measured value has 43 bytes of headroom to the 192-byte limit.
-The production budget has 28 bytes of headroom. The maximum treap depth is 55.
+The focused production measurement has 43 bytes per leaf of headroom. The
+production budget has 28 bytes of headroom. The focused index depth is 51 at
+one million leaves. The generated-history depth is 55.
 
 ## Assurance and remaining uncertainty
 

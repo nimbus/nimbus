@@ -57,5 +57,12 @@
   },
   "devDependencies": {
     "@playwright/cli": "^0.1.13"
+  },
+  "overrides": {
+    "@babel/core": "7.29.7",
+    "brace-expansion@^2.0.0": "2.1.4",
+    "firebase-admin": "14.3.0",
+    "uuid": "11.1.1",
+    "vite": "8.2.2"
   }
 }

@@ -700,6 +700,8 @@ export const sendAndSchedule = mutation({
   // emit/runtime_bundle_dispatch_global_invoke.mjs.
   assert.match(programBundle, /Object\.defineProperty\(globalThis, "__nimbusInvoke"/);
   assert.match(programBundle, /materializeRuntimeBindings/);
+  assert.match(programBundle, /runtimeHandlerFactoriesByName/);
+  assert.doesNotMatch(programBundle, /new\s+Function/);
 
   let scheduledCall = null;
   const sandbox = {
@@ -771,6 +773,8 @@ export const send = mutation({
   // testRuntimeProgramBundleCandidateFixture — same shared emitter.
   assert.match(bunProgramBundle, /Object\.defineProperty\(globalThis, "__nimbusInvoke"/);
   assert.match(bunProgramBundle, /runtimeHandlersByName/);
+  assert.match(bunProgramBundle, /runtimeHandlerFactoriesByName/);
+  assert.doesNotMatch(bunProgramBundle, /new\s+Function/);
   assert.doesNotMatch(bunProgramBundle, /^import\s/m);
   assert.doesNotMatch(bunProgramBundle, /^export\s/m);
   assert.match(bunProgramBundle, /"runtime_environment": "bun"/);

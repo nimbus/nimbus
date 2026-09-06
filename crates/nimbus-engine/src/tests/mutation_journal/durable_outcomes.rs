@@ -591,7 +591,11 @@ async fn trigger_cursor_unreadable_progress_evicts_and_replays() {
     exercise_trigger_cursor_outcome(OutcomeCase::Unreadable, "trigger-cursor-unreadable").await;
 }
 
-async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str) {
+async fn exercise_point_in_time_restore_outcome(
+    case: OutcomeCase,
+    tenant: &str,
+    advanced_fault_point: Option<FaultPoint>,
+) {
     let source_dir = tempdir().expect("restore source tempdir should build");
     let source_engine =
         Arc::new(Engine::new(source_dir.path()).expect("restore source engine should create"));
@@ -618,19 +622,20 @@ async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str)
         .expect("point-in-time restore archive should export");
 
     let point = match case {
-        OutcomeCase::Advanced => FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        OutcomeCase::Advanced => advanced_fault_point
+            .expect("advanced restore outcome proof must select its committed fault point"),
         OutcomeCase::Unchanged | OutcomeCase::Unreadable => {
+            assert!(
+                advanced_fault_point.is_none(),
+                "non-advanced restore outcome proof cannot discard a committed fault point"
+            );
             FaultPoint::StorageCommitBeforeVisibility
         }
     };
-    // Restore first commits its empty sequence-zero base snapshot, then appends
-    // the archive tail. The advanced-head case must fail the second boundary so
-    // the durable journal record, rather than only the empty base, is visible.
-    let faults = if matches!(case, OutcomeCase::Advanced) {
-        ArmedOneShotDirectFaultInjector::new_on_visit(point, 2)
-    } else {
-        ArmedOneShotDirectFaultInjector::new(point)
-    };
+    // Restore publishes the base snapshot, archive tail, history anchors, and
+    // retention checkpoint at one visibility boundary. A post-visibility fault
+    // therefore leaves the complete archive visible for crash-and-replay.
+    let faults = ArmedOneShotDirectFaultInjector::new(point);
     let destination_dir = tempdir().expect("restore destination tempdir should build");
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
@@ -796,15 +801,32 @@ async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str)
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn point_in_time_restore_unchanged_head_is_definitive_can_retry_and_stays_live() {
-    exercise_point_in_time_restore_outcome(OutcomeCase::Unchanged, "restore-definitive").await;
+    exercise_point_in_time_restore_outcome(OutcomeCase::Unchanged, "restore-definitive", None)
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn point_in_time_restore_advanced_head_evicts_replays_and_does_not_reuse_sequence() {
-    exercise_point_in_time_restore_outcome(OutcomeCase::Advanced, "restore-advanced").await;
+    exercise_point_in_time_restore_outcome(
+        OutcomeCase::Advanced,
+        "restore-advanced",
+        Some(FaultPoint::StorageCommitAfterVisibilityBeforeReturn),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn point_in_time_restore_journal_flush_fault_is_a_committed_outcome() {
+    exercise_point_in_time_restore_outcome(
+        OutcomeCase::Advanced,
+        "restore-journal-flush-advanced",
+        Some(FaultPoint::JournalFlushBeforeVisibility),
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn point_in_time_restore_unreadable_progress_evicts_and_replays() {
-    exercise_point_in_time_restore_outcome(OutcomeCase::Unreadable, "restore-unreadable").await;
+    exercise_point_in_time_restore_outcome(OutcomeCase::Unreadable, "restore-unreadable", None)
+        .await;
 }

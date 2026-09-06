@@ -60,17 +60,6 @@ impl RuntimeGrants {
         !self.service.is_empty()
     }
 
-    pub(crate) fn permits_same_process_realm_reuse(&self) -> bool {
-        self.service.is_empty()
-            && self.net_connect.is_empty()
-            && self.net_listen.is_empty()
-            && self.run.is_empty()
-            && self.ffi.is_empty()
-            && self.worker.is_empty()
-            && self.tool.is_empty()
-            && !self.sys.iter().any(|grant| grant == "inspector")
-    }
-
     fn application_base() -> Self {
         Self {
             read: vec!["$generated_root".to_string()],
@@ -113,6 +102,10 @@ impl RuntimeGrants {
             "[::]".to_string(),
         ];
         grants.sys.push("inspector".to_string());
+        // Local Node development exposes the host resolver configuration for
+        // dns.getServers(). Production application profiles keep this system
+        // authority denied.
+        grants.sys.push("networkInterfaces".to_string());
         grants.worker = vec!["thread".to_string()];
         grants
     }
@@ -217,4 +210,23 @@ fn assert_grant_family_empty(mode: RuntimeMode, family: &str, grants: &[String])
         grants.is_empty(),
         "{family} grants exceed the {mode:?} runtime mode ceiling"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeGrants;
+
+    #[test]
+    fn local_node_development_can_read_network_interfaces() {
+        let grants = RuntimeGrants::application_node_local_development();
+
+        assert!(grants.sys.iter().any(|grant| grant == "networkInterfaces"));
+    }
+
+    #[test]
+    fn production_node_keeps_network_interfaces_denied() {
+        let grants = RuntimeGrants::application_node_production_in_process();
+
+        assert!(grants.sys.iter().all(|grant| grant != "networkInterfaces"));
+    }
 }

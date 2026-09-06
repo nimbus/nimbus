@@ -39,12 +39,12 @@ This generated reference summarizes package and framework canaries by support bo
 | `node-platform-builtins` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-platform-file-path-roundtrip` |
 | `node-platform-builtins` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-platform-stream-timer` |
 | `node-platform-builtins` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-platform-crypto-fetch-http` |
-| `express` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-express` |
-| `express` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-express-middleware` |
-| `express` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-express-error-handler` |
-| `fastify` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-fastify` |
-| `fastify` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-fastify-hooks` |
-| `fastify` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-fastify-error-handler` |
+| `express` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-express` |
+| `express` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-express-middleware` |
+| `express` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-express-error-handler` |
+| `fastify` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-fastify` |
+| `fastify` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-fastify-hooks` |
+| `fastify` | `Application` | Support | Supported | Passed | Node22, Node24 | Node20, Node22, Node24 | `application-networking-fastify-error-handler` |
 | `socket.io` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-socket-io` |
 | `socket.io` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-socket-io-websocket-events` |
 | `undici` | `Application` | Support | Supported | Passed | Node22, Node24 | Node22, Node24 | `application-networking-undici` |

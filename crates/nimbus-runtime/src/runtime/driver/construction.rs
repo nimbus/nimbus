@@ -7,7 +7,7 @@ use crate::backends::v8::embedder::{
 };
 use crate::backends::v8::{
     RuntimeStartupSnapshotKey, V8RuntimeConstructionMode, V8StartupSnapshot,
-    create_v8_startup_snapshot,
+    create_v8_startup_snapshot, packaged_runtime_extension_source_provider,
 };
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeCompatibilityTarget;
@@ -51,14 +51,16 @@ impl NimbusRuntime {
             RuntimeStartupSnapshotKey::NodeFullService => &NODE_FULL_SERVICE_BOOTSTRAP_SNAPSHOT,
         };
         match snapshot.get_or_init(|| {
-            // Embedded fast path for the NodeFull anchor snapshot: deserialize the committed blob
+            // Embedded fast path for the NodeFull anchor snapshot: deserialize the generated blob
             // (~19ms) instead of building it (~4.18s, which — armed lazily — lands inside the first
             // request and blows per-request timeouts). Active in BOTH pointer-compression configs
-            // (release/cage `.pc.bin` and dev/test `.bin`), each with its own committed blob.
-            // Provenance-guarded and FAIL-SAFE: a stale, empty, or corrupt blob returns None and we
-            // fall back to a runtime build (slow-but-correct); the embedded snapshot is NEVER
-            // installed on any doubt. The cage's first-installer ORDERING is independently guarded by
-            // `anchor::assert_cage_install_ordering` below.
+            // (release/cage `.pc.bin` and dev/test `.bin`), each with its own generated blob.
+            // Provenance-guarded: a stale, empty, or corrupt blob returns None and is never
+            // installed. A source checkout can use the runtime-build fallback because its Deno
+            // sources remain present. Release packaging must generate and check the blob so the
+            // deployed artifact also carries every build-only extension source needed for later
+            // runtime construction. The cage's first-installer ordering is independently guarded
+            // by `anchor::assert_cage_install_ordering` below.
             if matches!(snapshot_key, RuntimeStartupSnapshotKey::NodeFull)
                 && let Some(embedded) = crate::backends::v8::try_embedded_node22_anchor_snapshot(
                     crate::backends::v8::EMBEDDED_NODE22_ANCHOR_SNAPSHOT,
@@ -175,6 +177,15 @@ impl NimbusRuntime {
             Self::install_bootstrap(&mut runtime)?;
         }
         Self::finalize_bootstrap(&mut runtime)?;
+        if startup_snapshot.is_some() {
+            self.policy
+                .metrics()
+                .record_v8_startup_snapshot_runtime_construction();
+        } else {
+            self.policy
+                .metrics()
+                .record_v8_unsnapshotted_runtime_construction();
+        }
         Ok(runtime)
     }
 
@@ -213,18 +224,13 @@ impl NimbusRuntime {
             self.policy.file_system(),
         );
         extensions.push(worker_threads_state_extension(worker_bootstrap_state));
+        let extension_source_provider = packaged_runtime_extension_source_provider(&extensions)?;
         let startup_snapshot_bytes = startup_snapshot.map(V8StartupSnapshot::as_startup_snapshot);
         let residual_lazy_js_sources = startup_snapshot
             .map(V8StartupSnapshot::residual_lazy_js_sources)
             .unwrap_or_default();
         let residual_lazy_esm_sources = startup_snapshot
             .map(V8StartupSnapshot::residual_lazy_esm_sources)
-            .unwrap_or_default();
-        let extension_replay_js_sources = startup_snapshot
-            .map(V8StartupSnapshot::extension_replay_js_sources)
-            .unwrap_or_default();
-        let extension_replay_esm_sources = startup_snapshot
-            .map(V8StartupSnapshot::extension_replay_esm_sources)
             .unwrap_or_default();
         Ok(RuntimeOptions {
             create_params: Some(self.create_isolate_params()),
@@ -240,6 +246,7 @@ impl NimbusRuntime {
             extension_transpiler: extension_transpiler_for_target(
                 self.policy.limits().compatibility_target,
             ),
+            extension_source_provider,
             inspector: matches!(
                 self.policy.limits().compatibility_target,
                 RuntimeCompatibilityTarget::Node20
@@ -250,8 +257,6 @@ impl NimbusRuntime {
             startup_snapshot: startup_snapshot_bytes,
             residual_lazy_js_sources,
             residual_lazy_esm_sources,
-            extension_replay_js_sources,
-            extension_replay_esm_sources,
             shared_array_buffer_store: Some(SharedArrayBufferStore::default()),
             validate_import_attributes_cb: node_import_attribute_validator(
                 self.policy.limits().compatibility_target,

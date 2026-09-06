@@ -78,8 +78,8 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             RuntimeCompatibilityTarget::Node22,
             22,
             RuntimeNodeSupportPhase::MaintenanceLts,
-            "22.22.3",
-            "v22.22.3",
+            "22.23.2",
+            "v22.23.2",
             Some("Jod"),
             "127",
             false,
@@ -88,8 +88,8 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             RuntimeCompatibilityTarget::Node24,
             24,
             RuntimeNodeSupportPhase::ActiveLts,
-            "24.16.0",
-            "v24.16.0",
+            "24.20.0",
+            "v24.20.0",
             Some("Krypton"),
             "137",
             true,
@@ -98,8 +98,8 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             RuntimeCompatibilityTarget::Node26,
             26,
             RuntimeNodeSupportPhase::CurrentNonLts,
-            "26.2.0",
-            "v26.2.0",
+            "26.8.1",
+            "v26.8.1",
             None,
             "147",
             false,
@@ -1130,62 +1130,6 @@ fn runtime_policy_accepts_current_v8_javascript_axis_combinations() {
         cooperative_warm_pool.limits().runtime_pool_kind,
         RuntimePoolKind::WarmPool
     );
-
-    let cooperative_context_recycle = RuntimePolicy::new(RuntimeLimits {
-        backend_kind: RuntimeBackendKind::V8,
-        bundle_content_kind: RuntimeBundleContentKind::JavaScript,
-        compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
-        execution_model: RuntimeExecutionModel::CooperativeLocker,
-        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
-        ..RuntimeLimits::default()
-    });
-    assert_eq!(
-        cooperative_context_recycle.limits().runtime_pool_kind,
-        RuntimePoolKind::WarmContextRecycle
-    );
-    assert_eq!(
-        cooperative_context_recycle
-            .limits()
-            .module_state_semantics(),
-        RuntimeModuleStateSemantics::FreshPerInvocation
-    );
-}
-
-#[test]
-#[should_panic(expected = "WarmContextRecycle requires CooperativeLocker")]
-fn warm_context_recycle_rejects_run_to_completion() {
-    let _ = RuntimePolicy::new(RuntimeLimits {
-        execution_model: RuntimeExecutionModel::RunToCompletion,
-        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
-        ..RuntimeLimits::default()
-    });
-}
-
-#[test]
-#[should_panic(expected = "requires same-owner exact-authority realm reuse proof")]
-fn warm_context_recycle_rejects_node_without_same_owner_exact_authority_realm_reuse_proof() {
-    let _ = RuntimePolicy::new(RuntimeLimits {
-        compatibility_target: RuntimeCompatibilityTarget::Node22,
-        execution_model: RuntimeExecutionModel::CooperativeLocker,
-        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
-        ..RuntimeLimits::default()
-    });
-}
-
-#[test]
-fn warm_context_recycle_accepts_node_with_same_owner_exact_authority_realm_reuse_proof() {
-    let policy = RuntimePolicy::new(RuntimeLimits {
-        compatibility_target: RuntimeCompatibilityTarget::Node22,
-        execution_model: RuntimeExecutionModel::CooperativeLocker,
-        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
-        node_full_realm_reuse_policy: RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority,
-        ..RuntimeLimits::default()
-    });
-
-    assert_eq!(
-        policy.limits().node_full_realm_reuse_policy,
-        RuntimeNodeFullRealmReusePolicy::SameOwnerExactAuthority
-    );
 }
 
 #[test]
@@ -1290,10 +1234,6 @@ fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
         serde_json::json!("warm_pool")
     );
     assert_eq!(
-        serde_json::to_value(RuntimePoolKind::WarmContextRecycle).unwrap(),
-        serde_json::json!("warm_context_recycle")
-    );
-    assert_eq!(
         serde_json::to_value(RuntimePoolKind::BunJscTrustedRetained).unwrap(),
         serde_json::json!("bun_jsc_trusted_retained")
     );
@@ -1349,23 +1289,6 @@ fn runtime_pool_kind_exposes_engine_owned_diagnostics() {
     );
     assert_eq!(
         bun_fresh_discard.reset_capabilities(),
-        RuntimeResetCapabilities {
-            op_state_per_invocation: true,
-            bootstrap_state_per_invocation: true,
-            user_module_state_per_invocation: true,
-        }
-    );
-
-    let v8_warm_context_recycle = RuntimeLimits {
-        runtime_pool_kind: RuntimePoolKind::WarmContextRecycle,
-        ..RuntimeLimits::default()
-    };
-    assert_eq!(
-        v8_warm_context_recycle.module_state_semantics(),
-        RuntimeModuleStateSemantics::FreshPerInvocation
-    );
-    assert_eq!(
-        v8_warm_context_recycle.reset_capabilities(),
         RuntimeResetCapabilities {
             op_state_per_invocation: true,
             bootstrap_state_per_invocation: true,

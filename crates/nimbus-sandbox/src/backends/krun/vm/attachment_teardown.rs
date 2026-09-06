@@ -157,6 +157,12 @@ impl KrunSandboxBackend {
             .read_exact_network_manifest(command)
             .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
         self.authenticate_network_teardown_manifest(command, &manifest)?;
+        require_execution_stopped(
+            manifest
+                .execution_teardown
+                .require_stopped_for_network(command.provider_claim()),
+        )?;
+        self.persist_reserved_attachment_cleanup_intent(command, &mut manifest)?;
         let interrupted_adoption = self.reconcile_interrupted_attachment_adoption(&mut manifest)?;
         self.authenticate_network_teardown_manifest(command, &manifest)?;
         require_execution_stopped(
@@ -596,6 +602,26 @@ impl KrunSandboxBackend {
             | NetworkAttachmentReservationState::ReservationCleanupPending => {}
         }
         Ok(InterruptedAdoptionDisposition::ConfirmedNoProviderEffect)
+    }
+
+    fn persist_reserved_attachment_cleanup_intent(
+        &self,
+        command: &SandboxNetworkTeardownCommand,
+        manifest: &mut KrunSandboxManifest,
+    ) -> NetworkTeardownResult<()> {
+        if command.operation() != SandboxNetworkTeardownOperation::Detach
+            || manifest.creator_handoff != KrunCreatorHandoffState::NotSpawned
+            || !matches!(
+                manifest.launch_authority,
+                KrunLaunchAuthority::Reserved { .. }
+            )
+        {
+            return Ok(());
+        }
+        self.mark_attachment_adopting(manifest)
+            .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
+        self.persist_effect_barrier(manifest, "Krun reserved attachment cleanup intent")
+            .map_err(NetworkTeardownAdapterError::ambiguous_error)
     }
 
     fn authenticate_network_teardown_snapshot(

@@ -112,7 +112,7 @@ reject_pattern \
   crates/nimbus-runtime/src/runtime/driver/loading.rs \
   crates/nimbus-runtime/src/runtime.rs
 
-for pool_kind in WarmPool WarmContextRecycle RetainedStorePool BunJscTrustedRetained; do
+for pool_kind in WarmPool RetainedStorePool BunJscTrustedRetained; do
   if ! sed -n '/pub(crate) fn validate_retained_state_admission/,/^}/p' \
     crates/nimbus-runtime/src/retained_state.rs | grep -F "RuntimePoolKind::${pool_kind}" >/dev/null; then
     fail "${pool_kind} is missing from the common retained-state admission guard"

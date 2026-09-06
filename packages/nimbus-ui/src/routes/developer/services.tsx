@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
+import { ServicesLoaderError } from "../../components/service-loader-errors";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { shortId } from "../../lib/format";
@@ -33,41 +34,6 @@ export const Route = createFileRoute("/developer/services")({
   component: ServicesPage,
   errorComponent: ServicesLoaderError,
 });
-
-export function ServicesLoaderError({
-  error,
-  reset,
-}: {
-  error: Error;
-  reset: () => void;
-}) {
-  return (
-    <section
-      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
-      data-testid="page-services"
-    >
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
-        <EmptyState
-          title="Services endpoint unavailable"
-          body={
-            <>
-              The services query failed:{" "}
-              <span
-                className="font-mono text-default"
-                data-testid="storage-server-error"
-              >
-                {error.message}
-              </span>
-              . Retry once the backend is reachable.
-            </>
-          }
-          cta={{ label: "Retry", onClick: reset }}
-          testid="storage-server-error-envelope"
-        />
-      </div>
-    </section>
-  );
-}
 
 function ServicesPage() {
   const { services } = Route.useLoaderData();

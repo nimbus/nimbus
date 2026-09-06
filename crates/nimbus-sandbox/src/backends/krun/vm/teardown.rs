@@ -371,6 +371,7 @@ impl KrunSandboxBackend {
         runtime: &dyn KrunExecutionTeardownRuntime,
         journal_authorization: Option<&ProviderCommandObservation>,
     ) -> crate::Result<SandboxExecutionTeardownObservation> {
+        self.persist_pre_activation_stop_fence(claim, manifest)?;
         require_matching_drain(manifest, claim)?;
         match manifest.execution_teardown.stop().clone() {
             KrunStopProgress::ExecutionStopped { fence, evidence } if fence == *claim => {
@@ -596,6 +597,7 @@ impl KrunSandboxBackend {
                 KrunLaunchAuthority::Reserved { .. }
                     | KrunLaunchAuthority::Adopting { .. }
                     | KrunLaunchAuthority::Adopted { .. }
+                    | KrunLaunchAuthority::ProviderOwned
             )
         {
             return self.persist_execution_stopped(claim, manifest, "creator_never_spawned", None);
@@ -668,6 +670,11 @@ impl KrunSandboxBackend {
         runtime: &dyn KrunExecutionTeardownRuntime,
         journal_authorization: Option<&ProviderCommandObservation>,
     ) -> crate::Result<SandboxExecutionTeardownObservation> {
+        if matches!(manifest.execution_teardown.drain(), KrunDrainProgress::Open)
+            && pre_activation_stop_is_exact(manifest)
+        {
+            return Ok(absent("pre-activation execution stop fence is not durable"));
+        }
         require_matching_drain(manifest, claim)?;
         match manifest.execution_teardown.stop() {
             KrunStopProgress::NotRequested => Ok(absent("stop intent is not durable")),
@@ -794,6 +801,26 @@ impl KrunSandboxBackend {
         Ok(succeeded(evidence))
     }
 
+    fn persist_pre_activation_stop_fence(
+        &self,
+        claim: &ProviderCommandClaim,
+        manifest: &mut KrunSandboxManifest,
+    ) -> crate::Result<()> {
+        if !matches!(manifest.execution_teardown.drain(), KrunDrainProgress::Open)
+            || !pre_activation_stop_is_exact(manifest)
+        {
+            return Ok(());
+        }
+        let evidence = teardown_evidence("krun_execution_never_admitted", manifest, claim)?;
+        manifest
+            .execution_teardown
+            .set_drain(KrunDrainProgress::ExecutionNeverAdmitted {
+                fence: claim.clone(),
+                evidence,
+            });
+        self.persist_effect_barrier(manifest, "krun pre-activation execution stop fence")
+    }
+
     fn admitted_work_evidence(
         &self,
         manifest: &KrunSandboxManifest,
@@ -851,10 +878,18 @@ fn require_matching_drain(
     manifest: &KrunSandboxManifest,
     stop_claim: &ProviderCommandClaim,
 ) -> crate::Result<()> {
-    let KrunDrainProgress::Drained { fence, .. } = manifest.execution_teardown.drain() else {
-        return Err(SandboxError::InvalidSpec {
-            message: "Krun execution stop requires exact durable drain completion".to_owned(),
-        });
+    let fence = match manifest.execution_teardown.drain() {
+        KrunDrainProgress::Drained { fence, .. } => fence,
+        KrunDrainProgress::ExecutionNeverAdmitted { fence, .. }
+            if fence.operation() == crate::ProviderCommandOperation::StopExecution =>
+        {
+            fence
+        }
+        _ => {
+            return Err(SandboxError::InvalidSpec {
+                message: "Krun execution stop requires exact durable drain completion or a no-execution admission fence".to_owned(),
+            });
+        }
     };
     if same_workload_fence(fence, stop_claim) {
         Ok(())
@@ -863,6 +898,18 @@ fn require_matching_drain(
             message: "Krun execution stop is crossed with the durable drain fence".to_owned(),
         })
     }
+}
+
+fn pre_activation_stop_is_exact(manifest: &KrunSandboxManifest) -> bool {
+    manifest.provision_prepared
+        && manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned
+        && matches!(
+            manifest.launch_authority,
+            KrunLaunchAuthority::Reserved { .. }
+                | KrunLaunchAuthority::Adopting { .. }
+                | KrunLaunchAuthority::Adopted { .. }
+                | KrunLaunchAuthority::ProviderOwned
+        )
 }
 
 fn same_workload_fence(left: &ProviderCommandClaim, right: &ProviderCommandClaim) -> bool {

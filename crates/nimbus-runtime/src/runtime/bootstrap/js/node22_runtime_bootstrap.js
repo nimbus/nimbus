@@ -1414,12 +1414,28 @@ function isDlopenTypeError(error) {
     error.message.startsWith("dlopen(");
 }
 
+function isFfiPermissionDeniedError(error) {
+  return typeof error?.message === "string" &&
+    error.message.startsWith("Requires ffi access");
+}
+
 function createNodeDlopenError(error) {
   const mapped = new Error(error.message);
   mapped.code = "ERR_DLOPEN_FAILED";
   if (typeof error.stack === "string") {
     mapped.stack = error.stack.replace(/^TypeError:/, "Error:");
   }
+  return mapped;
+}
+
+function createNimbusNativeAddonDisabledError(error) {
+  const mapped = new Error(
+    "Cannot load native addon because Nimbus in-process Node runtimes do not " +
+      "grant ffi/native-addon authority; use a service/microVM route. " +
+      `Original denial: ${error.message}`,
+  );
+  mapped.code = "ERR_DLOPEN_DISABLED";
+  mapped.cause = error;
   return mapped;
 }
 
@@ -1438,6 +1454,9 @@ function installNimbusProcessDlopenErrorMapping(nodeProcess) {
     try {
       return Reflect.apply(originalDlopen, this, args);
     } catch (error) {
+      if (isFfiPermissionDeniedError(error)) {
+        throw createNimbusNativeAddonDisabledError(error);
+      }
       if (isDlopenTypeError(error)) {
         throw createNodeDlopenError(error);
       }
@@ -1480,6 +1499,9 @@ function installNimbusNativeExtensionErrorMapping(moduleBuiltin) {
     try {
       return Reflect.apply(originalNativeExtension, this, args);
     } catch (error) {
+      if (isFfiPermissionDeniedError(error)) {
+        throw createNimbusNativeAddonDisabledError(error);
+      }
       if (isDlopenTypeError(error)) {
         throw createNodeDlopenError(error);
       }
@@ -3943,11 +3965,7 @@ Object.defineProperty(deno, "env", {
   writable: false,
 });
 Object.defineProperty(deno, "version", {
-  value: {
-    deno: "2.9.0-nimbus.1",
-    v8: "149.4.0-nimbus.10",
-    typescript: "0.0.0-nimbus",
-  },
+  value: core.ops.op_nimbus_runtime_versions(),
   configurable: true,
   enumerable: true,
   writable: false,
@@ -4235,9 +4253,10 @@ if (typeof internals.__initWorkerThreads === "function") {
         internals.nodeGlobals.process.env = workerEnv;
       }
     }
-    // HG7: same fresh-realm argument as __nimbusStartWorkerMessagePump above
-    // (read by worker_threads.rs:456,502 as part of the same never-reused
-    // worker-bundle preamble); slot-hardened anyway.
+    // HG7: same worker-bundle isolation argument as
+    // __nimbusStartWorkerMessagePump above (read by worker_threads.rs:456,502
+    // as part of the same never-reused worker-bundle preamble); slot-hardened
+    // anyway.
     Object.defineProperty(globalThis, "__nimbusWorkerThreadEnv", {
       value: workerEnv,
       configurable: false,

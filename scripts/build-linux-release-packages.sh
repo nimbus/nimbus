@@ -43,8 +43,8 @@ Examples:
     --nimbus-libkrun-archive /tmp/nimbus-libkrun-linux-amd64.tar.gz \
     --nimbus-crun-binary /tmp/nimbus-crun \
     --version v0.1.10 \
-    --libkrun-version v1.18.1-nimbus.1 \
-    --crun-version v1.27.1-nimbus.2 \
+    --libkrun-version v1.19.4-nimbus.3 \
+    --crun-version v1.29.1-nimbus.2 \
     --render-only
 EOF
 }

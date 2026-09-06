@@ -31,8 +31,40 @@ use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
 use crate::tenant::TenantIsolationMode;
 use crate::tls::TlsConfig;
+use crate::workload_boot::ServerWorkloadBootPlan;
 use crate::workload_composition::ServerWorkloadComposition;
 use nimbus_services::ServiceInstanceCatalog;
+use tokio::sync::watch;
+
+/// Cloneable authority for requesting an orderly server shutdown.
+///
+/// The server and its callers share this handle so local administration,
+/// process signals, and embedders all enter the same graceful listener and
+/// workload cleanup path.
+#[derive(Clone, Debug)]
+pub struct ServerShutdownHandle {
+    sender: watch::Sender<bool>,
+}
+
+impl ServerShutdownHandle {
+    fn new() -> Self {
+        let (sender, _) = watch::channel(false);
+        Self { sender }
+    }
+
+    /// Request shutdown. Repeated requests are idempotent.
+    pub fn request_shutdown(&self) {
+        self.sender.send_replace(true);
+    }
+
+    fn sender(&self) -> watch::Sender<bool> {
+        self.sender.clone()
+    }
+
+    fn subscribe(&self) -> watch::Receiver<bool> {
+        self.sender.subscribe()
+    }
+}
 
 /// Canonical public option bundle for serving Nimbus on a listener.
 pub struct ServeOptions {
@@ -41,6 +73,7 @@ pub struct ServeOptions {
     tls_config: Option<TlsConfig>,
     listener_leases: ServerListenerLeaseAuthority,
     prebound_wire_listeners: Option<PreboundServerListeners>,
+    server_shutdown: ServerShutdownHandle,
 }
 
 impl ServeOptions {
@@ -54,6 +87,7 @@ impl ServeOptions {
             tls_config: None,
             listener_leases,
             prebound_wire_listeners: None,
+            server_shutdown: ServerShutdownHandle::new(),
         }
     }
 
@@ -76,6 +110,7 @@ impl ServeOptions {
             tls_config: None,
             listener_leases: ServerListenerLeaseAuthority::new(network_authority),
             prebound_wire_listeners: None,
+            server_shutdown: ServerShutdownHandle::new(),
         }
     }
 
@@ -106,6 +141,7 @@ impl ServeOptions {
             tls_config: None,
             listener_leases,
             prebound_wire_listeners: None,
+            server_shutdown: ServerShutdownHandle::new(),
         })
     }
 
@@ -174,6 +210,12 @@ impl ServeOptions {
     fn with_router_options(mut self, update: impl FnOnce(RouterOptions) -> RouterOptions) -> Self {
         self.router_options = update(self.router_options);
         self
+    }
+
+    /// Submit exact declared services after managed recovery and before the
+    /// main listener begins serving requests.
+    pub fn with_workload_boot_plan(self, plan: ServerWorkloadBootPlan) -> Self {
+        self.with_router_options(|options| options.with_workload_boot_plan(plan))
     }
 
     #[cfg(test)]
@@ -334,12 +376,20 @@ impl ServeOptions {
         self.tls_config = Some(tls_config);
         self
     }
+
+    /// Obtain a handle that requests shutdown through the same graceful path
+    /// as the authenticated local administration endpoint.
+    #[must_use]
+    pub fn shutdown_handle(&self) -> ServerShutdownHandle {
+        self.server_shutdown.clone()
+    }
 }
 
 async fn serve_with_router_config(
     listener: tokio::net::TcpListener,
     config: RouterBuildConfig,
     tls_config: Option<TlsConfig>,
+    server_shutdown: ServerShutdownHandle,
 ) -> std::io::Result<()> {
     // Load and validate the TLS identity before any engine work so a bad
     // certificate fails the boot, not the first connection.
@@ -348,13 +398,21 @@ async fn serve_with_router_config(
         .map(crate::tls::load_rustls_server_config)
         .transpose()?;
     let listen_addr = listener.local_addr()?;
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let shutdown_tx = server_shutdown.sender();
+    let mut shutdown_rx = server_shutdown.subscribe();
     let config = config
         .with_listen_addr(listen_addr)
         .with_server_shutdown(shutdown_tx);
-    let prepared = Box::pin(config.prepare_for_serving())
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    // Router preparation enters several deep engine mutation futures. Poll it
+    // as a cancellable child task so it has a complete worker stack instead of
+    // sharing the caller's remaining stack with the server lifecycle.
+    let prepared =
+        tokio_util::task::AbortOnDropHandle::new(tokio::spawn(config.prepare_for_serving()))
+            .await
+            .map_err(|error| {
+                std::io::Error::other(format!("router preparation task failed: {error}"))
+            })?
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
     match rustls_config {
         Some(rustls_config) => {
             crate::tls::serve_tls(
@@ -431,6 +489,7 @@ pub async fn serve_leased(
         tls_config,
         listener_leases,
         mut prebound_wire_listeners,
+        server_shutdown,
     } = options;
     let mut main_listener = Some(listener);
     let mut listener_group = WireListenerGroup::new();
@@ -439,6 +498,8 @@ pub async fn serve_leased(
         let engine = router_options.engine();
         let system_connectivity_projection =
             nimbus_system::SystemConnectivityProjectionRuntime::new(&engine);
+        let server_listener_incarnation = listener_leases.incarnation().to_owned();
+        let mut server_listener_observations = Vec::new();
         let main_evidence = main_lease.observation_evidence().ok_or_else(|| {
             std::io::Error::other("main listener carries crossed active lease evidence")
         })?;
@@ -449,7 +510,7 @@ pub async fn serve_leased(
         };
         let main_observation =
             physical_listener_observation("nimbus-server", main_protocol, &main_evidence)?;
-        system_connectivity_projection.project_port_listener(main_observation);
+        server_listener_observations.push(main_observation);
         if !router_options.has_system_convex_registry() {
             router_options =
                 router_options.with_system_convex_registry(load_default_system_convex_registry()?);
@@ -612,7 +673,7 @@ pub async fn serve_leased(
                     return result;
                 }
             };
-            system_connectivity_projection.project_port_listener(adapter_observation);
+            server_listener_observations.push(adapter_observation);
             listener_group.prepare(
                 adapter,
                 adapter_listener,
@@ -638,13 +699,28 @@ pub async fn serve_leased(
             );
         }
 
+        nimbus_system::claim_server_listener_projection_async(
+            &engine,
+            &server_listener_incarnation,
+        )
+        .await
+        .map_err(|error| {
+            std::io::Error::other(format!(
+                "failed to claim the server listener projection: {error}"
+            ))
+        })?;
+        system_connectivity_projection
+            .project_server_listeners(server_listener_incarnation, server_listener_observations);
         listener_group.activate();
         let listener = main_listener
             .take()
             .expect("the main listener must be consumed exactly once");
         listener_group
             .supervise(Box::pin(serve_with_router_config(
-                listener, config, tls_config,
+                listener,
+                config,
+                tls_config,
+                server_shutdown,
             )))
             .await
     }

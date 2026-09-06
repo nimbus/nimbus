@@ -39,6 +39,44 @@ impl WorkloadControlBootPlan {
         self.placement_plans.len()
     }
 
+    pub(crate) fn into_server_plan(self) -> Result<nimbus_server::ServerWorkloadBootPlan, Error> {
+        if self.desired_workloads.len() != self.placement_plans.len() {
+            return Err(Error::InvalidInput(
+                "compose workload boot plan lost its one-to-one placement evidence".to_owned(),
+            ));
+        }
+        let local_node = embedded_local_node_identity();
+        let mut service_names = Vec::with_capacity(self.desired_workloads.len());
+        for (desired, placement) in self
+            .desired_workloads
+            .iter()
+            .zip(self.placement_plans.iter())
+        {
+            if desired.tenant_id() != &self.tenant_id
+                || desired.kind() != nimbus_workloads::DesiredWorkloadKind::Service
+                || desired.desired_state() != DesiredWorkloadState::Running
+                || placement.workload_id() != desired.workload_id()
+                || placement.node_id() != Some(local_node.as_str())
+            {
+                return Err(Error::InvalidInput(format!(
+                    "compose workload boot plan has crossed desired or placement evidence for `{}`",
+                    desired.workload_id()
+                )));
+            }
+            let service_name = desired
+                .workload_id()
+                .strip_prefix("service:")
+                .ok_or_else(|| {
+                    Error::InvalidInput(format!(
+                        "compose workload boot plan has invalid service workload id `{}`",
+                        desired.workload_id()
+                    ))
+                })?;
+            service_names.push(service_name.to_owned());
+        }
+        nimbus_server::ServerWorkloadBootPlan::new(self.tenant_id, service_names)
+    }
+
     #[cfg(test)]
     pub(crate) fn compose_files(&self) -> &[PathBuf] {
         &self.compose_files
@@ -222,6 +260,10 @@ services:
                 .iter()
                 .all(|workload| workload.tenant_id() == plan.tenant_id())
         );
+        let server_plan = plan
+            .into_server_plan()
+            .expect("scheduled compose services should cross the server seam");
+        assert_eq!(server_plan.service_names(), ["api", "db"]);
     }
 
     #[test]
