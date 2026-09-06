@@ -257,8 +257,6 @@ write-ahead-log operations through a test-only VFS shim, then reopens the store
 and compares the durable head, the applied head, and the materialized position
 against the last acknowledged result. Keep that fault control inside the test
 tree: the production binary carries no fault configuration and no VFS selection
-surface.
-
 ```bash
 cargo test -p nimbus-storage sqlite_physical_durability -- --nocapture
 ```

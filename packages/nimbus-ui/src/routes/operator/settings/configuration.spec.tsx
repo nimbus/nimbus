@@ -69,7 +69,7 @@ describe("ConfigurationSection runtime diagnostics", () => {
       within(bunLane).getByText("build_feature_disabled"),
     ).toBeInTheDocument();
     expect(
-      within(bunLane).getByText("codex/bun-v1.4.2-release-readiness"),
+      within(bunLane).getByText("bun-v1.4.2-nimbus.1"),
     ).toBeInTheDocument();
     expect(within(bunLane).getByText("lazy")).toBeInTheDocument();
     expect(

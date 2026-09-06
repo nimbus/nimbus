@@ -18,11 +18,11 @@ on:
       bun_source_ref:
         description: "Bun source ref or tag"
         required: true
-        default: "codex/bun-v1.4.2-release-readiness"
+        default: "bun-v1.4.2-nimbus.1"
       bun_source_revision:
         description: "Expected Bun source commit"
         required: true
-        default: "273d0e1b2e781e4b79cfd67f0e56a2c844353fe6"
+        default: "d6d4c5e39938b6c5ac243490a9230c26d52d737f"
       install_bun_with_npm:
         description: "Install a pinned Bun CLI with npm before building; keep enabled for self-sufficient hosted runner dispatches"
         required: true

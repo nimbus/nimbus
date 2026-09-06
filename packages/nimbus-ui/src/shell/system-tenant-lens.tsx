@@ -120,7 +120,7 @@ function useLensDocuments(view: LensView) {
   });
   const listeners = useQuery(api.listeners.list, {
     adapter: null,
-    state: null,
+    observedPhase: null,
     limit: 50,
   });
   const status = useQuery(api.system.status, {});

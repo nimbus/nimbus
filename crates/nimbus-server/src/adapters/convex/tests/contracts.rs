@@ -1,7 +1,7 @@
 use nimbus_runtime::HOST_CALL_ABI_VERSION;
 use serde_json::json;
 
-use super::fixture::host_bridge_fixture;
+use super::fixture::{host_bridge_fixture, host_bridge_fixture_for_invocation};
 use super::*;
 
 #[test]
@@ -159,7 +159,8 @@ fn dispatch_host_call_rejects_guest_supplied_http_route_plan() {
 
 #[test]
 fn dispatch_host_call_rejects_http_route_for_another_host_invocation() {
-    let (_tempdir, _service, _tenant_id, bridge) = host_bridge_fixture();
+    let (_tempdir, _service, _tenant_id, bridge) =
+        host_bridge_fixture_for_invocation(InvocationKind::Action, "http:active:0");
 
     let error = bridge
         .dispatch_host_call(HostCallRequest::new(
@@ -177,6 +178,7 @@ fn dispatch_host_call_rejects_http_route_for_another_host_invocation() {
     assert!(
         error
             .to_string()
-            .contains("does not match active host invocation")
+            .contains("does not match active host invocation"),
+        "unexpected host-route rejection: {error}",
     );
 }

@@ -8,11 +8,10 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: review and push the Bun workflow-prerequisite and bounded-smoke
-repair. Run a nonpublishing replacement on macOS arm64 and Linux x86_64 at
-exact Bun `d6d4c5e399`. Do not create tag `bun-v1.4.2-nimbus.1`, maintained
-branch `nimbus/bun-v1.4.2`, or the immutable Nimbus repin before both native
-hosts pass.
+Next action: run the final Sol-only review of the staged repairs and immutable
+Bun repin, then create and push one coherent Nimbus commit. Start the final
+nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays
+from that commit. Local checks verify the RRC2 and RRC6 repairs.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -21,11 +20,10 @@ Candidate branch `codex/bun-v1.4.2-release-readiness` applies the retained and
 reviewed Nimbus contracts on upstream `bun-v1.4.2` at `744846f844`. The latest
 stable upstream release is still Bun 1.4.2.
 
-After both immutable fork tags pass and Nimbus pins them, start the final
-nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays.
-Bind every accepted proof to that head. Rerun the 46-condition verifier.
-Public-cloud lanes remain fail-closed until their release credentials and
-endpoints are available.
+Both immutable fork tags now pass and the staged Nimbus candidate pins them.
+Bind every final proof to the committed candidate head. Rerun the 46-condition
+verifier. Public-cloud lanes remain fail-closed until their release credentials
+and endpoints are available.
 
 ## Outcome
 
@@ -595,3 +593,17 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-06 | RRC8 | fail-before | Run `34007688120` attempt 2 failed when its Linux server diagnostic compiled `nimbus-convex`. The preflight artifact contained `packages/nimbus-ui/dist` but omitted the seven generated files under `packages/nimbus-ui/.nimbus/convex`. The macOS job generated both trees locally and passed. This is a workflow prerequisite defect after the exact adapter evidence, not a Bun or product-runtime failure. |
 | 2026-09-06 | RRC8 | finding | The Bun workflow now transfers both generated nimbus-ui trees with the same artifact layout as the main CI workflow and verifies both after download. It upgrades both WebKit caches to `actions/cache@v5`. The linked-adapter verifier builds the shared library without starting Bun's unbounded smoke command, then runs the unchanged one-process generated loader through a portable 120-second Python limit. Five regressions cover success, native-loader failure, missing inputs, and timeout status 124. Python compilation, unit tests, Bash parsing, action lint, and whitespace checks pass. |
 | 2026-09-06 | RRC8 | cleanup | Removed the exact ignored Bun 1.4.1 `build/` directory after a clean-worktree check and a `git clean -ndX build` dry-run. The 7.7 GiB output was reproducible and the source worktree stayed clean. The current Bun 1.4.2 build and all user work stayed intact. |
+| 2026-09-06 | RRC8 | started | Nonpublishing run `34018081394` passed its exact-revision Linux runtime preflight at Nimbus `85af04e571ade76ade0a556e44bd6db04028a783` and Bun `d6d4c5e39938b6c5ac243490a9230c26d52d737f`. The macOS arm64 and Linux x86_64 native jobs are building from the same revisions. Publication remains disabled. |
+| 2026-09-06 | RRC6 | fail-before | Real Electron operation exposed two candidate defects. Network subnavigation changed the URL and selected item but kept the Routes pane mounted. The listener and port views also read obsolete `address` and `state` fields, so the live rows showed missing addresses and phases. Three server starts left 12 obsolete process-owned listener rows in the system inventory. |
+| 2026-09-06 | RRC6 | finding | The operator Network page now renders WebSocket, port, listener, and security inventories from the selected section and uses the canonical `actualAddress` and `observedPhase` schema. Server startup submits one atomic complete-set listener projection that removes only obsolete ownerless process rows and preserves machine- and service-owned evidence. Product tests cover navigation, schema, replacement scope, and retry idempotency. A real Electron replay shows exactly four current listeners and four ports, with addresses and ready phases, plus the expected empty WebSocket state and six capability records. |
+| 2026-09-06 | RRC2 | fail-before | Two Convex host-route tests had drifted from the host-owned contract. The route-mismatch fixture declared a query although HTTP routes are action-only, and the cancellation fixture supplied an obsolete guest route plan. This hid the intended mismatch and pre-dispatch cancellation assertions. |
+| 2026-09-06 | RRC2 | finding | The host-route fixtures now use the required action kind and registry-owned route identity. Both cancellable HTTP-route handlers check cancellation before payload parsing or route lookup. Focused regressions pass, `nimbus-system` passes 85 tests, and the canonical affected Nextest lane passes all 855 tests with 35 declared skips. Strict Clippy, formatting, whitespace, the 98-file and 851-test operator UI suite, UI typecheck and build, and the docs gate also pass. A bare whole-crate Cargo run remains excluded because the verification runbook assigns process-global runtime suites to Nextest. |
+| 2026-09-06 | RRC8 | evidence | The feature-off Node 22 anchor check reproduced a stored-provenance mismatch, regenerated an 18,529,593-byte blob, and then passed provenance and parse validation. A relinked local server starts from that snapshot without the stale fast-path warning, passes health, and shuts down cleanly. The exact hosted release graph still owns pointer-compressed regeneration because a separate local build would exceed the release host's safe disk budget. |
+| 2026-09-06 | RRC6 | checkpoint | Desktop commit `50bf6ca` corrects the macOS, Linux, and Windows `server.json` discovery paths in the operator documentation. The paths match the tested implementation, desktop lint, typecheck, all 186 unit tests, whitespace checks, and the earlier real-app replay. The commit is pushed only to `codex/release-readiness-2026-08`; no desktop product release was published. |
+| 2026-09-06 | RRC8 | review | The Sol xhigh review accepted two P2 findings. The first listener replacement lacked a durable same-Engine activation fence, so a retained retry from an earlier serve cycle could replace a newer inventory. The early HTTP-route cancellation check also removed the original dispatch-boundary check. No Opus 5 or Fable review ran. |
+| 2026-09-06 | RRC8 | finding | Server activation now records one durable listener-projection claim before it submits the complete inventory. The atomic replacement reads that claim in its execution unit and makes a superseded incarnation a no-op. The regression replays the older set after the current claim. HTTP-route handlers now check cancellation both before payload work and immediately before dispatch. Focused tests pass, the affected Nextest lane passes all 855 tests with 35 declared skips, and strict affected Clippy passes with warnings denied. |
+| 2026-09-06 | RRC8 | review | The required Sol xhigh follow-up review reports no accepted P0 through P3 finding after the two P2 repairs. TruffleHog is clean. No Opus 5 or Fable review ran. |
+| 2026-09-06 | RRC8 | evidence | Nonpublishing run `34018081394` passes the exact runtime preflight and both native jobs at Nimbus `85af04e571` and Bun `d6d4c5e399`. Linux and macOS each pass the native probe, 44 runtime tests, 10 linked tests, server diagnostics, package checks, and archive contracts. The Linux archive SHA-256 is `819a825a32800e57cbdec0ca19c3f8cf18ba736edd8564a469a6a7164b036f8d`; the macOS archive SHA-256 is `d0aa63417bcbaf5f709deae0bc9ac37bbfbff8d4389ed58a59cb0d0ea94d35d3`. Publication stayed disabled. |
+| 2026-09-06 | RRC8 | evidence | Annotated Bun tag `bun-v1.4.2-nimbus.1` has tag object `bbaf7d45c142fb74532426ef1ed5427918a4237d` and peels to reviewed commit `d6d4c5e39938b6c5ac243490a9230c26d52d737f`. Maintained branch `nimbus/bun-v1.4.2` and the GitHub default branch resolve to the same commit. The clean canonical Bun checkout now tracks that maintained branch. No Bun GitHub Release or Nimbus product publication occurred. |
+| 2026-09-06 | RRC8 | finding | Every active Bun/JSC workflow, runtime contract, diagnostic, installer, helper, and UI fixture now names immutable tag `bun-v1.4.2-nimbus.1` and exact revision `d6d4c5e399`. The focused source-contract, manifest, server-metrics, package-helper, release-asset-helper, installer, and UI checks pass. Bash syntax, action lint, and whitespace checks pass. |
+| 2026-09-06 | RRC8 | review | The final GPT-5.6 Sol xhigh pre-commit review of the complete staged release patch reports no accepted or actionable P0 through P3 finding, with correctness confidence `0.90`. TruffleHog is clean. No Opus 5 or Fable review ran. |

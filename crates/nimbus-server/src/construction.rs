@@ -491,6 +491,8 @@ pub async fn serve_leased(
         let engine = router_options.engine();
         let system_connectivity_projection =
             nimbus_system::SystemConnectivityProjectionRuntime::new(&engine);
+        let server_listener_incarnation = listener_leases.incarnation().to_owned();
+        let mut server_listener_observations = Vec::new();
         let main_evidence = main_lease.observation_evidence().ok_or_else(|| {
             std::io::Error::other("main listener carries crossed active lease evidence")
         })?;
@@ -501,7 +503,7 @@ pub async fn serve_leased(
         };
         let main_observation =
             physical_listener_observation("nimbus-server", main_protocol, &main_evidence)?;
-        system_connectivity_projection.project_port_listener(main_observation);
+        server_listener_observations.push(main_observation);
         if !router_options.has_system_convex_registry() {
             router_options =
                 router_options.with_system_convex_registry(load_default_system_convex_registry()?);
@@ -664,7 +666,7 @@ pub async fn serve_leased(
                     return result;
                 }
             };
-            system_connectivity_projection.project_port_listener(adapter_observation);
+            server_listener_observations.push(adapter_observation);
             listener_group.prepare(
                 adapter,
                 adapter_listener,
@@ -690,6 +692,18 @@ pub async fn serve_leased(
             );
         }
 
+        nimbus_system::claim_server_listener_projection_async(
+            &engine,
+            &server_listener_incarnation,
+        )
+        .await
+        .map_err(|error| {
+            std::io::Error::other(format!(
+                "failed to claim the server listener projection: {error}"
+            ))
+        })?;
+        system_connectivity_projection
+            .project_server_listeners(server_listener_incarnation, server_listener_observations);
         listener_group.activate();
         let listener = main_listener
             .take()

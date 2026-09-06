@@ -6,6 +6,7 @@ impl ConvexHostBridge {
         payload: Value,
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
+        ensure_runtime_host_not_cancelled(cancellation)?;
         let payload: ConvexRuntimeHttpRouteInvokePayload = serde_json::from_value(payload)?;
         let (request_context, route) = self.resolve_runtime_http_route(&payload)?;
         ensure_runtime_host_not_cancelled(cancellation)?;
@@ -41,6 +42,7 @@ impl ConvexHostBridge {
         payload: Value,
         cancellation: &HostCallCancellation,
     ) -> std::result::Result<Value, NimbusRuntimeError> {
+        ensure_runtime_host_not_cancelled(cancellation)?;
         let payload: ConvexRuntimeHttpRouteInvokePayload = serde_json::from_value(payload)?;
         let (request_context, route) = self.resolve_runtime_http_route(&payload)?;
         ensure_runtime_host_not_cancelled(cancellation)?;

@@ -31,11 +31,13 @@ mod scheduler;
 mod source;
 mod subscription;
 
+pub(crate) use connectivity::replace_server_port_listener_observations_async;
 pub use connectivity::{
     SystemConnectivityObservationError, SystemPortListenerObservation,
     SystemPublishedEndpointObservation, SystemServiceConnectivityObservation,
-    SystemUnixListenerObservation, record_port_listener_observation_async,
-    record_service_connectivity_observation_async, record_unix_listener_observation_async,
+    SystemUnixListenerObservation, claim_server_listener_projection_async,
+    record_port_listener_observation_async, record_service_connectivity_observation_async,
+    record_unix_listener_observation_async,
 };
 pub use deployment::{
     SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,

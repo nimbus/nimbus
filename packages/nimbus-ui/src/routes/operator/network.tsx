@@ -14,6 +14,7 @@ import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
+import { NetworkInventorySection } from "./-network-inventory";
 
 const SECTIONS = ["routes", "ws", "ports", "listeners", "security"] as const;
 type NetworkSection = (typeof SECTIONS)[number];
@@ -108,6 +109,14 @@ const NETWORK_SUB_DRAWER: SubDrawerSpec = {
 
 function NetworkPage() {
   useContributeSubDrawer(NETWORK_SUB_DRAWER);
+  const section = Route.useSearch().section;
+  if (section !== "routes") {
+    return <NetworkInventorySection section={section} />;
+  }
+  return <RoutesSection />;
+}
+
+function RoutesSection() {
   const routes = useQuery(api.routes.list, {
     adapter: null,
     limit: 500,
@@ -141,6 +150,7 @@ function NetworkPage() {
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-network"
+      data-section="routes"
     >
       <PageHeader
         title="Network"

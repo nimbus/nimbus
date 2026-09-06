@@ -14,6 +14,7 @@ use tokio::sync::Notify;
 use tokio::time::Instant;
 use tracing::warn;
 
+use crate::records::replace_server_port_listener_observations_async;
 use crate::{
     SystemPortListenerObservation, SystemServiceConnectivityObservation,
     delete_machine_state_async, record_machine_state_async, record_port_listener_observation_async,
@@ -56,6 +57,10 @@ struct ProjectionEntry {
 #[derive(Clone)]
 enum ProjectionOperation {
     PortListener(SystemPortListenerObservation),
+    ServerListeners {
+        server_incarnation: String,
+        observations: Vec<SystemPortListenerObservation>,
+    },
     ServiceConnectivity(SystemServiceConnectivityObservation),
     MachineState {
         config: MachineConfigRecord,
@@ -95,6 +100,21 @@ impl SystemConnectivityProjectionRuntime {
         self.submit(
             format!("listener:{}", observation.listener_id().as_str()),
             ProjectionOperation::PortListener(observation),
+        );
+    }
+
+    /// Replace all physical listeners owned by this server incarnation.
+    pub fn project_server_listeners(
+        &self,
+        server_incarnation: impl Into<String>,
+        observations: impl IntoIterator<Item = SystemPortListenerObservation>,
+    ) {
+        self.submit(
+            "server-listeners".to_owned(),
+            ProjectionOperation::ServerListeners {
+                server_incarnation: server_incarnation.into(),
+                observations: observations.into_iter().collect(),
+            },
         );
     }
 
@@ -400,6 +420,7 @@ impl ProjectionOperation {
                 (incoming.generation(), incoming.lease_epoch())
                     >= (current.generation(), current.lease_epoch())
             }
+            (Self::ServerListeners { .. }, Self::ServerListeners { .. }) => true,
             (Self::ServiceConnectivity(incoming), Self::ServiceConnectivity(current)) => {
                 let incoming_fence = (
                     incoming.source_generation(),
@@ -425,6 +446,17 @@ impl ProjectionOperation {
         match self {
             Self::PortListener(observation) => {
                 record_port_listener_observation_async(engine, observation).await
+            }
+            Self::ServerListeners {
+                server_incarnation,
+                observations,
+            } => {
+                replace_server_port_listener_observations_async(
+                    engine,
+                    server_incarnation,
+                    observations,
+                )
+                .await
             }
             Self::ServiceConnectivity(observation) => {
                 record_service_connectivity_observation_async(engine, observation).await
