@@ -8,10 +8,10 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: keep the candidate at NO-GO until the distribution owner publishes
-the authorized apt and COPR channels and proves fresh public installs. Configure
-the four public dual-target endpoints and repeat those comparisons before a GO
-decision. RRC99 waits for the final release-readiness repair merge.
+Next action: open and merge the release-readiness pull request without changing
+its tree. Tag the merged commit as `v0.1.46`. Monitor the tag-driven GitHub,
+GHCR, machine-os, Homebrew, and apt release jobs. Keep COPR disabled until its
+credential and public-project contract exist.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -62,10 +62,10 @@ After:
   apt, COPR, cloud-image, tag, and release publication work.
 - Does not own: multi-node clustering, continuous PITR, MongoDB change streams,
   or automatic server updates. The capability page marks these as not built.
-- Non-goal: publish a Nimbus product tag, release, or package. The owner
-  authorized repository updates and the fork releases needed to produce a
-  reproducible dependency graph. Do not change Nimbus release credentials or
-  public product package channels without owner approval.
+- The owner authorized the v0.1.46 Nimbus product release on 2026-09-06. Use
+  the established tag-driven release graph. Do not change release credentials
+  or enable an unconfigured COPR submission. Do not expand the supported
+  platform matrix as part of this release.
 
 ## Invariants
 
@@ -111,7 +111,7 @@ renamed, duplicated, or unsupported condition.
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `done` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `done` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `done` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
-| RRC7 | Validate archives, install paths, packages, OCI artifacts, upgrades, and current-release drift without publication. | `blocked` | All local artifacts pass. Public apt and COPR installs need publication. See `proof/release-readiness-2026-08/rrc7-distribution.md`. |
+| RRC7 | Validate archives, installers, packages, OCI artifacts, and upgrades, then publish the supported release graph. | `in_progress` | All local artifacts pass. The owner authorized the v0.1.46 GitHub, GHCR, Homebrew, and apt release. COPR remains disabled pending its credential and project contract. See `proof/release-readiness-2026-08/rrc7-distribution.md`. |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol-only reviews, and issue the GO or NO-GO report. | `done` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
@@ -235,10 +235,12 @@ renamed, duplicated, or unsupported condition.
   scripts. Public channel ownership stays in `distribution-plan.md`.
 - Steps: build candidate archives and packages. Verify archive and license
   layout. Smoke-test the OCI image. Test local install and upgrade flows.
-  Compare the candidate with the latest published release.
+  Compare the candidate with the latest published release. After owner
+  approval, merge the unchanged candidate and run the tag-driven release.
 - Acceptance: every locally testable release artifact passes its owning
-  verifier. Public apt, COPR, cloud-image, and tag work stays routed to the
-  distribution plan with an explicit status.
+  verifier. The public GitHub, GHCR, machine-os, Homebrew, and apt outputs pass
+  their live checks. COPR stays routed to the distribution plan until its
+  credential and public-project contract exist.
 - Fail-before: retain the first invalid artifact and verifier output.
 - Verification: run release archive, install, Linux package, OCI image, and
   desktop installer gates.
@@ -251,8 +253,9 @@ renamed, duplicated, or unsupported condition.
 - Steps: rerun critical smoke cases and complete gates on macOS and Linux.
   Update all matrix evidence. Run Sol xhigh reviews while the owner restriction
   applies. Write a release verdict.
-- Acceptance: all 46 matrix conditions pass. Nimbus and desktop gates pass.
-  Required host lanes pass. No accepted P0 through P2 review finding remains.
+- Acceptance: the matrix and proof files support an exact GO or NO-GO verdict.
+  Nimbus and desktop gates pass. Required host lanes pass. No accepted P0
+  through P2 review finding remains. A GO verdict requires all 46 conditions.
 - Fail-before: the matrix stays red until the last required proof closes.
 - Verification: run the matrix verifier, `make ci`, affected nightly harnesses,
   desktop checks, and Nimbus autoreview with Sol. Do not use Opus 5 or Fable
@@ -646,3 +649,4 @@ release blocker to remain.
 | 2026-09-06 | RRC7 | blocked | Release archives and OCI are direct passes. Public apt and COPR installs remain blocked because they require public product channels and publication authority. All safely testable RRC7 work is terminal; no Nimbus product state changed. |
 | 2026-09-06 | RRC8 | done | Issued the terminal NO-GO verdict. The fixed matrix has 45 passes and one blocked condition with zero unverified, failed, or structurally invalid conditions. Public apt and COPR evidence remains blocked. Four public dual-target comparisons also wait for their absent endpoint variables. No verified local product defect remains. |
 | 2026-09-06 | RRC8 | cleanup | After recording exact identities and hashes, removed about 1.4 GiB of run-owned remote release roots, 718 MiB of temporary worktree dependencies, two run-owned OCI images, and 336 MiB of local candidate inputs. `minicloud.local` has 50 GiB free and 7.0 GiB available memory. The unrelated libSQL container, older U3 worktrees, source changes, proofs, and hosted artifacts remain intact. |
+| 2026-09-06 | RRC7 | resumed | The owner authorized the release that the verified candidate can support. RRC7 will merge the unchanged candidate tree, publish v0.1.46 through the established GitHub, GHCR, machine-os, Homebrew, and apt graph, and prove the public outputs. COPR stays disabled until its credential and project contract exist. |
