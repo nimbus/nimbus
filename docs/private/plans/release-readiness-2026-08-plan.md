@@ -8,10 +8,10 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: run the final Sol-only review of the staged repairs and immutable
-Bun repin, then create and push one coherent Nimbus commit. Start the final
-nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays
-from that commit. Local checks verify the RRC2 and RRC6 repairs.
+Next action: push the current branch head, then dispatch the final
+nonpublishing exact-head CI, shard, Node, desktop, artifact, and host replays.
+Record every run ID before the first wait. Local checks verify the RRC2 and
+RRC6 repairs.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -607,3 +607,4 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-06 | RRC8 | evidence | Annotated Bun tag `bun-v1.4.2-nimbus.1` has tag object `bbaf7d45c142fb74532426ef1ed5427918a4237d` and peels to reviewed commit `d6d4c5e39938b6c5ac243490a9230c26d52d737f`. Maintained branch `nimbus/bun-v1.4.2` and the GitHub default branch resolve to the same commit. The clean canonical Bun checkout now tracks that maintained branch. No Bun GitHub Release or Nimbus product publication occurred. |
 | 2026-09-06 | RRC8 | finding | Every active Bun/JSC workflow, runtime contract, diagnostic, installer, helper, and UI fixture now names immutable tag `bun-v1.4.2-nimbus.1` and exact revision `d6d4c5e399`. The focused source-contract, manifest, server-metrics, package-helper, release-asset-helper, installer, and UI checks pass. Bash syntax, action lint, and whitespace checks pass. |
 | 2026-09-06 | RRC8 | review | The final GPT-5.6 Sol xhigh pre-commit review of the complete staged release patch reports no accepted or actionable P0 through P3 finding, with correctness confidence `0.90`. TruffleHog is clean. No Opus 5 or Fable review ran. |
+| 2026-09-06 | RRC8 | checkpoint | Nimbus commit `b4af24dc9` closes the confirmed listener-inventory, operator-network, HTTP-route fixture, and cancellation gaps. It also pins every active Bun/JSC consumer to immutable tag `bun-v1.4.2-nimbus.1`. The recorded affected tests, strict lint, builds, docs, and final Sol review pass. A separate plan checkpoint advances the exact-head final replay. |
