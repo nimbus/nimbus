@@ -149,7 +149,7 @@ impl RuntimeExecutor {
                     .as_ref()
                     .and_then(HostCallCancellation::cause),
             );
-        job.result_tx.send(Err(NimbusRuntimeError::Cancelled));
+        job.send_result(Err(NimbusRuntimeError::Cancelled));
     }
 
     fn register_queued_cancellation_listener(

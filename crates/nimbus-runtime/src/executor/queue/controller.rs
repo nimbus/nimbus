@@ -33,7 +33,7 @@ pub(crate) struct RuntimeWorkerQueueController {
 
 impl RuntimeWorkerQueueController {
     fn fail_ready_job(ready_job: Box<RuntimeWorkerJob>, error: NimbusRuntimeError) {
-        ready_job.result_tx.send(Err(error));
+        (*ready_job).send_result(Err(error));
     }
 
     pub(super) fn new(
@@ -79,7 +79,7 @@ impl RuntimeWorkerQueue for RuntimeWorkerQueueController {
         ready_jobs: Vec<RuntimeWorkerJob>,
     ) {
         self.router.complete_worker_job(self.worker_id);
-        job.result_tx.send(result);
+        job.send_result(result);
         for ready_job in ready_jobs {
             if let Err(failure) = self.router.dispatch_job_blocking(ready_job) {
                 let (ready_job, error) = failure.into_parts();

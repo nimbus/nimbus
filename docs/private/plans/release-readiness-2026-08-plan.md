@@ -8,10 +8,11 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: open and merge the release-readiness pull request without changing
-its tree. Tag the merged commit as `v0.1.46`. Monitor the tag-driven GitHub,
-GHCR, machine-os, Homebrew, and apt release jobs. Keep COPR disabled until its
-credential and public-project contract exist.
+Next action: finish pull request 328 after its pointer-compression completion
+repair passes the full required checks. Merge the green tree and tag the merged
+commit as `v0.1.46`. Monitor the tag-driven GitHub, GHCR, machine-os, Homebrew,
+and apt release jobs. Keep COPR disabled until its credential and public-project
+contract exist.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -649,4 +650,7 @@ release blocker to remain.
 | 2026-09-06 | RRC7 | blocked | Release archives and OCI are direct passes. Public apt and COPR installs remain blocked because they require public product channels and publication authority. All safely testable RRC7 work is terminal; no Nimbus product state changed. |
 | 2026-09-06 | RRC8 | done | Issued the terminal NO-GO verdict. The fixed matrix has 45 passes and one blocked condition with zero unverified, failed, or structurally invalid conditions. Public apt and COPR evidence remains blocked. Four public dual-target comparisons also wait for their absent endpoint variables. No verified local product defect remains. |
 | 2026-09-06 | RRC8 | cleanup | After recording exact identities and hashes, removed about 1.4 GiB of run-owned remote release roots, 718 MiB of temporary worktree dependencies, two run-owned OCI images, and 336 MiB of local candidate inputs. `minicloud.local` has 50 GiB free and 7.0 GiB available memory. The unrelated libSQL container, older U3 worktrees, source changes, proofs, and hosted artifacts remain intact. |
-| 2026-09-06 | RRC7 | resumed | The owner authorized the release that the verified candidate can support. RRC7 will merge the unchanged candidate tree, publish v0.1.46 through the established GitHub, GHCR, machine-os, Homebrew, and apt graph, and prove the public outputs. COPR stays disabled until its credential and project contract exist. |
+| 2026-09-06 | RRC7 | resumed | The owner authorized the release that the verified candidate can support. RRC7 will merge a green pull request, publish v0.1.46 through the established GitHub, GHCR, machine-os, Homebrew, and apt graph, and prove the public outputs. COPR stays disabled until its credential and project contract exist. |
+| 2026-09-06 | RRC7 | fail-before | Pull request 328 run `34055492429` failed the pointer-compression cage because `warm_pooled_runtime_rebinds_host_bridge_per_invocation` observed the second invocation host after the result arrived. The runtime had released its retained V8 bindings, but `RuntimeWorkerJob` still owned the host and egress references while it signaled completion. The caller could resume before the worker dropped that job. The release stayed paused. |
+| 2026-09-06 | RRC7 | finding | Every worker completion path now consumes the job and drops its invocation-owned state before it sends the result. API completion now includes host, egress, cancellation, retirement-guard, and request-state release instead of racing the caller. |
+| 2026-09-06 | RRC7 | evidence | The focused host-release regression passes 25 consecutive feature-off runs and the exact pointer-compression run. The complete pointer-compression cage passes 33 of 33 isolated tests. The focused executor suite passes 49 tests with three declared skips. Strict runtime Clippy passes with warnings denied. Formatting and whitespace checks pass. |
