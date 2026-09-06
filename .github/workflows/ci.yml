@@ -2695,6 +2695,7 @@ jobs:
           bash -n scripts/verify-install.sh
           bash -n scripts/verify-install-helper.sh
           python3 -m py_compile \
+            scripts/run_bun_jsc_shared_smoke.py \
             scripts/ci/detect-nextest-flakes.py \
             scripts/ci/shard-scaling-probe-summary.py
 
@@ -2724,6 +2725,9 @@ jobs:
 
       - name: Verify Bun/JSC release asset helper
         run: bash scripts/verify-bun-jsc-release-assets-helper.sh
+
+      - name: Verify Bun/JSC shared smoke runner
+        run: python3 -m unittest scripts.test_run_bun_jsc_shared_smoke
 
       - name: Verify Linux package helper
         run: bash scripts/verify-build-linux-release-packages-helper.sh

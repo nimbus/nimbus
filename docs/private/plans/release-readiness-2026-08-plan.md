@@ -8,12 +8,11 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish the Sol-only review of the Nimbus WebKit-source verifier
-and push the reviewed Nimbus candidate. Start replacement hosted and minicloud
-proofs at exact Bun `d6d4c5e399`. Require both native hosts and the exact
-pinned WebKit source build to pass. Repeat the macOS first-VM proof 100 times.
-Do not create tag `bun-v1.4.2-nimbus.1`, maintained branch
-`nimbus/bun-v1.4.2`, or the immutable Nimbus repin before these proofs pass.
+Next action: review and push the Bun workflow-prerequisite and bounded-smoke
+repair. Run a nonpublishing replacement on macOS arm64 and Linux x86_64 at
+exact Bun `d6d4c5e399`. Do not create tag `bun-v1.4.2-nimbus.1`, maintained
+branch `nimbus/bun-v1.4.2`, or the immutable Nimbus repin before both native
+hosts pass.
 
 Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
 run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
@@ -591,3 +590,8 @@ are clean, and RRC99 waits only for merge.
 | 2026-09-05 | RRC8 | fail-before | The minicloud source build used a clean WebKit checkout at `c9ad...`, not Bun 1.4.2's exact `2e2aa2290fac856d6f451ceacb58f7f5b44dd057` pin. It rebuilt 404 edges and then failed to find `JavaScriptCore/StrongSet.h`. This was invalid source input, not evidence against the current Bun candidate. |
 | 2026-09-05 | RRC8 | finding | Nimbus now verifies the actual WebKit source before a linked-adapter build. It requires Bun's immutable 40-character pin, the exact clean source HEAD, and the physical Git worktree root. It clears inherited Git repository selection, ignores account-level Git configuration, and disables the checkout's filesystem monitor. It also rejects hidden changes and replacement refs. The helper covers absolute, relative, empty, and literal-home path forms. It rejects dirty, stale, nested, redirected, symbolic, missing, and malformed inputs. The exact minicloud checkout at `2e2aa229...` passes. Formatting, shell parsing, ShellCheck, 72 runtime and UI contract tests, and whitespace checks pass. |
 | 2026-09-05 | RRC8 | review | Sol xhigh found and RRC8 fixed mismatched source selection, incomplete literal-home handling, parent-worktree and inherited-environment redirects, account-level Git exclusions, and filesystem-monitor trust. The final exact rerun reports no P0 through P3 finding. No Opus 5 or Fable review ran. |
+| 2026-09-06 | RRC8 | evidence | The exact minicloud gate at Nimbus `f19e203942` and Bun `d6d4c5e399` passes all 11 stages against clean WebKit `2e2aa2290f`. This includes the full native probe, 44 runtime tests, 10 linked tests, the server diagnostic, package and symbol audits, and a 100-process cancellation repetition. The gate log has SHA-256 `840ed106435d37f911a4f97ea90827ba51a8daf14446c8c0a1f2d369c8973a2f`; the cancellation log has SHA-256 `5061acc252429427b038e3c3ce18f4209ce4aa517f37acb40d3e0eeb542f7bab`. Cleanup removed 46.2 GiB of reproducible Cargo output and left 56 GiB free. Both `minicloud.local` and `192.168.4.29` pass noninteractive SSH checks. |
+| 2026-09-06 | RRC8 | evidence | Hosted run `34007688120` passes the exact runtime preflight and macOS arm64 adapter job at Nimbus `f19e203942` and Bun `d6d4c5e399`. The macOS archive's shared library has SHA-256 `c24e170312fd167bbc70f3d04a814c59e75f481b97be0b65a94003a949124fee` and passes 100 fresh-process first-VM repetitions. Attempt 1's Linux runner stopped inside the cancellation probe; the same probe passed 100 fresh processes on minicloud. Attempt 2 passed that probe, the concurrent first-VM proof, 44 runtime tests, and 10 linked tests. |
+| 2026-09-06 | RRC8 | fail-before | Run `34007688120` attempt 2 failed when its Linux server diagnostic compiled `nimbus-convex`. The preflight artifact contained `packages/nimbus-ui/dist` but omitted the seven generated files under `packages/nimbus-ui/.nimbus/convex`. The macOS job generated both trees locally and passed. This is a workflow prerequisite defect after the exact adapter evidence, not a Bun or product-runtime failure. |
+| 2026-09-06 | RRC8 | finding | The Bun workflow now transfers both generated nimbus-ui trees with the same artifact layout as the main CI workflow and verifies both after download. It upgrades both WebKit caches to `actions/cache@v5`. The linked-adapter verifier builds the shared library without starting Bun's unbounded smoke command, then runs the unchanged one-process generated loader through a portable 120-second Python limit. Five regressions cover success, native-loader failure, missing inputs, and timeout status 124. Python compilation, unit tests, Bash parsing, action lint, and whitespace checks pass. |
+| 2026-09-06 | RRC8 | cleanup | Removed the exact ignored Bun 1.4.1 `build/` directory after a clean-worktree check and a `git clean -ndX build` dry-run. The 7.7 GiB output was reproducible and the source worktree stayed clean. The current Bun 1.4.2 build and all user work stayed intact. |

@@ -299,6 +299,8 @@ else
   fi
 fi
 SHARED_LIBRARY="${NIMBUS_BUN_EMBED_SHARED_LIBRARY:-${BUN_BUILD_DIR}/${SHARED_LIBRARY_BASENAME}}"
+SMOKE_LOADER="${BUN_BUILD_DIR}/nimbus-bun-embed-shared-loader.py"
+BUN_SHARED_SMOKE_TIMEOUT_SECONDS="${NIMBUS_BUN_SHARED_SMOKE_TIMEOUT_SECONDS:-120}"
 
 REQUIRED_EXPORTS=(
   "${BUN_JSC_ADAPTER_REQUIRED_EXPORTS[@]}"
@@ -329,7 +331,8 @@ printf 'WebKit source: %s\n' "${WEBKIT_SOURCE}"
 printf 'Bun simdutf namespace enabled: %s\n' "${BUN_ENABLE_SIMDUTF_NAMESPACE}"
 printf 'Bun symbol audit required: %s\n\n' "${BUN_REQUIRE_SYMBOL_AUDIT}"
 printf 'Bun shared artifact audit required: %s\n' "${BUN_REQUIRE_SHARED_ARTIFACT_AUDIT}"
-printf 'Bun shared library: %s\n\n' "${SHARED_LIBRARY}"
+printf 'Bun shared library: %s\n' "${SHARED_LIBRARY}"
+printf 'Bun shared smoke timeout: %s seconds\n\n' "${BUN_SHARED_SMOKE_TIMEOUT_SECONDS}"
 
 if [[ ! -f "${BUN_REPO}/src/embed_probe/lib.rs" ]]; then
   printf 'missing Bun checkout: expected %s/src/embed_probe/lib.rs\n' "${BUN_REPO}" >&2
@@ -399,7 +402,7 @@ BUN_BUILD_ARGS=(
   "--embedder-shared=on"
   "--build-dir=${BUN_BUILD_DIR}"
   "--cache-dir=${BUN_CACHE_DIR}"
-  "--target=check-bun-embed-shared"
+  "--target=bun-embed-shared"
 )
 if is_enabled "${BUN_ENABLE_SIMDUTF_NAMESPACE}"; then
   BUN_BUILD_ARGS+=("--simdutf-namespace=${BUN_SIMDUTF_NAMESPACE}")
@@ -410,6 +413,15 @@ if [[ ! -f "${SHARED_LIBRARY}" ]]; then
   printf 'missing Bun/JSC shared adapter artifact: %s\n' "${SHARED_LIBRARY}" >&2
   exit 1
 fi
+if [[ ! -f "${SMOKE_LOADER}" ]]; then
+  printf 'missing Bun/JSC shared adapter smoke loader: %s\n' "${SMOKE_LOADER}" >&2
+  exit 1
+fi
+
+python3 "${REPO_ROOT}/scripts/run_bun_jsc_shared_smoke.py" \
+  --timeout-seconds "${BUN_SHARED_SMOKE_TIMEOUT_SECONDS}" \
+  "${SMOKE_LOADER}" \
+  "${SHARED_LIBRARY}"
 
 printf '\n[6/11] Generated build graph safety policy\n'
 reject_unsafe_generated_build_graph "${BUN_BUILD_DIR}/build.ninja"

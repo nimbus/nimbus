@@ -396,6 +396,7 @@ proof-helpers:
 	python3 -m unittest scripts.test_verify_profile_aware_isolate_runtime_gate
 	python3 -m unittest scripts.test_verify_profile_aware_isolate_runtime_crossover_trace
 	python3 -m unittest scripts.test_verify_release_version_contract
+	python3 -m unittest scripts.test_run_bun_jsc_shared_smoke
 	bash -n scripts/verify-release-oci-image-assets.sh
 	bash -n scripts/smoke-release-oci-image.sh
 	bash -n scripts/verify-release-oci-image-helper.sh

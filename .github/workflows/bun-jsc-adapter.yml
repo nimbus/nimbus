@@ -95,11 +95,13 @@ jobs:
           path: dist/bun-jsc-runtime-preflight/attestation.txt
           if-no-files-found: error
 
-      - name: Upload runtime UI prerequisite
+      - name: Upload runtime build prerequisites
         uses: actions/upload-artifact@v7
         with:
           name: bun-jsc-runtime-ui
-          path: packages/nimbus-ui/dist
+          path: |
+            packages/nimbus-ui/.nimbus/convex
+            packages/nimbus-ui/dist
           if-no-files-found: error
           retention-days: 1
 
@@ -200,7 +202,7 @@ jobs:
 
       - name: Cache WebKit source
         id: webkit-src-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.webkit.outputs.src }}
           key: webkit-src-${{ steps.webkit.outputs.version }}
@@ -217,7 +219,7 @@ jobs:
           git -C "${src}" checkout -q FETCH_HEAD
 
       - name: Cache WebKit build (JSC/WTF from source)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.webkit.outputs.webkit_build }}
           key: webkit-build-${{ matrix.platform_arch }}-${{ steps.webkit.outputs.version }}-release-local-nimbus_bun_simdutf-v1
@@ -264,11 +266,14 @@ jobs:
           name: bun-jsc-runtime-preflight
           path: dist/bun-jsc-runtime-preflight
 
-      - name: Download runtime UI prerequisite
+      - name: Download runtime build prerequisites
         uses: actions/download-artifact@v8
         with:
           name: bun-jsc-runtime-ui
-          path: packages/nimbus-ui/dist
+          path: packages/nimbus-ui
+
+      - name: Refresh runtime build prerequisite mtimes
+        run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Build, package, and verify adapter
         env:
