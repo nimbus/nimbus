@@ -518,7 +518,7 @@ globalThis.__nimbusInvoke = async function() {
   } catch (error) {
     return {
       status: "error",
-      value: {
+      error: {
         code: error.nimbusHostError && error.nimbusHostError.code,
         message: String(error.message),
         rawTokenPresent: typeof globalThis.__nimbusHostToken !== "undefined",
@@ -549,10 +549,10 @@ globalThis.__nimbusInvoke = async function() {
         invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
             .expect("linked Bun/JSC invocation should report host denial to guest");
     assert_eq!(response["status"], "error");
-    assert_eq!(response["value"]["code"], "host_bridge_denied");
-    assert_eq!(response["value"]["rawTokenPresent"], false);
+    assert_eq!(response["error"]["code"], "host_bridge_denied");
+    assert_eq!(response["error"]["rawTokenPresent"], false);
     assert!(
-        response["value"]["message"]
+        response["error"]["message"]
             .as_str()
             .expect("message should be a string")
             .contains("host policy denied Bun/JSC host call")
@@ -576,7 +576,7 @@ globalThis.__nimbusInvoke = async function() {
   } catch (error) {
     return {
       status: "error",
-      value: {
+      error: {
         code: error.nimbusHostError && error.nimbusHostError.code,
         message: String(error.message),
         rawTokenPresent: typeof globalThis.__nimbusHostToken !== "undefined",
@@ -669,10 +669,10 @@ globalThis.__nimbusInvoke = async function() {
         invoke_bun_bundle_blocking(&runtime, &RuntimeBundle::new(&bun_bundle_path), &request)
             .expect("linked Bun/JSC invocation should report forged context denial");
     assert_eq!(response["status"], "error");
-    assert_eq!(response["value"]["code"], "host_bridge_denied");
-    assert_eq!(response["value"]["rawTokenPresent"], false);
+    assert_eq!(response["error"]["code"], "host_bridge_denied");
+    assert_eq!(response["error"]["rawTokenPresent"], false);
     assert!(
-        response["value"]["message"]
+        response["error"]["message"]
             .as_str()
             .expect("message should be a string")
             .contains("guest supplied tenant identity is not trusted")
