@@ -635,7 +635,7 @@ globalThis.__nimbusInvoke = async function() {
   } catch (error) {
     return {
       status: "error",
-      value: {
+      error: {
         code: error.nimbusHostError && error.nimbusHostError.code,
         message: String(error.message),
         rawTokenPresent: typeof globalThis.__nimbusHostToken !== "undefined",
