@@ -8,9 +8,10 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish pull request 328 after its pointer-compression completion
-repair passes the full required checks. Merge the green tree and tag the merged
-commit as `v0.1.46`. Monitor the tag-driven GitHub, GHCR, machine-os, Homebrew,
+Next action: finish rusty_v8 release run `34068851857` for immutable
+`v150.4.0-nimbus.2` and verify its published assets. Complete the Nimbus
+`v0.1.47` pin and version checks, review and merge the release pull request,
+then tag its merge commit. Monitor the GitHub, GHCR, machine-os, Homebrew,
 and apt release jobs. Keep COPR disabled until its credential and public-project
 contract exist.
 
@@ -112,7 +113,7 @@ renamed, duplicated, or unsupported condition.
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `done` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `done` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `done` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
-| RRC7 | Validate archives, installers, packages, OCI artifacts, and upgrades, then publish the supported release graph. | `in_progress` | All local artifacts pass. The owner authorized the v0.1.46 GitHub, GHCR, Homebrew, and apt release. COPR remains disabled pending its credential and project contract. See `proof/release-readiness-2026-08/rrc7-distribution.md`. |
+| RRC7 | Validate archives, installers, packages, OCI artifacts, and upgrades, then publish the supported release graph. | `in_progress` | All local artifacts pass. The owner authorized the GitHub, GHCR, Homebrew, and apt release. The immutable v0.1.46 tag exposed a Linux V8 compatibility defect before publication; the corrected release is v0.1.47. COPR remains disabled pending its credential and project contract. See `proof/release-readiness-2026-08/rrc7-distribution.md`. |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol-only reviews, and issue the GO or NO-GO report. | `done` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
@@ -655,3 +656,6 @@ release blocker to remain.
 | 2026-09-06 | RRC7 | finding | Every worker completion path now consumes the job and drops its invocation-owned state before it sends the result. API completion now includes host, egress, cancellation, retirement-guard, and request-state release instead of racing the caller. |
 | 2026-09-06 | RRC7 | evidence | The focused host-release regression passes 25 consecutive feature-off runs and the exact pointer-compression run. The complete pointer-compression cage passes 33 of 33 isolated tests. The focused executor suite passes 49 tests with three declared skips. Strict runtime Clippy passes with warnings denied. Formatting and whitespace checks pass. |
 | 2026-09-06 | RRC7 | review | The required GPT-5.6 Sol xhigh pre-PR review of `f15aba4e4` reports no accepted or actionable P0 through P3 finding, with correctness confidence `0.98`. TruffleHog is clean. No Opus 5 or Fable review ran. |
+| 2026-09-06 | RRC7 | evidence | Pull request 328 merged as `67a7f3ffa`, and its replacement CI run `34057323397` passed 50 required jobs with two expected nightly skips. The annotated v0.1.46 tag points to that immutable merge commit. |
+| 2026-09-06 | RRC7 | fail-before | Release run `34060223809` stopped before packaging or publication. The Linux x86_64 Node anchor generator could not link the V8 150.4 archive on Ubuntu 22.04 because the archive, built on Ubuntu 24.04, referenced `__isoc23_strtol`, `__isoc23_strtoll`, `__isoc23_strtoul`, `__isoc23_strtoull`, and `__isoc23_sscanf`. The v0.1.46 tag remains immutable and has no release artifacts. |
+| 2026-09-06 | RRC7 | finding | rusty_v8 pull request 3 moves the x86_64 GNU release lane to Ubuntu 22.04, adds a regression assertion for that compatibility floor, and reserves immutable revision v150.4.0-nimbus.2. Its release-tool tests, formatting, whitespace check, TruffleHog scan, and Sol xhigh pre-PR review pass. Nimbus v0.1.47 is staged to consume the rebuilt archive after its exact digests exist. |
