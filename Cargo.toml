@@ -47,7 +47,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.46"
+version = "0.1.47"
 edition = "2024"
 publish = false
 repository = "https://github.com/nimbus/nimbus"
@@ -274,4 +274,4 @@ deno_websocket = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.
 node_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.5" }
 node_shim = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.5" }
 serde_v8 = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.5" }
-v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v150.4.0-nimbus.1" }
+v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v150.4.0-nimbus.2" }

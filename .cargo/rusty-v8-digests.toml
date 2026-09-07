@@ -6,14 +6,14 @@
 # same pin PR.
 [release]
 repo = "nimbus/rusty_v8"
-tag = "v150.4.0-nimbus.1"
+tag = "v150.4.0-nimbus.2"
 # The fork commit this tag must resolve to (moved-tag guard): the composite
 # fails unless Cargo.lock's v8 package source is exactly
 # git+https://github.com/<repo>?tag=<tag>#<commit>.
-commit = "961a76d0cee88efdecfa9224c519fd153c404b51"
+commit = "a90dfd667605057d648521e36791ef65eb275a9d"
 
 [assets]
-"librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "e91dd26b4c2fa7b4915e065208965ae7ec2f076fd0d4cba202317f1774d15b4e"
-"librusty_v8_ptrcomp_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "edc7a29bb3ea4ff443fcde074219f009c6725cb0b6e36cf787d9fd211a9e4e70"
+"librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "27cf1c9eabae0b98eead004a479d235d850de0ee38a0fd02d079a4e03a1d9f0d"
+"librusty_v8_ptrcomp_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "ddf2ddbdfdceb7d156a2c21a8d47814ec779beb7b79445c2947ba1dcc97f487a"
 "src_binding_simdutf_release_x86_64-unknown-linux-gnu.rs" = "7727826ae479bdb645e807239fb12d1f8e2e23de7a6cf16f5ee592690d1d8506"
 "src_binding_ptrcomp_simdutf_release_x86_64-unknown-linux-gnu.rs" = "7727826ae479bdb645e807239fb12d1f8e2e23de7a6cf16f5ee592690d1d8506"
