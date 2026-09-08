@@ -251,8 +251,12 @@ because the proposed feature branch did not exist remotely. This published
 the reviewed hook before PR #330 merged, contrary to the planned order.
 
 The command used a source-only refspec. The local branch tracks `origin/main`,
-and global `push.default` is `upstream`. The precise mapping cause remains
-unconfirmed. Future pushes must specify both source and destination refs.
+and global `push.default` is `upstream`. A disposable local Git 2.55.0 fixture
+reproduced this mapping without contacting GitHub. With `push.default=simple`,
+the same source-only refspec targeted the feature branch. An explicit source
+and destination also targeted the feature branch under `upstream`.
+Future pushes must specify both source and destination refs.
+
 No published history was rewritten. `git ls-remote` confirmed the exact commit.
 
 The registered tap had no local changes. Its fast-forward update to that
