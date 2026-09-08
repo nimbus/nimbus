@@ -1,0 +1,476 @@
+{
+  "conclusion": "success",
+  "head_sha": "e62e0cf767176a330dee02d211852ac6ec2b6daa",
+  "jobs": [
+    {
+      "completed_at": "2026-09-08T05:29:10Z",
+      "conclusion": "success",
+      "id": 101947406136,
+      "name": "Rust Dependency Audit",
+      "started_at": "2026-09-08T05:24:31Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406136"
+    },
+    {
+      "completed_at": "2026-09-08T05:34:10Z",
+      "conclusion": "success",
+      "id": 101947406206,
+      "name": "Ptrcomp Check",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406206"
+    },
+    {
+      "completed_at": "2026-09-08T05:24:58Z",
+      "conclusion": "success",
+      "id": 101947406230,
+      "name": "Rust Format",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406230"
+    },
+    {
+      "completed_at": "2026-09-08T05:44:27Z",
+      "conclusion": "success",
+      "id": 101947406268,
+      "name": "Bun/JSC Runtime Contract",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406268"
+    },
+    {
+      "completed_at": "2026-09-08T05:37:32Z",
+      "conclusion": "success",
+      "id": 101947406314,
+      "name": "Rust Runtime Tests",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406314"
+    },
+    {
+      "completed_at": "2026-09-08T05:36:55Z",
+      "conclusion": "success",
+      "id": 101947406322,
+      "name": "Rust Clippy",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406322"
+    },
+    {
+      "completed_at": "2026-09-08T05:32:35Z",
+      "conclusion": "success",
+      "id": 101947406326,
+      "name": "Root-only container PEP egress",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406326"
+    },
+    {
+      "completed_at": "2026-09-08T05:25:26Z",
+      "conclusion": "success",
+      "id": 101947406357,
+      "name": "UI Artifacts",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406357"
+    },
+    {
+      "completed_at": "2026-09-08T05:41:42Z",
+      "conclusion": "success",
+      "id": 101947406358,
+      "name": "Ptrcomp Cage",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406358"
+    },
+    {
+      "completed_at": "2026-09-08T05:24:48Z",
+      "conclusion": "success",
+      "id": 101947406360,
+      "name": "Node FaaS Compatibility Metadata",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406360"
+    },
+    {
+      "completed_at": "2026-09-08T05:27:02Z",
+      "conclusion": "success",
+      "id": 101947406492,
+      "name": "JavaScript Build and Test",
+      "started_at": "2026-09-08T05:24:35Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406492"
+    },
+    {
+      "completed_at": "2026-09-08T05:24:58Z",
+      "conclusion": "success",
+      "id": 101947406515,
+      "name": "Proof Helper Checks",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406515"
+    },
+    {
+      "completed_at": "2026-09-08T05:35:58Z",
+      "conclusion": "success",
+      "id": 101947406520,
+      "name": "Node D-Bus Integration",
+      "started_at": "2026-09-08T05:24:30Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406520"
+    },
+    {
+      "completed_at": "2026-09-08T05:24:28Z",
+      "conclusion": "skipped",
+      "id": 101947406828,
+      "name": "Nightly ${{ matrix.surface-label }} Verification Harness",
+      "started_at": "2026-09-08T05:24:28Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406828"
+    },
+    {
+      "completed_at": "2026-09-08T05:24:28Z",
+      "conclusion": "skipped",
+      "id": 101947406937,
+      "name": "Profile-Aware Runtime Crossover",
+      "started_at": "2026-09-08T05:24:29Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406937"
+    },
+    {
+      "completed_at": "2026-09-08T05:35:44Z",
+      "conclusion": "success",
+      "id": 101947587834,
+      "name": "Warm sccache",
+      "started_at": "2026-09-08T05:25:28Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587834"
+    },
+    {
+      "completed_at": "2026-09-08T05:51:21Z",
+      "conclusion": "success",
+      "id": 101947587853,
+      "name": "Rust Test Archive",
+      "started_at": "2026-09-08T05:25:28Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587853"
+    },
+    {
+      "completed_at": "2026-09-08T05:45:08Z",
+      "conclusion": "success",
+      "id": 101947587864,
+      "name": "Nimbus Bin Build",
+      "started_at": "2026-09-08T05:25:29Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587864"
+    },
+    {
+      "completed_at": "2026-09-08T05:36:51Z",
+      "conclusion": "success",
+      "id": 101947587875,
+      "name": "Rust Doctests",
+      "started_at": "2026-09-08T05:25:28Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587875"
+    },
+    {
+      "completed_at": "2026-09-08T05:25:26Z",
+      "conclusion": "skipped",
+      "id": 101947588468,
+      "name": "Linux Release Candidate",
+      "started_at": "2026-09-08T05:25:26Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947588468"
+    },
+    {
+      "completed_at": "2026-09-08T05:45:53Z",
+      "conclusion": "success",
+      "id": 101949516717,
+      "name": "Runtime Verification Harness",
+      "started_at": "2026-09-08T05:35:47Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101949516717"
+    },
+    {
+      "completed_at": "2026-09-08T05:51:29Z",
+      "conclusion": "success",
+      "id": 101951295132,
+      "name": "Examples Verify",
+      "started_at": "2026-09-08T05:45:11Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295132"
+    },
+    {
+      "completed_at": "2026-09-08T05:54:26Z",
+      "conclusion": "success",
+      "id": 101951295141,
+      "name": "Node FaaS Oracle (node22)",
+      "started_at": "2026-09-08T05:45:11Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295141"
+    },
+    {
+      "completed_at": "2026-09-08T05:55:26Z",
+      "conclusion": "success",
+      "id": 101951295164,
+      "name": "Node FaaS Oracle (node26)",
+      "started_at": "2026-09-08T05:45:11Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295164"
+    },
+    {
+      "completed_at": "2026-09-08T05:57:01Z",
+      "conclusion": "success",
+      "id": 101951295186,
+      "name": "Node FaaS Canaries (tooling node24)",
+      "started_at": "2026-09-08T05:45:11Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295186"
+    },
+    {
+      "completed_at": "2026-09-08T05:54:28Z",
+      "conclusion": "success",
+      "id": 101951295195,
+      "name": "Node FaaS Oracle (node24)",
+      "started_at": "2026-09-08T05:45:10Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295195"
+    },
+    {
+      "completed_at": "2026-09-08T06:04:17Z",
+      "conclusion": "success",
+      "id": 101951295204,
+      "name": "Node FaaS Canaries (application node26)",
+      "started_at": "2026-09-08T05:45:10Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295204"
+    },
+    {
+      "completed_at": "2026-09-08T06:05:46Z",
+      "conclusion": "success",
+      "id": 101951295207,
+      "name": "Node FaaS Canaries (application node24)",
+      "started_at": "2026-09-08T05:45:11Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295207"
+    },
+    {
+      "completed_at": "2026-09-08T06:05:39Z",
+      "conclusion": "success",
+      "id": 101951295230,
+      "name": "Node FaaS Canaries (application node22)",
+      "started_at": "2026-09-08T05:45:11Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295230"
+    },
+    {
+      "completed_at": "2026-09-08T05:56:25Z",
+      "conclusion": "success",
+      "id": 101951295231,
+      "name": "Node FaaS Canaries (tooling node22)",
+      "started_at": "2026-09-08T05:45:11Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295231"
+    },
+    {
+      "completed_at": "2026-09-08T05:55:37Z",
+      "conclusion": "success",
+      "id": 101952481904,
+      "name": "Rust Workspace Node-Dependent Tests",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481904"
+    },
+    {
+      "completed_at": "2026-09-08T05:53:39Z",
+      "conclusion": "success",
+      "id": 101952481915,
+      "name": "Elle Serializability Proof",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481915"
+    },
+    {
+      "completed_at": "2026-09-08T05:57:12Z",
+      "conclusion": "success",
+      "id": 101952481945,
+      "name": "Rust Workspace Tests (shard 2/3)",
+      "started_at": "2026-09-08T05:51:24Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481945"
+    },
+    {
+      "completed_at": "2026-09-08T05:55:16Z",
+      "conclusion": "success",
+      "id": 101952481946,
+      "name": "Rust Workspace Tests (shard 1/3)",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481946"
+    },
+    {
+      "completed_at": "2026-09-08T06:00:15Z",
+      "conclusion": "success",
+      "id": 101952481949,
+      "name": "PPSC Seed Farm (2/4)",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481949"
+    },
+    {
+      "completed_at": "2026-09-08T06:01:02Z",
+      "conclusion": "success",
+      "id": 101952481987,
+      "name": "PPSC Seed Farm (3/4)",
+      "started_at": "2026-09-08T05:51:31Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481987"
+    },
+    {
+      "completed_at": "2026-09-08T06:02:29Z",
+      "conclusion": "success",
+      "id": 101952482015,
+      "name": "PPSC Seed Farm (4/4)",
+      "started_at": "2026-09-08T05:53:50Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482015"
+    },
+    {
+      "completed_at": "2026-09-08T05:53:19Z",
+      "conclusion": "success",
+      "id": 101952482020,
+      "name": "Engine Verification Harness (shard 2/2)",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482020"
+    },
+    {
+      "completed_at": "2026-09-08T05:58:40Z",
+      "conclusion": "success",
+      "id": 101952482022,
+      "name": "External Provider Integration Tests (postgres)",
+      "started_at": "2026-09-08T05:54:50Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482022"
+    },
+    {
+      "completed_at": "2026-09-08T05:53:53Z",
+      "conclusion": "success",
+      "id": 101952482045,
+      "name": "Engine Verification Harness (shard 1/2)",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482045"
+    },
+    {
+      "completed_at": "2026-09-08T05:59:14Z",
+      "conclusion": "success",
+      "id": 101952482049,
+      "name": "External Provider Integration Tests (libsql)",
+      "started_at": "2026-09-08T05:53:55Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482049"
+    },
+    {
+      "completed_at": "2026-09-08T05:56:59Z",
+      "conclusion": "success",
+      "id": 101952482057,
+      "name": "Server Verification Harness (shard 1/4)",
+      "started_at": "2026-09-08T05:53:49Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482057"
+    },
+    {
+      "completed_at": "2026-09-08T05:53:48Z",
+      "conclusion": "success",
+      "id": 101952482066,
+      "name": "Server Verification Harness (shard 4/4)",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482066"
+    },
+    {
+      "completed_at": "2026-09-08T06:03:08Z",
+      "conclusion": "success",
+      "id": 101952482081,
+      "name": "PPSC Seed Farm (1/4)",
+      "started_at": "2026-09-08T05:54:29Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482081"
+    },
+    {
+      "completed_at": "2026-09-08T05:56:02Z",
+      "conclusion": "success",
+      "id": 101952482108,
+      "name": "Storage Verification Harness",
+      "started_at": "2026-09-08T05:53:20Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482108"
+    },
+    {
+      "completed_at": "2026-09-08T05:54:48Z",
+      "conclusion": "success",
+      "id": 101952482111,
+      "name": "Rust Workspace Tests (shard 3/3)",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482111"
+    },
+    {
+      "completed_at": "2026-09-08T05:58:47Z",
+      "conclusion": "success",
+      "id": 101952482123,
+      "name": "External Provider Integration Tests (mysql)",
+      "started_at": "2026-09-08T05:54:28Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482123"
+    },
+    {
+      "completed_at": "2026-09-08T05:53:47Z",
+      "conclusion": "success",
+      "id": 101952482162,
+      "name": "Server Verification Harness (shard 3/4)",
+      "started_at": "2026-09-08T05:51:23Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482162"
+    },
+    {
+      "completed_at": "2026-09-08T05:56:08Z",
+      "conclusion": "success",
+      "id": 101952482185,
+      "name": "Server Verification Harness (shard 2/4)",
+      "started_at": "2026-09-08T05:53:40Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482185"
+    },
+    {
+      "completed_at": "2026-09-08T05:51:21Z",
+      "conclusion": "skipped",
+      "id": 101952482599,
+      "name": "Nightly Rust Workspace Tests (shard ${{ matrix.partition }})",
+      "started_at": "2026-09-08T05:51:21Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482599"
+    },
+    {
+      "completed_at": "2026-09-08T06:06:02Z",
+      "conclusion": "success",
+      "id": 101955320033,
+      "name": "Node FaaS Compatibility",
+      "started_at": "2026-09-08T06:05:48Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101955320033"
+    },
+    {
+      "completed_at": "2026-09-08T06:06:08Z",
+      "conclusion": "success",
+      "id": 101955372717,
+      "name": "Rust Gate Summary",
+      "started_at": "2026-09-08T06:06:04Z",
+      "status": "completed",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101955372717"
+    }
+  ],
+  "run_id": 34190502568,
+  "status": "completed"
+}

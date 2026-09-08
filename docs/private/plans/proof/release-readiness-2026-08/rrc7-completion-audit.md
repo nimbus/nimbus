@@ -27,7 +27,7 @@ identities, archive hashes, install commands, reviews, and exclusions.
 | Publish signed apt packages | Run `34187740409` passed all six jobs from Nimbus `c05b17125`; the fresh install verified the pinned public-key fingerprint | Pass |
 | Verify the apt upgrade | Real v0.1.45 packages upgraded through signed public apt to the exact Nimbus, crun, and libkrun tuple | Pass |
 | Verify Homebrew install and upgrade | Real v0.1.45 upgrade and v0.1.47 reinstall passed; public hook commit `661071c` passed direct execution and Sol review | Pass |
-| Repair automatic apt dispatch | Exact regression and Sol review pass for `e62e0cf76`; PR #330 remains open with active CI | Incomplete |
+| Repair automatic apt dispatch | Exact regression and Sol review pass for `e62e0cf76`; main CI passes, but PR #330 awaits Rust CodeQL and merge | Incomplete |
 | Keep review and privacy constraints | Isolated Sol reviews found no remaining actionable issue; no Opus or Fable review ran; additional private plan text stayed local | Pass |
 | Close the control plane | RRC7 remains active and RRC99 awaits the final repair merge | Incomplete |
 
@@ -51,6 +51,9 @@ and `nimbus_oci_vulns.sarif.json`.
 
 ## Next Action
 
-Wait for CI run `34190502568` and CodeQL run `34190502684` to finish.
+CI run `34190502568` passed 48 jobs and declared four expected skips.
+Its full job roster is [rrc7-channel-ci.json](rrc7-channel-ci.json).
+CodeQL run `34190502684` still has an active Rust analysis job.
+
 Merge PR #330 only after its required checks pass. Record the exact merge,
 verify the public workflow repair, and complete RRC99 in a docs-only change.
