@@ -5,7 +5,7 @@ import { EmptyState } from "./empty-state";
 
 /**
  * Router-level not-found component. It renders inside the root `<Outlet/>`,
- * so the sidebar, tenant selector and status bar stay mounted
+ * so the sidebar and tenant selector stay mounted
  * and the operator keeps a working way out of a stale link.
  */
 export function NotFound() {

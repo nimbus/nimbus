@@ -15,7 +15,7 @@
 //   6. /ui/operator/tenants      — diagnostic envelope is reachable (the
 //                               page renders; the empty/error states
 //                               are owned by the route loader)
-//   7. /ui/developer/observability  — disabled `events`/`errors` tab chips
+//   7. /ui/developer/observability  — Logs/Runs page tabs; no Events/Errors chips
 //   8. command palette via ⌘K — listbox + mode list render
 //
 // Fixture seeding:
@@ -255,17 +255,24 @@ test.describe("console smoke walk", () => {
       ),
     ).toBeVisible();
 
-    // 7. Developer Observability — disabled events/errors tab chips
+    // 7. Developer Observability — the Logs/Runs tab strip switches the
+    // sub-view through the URL, and no unbuilt view is named.
     await switchView(page, "developer");
     await navigateTo(page, "observability");
     await expect(page.getByTestId("page-observability")).toBeVisible();
     await expect(page.getByTestId("observability-tabs")).toBeVisible();
-    await expect(
-      page.getByTestId("observability-tab-events-coming-soon"),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("observability-tab-errors-coming-soon"),
-    ).toBeVisible();
+    await expect(page.getByTestId("observability-tab-logs")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await page.getByTestId("observability-tab-runs").click();
+    await expect(page).toHaveURL(/tab=runs/);
+    await expect(page.getByTestId("observability-tab-runs")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByTestId("observability-tab-events")).toHaveCount(0);
+    await expect(page.getByTestId("observability-tab-errors")).toHaveCount(0);
 
     // 8. Command palette via ⌘K
     await page.keyboard.press("Meta+k");

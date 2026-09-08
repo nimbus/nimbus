@@ -54,7 +54,6 @@ export type SubPanelItem<TId extends string = string> = {
   readonly to: string;
   readonly search?: Record<string, unknown>;
   readonly description?: string;
-  readonly disabled?: boolean;
   readonly count?: number | null;
 };
 
@@ -448,7 +447,7 @@ function SheetSubPanel({
               data-testid="sub-panel-overlay"
               data-kind={spec.kind}
               style={{ top: anchor.top, left: anchor.left }}
-              className="fixed bottom-[var(--statusbar-height)] z-50 flex w-64 flex-col border-r border-border-2 bg-bg-panel shadow-lg outline-none"
+              className="fixed bottom-0 z-50 flex w-64 flex-col border-r border-border-2 bg-bg-panel shadow-lg outline-none"
             >
               <SubPanelBody
                 spec={spec}
@@ -623,43 +622,11 @@ function SubPanelStaticList({
         const active = isItemActive(location, item);
         const row = cn(
           "flex h-8 items-center gap-2 rounded-sm border-l-2 border-transparent px-2 text-sm",
-          item.disabled
-            ? "text-text-3"
-            : active
-              ? "bg-bg-hover text-text-1"
-              : "text-text-3 hover:bg-bg-hover hover:text-text-1",
+          active
+            ? "bg-bg-hover text-text-1"
+            : "text-text-3 hover:bg-bg-hover hover:text-text-1",
         );
         const label = <span className="flex-1 truncate">{item.label}</span>;
-        /* A sub-view that does not exist yet is not a link. Rendering it as
-           one and blocking the mouse with `pointer-events-none` left it in the
-           tab order and still activatable by Enter, and because the view is
-           unbuilt the router then dropped the `tab` search param and landed
-           the user on a different view than the one they chose. A span with
-           `aria-disabled` cannot be reached or fired at all, and announces
-           the state rather than only looking dim. The chip carries the state,
-           not opacity: dimmed text over the panel ground fails contrast. */
-        if (item.disabled) {
-          return (
-            <li key={item.id}>
-              <span
-                aria-disabled="true"
-                data-testid={`sub-panel-item-${item.id}`}
-                data-active="false"
-                title={`${item.label} — coming soon`}
-                className={cn(row, "cursor-not-allowed")}
-              >
-                {label}
-                <span
-                  aria-hidden
-                  className="inline-flex items-center rounded-xs border border-border-2 bg-bg-raised px-1.5 py-0.5 text-xs font-medium leading-none text-text-3"
-                  data-testid={`sub-panel-item-${item.id}-coming-soon`}
-                >
-                  coming soon
-                </span>
-              </span>
-            </li>
-          );
-        }
         return (
           <li key={item.id}>
             <Link

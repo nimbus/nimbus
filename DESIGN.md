@@ -301,13 +301,15 @@ owns the cross-tenant feed under `/operator/observability`.)
 
 - Logs: structured records with level, timestamp, request ID, function
   path, tenant, search and filters.
-- Events: ordered domain events (mutation applied, scheduler fired,
-  service restarted) for the active tenant.
-- Traces: per-request waterfall with span timing and inline log lines.
-- Errors: grouped failures with last seen, count, sample traces.
+- Runs: recent function runs with status, duration, and the correlated
+  log lines.
+- Events (UIR20): ordered domain events (mutation applied, scheduler
+  fired, service restarted) for the active tenant.
+- Errors (UIR20): grouped failures with last seen, count, sample traces.
 
-The Observability sub-panel is a **static menu**
-(`Logs` / `Events` / `Traces` / `Errors`).
+Observability has no sub-panel. Its views are page-header tabs
+(`Logs` / `Runs`, driven by `?tab=`), and a tab appears only once its
+page exists: the strip never names a view the operator cannot open.
 
 ### Settings (tenant)
 
@@ -437,13 +439,13 @@ filter bar once the Observability tabs land) narrows to one tenant
 without leaving the Operator console.
 
 - Logs: cross-tenant log stream with the same filter set as Developer.
-- Events: cross-tenant ordered domain events.
-- Traces: cross-tenant per-request waterfall.
-- Errors: cross-tenant grouped failures.
+- Runs: cross-tenant recent function runs.
+- Events (UIR20): cross-tenant ordered domain events.
+- Errors (UIR20): cross-tenant grouped failures.
 
-The Observability sub-panel is a **static menu** (`Logs` / `Events` /
-`Traces` / `Errors`). The same `<ObservabilityShell>` component backs
-both Developer and Operator routes; only the query input differs.
+The Operator page uses the same page-header tab strip as the Developer
+page (`Logs` / `Runs`, driven by `?tab=`) through the shared `PageTabs`
+component; only the query input differs.
 
 ### Settings (server)
 
@@ -501,10 +503,9 @@ sub-panel, and the page.
 │  nav rows    │  or dynamic  │                                          │
 │              │  list)       │                                          │
 │ status · ver │              │                                          │
+│ update row   │              │                                          │
 │ theme · fold │              │                                          │
-├──────────────┴──────────────┴──────────────────────────────────────────┤
-│ Status bar: connection · embed integrity · build · time                │
-└───────────────────────────────────────────────────────────────────────┘
+└──────────────┴──────────────┴──────────────────────────────────────────┘
 ```
 
 ### Sidebar
@@ -583,8 +584,10 @@ Geometry, on desktop:
 Two contributor modes:
 
 - **Static menu** — a fixed list of sub-pages with an active state.
-  Used by Settings (both views), Network, Schedules, Observability.
-  Pattern reference: Convex `SettingsSidebar`.
+  Used by Settings (both views), Network, Schedules. Pattern reference:
+  Convex `SettingsSidebar`. A static menu lists only pages that exist;
+  a page that is not built yet is not a menu item, disabled or
+  otherwise.
 - **Dynamic list** — a resource list fed by a query. Used by Storage
   tables, Compute functions, Tenants, Machines, Services, Files. Pattern
   reference: Convex `DataSidebar`. The search field appears once the
@@ -605,10 +608,12 @@ resolves it at the root. Routes without a sub-panel reserve no space.
 - **Logs / runs** (Observability): timeline table plus correlated
   detail drawer.
 
-### Status bar
+### Page tabs
 
-Persistent at the bottom across both views. Shows connection state,
-embed integrity, build version, current time. Shared component.
+A page with a short, fixed set of views (Observability: Logs / Runs)
+switches between them with a tab strip under its header, driven by the
+`?tab=` search param so every view has an address. `PageTabs` is the
+shared component. A list the operator can grow is a sub-panel instead.
 
 ### Responsive behavior
 
@@ -624,7 +629,7 @@ embed integrity, build version, current time. Shared component.
   holds the menu button and the mascot lockup, and the whole sidebar body
   (scope row, nav groups, theme toggle) opens in a left sheet that closes
   on every navigation. The sidebar has one breakpoint; the tiers above
-  belong to the sub-panel and the status bar.
+  belong to the sub-panel.
 
 ### Do-not list
 
@@ -1076,23 +1081,21 @@ by `⌘K` (macOS) / `Ctrl-K` (Windows/Linux), the palette must:
 Implementation: the shadcn `command` primitive (`cmdk` inside a Base UI
 dialog), mounted at the app root.
 
-### Bottom Status Bar
+### Sidebar Footer
 
-A persistent thin bar (24-28px) anchored to the bottom of the viewport.
-Frees the sidebar from meta-state and gives the operator one always-visible
-read of system identity. Reference: VS Code, Podman Desktop.
+The console has no bottom status bar. What was in it lives in the sidebar
+footer, which is on every screen and reads top to bottom: the connection
+line (state dot, `Connected`, server version), the update row, the theme
+toggle, and the collapse control. The server URL is on the Settings page.
 
-Required slots, left to right:
-
-- Connection state dot + label (`Connected`, `Reconnecting`, `Offline`).
-- Active server URL (monospace, truncated, click-to-copy).
-- Server version + build hash (monospace, click opens release notes).
-- Active tenant (monospace, click opens tenant switcher).
-- Inflight request count (when > 0).
-- Right side: keyboard hints (`⌘K palette` `⌘\\ system tenant lens`).
-
-The bar never wraps. Truncate aggressively; rely on title attributes for
-full values.
+The update row is the one footer row that is not always there. It appears
+under the connection line when the server is behind the latest release
+(`Update to 0.2.0`, pending dot, opens the upgrade popover), follows the
+upgrade while it runs (`Updating to 0.2.0…`), holds `Updated to 0.2.0`
+for a moment after, and is absent when the console is current. In the rail
+the row is its dot with a tooltip; the button keeps its label for a screen
+reader. The three tones read from the shared state palette (`pending`,
+`starting`, `ready`), never a private table.
 
 ### Resource Breadcrumb
 
@@ -1121,11 +1124,8 @@ the resource header), the chip is permanent rather than hover-only.
 
 ### Toast / Notification Queue
 
-Use `sonner` for transient feedback. Anchor: bottom-right, offset by
-`calc(var(--statusbar-height) + 12px)` so the toast stack clears the
-fixed status bar at every viewport. The same `--statusbar-height` token
-drives the status bar height, so the gap stays correct if either changes.
-Rules:
+Use `sonner` for transient feedback. Anchor: bottom-right, with the
+default offset; nothing fixed sits under the toast stack. Rules:
 
 - Mutations confirm via toast (`Started machine-01`), not via modal.
 - Errors show until dismissed; never auto-disappear.

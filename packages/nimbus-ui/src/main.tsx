@@ -14,7 +14,7 @@ const router = createRouter({
   basepath: window.location.pathname.startsWith("/ui") ? "/ui" : undefined,
   defaultPreload: "intent",
   // Both render inside the root `<Outlet/>`, so a missing route or a crashing
-  // view degrades the content pane only: nav, tenant selector and status bar
+  // view degrades the content pane only: sidebar and tenant selector
   // stay mounted and clickable.
   defaultNotFoundComponent: NotFound,
   defaultErrorComponent: RouteError,

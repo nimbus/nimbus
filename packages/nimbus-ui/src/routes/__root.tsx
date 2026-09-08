@@ -18,7 +18,6 @@ import { KeyboardContract } from "../shell/keyboard-contract";
 import { viewFromPathname } from "../shell/nav-entries";
 import { MobileTopBar } from "../shell/sidebar/mobile-sheet";
 import { Sidebar } from "../shell/sidebar/sidebar";
-import { StatusBar } from "../shell/status-bar";
 import { SubPanelLayout, SubPanelProvider } from "../shell/sub-panel";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
@@ -95,7 +94,6 @@ function ShellLayout() {
                   </main>
                 </SubPanelLayout>
               </div>
-              <StatusBar />
             </div>
             <CommandPalette />
             <SystemTenantLens />
@@ -105,7 +103,6 @@ function ShellLayout() {
           <Toaster
             ref={setToastRegion}
             position="bottom-right"
-            offset="calc(var(--statusbar-height) + 12px)"
             visibleToasts={VISIBLE_TOAST_LIMIT}
             // Never expire a toast on sonner's clock. See ToastLifetimes: this is
             // half of the split, and the half that keeps an error on screen.

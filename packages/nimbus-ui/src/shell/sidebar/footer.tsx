@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import { type ConnState, StateDot } from "../../components/state-dot";
 import { useUiStore } from "../../store/ui-store";
 import { RailTooltip, rowClass } from "./rail";
+import { UpgradeRow } from "./upgrade-row";
 
 type SystemStatus = {
   version?: string | null;
@@ -16,10 +17,11 @@ const CONN_LABELS: Record<ConnState, string> = {
   offline: "Offline",
 };
 
-// SidebarFooter holds the three things that are true of the whole console
-// and not of any page: whether it is connected and to which version, which
-// theme it is in, and how wide the sidebar is. The sheet omits the collapse
-// control because a sheet has no rail to collapse to.
+// SidebarFooter holds the things that are true of the whole console and not
+// of any page: whether it is connected and to which version, whether a newer
+// version is waiting, which theme it is in, and how wide the sidebar is. The
+// sheet omits the collapse control because a sheet has no rail to collapse
+// to.
 export function SidebarFooter({
   collapsed,
   inSheet,
@@ -41,6 +43,7 @@ export function SidebarFooter({
       }
     >
       <ConnectionStatus collapsed={collapsed} />
+      <UpgradeRow collapsed={collapsed} />
       <ThemeToggle collapsed={collapsed} inSheet={inSheet} />
       {inSheet ? null : (
         <CollapseButton

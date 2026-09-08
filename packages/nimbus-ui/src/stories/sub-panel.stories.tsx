@@ -94,30 +94,10 @@ function FakeStaticList({
         const active = item.id === activeId;
         const row = cn(
           "flex h-8 items-center gap-2 rounded-sm border-l-2 border-transparent px-2 text-sm no-underline",
-          item.disabled
-            ? "text-text-3"
-            : active
-              ? "bg-bg-hover text-text-1"
-              : "text-text-3 hover:bg-bg-hover hover:text-text-1",
+          active
+            ? "bg-bg-hover text-text-1"
+            : "text-text-3 hover:bg-bg-hover hover:text-text-1",
         );
-        if (item.disabled) {
-          return (
-            <li key={item.id}>
-              <span
-                aria-disabled="true"
-                className={cn(row, "cursor-not-allowed")}
-              >
-                <span className="flex-1 truncate">{item.label}</span>
-                <span
-                  aria-hidden
-                  className="inline-flex items-center rounded-xs border border-border-2 bg-bg-raised px-1.5 py-0.5 text-xs font-medium leading-none text-text-3"
-                >
-                  coming soon
-                </span>
-              </span>
-            </li>
-          );
-        }
         return (
           <li key={item.id}>
             <a
@@ -195,12 +175,6 @@ const STATIC_SPEC: StaticSubPanelSpec = {
     { id: "tenants", label: "Tenants", to: "/operator/tenants", count: 4 },
     { id: "tables", label: "Tables", to: "/operator/tables", count: 17 },
     { id: "documents", label: "Documents", to: "/operator/documents" },
-    {
-      id: "indexes",
-      label: "Indexes",
-      to: "/operator/indexes",
-      disabled: true,
-    },
   ],
 };
 

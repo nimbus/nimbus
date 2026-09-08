@@ -70,7 +70,6 @@ vi.mock("../shell/keyboard-contract", () => ({ KeyboardContract: () => null }));
 vi.mock("../shell/nav-entries", () => ({
   viewFromPathname: () => "developer",
 }));
-vi.mock("../shell/status-bar", () => ({ StatusBar: () => null }));
 vi.mock("../shell/system-tenant-lens", () => ({
   SystemTenantLens: () => null,
 }));

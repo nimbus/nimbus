@@ -41,6 +41,17 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: () => ({ version: "0.1.0" }),
 }));
 
+vi.mock("../../hooks/use-staleness", () => ({
+  useStalenessContext: () => ({
+    snapshot: { state: "hidden", info: null, targetLatest: null },
+    isLocal: false,
+    hasDesktopBridge: false,
+    openPopover: vi.fn(),
+    closePopover: vi.fn(),
+    startUpgrade: vi.fn(),
+    copyCommand: vi.fn(),
+  }),
+}));
 vi.mock("../../hooks/use-tenant-list", () => ({
   useTenantList: () => ({
     kind: "loaded",

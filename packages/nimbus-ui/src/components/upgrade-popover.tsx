@@ -11,6 +11,12 @@ type UpgradePopoverProps = {
   onUpdate: () => Promise<void> | void;
   onCopyCommand: () => Promise<void> | void;
   trigger: React.ReactNode;
+  // The trigger button is the caller's row: the sidebar footer and the
+  // Settings page each hand in the classes that make it look like its
+  // neighbours, and a label that names the action when the row shows only
+  // a dot.
+  triggerClassName?: string;
+  triggerLabel?: string;
 };
 
 export function UpgradePopover({
@@ -22,6 +28,8 @@ export function UpgradePopover({
   onUpdate,
   onCopyCommand,
   trigger,
+  triggerClassName = "inline-flex items-center gap-1.5 rounded-xs px-1 font-mono text-xs hover:bg-bg-raised focus-visible:bg-bg-raised",
+  triggerLabel,
 }: UpgradePopoverProps) {
   const remote = !isLocal;
   const canRunHere = isLocal && hasDesktopBridge && !!info.upgrade.command;
@@ -36,9 +44,10 @@ export function UpgradePopover({
         render={
           <button
             type="button"
-            data-testid="status-version-trigger"
+            data-testid="upgrade-popover-trigger"
             aria-haspopup="dialog"
-            className="inline-flex items-center gap-1.5 rounded-xs px-1 font-mono text-xs hover:bg-bg-raised focus-visible:bg-bg-raised"
+            aria-label={triggerLabel}
+            className={triggerClassName}
           >
             {trigger}
           </button>

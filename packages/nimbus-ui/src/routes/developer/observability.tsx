@@ -1,17 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { cn } from "@/lib/utils";
+import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "../../components/page-header";
-import { CategoryPill } from "../../components/pill";
-import {
-  type StaticSubPanelSpec,
-  useContributeSubPanel,
-} from "../../shell/sub-panel";
+import { PageTabs } from "../../components/page-tabs";
 import { LogsTab } from "./observability/-logs";
 import { RunsTab } from "./observability/-runs";
 import {
-  ACTIVE_OBSERVABILITY_TABS,
-  type ActiveObservabilityTab,
-  DISABLED_OBSERVABILITY_TABS,
+  OBSERVABILITY_TABS,
   type ObservabilitySearch,
   type ObservabilityTab,
   parseBool,
@@ -34,40 +27,11 @@ export const Route = createFileRoute("/developer/observability")({
   component: ObservabilityPage,
 });
 
-const TAB_LABELS: Record<ObservabilityTab, string> = {
-  logs: "Logs",
-  runs: "Runs",
-  events: "Events",
-  errors: "Errors",
-};
-
-export const OBSERVABILITY_SUB_PANEL = {
-  kind: "static",
-  title: "Observability",
-  items: [
-    ...ACTIVE_OBSERVABILITY_TABS.map((id) => ({
-      id,
-      label: TAB_LABELS[id],
-      to: "/developer/observability" as const,
-      search: { tab: id },
-      disabled: false as const,
-    })),
-    ...DISABLED_OBSERVABILITY_TABS.map((id) => ({
-      id,
-      label: TAB_LABELS[id],
-      to: "/developer/observability" as const,
-      search: { tab: id },
-      disabled: true as const,
-    })),
-  ],
-} as const satisfies StaticSubPanelSpec<ObservabilityTab>;
-
 export type { ObservabilityTab } from "./observability/-types";
 
 function ObservabilityPage() {
-  useContributeSubPanel(OBSERVABILITY_SUB_PANEL);
   const search = Route.useSearch();
-  const tab: ActiveObservabilityTab = search.tab ?? "logs";
+  const tab: ObservabilityTab = search.tab ?? "logs";
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
@@ -83,7 +47,7 @@ function ObservabilityPage() {
   );
 }
 
-function Header({ tab }: { tab: ActiveObservabilityTab }) {
+function Header({ tab }: { tab: ObservabilityTab }) {
   return (
     // `shrink-0` on both this column and the tab strip: the page column is
     // `overflow-hidden`, so anything the flexbox compresses here is clipped
@@ -104,74 +68,13 @@ function Header({ tab }: { tab: ActiveObservabilityTab }) {
         }
         testid="observability-header"
       />
-      <nav
-        aria-label="Observability tabs"
-        className="flex shrink-0 gap-px self-start overflow-hidden rounded-md border border-border-2 bg-bg-raised"
-        data-testid="observability-tabs"
-      >
-        {OBSERVABILITY_SUB_PANEL.items.map((item) =>
-          item.disabled ? (
-            <DisabledTab key={item.id} id={item.id} label={item.label} />
-          ) : (
-            <ActiveTabLink
-              key={item.id}
-              id={item.id}
-              label={item.label}
-              active={tab === item.id}
-            />
-          ),
-        )}
-      </nav>
-    </div>
-  );
-}
-
-function DisabledTab({ id, label }: { id: ObservabilityTab; label: string }) {
-  return (
-    <span
-      aria-disabled="true"
-      data-testid={`observability-tab-${id}`}
-      title={`${label} — coming soon`}
-      className={cn(
-        "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium",
-        "cursor-not-allowed text-text-3",
-      )}
-    >
-      {label}
-      {/* The neutral pill carries the disabled state at the smallest
-          sanctioned step; a muted wrapper alone did not read as disabled. */}
-      <CategoryPill
-        aria-hidden
-        value="coming soon"
-        data-testid={`observability-tab-${id}-coming-soon`}
+      <PageTabs
+        label="Observability tabs"
+        tabs={OBSERVABILITY_TABS}
+        active={tab}
+        testid="observability-tabs"
+        itemTestid="observability-tab"
       />
-    </span>
-  );
-}
-
-function ActiveTabLink({
-  id,
-  label,
-  active,
-}: {
-  id: ActiveObservabilityTab;
-  label: string;
-  active: boolean;
-}) {
-  return (
-    <Link
-      to="/developer/observability"
-      search={(prev) => ({ ...prev, tab: id })}
-      data-testid={`observability-tab-${id}`}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "px-3 py-1.5 text-xs font-medium",
-        active
-          ? "bg-bg-panel text-text-1"
-          : "text-text-3 hover:bg-bg-panel hover:text-text-1",
-      )}
-    >
-      {label}
-    </Link>
+    </div>
   );
 }
