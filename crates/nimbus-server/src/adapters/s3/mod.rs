@@ -6,6 +6,8 @@
 
 pub mod listener;
 
+pub(crate) use listener::EngineS3Resolver;
+
 use std::fmt::{Debug, Formatter};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;

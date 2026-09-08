@@ -110,7 +110,7 @@ view.
 | Services | Long-running placement (this tenant's view) | Compose-declared services in the active tenant, lifecycle state, endpoints, restart policy |
 | Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
 | Storage | Schema-aware data | Tables, document browser, schema tab, indexes tab, query builder |
-| Files | Opaque bytes / blob storage | Buckets, object browser, presigned URLs (placeholder in this baseline) |
+| Files | Opaque bytes / blob storage | Buckets, object browser, upload, preview, download over the console session |
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
 | Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding (all planned; the page is one empty state until the first tenant-scoped setting has an API) |
 
@@ -331,19 +331,35 @@ Nimbus document browser with adapter-specific labels and type renderers.
 
 ### Files (Developer)
 
-Files owns opaque-byte / S3-compatible blob storage for the active
-tenant. Ships as a placeholder surface in this baseline; the routes and
-sub-panel are real, the underlying feature is not implemented yet.
+Files owns opaque-byte / S3-compatible object storage for the active
+tenant. It reads and writes through the console's own object route
+family on `/api/tenants/{tenant}/objects`, which rides the console
+session like every other console write; the S3 listener is a separate
+front door with its own credentials, which the console never holds.
 
-- Buckets / namespaces list with object count and total bytes.
-- Object browser with prefix navigation, last-modified / size columns,
-  upload, download, copy presigned URL.
-- Object detail drawer: metadata, content type, lifecycle policy if any.
-
-The Files sub-panel is a **dynamic list** of buckets.
-
-The placeholder state honors the token system and renders an honest
-"Not yet implemented" line — no fake bucket data, no synthesized objects.
+- The sub-panel is a **dynamic list** of buckets with object count and
+  total bytes. A bucket exists once it holds an object; **New bucket**
+  names one and opens its (empty) listing so the first upload lands
+  there.
+- The page lists one prefix level on the shared `DataTable`: Name,
+  Size, Type, Modified, and a row menu. Keys that continue past the next
+  slash fold into a folder row. The bucket, the prefix, and the open
+  object all live in the address (`?bucket=&prefix=&object=`). A
+  breadcrumb above the table walks the prefix.
+- Upload is a drop anywhere on the listing or the Upload chooser. Each
+  file becomes one whole object keyed by its name under the current
+  prefix; an upload strip shows progress, the result, or the server's
+  reason for a refusal. The route takes whole objects up to 16 MiB and
+  never creates a tenant.
+- The object sheet holds the facts (size, type, modified, etag), a
+  preview for images and text under 256 KiB, Download, Copy link, and
+  Delete. The link is the console's object route, so it answers for a
+  signed-in console session only. There are no presigned URLs.
+- Downloads and previews come back with `content-security-policy:
+  sandbox` and `nosniff`, so a stored page cannot script the console.
+- The listing is read on demand (there is no live query over objects)
+  and again after every write the console makes. A listing carries up
+  to 1000 keys under the prefix and says when it stopped short.
 
 ### Observability (Developer)
 

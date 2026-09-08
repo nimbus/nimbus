@@ -3,6 +3,9 @@ use std::sync::Arc;
 use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
 
+use nimbus_object_storage::ObjectStorageConfig;
+
+use crate::adapters::s3::EngineS3Resolver;
 use crate::config::transport::TransportConfig;
 use crate::error_envelope::StructuredHttpError;
 use crate::local_server::LocalServerPolicyError;
@@ -25,6 +28,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) node_services: NodeServicesConfig,
     pub(crate) transport: TransportConfig,
     pub(crate) runtime: RuntimeGovernorConfig,
+    pub(crate) object_storage: ObjectStorageConfig,
 }
 
 /// Shared application state.
@@ -41,6 +45,10 @@ pub(crate) struct AppStateConfig {
 pub(crate) struct AppState {
     compute: ComputeState,
     transport: TransportConfig,
+    /// Per-tenant object byte and metadata planes for the native object
+    /// routes. Built over the same placement config the S3 listener uses,
+    /// so both surfaces read and write one object space per tenant.
+    objects: EngineS3Resolver,
 }
 
 impl std::ops::Deref for AppState {
@@ -60,9 +68,11 @@ impl AppState {
             node_services,
             transport,
             runtime,
+            object_storage,
         } = config;
         workload.authenticate_node_services(&node_services);
         let (engine, workload_composition) = workload.into_compute();
+        let objects = EngineS3Resolver::new(engine.clone(), object_storage);
         let compute = ComputeState::from_config(ComputeStateConfig {
             engine,
             workload_composition,
@@ -71,7 +81,15 @@ impl AppState {
             node_services,
             runtime,
         });
-        Self { compute, transport }
+        Self {
+            compute,
+            transport,
+            objects,
+        }
+    }
+
+    pub(crate) fn objects(&self) -> &EngineS3Resolver {
+        &self.objects
     }
 
     pub(crate) fn listen_addr(&self) -> Option<std::net::SocketAddr> {

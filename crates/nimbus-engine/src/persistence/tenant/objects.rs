@@ -1,5 +1,5 @@
 use nimbus_core::Result;
-use nimbus_storage::{ObjectManifest, ObjectMetaRead, ObjectMultipartUpload};
+use nimbus_storage::{ObjectBucketSummary, ObjectManifest, ObjectMetaRead, ObjectMultipartUpload};
 
 use super::TenantPersistence;
 
@@ -25,6 +25,10 @@ impl TenantPersistence {
         match_tenant_persistence!(self, |store| {
             store.list_object_manifests(bucket, prefix, limit)
         })
+    }
+
+    pub(crate) fn list_object_buckets(&self) -> Result<Vec<ObjectBucketSummary>> {
+        match_tenant_persistence!(self, |store| store.list_object_buckets())
     }
 
     pub(crate) fn get_multipart_upload(

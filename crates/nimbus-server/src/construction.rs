@@ -228,6 +228,17 @@ impl ServeOptions {
         self.with_router_options(|options| options.with_convex_registry(convex_registry))
     }
 
+    /// Placement policy for the object byte plane behind the native object
+    /// routes. Pass the same config to [`Self::with_s3`] through
+    /// `S3Config::with_object_storage_config` so both surfaces share one
+    /// object space per tenant.
+    pub fn with_object_storage_config(
+        self,
+        object_storage: nimbus_object_storage::ObjectStorageConfig,
+    ) -> Self {
+        self.with_router_options(|options| options.with_object_storage_config(object_storage))
+    }
+
     pub fn with_convex_registry_for_silo(
         self,
         silo: &nimbus_core::TenantId,

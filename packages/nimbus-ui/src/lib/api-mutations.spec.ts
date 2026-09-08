@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   documents,
   machines,
+  objects,
   schedules,
   schema,
   services,
@@ -377,5 +378,74 @@ describe("api-mutations request-fidelity", () => {
     );
     await system.rotateToken("old-token");
     expect(auth).toBe("Bearer old-token");
+  });
+});
+
+describe("objects", () => {
+  it("lists buckets and objects under a prefix on the native object route", async () => {
+    let listUrl = "";
+    server.use(
+      http.get("*/api/tenants/:t/objects", () =>
+        HttpResponse.json({
+          buckets: [{ bucket: "assets", objectCount: 2, totalBytes: 12 }],
+        }),
+      ),
+      http.get("*/api/tenants/:t/objects/:bucket", ({ request }) => {
+        listUrl = request.url;
+        return HttpResponse.json({
+          bucket: "assets",
+          prefix: "docs/",
+          objects: [],
+          truncated: false,
+        });
+      }),
+    );
+    const buckets = await objects.buckets("demo");
+    expect(buckets).toEqual({
+      ok: true,
+      data: { buckets: [{ bucket: "assets", objectCount: 2, totalBytes: 12 }] },
+    });
+    const listing = await objects.list("demo", "assets", "docs/", 500);
+    expect(listing.ok).toBe(true);
+    expect(listUrl).toMatch(/\/api\/tenants\/demo\/objects\/assets\?/);
+    expect(new URL(listUrl).searchParams.get("prefix")).toBe("docs/");
+    expect(new URL(listUrl).searchParams.get("limit")).toBe("500");
+  });
+
+  it("keeps the slashes of a key in the address and escapes the rest", () => {
+    expect(objects.url("demo", "assets", "docs/hello world.txt")).toBe(
+      "/api/tenants/demo/objects/assets/docs/hello%20world.txt",
+    );
+    expect(objects.url("demo", "a b", "x#y.txt", { download: true })).toBe(
+      "/api/tenants/demo/objects/a%20b/x%23y.txt?download=1",
+    );
+  });
+
+  it("reads an object as text and reports a missing one by status", async () => {
+    server.use(
+      http.get("*/api/tenants/:t/objects/:bucket/hello.txt", () =>
+        HttpResponse.text("hello", { status: 200 }),
+      ),
+      http.get("*/api/tenants/:t/objects/:bucket/gone.txt", () =>
+        HttpResponse.json({ error: { message: "missing" } }, { status: 404 }),
+      ),
+    );
+    expect(await objects.readText("demo", "assets", "hello.txt")).toEqual({
+      ok: true,
+      data: "hello",
+    });
+    const gone = await objects.readText("demo", "assets", "gone.txt");
+    expect(gone.ok).toBe(false);
+    if (!gone.ok) expect(gone.status).toBe(404);
+  });
+
+  it("deletes one object", async () => {
+    server.use(
+      http.delete("*/api/tenants/:t/objects/:bucket/docs/a.txt", () =>
+        HttpResponse.json(null, { status: 204 }),
+      ),
+    );
+    const result = await objects.remove("demo", "assets", "docs/a.txt");
+    expect(result.ok).toBe(true);
   });
 });

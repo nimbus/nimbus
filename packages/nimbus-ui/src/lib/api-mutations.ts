@@ -305,3 +305,159 @@ export const system = {
     return apiFetch(`/api/system/shutdown`, { method: "POST" });
   },
 };
+
+// One bucket as the native object route reports it: the aggregate of the
+// tenant's manifests under that name. A bucket exists only while it holds
+// at least one object.
+export type ObjectBucket = {
+  bucket: string;
+  objectCount: number;
+  totalBytes: number;
+};
+
+// One object's manifest facts (`ObjectSummaryResponse` in
+// crates/nimbus-server/src/http/objects.rs). `etag` is the MD5 hex of the
+// bytes; `contentType` is what the writer declared, or null.
+export type ObjectSummary = {
+  bucket: string;
+  key: string;
+  size: number;
+  contentType: string | null;
+  etag: string;
+  lastModifiedMillis: number;
+};
+
+export type ObjectListing = {
+  bucket: string;
+  prefix: string;
+  objects: ObjectSummary[];
+  // The bucket holds more keys under this prefix than the page carried.
+  truncated: boolean;
+};
+
+export type UploadProgress = { loaded: number; total: number };
+
+// A key keeps its slashes in the address (the route captures the rest of
+// the path) while every other reserved byte is escaped per segment.
+function objectPath(tenant: string, bucket: string, key: string): string {
+  const segments = key.split("/").map(enc).join("/");
+  return `/api/tenants/${enc(tenant)}/objects/${enc(bucket)}/${segments}`;
+}
+
+// Whole-object storage over the native, session-authenticated route family.
+// The S3 listener is a separate front door with its own credentials, which
+// the console never holds; these routes ride the session cookie like every
+// other console write. Uploads go through XMLHttpRequest because `fetch`
+// reports no upload progress. Downloads are plain navigations to `url()`.
+export const objects = {
+  buckets(tenant: string): Promise<ApiResult<{ buckets: ObjectBucket[] }>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/objects`, { method: "GET" });
+  },
+  list(
+    tenant: string,
+    bucket: string,
+    prefix: string,
+    limit?: number,
+  ): Promise<ApiResult<ObjectListing>> {
+    const params = new URLSearchParams();
+    if (prefix) params.set("prefix", prefix);
+    if (limit !== undefined) params.set("limit", String(limit));
+    const query = params.toString();
+    return apiFetch(
+      `/api/tenants/${enc(tenant)}/objects/${enc(bucket)}${query ? `?${query}` : ""}`,
+      { method: "GET" },
+    );
+  },
+  url(
+    tenant: string,
+    bucket: string,
+    key: string,
+    options: { download?: boolean } = {},
+  ): string {
+    return `${objectPath(tenant, bucket, key)}${options.download ? "?download=1" : ""}`;
+  },
+  // The bytes of one object as text, for the preview. The caller bounds the
+  // size before asking; the route serves the whole object.
+  async readText(
+    tenant: string,
+    bucket: string,
+    key: string,
+  ): Promise<ApiResult<string>> {
+    let response: Response;
+    try {
+      response = await fetch(objectPath(tenant, bucket, key), {
+        credentials: "include",
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error: `Request failed: ${response.status}`,
+      };
+    }
+    return { ok: true, data: await response.text() };
+  },
+  upload(
+    tenant: string,
+    bucket: string,
+    key: string,
+    body: Blob,
+    options: {
+      contentType?: string;
+      onProgress?: (progress: UploadProgress) => void;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<ApiResult<ObjectSummary>> {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", objectPath(tenant, bucket, key));
+      xhr.withCredentials = true;
+      if (options.contentType) {
+        xhr.setRequestHeader("content-type", options.contentType);
+      }
+      xhr.upload.onprogress = (event) => {
+        if (!options.onProgress) return;
+        options.onProgress({
+          loaded: event.loaded,
+          total: event.lengthComputable ? event.total : body.size,
+        });
+      };
+      xhr.onerror = () => resolve({ ok: false, error: "Network error" });
+      xhr.onabort = () => resolve({ ok: false, error: "Upload cancelled" });
+      xhr.onload = () => {
+        let parsed: unknown = null;
+        try {
+          parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+        } catch {
+          parsed = null;
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ ok: true, data: parsed as ObjectSummary });
+        } else {
+          resolve({
+            ok: false,
+            status: xhr.status,
+            error: errorMessage(parsed, xhr.status),
+          });
+        }
+      };
+      options.signal?.addEventListener("abort", () => xhr.abort(), {
+        once: true,
+      });
+      xhr.send(body);
+    });
+  },
+  remove(
+    tenant: string,
+    bucket: string,
+    key: string,
+  ): Promise<ApiResult<unknown>> {
+    return apiFetch(objectPath(tenant, bucket, key), { method: "DELETE" });
+  },
+};

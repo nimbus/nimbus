@@ -585,6 +585,19 @@ impl ObjectMultipartUpload {
     }
 }
 
+/// One bucket as the manifest table knows it: the bucket name plus the
+/// count and byte total of the manifests that name it.
+///
+/// Buckets have no row of their own. A bucket exists exactly while at least
+/// one manifest names it, so this summary is derived by a scan over the
+/// manifest table rather than read from a bucket catalogue.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectBucketSummary {
+    pub bucket: String,
+    pub object_count: u64,
+    pub total_bytes: u64,
+}
+
 /// Metadata-plane read capability for named object manifests and multipart
 /// uploads.
 ///
@@ -609,6 +622,8 @@ pub trait ObjectMetaRead {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectManifest>>;
+    /// Every bucket that at least one manifest names, sorted by bucket name.
+    fn list_object_buckets(&self) -> Result<Vec<ObjectBucketSummary>>;
     fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>>;
     fn list_multipart_uploads(
         &self,
@@ -1072,6 +1087,33 @@ where
         manifests.truncate(limit);
     }
     Ok(manifests)
+}
+
+pub(super) fn list_object_buckets_for_store<S>(store: &S) -> Result<Vec<ObjectBucketSummary>>
+where
+    S: TenantRangeScan,
+{
+    let table = object_manifest_table()?;
+    let mut check_cancel = || Ok(());
+    let mut buckets: std::collections::BTreeMap<String, ObjectBucketSummary> =
+        std::collections::BTreeMap::new();
+    for document in store
+        .scan_table_matching_with_filters_cancellable(&table, &[], &mut check_cancel, |_| Ok(true))?
+        .iter()
+    {
+        let manifest = ObjectManifest::from_document(document)?;
+        let summary =
+            buckets
+                .entry(manifest.bucket.clone())
+                .or_insert_with(|| ObjectBucketSummary {
+                    bucket: manifest.bucket.clone(),
+                    object_count: 0,
+                    total_bytes: 0,
+                });
+        summary.object_count += 1;
+        summary.total_bytes = summary.total_bytes.saturating_add(manifest.size);
+    }
+    Ok(buckets.into_values().collect())
 }
 
 /// Test-only direct write; see [`put_object_manifest_direct`].

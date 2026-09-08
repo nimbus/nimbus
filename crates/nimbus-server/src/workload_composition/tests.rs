@@ -670,6 +670,7 @@ async fn complete_composition_builds_one_exact_managed_authority_without_eager_e
             .with_service_manager(Arc::clone(&fixture.service_manager)),
         transport: TransportConfig::default(),
         runtime: RuntimeGovernorConfig::default(),
+        object_storage: nimbus_object_storage::ObjectStorageConfig::default(),
     });
     assert!(Arc::ptr_eq(&state.engine, &fixture.engine));
     assert!(Arc::ptr_eq(
@@ -1174,6 +1175,7 @@ fn app_state_rejects_crossed_service_manager_before_authority_or_provider_effect
                 .with_service_manager(crossed_service_manager),
             transport: TransportConfig::default(),
             runtime: RuntimeGovernorConfig::default(),
+            object_storage: nimbus_object_storage::ObjectStorageConfig::default(),
         });
     }));
 
@@ -1201,6 +1203,7 @@ fn protocol_only_profile_owns_no_workload_authority() {
         node_services: NodeServicesConfig::default(),
         transport: TransportConfig::default(),
         runtime: RuntimeGovernorConfig::default(),
+        object_storage: nimbus_object_storage::ObjectStorageConfig::default(),
     });
 
     assert!(state.network_manager().is_none());

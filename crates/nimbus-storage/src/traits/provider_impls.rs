@@ -37,15 +37,16 @@ use crate::{PostgresProvider, PostgresReadSnapshot, PostgresTenantStore};
 
 use super::object_metadata::{
     get_multipart_upload_for_store, get_object_manifest_for_store,
-    list_multipart_uploads_for_store, list_object_manifests_for_store,
+    list_multipart_uploads_for_store, list_object_buckets_for_store,
+    list_object_manifests_for_store,
 };
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use super::{CommitterLease, CommitterLeaseStore};
 use super::{
     CommitterLeaseResult, ControlPlaneUsage, DurableJournal, KeyProviderSurface,
-    MaterializedRebuild, ObjectManifest, ObjectMetaRead, ObjectMultipartUpload, ResourcePathScan,
-    ResourcePathSnapshot, SchedulerStore, StorageEngine, TenantLifecycle, TenantPointRead,
-    TenantPointWrite, TenantRangeScan,
+    MaterializedRebuild, ObjectBucketSummary, ObjectManifest, ObjectMetaRead,
+    ObjectMultipartUpload, ResourcePathScan, ResourcePathSnapshot, SchedulerStore, StorageEngine,
+    TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
 };
 
 // Only the remote providers hold a committer lease; the embedded backends have
@@ -721,6 +722,10 @@ macro_rules! impl_object_meta_read {
                       limit: usize,
                   ) -> Result<Vec<ObjectManifest>> {
                       list_object_manifests_for_store(self, bucket, prefix, limit)
+                  }
+
+                  fn list_object_buckets(&self) -> Result<Vec<ObjectBucketSummary>> {
+                      list_object_buckets_for_store(self)
                   }
 
                   fn get_multipart_upload(
