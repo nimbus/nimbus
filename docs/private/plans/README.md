@@ -80,6 +80,16 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
+- `nimbus-ui-rebuild-plan.html` - `active`. Owns the operator console rebuild
+  in `packages/nimbus-ui`: the Starport-derived stack (shadcn `base-nova` on
+  Base UI, TanStack Router, Table, Virtual, Charts), one neutral-plus-amber
+  palette, Geist type, the single-sidebar shell with a resizable sub-panel, the
+  face-only mascot, every page rebuilt in place, the thirteen findings of the
+  2026-09-08 design review, and the five server contracts behind the
+  onboarding, observability, storage-editor, Files, Sandboxes, and Deploys
+  gaps. It does not block release-readiness or distribution. Band UI in
+  `architecture-review-2026-07-plan.md` stays closed history; new console
+  work routes here.
 
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
