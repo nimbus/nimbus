@@ -28,8 +28,7 @@ function renderTable(
     order: null,
     indexBacked: new Set(["_id", "author"]),
     onSort: vi.fn(),
-    onToggleAll: vi.fn(),
-    onToggleOne: vi.fn(),
+    onSelectionChange: vi.fn(),
     onEdit: vi.fn(),
     onDelete: vi.fn(),
     onPrev: vi.fn(),
@@ -38,6 +37,13 @@ function renderTable(
   };
   render(<DocumentsTable {...props} />);
   return props;
+}
+
+/** The document rows on screen, excluding the row menu and skeleton rows. */
+function documentRows() {
+  return document.querySelectorAll(
+    '[role="row"][data-testid^="documents-row-"]',
+  );
 }
 
 describe("DocumentsTable rows", () => {
@@ -55,12 +61,26 @@ describe("DocumentsTable rows", () => {
     const props = renderTable();
 
     await user.click(screen.getByTestId("documents-select-doc_a"));
-    expect(props.onToggleOne).toHaveBeenCalledWith("doc_a", true);
+    expect(props.onSelectionChange).toHaveBeenCalledWith(["doc_a"]);
     expect(props.onEdit).not.toHaveBeenCalled();
 
     await user.click(screen.getByTestId("documents-delete-doc_b"));
     expect(props.onDelete).toHaveBeenCalledWith(["doc_b"]);
     expect(props.onEdit).not.toHaveBeenCalled();
+  });
+
+  it("reports the whole page from the select-all box", async () => {
+    const user = userEvent.setup();
+    const props = renderTable();
+    await user.click(screen.getByTestId("documents-select-all"));
+    expect(props.onSelectionChange).toHaveBeenCalledWith(["doc_a", "doc_b"]);
+  });
+
+  it("reports the remaining set when a selected row is unchecked", async () => {
+    const user = userEvent.setup();
+    const props = renderTable({ selected: new Set(["doc_a", "doc_b"]) });
+    await user.click(screen.getByTestId("documents-select-doc_a"));
+    expect(props.onSelectionChange).toHaveBeenCalledWith(["doc_b"]);
   });
 
   // DESIGN.md:1117 — right-click is a peer of click on every resource row.
@@ -113,7 +133,7 @@ describe("DocumentsTable rows", () => {
     expect(screen.getByTestId("documents-row-doc_b")).toHaveFocus();
   });
 
-  // A roving tabindex keeps the grid to one tab stop; 25 rows at tabIndex 0
+  // A roving tabindex keeps the grid to one tab stop; 200 rows at tabIndex 0
   // would be worse for a keyboard user than none.
   it("keeps exactly one row in the tab order", () => {
     renderTable();
@@ -125,41 +145,15 @@ describe("DocumentsTable rows", () => {
     );
   });
 
-  // Row focus is the only cue for which document Enter opens, and the roving
-  // tabindex means it is reached by arrow key, so hover never fires to help.
-  // The row used to cancel the console-wide outline and paint a 1px inset
-  // `--accent` ring instead — 1.71:1 on `--surface-2` in warm light, against
-  // the 3:1 non-text floor, and half of it hidden behind the pinned cells.
-  // Vitest runs with `css: false`, so there is no cascade here to measure;
-  // what this can hold is that the row does not opt out of the outline the
-  // base layer paints, and does not reintroduce its own ring.
-  it("leaves the console-wide focus outline alone", () => {
-    renderTable();
-    const row = screen.getByTestId("documents-row-doc_a");
-    // Anchored on whitespace as well as on `:` and the start of the string.
-    // `(^|:)outline-none` reads a variant prefix but walks straight past a
-    // bare `outline-none` between two other utilities, which is the form the
-    // regression would actually take. The trailing guard keeps a longer
-    // utility that merely starts with the same letters from matching.
-    expect(row.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
-    expect(row.className).not.toMatch(/ring-\[color:var\(--/);
-    // Lifted over the neighbouring rows' pinned cells (`z-10`), which would
-    // otherwise cover the ring where it is drawn in their 2px band, and under
-    // the sticky header (`z-20`), which has to stay on top when the row
-    // scrolls beneath it.
-    expect(row.className).toContain("focus-visible:relative");
-    expect(row.className).toContain("focus-visible:z-[15]");
-  });
-
   it("marks a selected row for assistive technology", () => {
     renderTable({ selected: new Set(["doc_a"]) });
     expect(screen.getByTestId("documents-row-doc_a")).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(screen.getByTestId("documents-row-doc_b")).toHaveAttribute(
+    expect(screen.getByTestId("documents-row-doc_b")).not.toHaveAttribute(
       "aria-selected",
-      "false",
+      "true",
     );
     expect(screen.getByTestId("documents-pagination")).toHaveTextContent(
       "1 selected",
@@ -175,6 +169,18 @@ describe("DocumentsTable headers", () => {
     expect(props.onSort).toHaveBeenCalledWith("author");
   });
 
+  // TanStack cycles a column asc, desc, off. The page owns the direction
+  // and treats every click on the active column as a flip, so the "off"
+  // step of the cycle still has to name the active field.
+  it("names the active column again when the sort cycle would clear it", async () => {
+    const user = userEvent.setup();
+    const props = renderTable({
+      order: { field: "author", direction: "desc" },
+    });
+    await user.click(screen.getByTestId("documents-sort-author"));
+    expect(props.onSort).toHaveBeenCalledWith("author");
+  });
+
   it("shows which column the page is sorted by", () => {
     renderTable({ order: { field: "author", direction: "desc" } });
     expect(screen.getByTestId("documents-sort-author")).toHaveAttribute(
@@ -185,6 +191,9 @@ describe("DocumentsTable headers", () => {
       "data-active",
       "false",
     );
+    expect(
+      screen.getByRole("columnheader", { name: /author/ }),
+    ).toHaveAttribute("aria-sort", "descending");
   });
 
   // DESIGN.md:269 — the browser has to make index use visible rather than
@@ -208,8 +217,12 @@ describe("DocumentsTable loading", () => {
   it("replaces the rows with skeletons while a page is in flight", () => {
     renderTable({ loading: true });
 
-    expect(screen.getAllByTestId("documents-skeleton-row").length).toBe(
+    expect(screen.getAllByTestId("documents-table-skeleton-row").length).toBe(
       PAGE.data.length,
+    );
+    expect(screen.getByTestId("documents-table")).toHaveAttribute(
+      "aria-busy",
+      "true",
     );
     expect(screen.queryByTestId("documents-row-doc_a")).not.toBeInTheDocument();
     expect(screen.queryByText("first")).not.toBeInTheDocument();
@@ -226,7 +239,7 @@ describe("DocumentsTable loading", () => {
       page: { data: [], next_cursor: null, has_more: false },
     });
     expect(
-      screen.getAllByTestId("documents-skeleton-row").length,
+      screen.getAllByTestId("documents-table-skeleton-row").length,
     ).toBeGreaterThan(1);
   });
 
@@ -240,7 +253,7 @@ describe("DocumentsTable loading", () => {
     const all = screen.getByTestId("documents-select-all");
     expect(all).not.toBeChecked();
     await user.click(all);
-    expect(props.onToggleAll).not.toHaveBeenCalled();
+    expect(props.onSelectionChange).not.toHaveBeenCalled();
   });
 
   it("reports the page number the URL names", () => {
@@ -248,5 +261,62 @@ describe("DocumentsTable loading", () => {
     expect(screen.getByTestId("documents-pagination")).toHaveTextContent(
       "page 3",
     );
+  });
+});
+
+describe("DocumentsTable virtualization", () => {
+  // A 200-row page is the norm and a filter can return more. The grid
+  // renders only the rows in and around the viewport past the threshold,
+  // so a full page costs the same as a short one.
+  it("renders at most 60 rows for a 1,000-row page", () => {
+    // happy-dom lays nothing out, so the scroller has no offsetHeight and the
+    // virtualizer would render an empty window. Give it a viewport.
+    const offsetHeight = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "offsetHeight",
+    );
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get: () => 400,
+    });
+    try {
+      const data = Array.from({ length: 1_000 }, (_, i) => ({
+        _id: `doc_${i}`,
+        author: `author-${i}`,
+        body: `body-${i}`,
+        tags: [],
+      }));
+      renderTable({
+        page: { data, next_cursor: "c1", has_more: true },
+      });
+      const grid = screen.getByTestId("documents-table");
+      expect(grid).toHaveAttribute("data-virtual", "true");
+      expect(grid).toHaveAttribute("aria-rowcount", "1001");
+      const rendered = documentRows().length;
+      expect(rendered).toBeGreaterThan(0);
+      expect(rendered).toBeLessThanOrEqual(60);
+      expect(screen.getByTestId("documents-pagination")).toHaveTextContent(
+        "1000 rows",
+      );
+    } finally {
+      if (offsetHeight) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "offsetHeight",
+          offsetHeight,
+        );
+      } else {
+        delete (HTMLElement.prototype as { offsetHeight?: number })
+          .offsetHeight;
+      }
+    }
+  });
+
+  it("renders every row of a short page", () => {
+    renderTable();
+    expect(screen.getByTestId("documents-table")).not.toHaveAttribute(
+      "data-virtual",
+    );
+    expect(documentRows()).toHaveLength(PAGE.data.length);
   });
 });

@@ -109,7 +109,7 @@ view.
 | Compute | Request-scoped execution | Functions list, function detail, function runner, runs |
 | Services | Long-running placement (this tenant's view) | Compose-declared services in the active tenant, lifecycle state, endpoints, restart policy |
 | Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
-| Storage | Schema-aware data | Tables, document browser, schema panel, indexes, query builder |
+| Storage | Schema-aware data | Tables, document browser, schema tab, indexes tab, query builder |
 | Files | Opaque bytes / blob storage | Buckets, object browser, presigned URLs (placeholder in this baseline) |
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
 | Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding |
@@ -285,11 +285,14 @@ view assumes a tenant is selected.
 - Document actions: insert new document, edit in a drawer with schema
   validation preview, delete with confirmation, and bulk delete only after
   explicit selection.
-- Schema panel for optional Nimbus schemas and adapter-derived schema views,
-  including create, edit, delete, and validation error display.
-- Indexes panel with name, fields, status, usage when available, create/drop
+- Schema tab for optional Nimbus schemas and adapter-derived schema views,
+  including create, edit, delete, and validation error display. The tab is
+  a full-width view of the table page, addressed by `?tab=schema`, not a
+  side inspector beside the grid.
+- Indexes tab with name, fields, status, usage when available, create/drop
   actions where implemented, and warnings about write cost or unsupported
-  index types.
+  index types. Addressed by `?tab=indexes`; read-only until the index API
+  exists.
 - Query builder that makes index use visible and refuses unbounded scans where
   the backend would be unsafe.
 
@@ -992,7 +995,16 @@ Tables are the default shape for resources:
 - Row click opens detail; row checkbox selects for bulk actions.
 - Inline actions appear on hover and are also reachable by keyboard.
 - Empty state stays compact and includes the next useful action.
-- Loading state preserves table geometry with skeleton rows.
+- Loading state preserves table geometry with skeleton rows. `DataTable`
+  draws them itself (`loading`, `skeletonRows`) under the real header, so a
+  page never swaps a centered label for the table.
+- Past 100 rows `DataTable` virtualizes: only the rows in and around the
+  viewport are in the DOM (`data-virtual="true"`, `aria-rowcount` for the
+  full count). A 200-row page costs the same as a short one.
+- Right-click on a row is a peer of click. `DataTable` reports the row and
+  an anchor (`onRowContextMenu`); Shift+F10 and the ContextMenu key raise
+  the same menu from the keyboard. Arrow keys move focus between rows, one
+  row at a time in the tab order, and Enter or Space activates.
 
 ### Forms And Editors
 
@@ -1062,7 +1074,10 @@ Do not place more than two categorical badges on the same row.
 
 ### Data Browser
 
-- Use cursor pagination, not unbounded fetches.
+- Use cursor pagination, not unbounded fetches. One page is 200 documents,
+  drawn by the virtualized `DataTable`; sorting stays server-side
+  (`manualSorting`) and every click on the active column flips its
+  direction.
 - Show active filters and sort order as editable chips.
 - Document values open in a drawer with JSON/BSON/Firestore type fidelity.
 - Inline editing is allowed only when the backend supports the exact mutation

@@ -27,20 +27,23 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatCount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 // DataTable is the one dense table. Every list in the console is this
 // component with a column plan, so sorting, resizing, selection, row
-// activation, and the empty row look and behave the same on every page.
-// Above VIRTUAL_THRESHOLD rows the body is virtualized on the table's own
-// scroller, so a 10,000-row list costs what a 30-row list costs.
+// activation, the context menu, the loading rows, and the empty row look and
+// behave the same on every page. Above VIRTUAL_THRESHOLD rows the body is
+// virtualized on the table's own scroller, so a 10,000-row list costs what a
+// 30-row list costs.
 
 export const dataTableFeatures = tableFeatures({
   rowSortingFeature,
@@ -69,6 +72,7 @@ export function dataColumns<TData extends RowData>() {
 
 export const ROW_HEIGHT = 40;
 export const VIRTUAL_THRESHOLD = 100;
+export const SKELETON_ROWS = 8;
 
 // selectionColumn is the checkbox column a bulk toolbar needs. It sorts
 // nothing, resizes nothing, and names each box after the row.
@@ -102,6 +106,15 @@ export function selectionColumn<TData extends RowData>(
   };
 }
 
+// RowAnchor is where a row's context menu opens: the pointer position for a
+// right-click, or the row's own box for a keyboard request, plus the row
+// element focus returns to when the menu closes.
+export type RowAnchor = {
+  x: number;
+  y: number;
+  element: HTMLElement | null;
+};
+
 export type DataTableProps<TData extends RowData> = {
   columns: ReadonlyArray<DataColumn<TData>>;
   data: ReadonlyArray<TData>;
@@ -110,18 +123,31 @@ export type DataTableProps<TData extends RowData> = {
   ariaLabel: string;
   sorting?: SortingState;
   onSortingChange?: OnChangeFn<SortingState>;
+  // manualSorting reports sort changes without reordering rows, for a
+  // table whose order the server decides.
+  manualSorting?: boolean;
   rowSelection?: RowSelectionState;
   onRowSelectionChange?: OnChangeFn<RowSelectionState>;
   // onRowActivate fires on click, Enter, or Space on a row, unless the
   // event started inside a control the row contains.
   onRowActivate?: (row: TData) => void;
+  // onRowContextMenu fires on right-click, Shift+F10, or the ContextMenu
+  // key on a row. The table anchors the request; the page draws the menu.
+  onRowContextMenu?: (row: TData, anchor: RowAnchor) => void;
   emptyMessage?: ReactNode;
+  // loading keeps the header and paints skeletonRows placeholder rows in
+  // the body, so a page in flight moves nothing.
+  loading?: boolean;
+  skeletonRows?: number;
   // virtual forces the virtualizer on or off; by default it turns on past
   // VIRTUAL_THRESHOLD rows.
   virtual?: boolean;
   // maxHeight bounds the scroller; omit it when the parent bounds it.
   maxHeight?: number | string;
   testid?: string;
+  // rowTestid names one row for a test; by default every row is
+  // `${testid}-row`.
+  rowTestid?: (row: TData) => string;
   className?: string;
   rowClassName?: (row: TData) => string | undefined;
 };
@@ -148,6 +174,8 @@ export function isInnerControl(target: EventTarget | null, row: HTMLElement) {
   return false;
 }
 
+const SKELETON_WIDTHS = ["62%", "84%", "46%", "72%"];
+
 export function DataTable<TData extends RowData>({
   columns,
   data,
@@ -155,13 +183,18 @@ export function DataTable<TData extends RowData>({
   ariaLabel,
   sorting: sortingProp,
   onSortingChange,
+  manualSorting = false,
   rowSelection: rowSelectionProp,
   onRowSelectionChange,
   onRowActivate,
+  onRowContextMenu,
   emptyMessage = "Nothing to show.",
+  loading = false,
+  skeletonRows = SKELETON_ROWS,
   virtual,
   maxHeight,
   testid,
+  rowTestid,
   className,
   rowClassName,
 }: DataTableProps<TData>) {
@@ -184,6 +217,7 @@ export function DataTable<TData extends RowData>({
     onColumnSizingChange: setColumnSizing,
     columnResizeMode: "onChange",
     enableRowSelection: true,
+    manualSorting,
     // The first click sorts ascending for every column. TanStack's automatic
     // direction reads the filtered row model, which is empty here because
     // the filter feature is not loaded, and it would fall back to descending.
@@ -201,6 +235,34 @@ export function DataTable<TData extends RowData>({
     enabled: isVirtual,
   });
 
+  // Rows take focus only when the page can do something with a focused
+  // row. One row at a time is in the tab order: the arrow keys move
+  // between rows, and Tab leaves the table after one stop rather than one
+  // stop per row.
+  const focusable = Boolean(onRowActivate || onRowContextMenu);
+  const [focusIndex, setFocusIndex] = useState(0);
+  const activeIndex = Math.max(0, Math.min(focusIndex, rowModel.length - 1));
+  const rowElements = useRef(new Map<number, HTMLDivElement>());
+  const pendingFocus = useRef<number | null>(null);
+  // A virtualized target row may not be mounted when the key is pressed,
+  // so the focus lands after the render that scrolls it into the window.
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (target === null) return;
+    const element = rowElements.current.get(target);
+    if (!element) return;
+    pendingFocus.current = null;
+    element.focus();
+  });
+  const moveFocus = (from: number, delta: number) => {
+    const next = Math.max(0, Math.min(from + delta, rowModel.length - 1));
+    if (next === from) return;
+    setFocusIndex(next);
+    pendingFocus.current = next;
+    if (isVirtual) virtualizer.scrollToIndex(next);
+    rowElements.current.get(next)?.focus();
+  };
+
   const headerGroups = table.getHeaderGroups();
   const template = table
     .getAllLeafColumns()
@@ -215,10 +277,38 @@ export function DataTable<TData extends RowData>({
   const activate = (row: Row<DataTableFeatures, TData>) => {
     onRowActivate?.(row.original);
   };
+  const requestMenu = (
+    row: Row<DataTableFeatures, TData>,
+    index: number,
+    point?: { x: number; y: number },
+  ) => {
+    const element = rowElements.current.get(index) ?? null;
+    const rect = element?.getBoundingClientRect();
+    onRowContextMenu?.(row.original, {
+      x: point?.x ?? (rect ? rect.left + 24 : 0),
+      y: point?.y ?? (rect ? rect.bottom : 0),
+      element,
+    });
+  };
   const onRowKeyDown = (
     event: KeyboardEvent<HTMLDivElement>,
     row: Row<DataTableFeatures, TData>,
+    index: number,
   ) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveFocus(index, event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (
+      onRowContextMenu &&
+      (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey))
+    ) {
+      event.preventDefault();
+      requestMenu(row, index);
+      return;
+    }
+    if (!onRowActivate) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     if (isInnerControl(event.target, event.currentTarget)) return;
     event.preventDefault();
@@ -231,6 +321,14 @@ export function DataTable<TData extends RowData>({
     if (isInnerControl(event.target, event.currentTarget)) return;
     activate(row);
   };
+  const onRowContext = (
+    event: MouseEvent<HTMLDivElement>,
+    row: Row<DataTableFeatures, TData>,
+    index: number,
+  ) => {
+    event.preventDefault();
+    requestMenu(row, index, { x: event.clientX, y: event.clientY });
+  };
 
   const renderRow = (
     row: Row<DataTableFeatures, TData>,
@@ -239,15 +337,27 @@ export function DataTable<TData extends RowData>({
   ) => (
     <div
       key={row.id}
+      ref={(element) => {
+        if (element) rowElements.current.set(index, element);
+        else rowElements.current.delete(index);
+      }}
       role="row"
       aria-rowindex={index + 2}
       aria-selected={row.getIsSelected() || undefined}
-      data-testid={testid ? `${testid}-row` : undefined}
+      data-testid={
+        rowTestid?.(row.original) ?? (testid ? `${testid}-row` : undefined)
+      }
       data-row-id={row.id}
-      tabIndex={onRowActivate ? 0 : undefined}
+      tabIndex={focusable ? (index === activeIndex ? 0 : -1) : undefined}
+      onFocus={focusable ? () => setFocusIndex(index) : undefined}
       onClick={onRowActivate ? (event) => onRowClick(event, row) : undefined}
+      onContextMenu={
+        onRowContextMenu
+          ? (event) => onRowContext(event, row, index)
+          : undefined
+      }
       onKeyDown={
-        onRowActivate ? (event) => onRowKeyDown(event, row) : undefined
+        focusable ? (event) => onRowKeyDown(event, row, index) : undefined
       }
       className={cn(
         "grid items-center border-b border-border-1 outline-none last:border-b-0 focus-visible:border-accent",
@@ -269,12 +379,40 @@ export function DataTable<TData extends RowData>({
     </div>
   );
 
+  const renderSkeletonRow = (index: number) => (
+    <div
+      // biome-ignore lint/suspicious/noArrayIndexKey: a placeholder has no identity beyond its position
+      key={index}
+      role="row"
+      aria-rowindex={index + 2}
+      aria-hidden="true"
+      data-testid={testid ? `${testid}-skeleton-row` : undefined}
+      className="grid items-center border-b border-border-1 last:border-b-0"
+      style={{ ...gridStyle, height: ROW_HEIGHT }}
+    >
+      {table.getAllLeafColumns().map((column, columnIndex) => (
+        <div key={column.id} role="cell" className="min-w-0 px-3">
+          <Skeleton
+            className="h-3"
+            style={{
+              width:
+                SKELETON_WIDTHS[(index + columnIndex) % SKELETON_WIDTHS.length],
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+
+  const rowCount = loading ? skeletonRows : rowModel.length;
+
   return (
     <div
       role="table"
       aria-label={ariaLabel}
-      aria-rowcount={rowModel.length + 1}
+      aria-rowcount={rowCount + 1}
       aria-colcount={table.getAllLeafColumns().length}
+      aria-busy={loading || undefined}
       data-testid={testid}
       data-virtual={isVirtual ? "true" : undefined}
       className={cn(
@@ -360,12 +498,16 @@ export function DataTable<TData extends RowData>({
           role="rowgroup"
           data-testid={testid ? `${testid}-body` : undefined}
           style={
-            isVirtual
+            isVirtual && !loading
               ? { height: virtualizer.getTotalSize(), position: "relative" }
               : undefined
           }
         >
-          {rowModel.length === 0 ? (
+          {loading ? (
+            Array.from({ length: skeletonRows }, (_, index) =>
+              renderSkeletonRow(index),
+            )
+          ) : rowModel.length === 0 ? (
             <div role="row" aria-rowindex={2}>
               <div
                 role="cell"

@@ -4,7 +4,7 @@ import { documents } from "../../lib/api-mutations";
 import type { PageResponse } from "../../lib/types/table";
 import type { DocumentFilter, DocumentOrder } from "./table-query";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 200;
 
 export type DocumentQuery = {
   filters: DocumentFilter[];
