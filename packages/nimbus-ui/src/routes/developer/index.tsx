@@ -77,6 +77,7 @@ function OverviewPage() {
     bundleId: null,
     functionPath: null,
     status: null,
+    fingerprint: null,
     tenantId: null,
     limit: 200,
   }) as AnyDoc[] | undefined;

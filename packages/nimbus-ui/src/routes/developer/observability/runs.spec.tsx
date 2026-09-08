@@ -172,6 +172,7 @@ describe("RunsTab read states", () => {
     expect(props.setSearchAction).toHaveBeenCalledWith({
       status: undefined,
       functionPath: undefined,
+      fingerprint: undefined,
     });
   });
 
@@ -198,6 +199,7 @@ describe("RunsTab table", () => {
       bundleId: null,
       functionPath: "messages:send",
       status: "error",
+      fingerprint: null,
       limit: 200,
     });
   });

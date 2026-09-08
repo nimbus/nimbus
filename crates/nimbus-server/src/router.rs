@@ -764,6 +764,7 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
         .route("/api/console/source", get(http::module_source))
         .route("/api/console/graph", get(http::call_graph))
         .route("/api/console/logs", get(http::search_logs))
+        .route("/api/console/errors", get(http::error_groups))
         .route("/debug/runtime/metrics", get(http::runtime_diagnostics))
         .route(
             "/debug/tenants/{tenant_id}/consistency",

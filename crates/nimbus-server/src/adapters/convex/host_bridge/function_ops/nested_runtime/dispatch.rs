@@ -162,7 +162,8 @@ impl ConvexHostBridge {
                 request.function_name
             ))
             .map_err(runtime_error_to_core)?;
-        let response = invoke_runtime_bundle_on_worker_with_egress_gateway(
+        let span = self.start_function_span(name);
+        let result = invoke_runtime_bundle_on_worker_with_egress_gateway(
             runtime_lane.executor().as_ref(),
             runtime_lane.policy(),
             Arc::new(self.retargeted_for_nested_invocation(request.kind.clone(), name)),
@@ -179,10 +180,10 @@ impl ConvexHostBridge {
             ),
         )
         .await
-        .map_err(runtime_error_to_core)?;
-        let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)
-            .map_err(|error| Error::Serialization(error.to_string()))?;
-        envelope.into_core_result()
+        .map_err(runtime_error_to_core)
+        .and_then(parse_nested_runtime_response);
+        self.finish_span(span, result.is_ok());
+        result
     }
 
     pub(in crate::adapters::convex) fn invoke_nested_runtime_function_cancellable(
@@ -206,7 +207,8 @@ impl ConvexHostBridge {
                 request.function_name
             ))
             .map_err(runtime_error_to_core)?;
-        let response = invoke_runtime_bundle_blocking_with_egress_gateway(
+        let span = self.start_function_span(name);
+        let result = invoke_runtime_bundle_blocking_with_egress_gateway(
             runtime_lane.executor().as_ref(),
             runtime_lane.policy(),
             Arc::new(self.retargeted_for_nested_invocation(request.kind.clone(), name)),
@@ -222,10 +224,10 @@ impl ConvexHostBridge {
                 self.registry().runtime_bundle_provenance(),
             ),
         )
-        .map_err(runtime_error_to_core)?;
-        let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)
-            .map_err(|error| Error::Serialization(error.to_string()))?;
-        envelope.into_core_result()
+        .map_err(runtime_error_to_core)
+        .and_then(parse_nested_runtime_response);
+        self.finish_span(span, result.is_ok());
+        result
     }
 
     fn prepare_nested_runtime_invocation(
@@ -280,4 +282,10 @@ impl ConvexHostBridge {
             },
         })
     }
+}
+
+fn parse_nested_runtime_response(response: Value) -> Result<Value, Error> {
+    let envelope: ConvexRuntimeResponseEnvelope = serde_json::from_value(response)
+        .map_err(|error| Error::Serialization(error.to_string()))?;
+    envelope.into_core_result()
 }

@@ -292,3 +292,121 @@ async fn console_log_search_scopes_to_the_tenant_and_matches_text() {
         .expect("bad tenant request should send");
     assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn console_error_groups_fold_failed_runs_and_scope_to_the_tenant() {
+    let temp = tempdir().expect("tempdir should build");
+    let paths = sample_paths(temp.path());
+    let current = load_or_create_local_admin_token(&paths).expect("token should exist");
+    let local_server_security = Arc::new(LocalServerSecurityState::new(paths, current.clone()));
+    let fixture = EngineFixture::new(|path| nimbus_engine::Engine::new(path));
+    let engine = fixture.engine();
+    let acme = nimbus_core::TenantId::new("acme").expect("tenant id");
+    let beta = nimbus_core::TenantId::new("beta").expect("tenant id");
+    let thrown = nimbus_core::Error::function_thrown(
+        "messages:send",
+        "Message text must not be empty (at messages:12)",
+        None,
+    );
+    let thrown_display = thrown.to_string();
+    let missing = nimbus_core::Error::InvalidInput("text is required".to_string());
+    let missing_display = missing.to_string();
+    for (tenant, error, display, started_at) in [
+        (&acme, &thrown, &thrown_display, 1_000),
+        (&acme, &thrown, &thrown_display, 2_000),
+        (&beta, &missing, &missing_display, 3_000),
+    ] {
+        nimbus_system::record_run_async(
+            &engine,
+            nimbus_system::RunRecord {
+                tenant_id: tenant,
+                function_path: "messages:send",
+                kind: "mutation",
+                started_at,
+                duration_ms: 4.0,
+                status: "error",
+                error: Some(nimbus_system::RunError::from_core_error(error, display)),
+                spans: Vec::new(),
+            },
+        )
+        .await
+        .expect("run should record");
+    }
+    nimbus_system::record_run_async(
+        &engine,
+        nimbus_system::RunRecord {
+            tenant_id: &acme,
+            function_path: "messages:send",
+            kind: "mutation",
+            started_at: 4_000,
+            duration_ms: 1.0,
+            status: "ok",
+            error: None,
+            spans: Vec::new(),
+        },
+    )
+    .await
+    .expect("run should record");
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(engine)
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .get(server.http_url("/api/console/errors?limit=50"))
+        .bearer_auth(&current.token)
+        .send()
+        .await
+        .expect("error groups request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    let page: serde_json::Value = response.json().await.expect("page should parse");
+    assert_eq!(page["scanned"], 3, "{page}");
+    assert_eq!(page["exhaustive"], true, "{page}");
+    assert_eq!(page["limit"], 50, "{page}");
+    let groups = page["groups"]
+        .as_array()
+        .expect("groups should be an array");
+    assert_eq!(groups.len(), 2, "{page}");
+    assert_eq!(groups[0]["tenantId"], "beta", "newest group first: {page}");
+    assert_eq!(groups[0]["class"], "invalid_input", "{page}");
+    assert_eq!(groups[0]["count"], 1, "{page}");
+    assert_eq!(groups[1]["tenantId"], "acme", "{page}");
+    assert_eq!(groups[1]["class"], "function_thrown", "{page}");
+    assert_eq!(groups[1]["count"], 2, "{page}");
+    assert_eq!(groups[1]["firstSeen"], 1_000, "{page}");
+    assert_eq!(groups[1]["lastSeen"], 2_000, "{page}");
+    assert_eq!(groups[1]["location"], "messages:12", "{page}");
+    assert_eq!(groups[1]["functionPath"], "messages:send", "{page}");
+    assert!(
+        groups[1]["latestRunId"].as_str().is_some(),
+        "the newest run id opens the drill-in: {page}"
+    );
+
+    let scoped = server
+        .client()
+        .get(server.http_url("/api/console/errors?tenant=acme"))
+        .bearer_auth(&current.token)
+        .send()
+        .await
+        .expect("scoped request should send");
+    assert_eq!(scoped.status(), StatusCode::OK);
+    let page: serde_json::Value = scoped.json().await.expect("page should parse");
+    let groups = page["groups"]
+        .as_array()
+        .expect("groups should be an array");
+    assert_eq!(groups.len(), 1, "{page}");
+    assert_eq!(groups[0]["tenantId"], "acme", "{page}");
+    assert_eq!(page["limit"], nimbus_system::ERROR_GROUP_LIMIT, "{page}");
+
+    let rejected = server
+        .client()
+        .get(server.http_url("/api/console/errors?tenant=not%20a%20tenant"))
+        .bearer_auth(&current.token)
+        .send()
+        .await
+        .expect("bad tenant request should send");
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+}

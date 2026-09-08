@@ -634,6 +634,7 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
     bundleId: null,
     functionPath: fn.path ?? null,
     status: null,
+    fingerprint: null,
     tenantId: null,
     limit: 50,
   }) as RunDoc[] | undefined;

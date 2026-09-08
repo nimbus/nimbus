@@ -27,21 +27,23 @@ pub use records::SystemTenantStatusEvidenceWriter;
 pub use records::ensure_system_tenant_async;
 pub(crate) use records::record_table_state_for_generation_async;
 pub use records::{
-    LOG_PAGE_LIMIT, LOG_SCAN_WINDOW, LogPage, LogQuery, RunError, RunRecord,
-    SystemConnectivityObservationError, SystemDeploymentFunctionRecordInput,
-    SystemDeploymentHttpRouteRecordInput, SystemDeploymentRecordInput, SystemEvent,
-    SystemPortListenerObservation, SystemPublishedEndpointObservation,
-    SystemServiceConnectivityObservation, SystemUnixListenerObservation,
-    claim_server_listener_projection_async, delete_cron_job_state_async,
-    delete_machine_state_async, delete_scheduled_job_state_async, delete_subscription_state_async,
-    endpoint_protocol, prepare_system_tenant_async, query_log_lines_async,
-    record_deployment_state_async, record_machine_state_async,
+    ERROR_GROUP_LIMIT, ERROR_SCAN_WINDOW, ErrorGroup, ErrorGroupPage, ErrorGroupQuery,
+    LOG_PAGE_LIMIT, LOG_SCAN_WINDOW, LogPage, LogQuery, OpenSpan, RUN_SPAN_LIMIT, RunError,
+    RunRecord, RunSpan, RunSpanRecorder, SystemConnectivityObservationError,
+    SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,
+    SystemDeploymentRecordInput, SystemEvent, SystemPortListenerObservation,
+    SystemPublishedEndpointObservation, SystemServiceConnectivityObservation,
+    SystemUnixListenerObservation, claim_server_listener_projection_async,
+    delete_cron_job_state_async, delete_machine_state_async, delete_scheduled_job_state_async,
+    delete_subscription_state_async, endpoint_protocol, error_class, error_fingerprint,
+    normalize_error_message, prepare_system_tenant_async, query_error_groups_async,
+    query_log_lines_async, record_deployment_state_async, record_machine_state_async,
     record_port_listener_observation_async, record_run_async,
     record_scheduled_job_result_state_async, record_service_connectivity_observation_async,
     record_source_package_state_async, record_subscription_delivery_async,
     record_subscription_error_async, record_subscription_state_async, record_system_event_async,
     record_table_state_async, record_unix_listener_observation_async, sandbox_backend,
-    sandbox_status, sync_scheduler_state_for_tenant_async,
+    sandbox_status, span_kind_for_operation, sync_scheduler_state_for_tenant_async,
 };
 pub use records::{
     ModuleSource, SystemModuleRecordInput, SystemSourcePackageRecordInput,

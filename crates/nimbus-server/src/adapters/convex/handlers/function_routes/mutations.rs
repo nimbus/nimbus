@@ -38,7 +38,8 @@ pub(crate) async fn mutation(
                 state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
-            );
+            )
+            .with_span_recorder(trace.recorder());
             invoke_named_convex_function_async_cancellable(
                 &context,
                 InvocationRequest {

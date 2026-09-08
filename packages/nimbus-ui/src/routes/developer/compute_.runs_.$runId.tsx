@@ -1,6 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useMemo } from "react";
-import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
@@ -9,9 +8,10 @@ import {
   RunErrorPanel,
   RunSummary,
 } from "../../components/run-panels";
-import { resolveStateKind, statePalette } from "../../components/state-dot";
-import { formatDuration, shortId } from "../../lib/format";
+import { TraceWaterfall } from "../../components/trace-waterfall";
+import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
+import type { RunSpan } from "./observability/-types";
 
 export const Route = createFileRoute("/developer/compute_/runs_/$runId")({
   loader: async ({ params }) => {
@@ -89,227 +89,19 @@ function RunDetailBody({
   runId: string;
   events: EventDoc[];
 }) {
-  const startedAt = run.startedAt ?? run._creationTime;
-  const duration = run.durationMs ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
       <RunSummary run={run} runId={runId} />
       <TraceWaterfall
-        startedAt={startedAt}
-        duration={duration}
+        spans={run.spans as RunSpan[] | undefined}
         status={run.status}
-        events={events}
+        durationMs={run.durationMs}
+        testid="run-detail-trace"
       />
       <RunCorrelatedEvents events={events} runId={runId} />
       {run.error ? (
         <RunErrorPanel error={run.error} functionPath={run.functionPath} />
       ) : null}
-    </div>
-  );
-}
-
-function TraceWaterfall({
-  startedAt,
-  duration,
-  status,
-  events,
-}: {
-  startedAt: number | undefined;
-  duration: number | null;
-  status: string | undefined;
-  events: EventDoc[];
-}) {
-  const spans = useMemo(() => {
-    if (typeof startedAt !== "number")
-      return [] as Array<{
-        id: string;
-        label: string;
-        offsetMs: number;
-        level?: string;
-      }>;
-    return events
-      .filter((e) => typeof e.createdAt === "number")
-      .map((e) => ({
-        id: e._id,
-        label: e.message ?? e.category ?? e.source ?? "event",
-        offsetMs: Math.max(0, (e.createdAt ?? 0) - startedAt),
-        level: e.level,
-      }));
-  }, [events, startedAt]);
-
-  const total =
-    duration ?? (spans.length > 0 ? spans[spans.length - 1].offsetMs + 1 : 0);
-
-  if (typeof startedAt !== "number") {
-    return (
-      <Panel
-        title="Trace timing"
-        testid="run-detail-trace"
-        empty="Trace timing requires a startedAt timestamp on the run record."
-      />
-    );
-  }
-
-  return (
-    <div
-      className="rounded-md border border-border-2 bg-bg-panel p-4"
-      data-testid="run-detail-trace"
-    >
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-xs font-medium text-text-3">Trace timing</h2>
-        <span className="font-mono tabular text-xs text-text-3">
-          {formatDuration(total)} total
-        </span>
-      </div>
-      <div className="space-y-2">
-        {/* The run's own span reports the run's own status. It was pinned to
-            `ok`, so a failed run painted itself success-green above the very
-            events that failed it. */}
-        <WaterfallBar
-          label="run"
-          offsetMs={0}
-          widthMs={total}
-          total={total}
-          state={status}
-          testid="run-detail-trace-bar"
-        />
-        {spans.length === 0 ? (
-          <p
-            className="font-mono text-xs text-text-3"
-            data-testid="run-detail-trace-empty"
-          >
-            No correlated events yet — only the run span is shown.
-          </p>
-        ) : (
-          spans.map((span) => (
-            <WaterfallBar
-              key={span.id}
-              label={span.label}
-              offsetMs={span.offsetMs}
-              widthMs={Math.max(2, total * 0.02)}
-              total={total}
-              state={span.level ?? "info"}
-              testid={`run-detail-trace-span-${span.id}`}
-            />
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-type WaterfallTone = "ok" | "muted" | "error";
-
-const toneFills: Record<WaterfallTone, string> = {
-  ok: "bg-[color-mix(in_oklch,var(--success)_70%,transparent)]",
-  muted: "bg-[color-mix(in_oklch,var(--text-3)_50%,transparent)]",
-  error: "bg-[color-mix(in_oklch,var(--error)_75%,transparent)]",
-};
-
-/**
- * A bar's fill is a status color, and DESIGN.md rules that color is never the
- * only signal. Each status tone therefore also carries a glyph the eye can
- * separate by *shape* — ✓ against ✗, the way `StatePill` separates its states
- * — and that glyph names its state to assistive tech. `muted` is the absence
- * of a status rather than a status, so it claims neither a glyph nor a name.
- *
- * A full `StatePill` per row was rejected: the waterfall is a dense trace and
- * a state word on every row would out-weigh the bars it annotates.
- */
-const toneMarkers: Record<
-  WaterfallTone,
-  { glyph: string; token: string } | null
-> = {
-  ok: { glyph: "✓", token: "--success" },
-  muted: null,
-  error: { glyph: "✗", token: "--error" },
-};
-
-/**
- * Resolve any state string the server can write — a run `status`, an event
- * `level` — onto the three bar tones, through the same palette the chips
- * read. A state the palette calls danger can then never paint a success bar.
- */
-function toneForState(state: string | null | undefined): WaterfallTone {
-  const { token } = statePalette[resolveStateKind(state)];
-  if (token === "--error") return "error";
-  if (token === "--success") return "ok";
-  return "muted";
-}
-
-function WaterfallBar({
-  label,
-  offsetMs,
-  widthMs,
-  total,
-  state,
-  testid,
-}: {
-  label: string;
-  offsetMs: number;
-  widthMs: number;
-  total: number;
-  state: string | null | undefined;
-  testid: string;
-}) {
-  const safeTotal = total > 0 ? total : 1;
-  const leftPct = Math.min(100, Math.max(0, (offsetMs / safeTotal) * 100));
-  const widthPct = Math.min(
-    100 - leftPct,
-    Math.max(0.5, (widthMs / safeTotal) * 100),
-  );
-  const tone = toneForState(state);
-  const marker = toneMarkers[tone];
-  return (
-    <div
-      className="grid grid-cols-[10rem_1fr_5rem] items-center gap-3 font-mono text-xs"
-      data-testid={testid}
-    >
-      {/* The glyph sits outside the truncating span so a long label can never
-          clip the row's only non-color signal. */}
-      <span className="flex min-w-0 items-center gap-1.5" title={label}>
-        {marker ? (
-          <span
-            role="img"
-            aria-label={state ?? tone}
-            className="shrink-0 leading-none"
-            style={{ color: `var(${marker.token})` }}
-            data-testid={`${testid}-marker`}
-          >
-            {marker.glyph}
-          </span>
-        ) : null}
-        <span className="truncate text-text-1">{label}</span>
-      </span>
-      <div className="relative h-3 rounded-full bg-bg-raised">
-        <div
-          className={cn("absolute top-0 h-3 rounded-full", toneFills[tone])}
-          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-        />
-      </div>
-      <span className="tabular text-text-3 text-right">
-        {offsetMs === 0 ? "0ms" : `+${formatDuration(offsetMs)}`}
-      </span>
-    </div>
-  );
-}
-
-function Panel({
-  title,
-  testid,
-  empty,
-}: {
-  title: string;
-  testid: string;
-  empty: string;
-}) {
-  return (
-    <div
-      className="rounded-md border border-border-2 bg-bg-panel p-4"
-      data-testid={testid}
-    >
-      <h2 className="mb-2 text-xs font-medium text-text-3">{title}</h2>
-      <p className="font-mono text-xs text-text-3">{empty}</p>
     </div>
   );
 }

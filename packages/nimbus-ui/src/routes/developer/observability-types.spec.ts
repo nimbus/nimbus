@@ -11,7 +11,9 @@ function assertEqual<T extends true>(_: T): void {}
 
 describe("ObservabilityTab type derivation", () => {
   it("ObservabilityTab names only the tabs that exist", () => {
-    assertEqual<Equal<ObservabilityTab, "logs" | "runs">>(true);
+    assertEqual<Equal<ObservabilityTab, "logs" | "runs" | "traces" | "errors">>(
+      true,
+    );
   });
 
   it("derivation tracks the tab list at compile time", () => {

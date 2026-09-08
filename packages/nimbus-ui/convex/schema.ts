@@ -107,11 +107,18 @@ export default defineSchema({
     durationMs: v.optional(v.number()),
     status: v.string(),
     error: v.optional(v.any()),
+    // The error fingerprint: function path, error class, and normalized
+    // message. Failed runs only; the Errors tab folds runs by it.
+    fingerprint: v.optional(v.string()),
+    // The run's spans, the function's own span first. Each names its
+    // parent by index into this array.
+    spans: v.optional(v.any()),
     startedAt: v.number(),
   })
     .index("by_bundleId", ["bundleId"])
     .index("by_functionPath", ["functionPath"])
     .index("by_status", ["status"])
+    .index("by_fingerprint", ["fingerprint"])
     .index("by_startedAt", ["startedAt"])
     .index("by_tenantId", ["tenantId"])
     .index("by_tenantId_and_startedAt", ["tenantId", "startedAt"]),

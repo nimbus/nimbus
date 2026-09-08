@@ -7,6 +7,8 @@ export const recent = query({
     bundleId: v.union(v.string(), v.null()),
     functionPath: v.union(v.string(), v.null()),
     status: v.union(v.string(), v.null()),
+    // The error group the reader drilled into from the Errors tab.
+    fingerprint: v.union(v.string(), v.null()),
     // The tenant the reader is scoped to, or null for every tenant. Every
     // run row names its tenant, so a tenant scope is an index read on
     // by_tenantId_and_startedAt.
@@ -14,7 +16,10 @@ export const recent = query({
     limit: v.union(v.number(), v.null()),
   },
   returns: v.array(v.any()),
-  handler: async (ctx, { bundleId, functionPath, status, tenantId, limit }) => {
+  handler: async (
+    ctx,
+    { bundleId, functionPath, status, fingerprint, tenantId, limit },
+  ) => {
     const boundedLimit =
       limit === null || !Number.isFinite(limit)
         ? 100
@@ -32,8 +37,18 @@ export const recent = query({
             narrowed = narrowed.eq(q.field("functionPath"), functionPath);
           }
           if (status) narrowed = narrowed.eq(q.field("status"), status);
+          if (fingerprint) {
+            narrowed = narrowed.eq(q.field("fingerprint"), fingerprint);
+          }
           return narrowed;
         })
+        .order("desc")
+        .take(boundedLimit);
+    }
+    if (fingerprint) {
+      return await ctx.db
+        .query("runs")
+        .withIndex("by_fingerprint", (q) => q.eq("fingerprint", fingerprint))
         .order("desc")
         .take(boundedLimit);
     }

@@ -115,11 +115,17 @@ export function RunsTab({
     bundleId: null,
     functionPath: search.functionPath ?? null,
     status: search.status ?? null,
+    fingerprint: search.fingerprint ?? null,
     limit: 200,
   }) as RunDoc[] | undefined;
 
   const clearFilters = useCallback(
-    () => setSearchAction({ status: undefined, functionPath: undefined }),
+    () =>
+      setSearchAction({
+        status: undefined,
+        functionPath: undefined,
+        fingerprint: undefined,
+      }),
     [setSearchAction],
   );
 
@@ -128,7 +134,9 @@ export function RunsTab({
   // the user set that nothing matches. Blaming filters that are not set sends
   // the reader hunting for a control they never touched.
   const filtered =
-    search.status !== undefined || search.functionPath !== undefined;
+    search.status !== undefined ||
+    search.functionPath !== undefined ||
+    search.fingerprint !== undefined;
 
   const rows = useMemo(() => runs ?? [], [runs]);
   const settledEmpty = runs !== undefined && runs.length === 0;
@@ -178,6 +186,18 @@ export function RunsTab({
           onChange={(v) => setSearch({ functionPath: v || undefined })}
           testid="observability-filter-run-function"
         />
+        {search.fingerprint ? (
+          // The Errors tab's drill-in narrows the list to one error group.
+          // The group has no facet control of its own; the chip names it
+          // and clears it, so the narrowing is never invisible.
+          <FacetButton
+            onClick={() => setSearch({ fingerprint: undefined })}
+            title="Show every run again"
+            testid="observability-filter-run-fingerprint"
+          >
+            error group {search.fingerprint.slice(0, 8)} ×
+          </FacetButton>
+        ) : null}
       </FacetBar>
       <AdapterHonesty onShowLogs={() => setSearchAction({ tab: "logs" })} />
       {settledEmpty ? (
@@ -253,7 +273,7 @@ function RunsEmptyState({
     return (
       <EmptyState
         title="No runs match the current filters"
-        body="Status and function narrow the same list, so a run has to satisfy both. Clear them to see every run the server has recorded."
+        body="Status, function, and error group narrow the same list, so a run has to satisfy all of them. Clear them to see every run the server has recorded."
         cta={{ label: "Clear filters", onClick: onClear }}
         testid="observability-runs-empty"
       />

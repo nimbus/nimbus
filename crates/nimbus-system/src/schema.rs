@@ -232,6 +232,8 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 number("durationMs", false),
                 string("status", true),
                 object("error", false),
+                string("fingerprint", false),
+                array("spans", false),
                 number("startedAt", true),
             ],
             &[
@@ -241,6 +243,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 index("by_startedAt", &["startedAt"]),
                 index("by_tenantId", &["tenantId"]),
                 index("by_tenantId_and_startedAt", &["tenantId", "startedAt"]),
+                index("by_fingerprint", &["fingerprint"]),
             ],
         )?,
         table(

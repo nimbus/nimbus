@@ -377,16 +377,25 @@ owns the cross-tenant feed under `/operator/observability`.)
   opens a right-side sheet that shows the run summary, the error, and
   the correlated lines; `Show in logs` narrows the Logs tab to that run
   and `Open run` goes to the full run page.
-- Events (UIR20): ordered domain events (mutation applied, scheduler
-  fired, service restarted) for the active tenant.
-- Errors (UIR20): grouped failures with last seen, count, sample traces.
+- Traces: the run list beside one run's waterfall. A run's spans are the
+  function's own span and one span per host call under it (`db`,
+  `scheduler`, `storage`, `function` for a nested call), drawn on one
+  time axis with the error glyph on any span that failed; `?run=` names
+  the trace on show. The same waterfall sits in the run sheet and on the
+  run page, so the three surfaces agree on what a run did.
+- Errors: failed runs folded by fingerprint (function, error class,
+  normalized message) with run count, first and last seen, and location.
+  A row drills into Runs narrowed to that group, where a chip names the
+  group and clears it.
 
 Observability has no sub-panel. Its views are page-header tabs
-(`Logs` / `Runs`, driven by `?tab=`), and a tab appears only once its
-page exists: the strip never names a view the operator cannot open.
+(`Logs` / `Runs` / `Traces` / `Errors`, driven by `?tab=`), and a tab
+appears only once its page exists: the strip never names a view the
+operator cannot open.
 
 Every filter lives in the address (`?tenant=`, `?level=`, `?category=`,
-`?source=`, `?correlationId=`, `?status=`, `?functionPath=`, `?run=`), so
+`?source=`, `?correlationId=`, `?status=`, `?functionPath=`, `?run=`,
+`?fingerprint=`), so
 a view is a link. Run and event rows name their tenant, so the tenant
 facet is an index read on both tables; a line the server writes outside
 any tenant shows only under the operator page's `all tenants` scope.
@@ -583,11 +592,14 @@ ahead of the tenant list; picking one narrows the view through
   every tenant.
 - Runs: the same `DataTable` and run sheet as Developer, across every
   tenant.
-- Events (UIR20): cross-tenant ordered domain events.
-- Errors (UIR20): cross-tenant grouped failures.
+- Traces: the same run list and waterfall as Developer, across every
+  tenant.
+- Errors: the same error-group table as Developer, across every tenant;
+  each group names its tenant.
 
 The Operator page uses the same page-header tab strip as the Developer
-page (`Logs` / `Runs`, driven by `?tab=`) through the shared `PageTabs`
+page (`Logs` / `Runs` / `Traces` / `Errors`, driven by `?tab=`) through
+the shared `PageTabs`
 component; only the default tenant scope differs.
 
 ### Settings (server)

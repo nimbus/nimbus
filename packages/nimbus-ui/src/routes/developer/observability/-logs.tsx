@@ -122,6 +122,7 @@ export function LogsTab({
     bundleId: null,
     functionPath: null,
     status: null,
+    fingerprint: null,
     limit: 200,
   }) as RunDoc[] | undefined;
   const perf = usePerfEventStream();

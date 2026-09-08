@@ -13,9 +13,12 @@ impl HostBridge for ConvexHostBridge {
         let runtime_policy = self.runtime_policy();
         let metrics = runtime_policy.metrics();
         let operation = convex_host_operation_name(request.operation);
-        execute_host_call(metrics.as_ref(), operation, || {
+        let span = self.start_host_call_span(operation);
+        let result = execute_host_call(metrics.as_ref(), operation, || {
             self.dispatch_host_call(request)
-        })
+        });
+        self.finish_span(span, result.is_ok());
+        result
     }
 
     fn call_cancellable(
@@ -26,9 +29,13 @@ impl HostBridge for ConvexHostBridge {
         let runtime_policy = self.runtime_policy();
         let metrics = runtime_policy.metrics();
         let operation = convex_host_operation_name(request.operation);
-        execute_host_call_cancellable(metrics.as_ref(), operation, cancellation, || {
-            self.dispatch_host_call_cancellable(request, cancellation)
-        })
+        let span = self.start_host_call_span(operation);
+        let result =
+            execute_host_call_cancellable(metrics.as_ref(), operation, cancellation, || {
+                self.dispatch_host_call_cancellable(request, cancellation)
+            });
+        self.finish_span(span, result.is_ok());
+        result
     }
 
     fn call_async(
@@ -52,16 +59,23 @@ impl HostBridge for ConvexHostBridge {
         let runtime_policy = bridge.runtime_policy();
         let metrics = runtime_policy.metrics();
         let operation = convex_host_operation_name(request.operation);
-        Box::pin(execute_async_host_call(
-            trace,
-            metrics,
-            operation,
-            cancellation.clone(),
-            async move {
-                bridge
-                    .dispatch_host_call_async(request, &cancellation)
-                    .await
-            },
-        ))
+        let span = bridge.start_host_call_span(operation);
+        let recorder = bridge.clone();
+        Box::pin(async move {
+            let result = execute_async_host_call(
+                trace,
+                metrics,
+                operation,
+                cancellation.clone(),
+                async move {
+                    bridge
+                        .dispatch_host_call_async(request, &cancellation)
+                        .await
+                },
+            )
+            .await;
+            recorder.finish_span(span, result.is_ok());
+            result
+        })
     }
 }

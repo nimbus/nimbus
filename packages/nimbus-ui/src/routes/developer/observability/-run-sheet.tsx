@@ -8,6 +8,7 @@ import {
   RunErrorPanel,
   RunSummary,
 } from "../../../components/run-panels";
+import { TraceWaterfall } from "../../../components/trace-waterfall";
 import { Button } from "../../../components/ui/button";
 import {
   Sheet,
@@ -117,6 +118,12 @@ function RunSheetBody({
           runId={runId}
           testid={TESTID}
           className="grid-cols-2 md:grid-cols-2"
+        />
+        <TraceWaterfall
+          spans={run.spans}
+          status={run.status}
+          durationMs={run.durationMs}
+          testid={`${TESTID}-trace`}
         />
         {run.status === "error" || run.error !== undefined ? (
           <RunErrorPanel

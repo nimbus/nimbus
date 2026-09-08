@@ -25,12 +25,14 @@ use crate::schema::{SystemTable, projection_fence_table_schema, system_table_sch
 
 mod connectivity;
 mod deployment;
+mod errors;
 mod logs;
 mod machine;
 mod run;
 mod scheduler;
 mod source;
 mod subscription;
+mod trace;
 
 pub(crate) use connectivity::replace_server_port_listener_observations_async;
 pub use connectivity::{
@@ -43,6 +45,10 @@ pub use connectivity::{
 pub use deployment::{
     SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,
     SystemDeploymentRecordInput, record_deployment_state_async,
+};
+pub use errors::{
+    ERROR_GROUP_LIMIT, ERROR_SCAN_WINDOW, ErrorGroup, ErrorGroupPage, ErrorGroupQuery, error_class,
+    error_fingerprint, normalize_error_message, query_error_groups_async,
 };
 pub use logs::{LOG_PAGE_LIMIT, LOG_SCAN_WINDOW, LogPage, LogQuery, query_log_lines_async};
 pub use machine::{delete_machine_state_async, record_machine_state_async};
@@ -62,6 +68,7 @@ pub use subscription::{
     delete_subscription_state_async, record_subscription_delivery_async,
     record_subscription_error_async, record_subscription_state_async,
 };
+pub use trace::{OpenSpan, RUN_SPAN_LIMIT, RunSpan, RunSpanRecorder, span_kind_for_operation};
 
 pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
     let tenant_id = system_tenant_id()?;

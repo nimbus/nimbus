@@ -1,10 +1,11 @@
 // One canonical declaration of the observability tabs. The route's `tab`
 // search param and the tab strip both derive from this list, so adding a
-// tab is a single-line change. Traces and Errors join it when their pages
-// exist (UIR20); until then the console does not name them.
+// tab is a single-line change.
 export const OBSERVABILITY_TABS = [
   { id: "logs", label: "Logs" },
   { id: "runs", label: "Runs" },
+  { id: "traces", label: "Traces" },
+  { id: "errors", label: "Errors" },
 ] as const;
 
 export type ObservabilityTab = (typeof OBSERVABILITY_TABS)[number]["id"];
@@ -26,7 +27,11 @@ export type ObservabilitySearch = {
   q?: string;
   status?: string;
   functionPath?: string;
-  // The run whose detail sheet is open on the Runs tab.
+  // The error group the Runs tab is narrowed to, set by the Errors tab's
+  // drill-in. A fingerprint names one function, error class, and message.
+  fingerprint?: string;
+  // The run whose detail sheet is open on the Runs tab, or whose waterfall
+  // the Traces tab shows.
   run?: string;
   follow?: boolean;
   pauseOnError?: boolean;
@@ -45,6 +50,20 @@ export type EventDoc = {
   createdAt?: number;
 };
 
+// One span of a run, as `record_run_async` writes it
+// (crates/nimbus-system/src/records/trace.rs). `parent` is an index into
+// the run's `spans` array; the function's own span is first and has none.
+export type RunSpan = {
+  name: string;
+  // "function" for the run and nested ctx.run* calls, "db" for ctx.db,
+  // "scheduler" for ctx.scheduler, "host" for every other host call.
+  kind: string;
+  parent: number | null;
+  startMs: number;
+  durationMs: number;
+  status: string;
+};
+
 export type RunDoc = {
   _id: string;
   _creationTime?: number;
@@ -55,7 +74,32 @@ export type RunDoc = {
   durationMs?: number;
   status?: string;
   error?: unknown;
+  fingerprint?: string;
+  spans?: RunSpan[];
   startedAt?: number;
+};
+
+// One row of GET /api/console/errors: the failed runs that share a
+// fingerprint, with the newest run as the sample.
+export type ErrorGroup = {
+  fingerprint: string;
+  tenantId: string;
+  functionPath: string;
+  kind: string;
+  class: string;
+  message: string;
+  location: string | null;
+  count: number;
+  firstSeen: number;
+  lastSeen: number;
+  latestRunId: string;
+};
+
+export type ErrorGroupPage = {
+  groups: ErrorGroup[];
+  scanned: number;
+  exhaustive: boolean;
+  limit: number;
 };
 
 export function parseTab(value: unknown): ObservabilityTab | undefined {
@@ -89,6 +133,7 @@ export function parseObservabilitySearch(
     q: parseString(search.q),
     status: parseString(search.status),
     functionPath: parseString(search.functionPath),
+    fingerprint: parseString(search.fingerprint),
     run: parseString(search.run),
     follow: parseBool(search.follow),
     pauseOnError: parseBool(search.pauseOnError),

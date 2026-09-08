@@ -262,8 +262,9 @@ test.describe("console smoke walk", () => {
       ),
     ).toBeVisible();
 
-    // 7. Developer Observability — the Logs/Runs tab strip switches the
-    // sub-view through the URL, and no unbuilt view is named.
+    // 7. Developer Observability — the Logs/Runs/Traces/Errors tab strip
+    // switches the sub-view through the URL, every named view opens, and
+    // no unbuilt view is named.
     await switchView(page, "developer");
     await navigateTo(page, "observability");
     await expect(page.getByTestId("page-observability")).toBeVisible();
@@ -278,8 +279,13 @@ test.describe("console smoke walk", () => {
       "aria-current",
       "page",
     );
+    await page.getByTestId("observability-tab-traces").click();
+    await expect(page).toHaveURL(/tab=traces/);
+    await expect(page.getByTestId("observability-traces")).toBeVisible();
+    await page.getByTestId("observability-tab-errors").click();
+    await expect(page).toHaveURL(/tab=errors/);
+    await expect(page.getByTestId("observability-errors")).toBeVisible();
     await expect(page.getByTestId("observability-tab-events")).toHaveCount(0);
-    await expect(page.getByTestId("observability-tab-errors")).toHaveCount(0);
 
     // 8. Command palette via ⌘K
     await page.keyboard.press("Meta+k");

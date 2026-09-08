@@ -26,6 +26,7 @@ use nimbus_compute::scheduling::{
 mod authz;
 mod deploy;
 mod documents;
+mod errors;
 mod graph;
 mod local_admin;
 mod logs;
@@ -49,6 +50,7 @@ pub(crate) use deploy::deploy_app;
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };
+pub(crate) use errors::error_groups;
 pub(crate) use graph::call_graph;
 pub(crate) use local_admin::{rotate_local_admin_token, shutdown_system};
 pub(crate) use logs::search_logs;

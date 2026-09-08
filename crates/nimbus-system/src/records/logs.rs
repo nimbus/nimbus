@@ -345,6 +345,7 @@ mod tests {
                     duration_ms: 2.5,
                     status: "ok",
                     error: None,
+                    spans: Vec::new(),
                 },
             )
             .await

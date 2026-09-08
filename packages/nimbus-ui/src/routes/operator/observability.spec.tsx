@@ -98,11 +98,13 @@ describe("operator observability sub-view switching", () => {
   });
 
   it("names only the sub-views that exist", () => {
-    // Events and Errors return with their pages (UIR20). Until then the
-    // strip does not show a name the operator cannot open.
+    // Every name on the strip opens a page; the strip never shows a name
+    // the operator cannot open.
     expect(ADMIN_OBSERVABILITY_TABS.map((tab) => tab.id)).toEqual([
       "logs",
       "runs",
+      "traces",
+      "errors",
     ]);
     for (const tab of ADMIN_OBSERVABILITY_TABS) {
       expect(tab.label).not.toMatch(/soon/i);
@@ -125,7 +127,7 @@ describe("operator observability header", () => {
     );
     const subtitle = header.querySelector("p");
     expect(subtitle?.textContent).toContain(
-      "Logs and runs across every tenant.",
+      "Logs, runs, traces, and error groups across every tenant.",
     );
     expect(subtitle?.getAttribute("data-slot")).toBe("page-subtitle");
   });

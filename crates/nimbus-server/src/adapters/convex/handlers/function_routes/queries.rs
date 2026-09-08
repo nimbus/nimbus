@@ -42,7 +42,8 @@ pub(crate) async fn query(
                 state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
-            );
+            )
+            .with_span_recorder(trace.recorder());
             let result = invoke_named_convex_function_async_cancellable(
                 &context,
                 InvocationRequest {
@@ -136,7 +137,8 @@ pub(crate) async fn paginated_query(
                 state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
-            );
+            )
+            .with_span_recorder(trace.recorder());
             let value = invoke_named_convex_function_async_cancellable(
                 &context,
                 InvocationRequest {

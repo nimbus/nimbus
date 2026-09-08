@@ -71,7 +71,7 @@ describe("developer observability header", () => {
     expect(header.querySelector("h1")?.textContent).toBe("Observability");
     const subtitle = header.querySelector("p");
     expect(subtitle?.textContent).toContain(
-      "Runs and their log lines for the active tenant",
+      "Logs, runs, traces, and error groups for the active tenant",
     );
     expect(subtitle?.getAttribute("data-slot")).toBe("page-subtitle");
   });
