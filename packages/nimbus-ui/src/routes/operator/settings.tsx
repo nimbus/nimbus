@@ -140,7 +140,7 @@ function SettingsPage() {
       <PageHeader title="Settings" subtitle={SECTION_SUBTITLES[section]} />
 
       {unbuilt ? (
-        <div className="flex min-h-0 flex-1 rounded-md border border-app bg-surface">
+        <div className="flex min-h-0 flex-1 rounded-md border border-border-2 bg-bg-panel">
           <EmptyState
             title={unbuilt.title}
             body={unbuilt.body}

@@ -7,7 +7,7 @@ const meta: Meta<typeof EmptyState> = {
   component: EmptyState,
   decorators: [
     (Story) => (
-      <div className="h-64 w-full max-w-xl rounded-md border border-app bg-surface">
+      <div className="h-64 w-full max-w-xl rounded-md border border-border-2 bg-bg-panel">
         <Story />
       </div>
     ),

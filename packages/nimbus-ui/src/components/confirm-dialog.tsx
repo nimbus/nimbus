@@ -60,8 +60,8 @@ export function ConfirmDialog({
   if (!open) return null;
 
   const confirmTone = danger
-    ? "border-danger text-danger hover:bg-surface-2"
-    : "border-app text-default hover:bg-surface-2";
+    ? "border-error text-error hover:bg-bg-raised"
+    : "border-border-2 text-text-1 hover:bg-bg-raised";
 
   return (
     <div
@@ -84,23 +84,23 @@ export function ConfirmDialog({
         // tabIndex -1 so the panel can hold focus if it ever has no focusable
         // child; outline-none so that lands without ringing the whole dialog.
         tabIndex={-1}
-        className="relative z-10 w-full max-w-md rounded-md border border-app bg-surface p-4 shadow-lg outline-none"
+        className="relative z-10 w-full max-w-md rounded-md border border-border-2 bg-bg-panel p-4 shadow-lg outline-none"
       >
         <header className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-sm text-default">{title}</h2>
+          <h2 className="text-sm text-text-1">{title}</h2>
           <button
             type="button"
             onClick={dismiss}
             aria-disabled={busy}
             aria-label="Dismiss"
-            className="font-mono text-xs text-muted hover:text-default aria-disabled:cursor-not-allowed"
+            className="font-mono text-xs text-text-3 hover:text-text-1 aria-disabled:cursor-not-allowed"
           >
             ✕
           </button>
         </header>
         {description ? (
           <div
-            className="mb-4 text-sm text-default"
+            className="mb-4 text-sm text-text-1"
             data-testid={`${testid}-description`}
           >
             {description}
@@ -120,7 +120,7 @@ export function ConfirmDialog({
             onClick={dismiss}
             aria-disabled={busy}
             data-testid={`${testid}-cancel`}
-            className="rounded border border-app bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] text-default hover:border-strong aria-disabled:cursor-not-allowed aria-disabled:text-muted"
+            className="rounded-xs border border-border-2 bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-1 hover:border-border-3 aria-disabled:cursor-not-allowed aria-disabled:text-text-3"
           >
             {cancelLabel}
           </button>
@@ -133,7 +133,7 @@ export function ConfirmDialog({
             aria-disabled={busy}
             data-testid={`${testid}-confirm`}
             className={cn(
-              "rounded border bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] aria-disabled:cursor-not-allowed aria-disabled:text-muted",
+              "rounded-xs border bg-bg-panel px-3 py-1.5 text-xs font-medium aria-disabled:cursor-not-allowed aria-disabled:text-text-3",
               confirmTone,
             )}
           >

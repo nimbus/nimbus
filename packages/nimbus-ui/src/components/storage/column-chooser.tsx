@@ -63,8 +63,8 @@ export function ColumnChooser({
         aria-expanded={open}
         aria-haspopup="dialog"
         className={cn(
-          "flex h-[26px] items-center gap-1 rounded border border-app px-2 font-mono text-xs uppercase tracking-wide hover:bg-surface",
-          open ? "bg-surface text-default" : "text-muted hover:text-default",
+          "flex h-[26px] items-center gap-1 rounded-xs border border-border-2 px-2 text-xs font-medium hover:bg-bg-panel",
+          open ? "bg-bg-panel text-text-1" : "text-text-3 hover:text-text-1",
         )}
         data-testid="documents-column-chooser"
       >
@@ -79,15 +79,15 @@ export function ColumnChooser({
 
       {open ? (
         <div
-          className="absolute right-0 top-full z-30 mt-1 flex max-h-80 w-72 flex-col rounded-md border border-app bg-surface shadow-lg"
+          className="absolute right-0 top-full z-30 mt-1 flex max-h-80 w-72 flex-col rounded-md border border-border-2 bg-bg-panel shadow-lg"
           data-testid="documents-column-chooser-panel"
         >
-          <div className="border-b border-app px-3 py-2">
-            <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
+          <div className="border-b border-border-2 px-3 py-2">
+            <p className="text-xs font-medium text-text-3">
               {fromSchema ? "schema fields" : "fields seen so far"}
             </p>
             {fromSchema ? null : (
-              <p className="mt-1 text-xs leading-snug text-muted">
+              <p className="mt-1 text-xs leading-snug text-text-3">
                 This table has no schema, so the field list grows as you page
                 through documents.
               </p>
@@ -95,7 +95,7 @@ export function ColumnChooser({
           </div>
           <ul className="min-h-0 flex-1 overflow-auto py-1">
             {available.length === 0 ? (
-              <li className="px-3 py-3 font-mono text-xs text-muted">
+              <li className="px-3 py-3 font-mono text-xs text-text-3">
                 No fields discovered yet.
               </li>
             ) : null}
@@ -105,7 +105,7 @@ export function ColumnChooser({
               return (
                 <li
                   key={field}
-                  className="flex h-8 items-center gap-2 px-3 hover:bg-surface-2"
+                  className="flex h-8 items-center gap-2 px-3 hover:bg-bg-raised"
                 >
                   <Checkbox
                     label={`Show column ${field}`}
@@ -116,7 +116,7 @@ export function ColumnChooser({
                   <span
                     className={cn(
                       "flex-1 truncate font-mono text-xs",
-                      isVisible ? "text-default" : "text-muted",
+                      isVisible ? "text-text-1" : "text-text-3",
                     )}
                   >
                     {field}
@@ -133,7 +133,7 @@ export function ColumnChooser({
                     aria-label={`Move ${field} left`}
                     disabled={!isVisible || index <= 1}
                     onClick={() => onMove(field, -1)}
-                    className="flex h-8 w-8 items-center justify-center rounded text-muted hover:text-default disabled:opacity-30"
+                    className="flex h-8 w-8 items-center justify-center rounded-xs text-text-3 hover:text-text-1 disabled:opacity-30"
                   >
                     <ChevronUp size={14} aria-hidden />
                   </button>
@@ -142,7 +142,7 @@ export function ColumnChooser({
                     aria-label={`Move ${field} right`}
                     disabled={!isVisible || index === visible.length - 1}
                     onClick={() => onMove(field, 1)}
-                    className="flex h-8 w-8 items-center justify-center rounded text-muted hover:text-default disabled:opacity-30"
+                    className="flex h-8 w-8 items-center justify-center rounded-xs text-text-3 hover:text-text-1 disabled:opacity-30"
                   >
                     <ChevronDown size={14} aria-hidden />
                   </button>
@@ -150,14 +150,14 @@ export function ColumnChooser({
               );
             })}
           </ul>
-          <div className="flex items-center justify-between border-t border-app px-3 py-2">
-            <span className="font-mono text-xs text-muted">
+          <div className="flex items-center justify-between border-t border-border-2 px-3 py-2">
+            <span className="font-mono text-xs text-text-3">
               saved per table
             </span>
             <button
               type="button"
               onClick={onReset}
-              className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default"
+              className="rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-raised hover:text-text-1"
               data-testid="documents-column-reset"
             >
               reset

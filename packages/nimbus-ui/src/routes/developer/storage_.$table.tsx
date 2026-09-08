@@ -500,10 +500,10 @@ function TableDocumentsPage() {
                 type="button"
                 onClick={() => togglePanel("schema")}
                 className={cn(
-                  "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide hover:bg-surface",
+                  "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium hover:bg-bg-panel",
                   search.panel === "schema"
-                    ? "bg-surface text-default"
-                    : "text-muted hover:text-default",
+                    ? "bg-bg-panel text-text-1"
+                    : "text-text-3 hover:text-text-1",
                 )}
                 data-testid="documents-toggle-schema"
               >
@@ -513,10 +513,10 @@ function TableDocumentsPage() {
                 type="button"
                 onClick={() => togglePanel("indexes")}
                 className={cn(
-                  "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide hover:bg-surface",
+                  "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium hover:bg-bg-panel",
                   search.panel === "indexes"
-                    ? "bg-surface text-default"
-                    : "text-muted hover:text-default",
+                    ? "bg-bg-panel text-text-1"
+                    : "text-text-3 hover:text-text-1",
                 )}
                 data-testid="documents-toggle-indexes"
               >
@@ -528,7 +528,7 @@ function TableDocumentsPage() {
               <button
                 type="button"
                 onClick={() => setShowInsert(true)}
-                className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-default hover:bg-surface"
+                className="rounded-xs border border-border-2 px-2 py-1 text-xs font-medium text-text-1 hover:bg-bg-panel"
                 data-testid="documents-open-insert"
               >
                 insert
@@ -565,7 +565,7 @@ function TableDocumentsPage() {
             that budget -- the grid scrolls horizontally, so it stays
             reachable. */}
         <div
-          className="flex min-h-0 min-w-[20rem] flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface"
+          className="flex min-h-0 min-w-[20rem] flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
           data-testid="documents-table-column"
         >
           <QueryBar
@@ -703,19 +703,19 @@ function TableDocumentsPage() {
           <div className="space-y-2">
             <p>
               Removes{" "}
-              <span className="font-mono text-default tabular">
+              <span className="font-mono text-text-1 tabular">
                 {confirmDelete?.length ?? 0}
               </span>{" "}
               document
               {confirmDelete && confirmDelete.length === 1 ? "" : "s"} from{" "}
-              <span className="font-mono text-default">{table}</span>. This
+              <span className="font-mono text-text-1">{table}</span>. This
               action cannot be undone.
             </p>
             {/* A bulk confirm that names no document tells the operator
                 nothing about what is about to be destroyed. */}
             {confirmDelete && confirmDelete.length > 0 ? (
               <ul
-                className="font-mono text-xs text-muted"
+                className="font-mono text-xs text-text-3"
                 data-testid="documents-delete-ids"
               >
                 {confirmDelete.slice(0, CONFIRM_ID_PREVIEW).map((id) => (

@@ -49,7 +49,7 @@ export function TenantHeaderStrip({
   return (
     <div
       data-testid="settings-tenant-header"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
+      className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border-2 bg-bg-raised md:grid-cols-4"
     >
       <Cell label="Active tenant">
         <CopyChip
@@ -59,22 +59,22 @@ export function TenantHeaderStrip({
         />
       </Cell>
       <Cell label="Storage backend">
-        <span className="font-mono text-xs text-default">{storageBackend}</span>
+        <span className="font-mono text-xs text-text-1">{storageBackend}</span>
       </Cell>
       <Cell label="License">
         <span
-          className="font-mono text-xs text-default"
+          className="font-mono text-xs text-text-1"
           data-testid="settings-license-kind"
         >
           {licenseLabel}
           {licenseStatus ? (
-            <span className="ml-1 text-muted">· {licenseStatus}</span>
+            <span className="ml-1 text-text-3">· {licenseStatus}</span>
           ) : null}
         </span>
       </Cell>
       <Cell label="Usage">
         <span
-          className="font-mono text-xs text-default tabular"
+          className="font-mono text-xs text-text-1 tabular"
           data-testid="settings-usage"
         >
           {usageLabel}
@@ -139,14 +139,14 @@ export function ServerInfoSection({
           {typeof status?.startedAt === "number" ? (
             <Uptime startedAtMs={status.startedAt} />
           ) : (
-            <span className="tabular text-muted">—</span>
+            <span className="tabular text-text-3">—</span>
           )}
         </Definition>
         <Definition label="Started">
           {typeof status?.startedAt === "number" ? (
             <RelativeTime epochMs={status.startedAt} />
           ) : (
-            <span className="tabular text-muted">—</span>
+            <span className="tabular text-text-3">—</span>
           )}
         </Definition>
         <Definition label="Listen address">
@@ -164,7 +164,7 @@ export function ServerInfoSection({
           />
         </Definition>
         <Definition label="Storage backend">
-          <span className="font-mono text-xs text-default">
+          <span className="font-mono text-xs text-text-1">
             {storageBackend}
           </span>
         </Definition>
@@ -178,17 +178,17 @@ export function ServerInfoSection({
         */}
         <Definition label="Encryption">
           {encryptionEnabled === "loading" ? (
-            <span className="font-mono text-xs text-muted">loading…</span>
+            <span className="font-mono text-xs text-text-3">loading…</span>
           ) : encryptionEnabled === "error" ? (
             <span
-              className="font-mono text-xs text-danger"
+              className="font-mono text-xs text-error"
               data-testid="settings-encryption-unavailable"
             >
               unavailable
             </span>
           ) : encryptionEnabled ? (
             <span
-              className="inline-flex flex-wrap items-center gap-1.5 font-mono text-xs text-default"
+              className="inline-flex flex-wrap items-center gap-1.5 font-mono text-xs text-text-1"
               data-testid="settings-encryption-enabled"
             >
               on
@@ -198,7 +198,7 @@ export function ServerInfoSection({
             </span>
           ) : (
             <span
-              className="font-mono text-xs text-muted"
+              className="font-mono text-xs text-text-3"
               data-testid="settings-encryption-off"
             >
               off
@@ -220,14 +220,14 @@ function UpdatesValue() {
   const { state, info } = snapshot;
 
   if (!info) {
-    return <span className="text-muted">loading…</span>;
+    return <span className="text-text-3">loading…</span>;
   }
 
   if (state === "upgrading") {
     return (
       <span
         data-testid="settings-updates-upgrading"
-        className="font-mono text-xs text-default"
+        className="font-mono text-xs text-text-1"
       >
         Updating to {info.latest}…
       </span>
@@ -242,7 +242,7 @@ function UpdatesValue() {
     return (
       <span
         data-testid="settings-updates-upgraded"
-        className="font-mono text-xs text-default"
+        className="font-mono text-xs text-text-1"
       >
         Updated to {info.latest}
       </span>
@@ -253,7 +253,7 @@ function UpdatesValue() {
     return (
       <span
         data-testid="settings-updates-current"
-        className="font-mono text-xs text-default"
+        className="font-mono text-xs text-text-1"
       >
         up to date
       </span>
@@ -278,11 +278,11 @@ function UpdatesValue() {
         onUpdate={startUpgrade}
         onCopyCommand={copyCommand}
         trigger={
-          <span className="inline-flex items-center gap-1.5 font-mono text-xs text-default">
+          <span className="inline-flex items-center gap-1.5 font-mono text-xs text-text-1">
             <span
               aria-hidden
               className="inline-block size-2 rounded-full"
-              style={{ background: "var(--nimbus-brand)" }}
+              style={{ background: "var(--accent)" }}
             />
             {info.latest} available — Update
           </span>

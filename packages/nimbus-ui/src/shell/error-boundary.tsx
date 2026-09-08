@@ -4,7 +4,7 @@ import { Component, type ReactNode } from "react";
 import { CopyChip } from "../components/copy-chip";
 
 const ACTION_CLASS =
-  "rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default";
+  "rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1";
 
 type Props = { children: ReactNode; pathname: string };
 type State = { error: Error | null; pathname: string };
@@ -54,7 +54,7 @@ class ShellErrorBoundary extends Component<Props, State> {
     return (
       <div
         role="alert"
-        className="flex h-full items-center justify-center bg-canvas text-default"
+        className="flex h-full items-center justify-center bg-bg-canvas text-text-1"
         data-testid="error-boundary"
       >
         {/* A bare `w-[480px]` hung off BOTH edges of a phone viewport —
@@ -84,12 +84,10 @@ class ShellErrorBoundary extends Component<Props, State> {
             into either suggestion. 90vw is chosen over it so the card keeps a
             gutter and still reads as a card rather than a full-bleed band. */}
         <div
-          className="w-[min(480px,90vw)] rounded-md border bg-surface p-4 border-app"
+          className="w-[min(480px,90vw)] rounded-md border bg-bg-panel p-4 border-border-2"
           data-testid="error-boundary-card"
         >
-          <div className="text-sm font-mono uppercase tracking-wider text-danger">
-            Error
-          </div>
+          <div className="text-sm font-medium text-error">Error</div>
           <p className="mt-1 text-base">
             The console shell failed to render. Moving to another view clears
             this screen.
@@ -98,7 +96,7 @@ class ShellErrorBoundary extends Component<Props, State> {
             label="error details"
             value={details}
             testid="error-boundary-copy"
-            className="mt-3 max-w-full border border-app px-2 py-1 text-danger"
+            className="mt-3 max-w-full border border-border-2 px-2 py-1 text-error"
           >
             {error.message}
           </CopyChip>

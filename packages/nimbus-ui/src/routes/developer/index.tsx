@@ -177,7 +177,7 @@ function TopStrip({ status }: { status: LoadingValue<SystemStatus> }) {
   return (
     <div
       data-testid="overview-top-strip"
-      className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
+      className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-border-2 bg-bg-raised md:grid-cols-4"
     >
       <Cell label="Server">
         <LoadingCell value={status} testid="overview-server">
@@ -255,11 +255,11 @@ function TopStrip({ status }: { status: LoadingValue<SystemStatus> }) {
 
 function StripValue({ value }: { value: string | null }) {
   if (value === null) return <StripDash />;
-  return <span className="font-mono text-xs text-default">{value}</span>;
+  return <span className="font-mono text-xs text-text-1">{value}</span>;
 }
 
 function StripDash() {
-  return <span className="tabular text-muted">—</span>;
+  return <span className="tabular text-text-3">—</span>;
 }
 
 function Cell({
@@ -270,10 +270,8 @@ function Cell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-xs uppercase tracking-[0.14em] text-muted">
-        {label}
-      </span>
+    <div className="flex flex-col gap-1 bg-bg-panel px-3 py-2">
+      <span className="text-xs font-medium text-text-3">{label}</span>
       {/* The value line is reserved at 20px whatever occupies it. The loading
           marker is a bare `·` at text-sm and the loaded cells are text-xs
           chips, so without a floor the whole eight-cell strip resized under
@@ -395,14 +393,12 @@ function CountPanel({
     <Link
       to={to}
       data-testid={testid}
-      className="group flex flex-col gap-2 rounded-md border border-app bg-surface p-3 hover:border-strong"
+      className="group flex flex-col gap-2 rounded-md border border-border-2 bg-bg-panel p-3 hover:border-border-3"
     >
       <div className="flex items-baseline justify-between">
-        <span className="text-xs uppercase tracking-[0.14em] text-muted">
-          {title}
-        </span>
+        <span className="text-xs font-medium text-text-3">{title}</span>
         <span
-          className="tabular font-mono text-lg text-default"
+          className="tabular font-mono text-md text-text-1"
           data-testid={`${testid}-total`}
         >
           {explicitTotal !== undefined ? (
@@ -446,25 +442,25 @@ function CountPanelSubline({
   // Connection state outranks both paths: a tile whose query has not landed
   // must not present a stale breakdown or a confident subline.
   if (docs.kind === "loading") {
-    return <span className="text-xs text-muted">Loading…</span>;
+    return <span className="text-xs text-text-3">Loading…</span>;
   }
   if (docs.kind === "offline") {
     return (
-      <span className="text-xs text-muted" title="Disconnected">
+      <span className="text-xs text-text-3" title="Disconnected">
         offline · last value shown elsewhere
       </span>
     );
   }
   if (docs.kind === "error") {
     return (
-      <span className="text-xs text-danger" title={docs.message}>
+      <span className="text-xs text-error" title={docs.message}>
         {docs.message}
       </span>
     );
   }
   if (groupBy === undefined) {
     if (subline === undefined) return <Dash />;
-    return <span className="text-xs text-muted">{subline}</span>;
+    return <span className="text-xs text-text-3">{subline}</span>;
   }
   const breakdown = groupCount(docs.value, groupBy);
   // Groupable but genuinely empty. The count already says zero; DESIGN.md
@@ -479,9 +475,7 @@ function CountPanelSubline({
           ) : (
             <StateChip state={key} />
           )}
-          <span className="tabular font-mono text-xs text-default">
-            {count}
-          </span>
+          <span className="tabular font-mono text-xs text-text-1">{count}</span>
         </li>
       ))}
     </ul>
@@ -490,7 +484,7 @@ function CountPanelSubline({
 
 function Dash() {
   return (
-    <span className="text-xs text-muted" aria-hidden="true">
+    <span className="text-xs text-text-3" aria-hidden="true">
       —
     </span>
   );
@@ -510,12 +504,10 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-events"
-      className="flex min-h-[200px] flex-col rounded-md border border-app bg-surface"
+      className="flex min-h-[200px] flex-col rounded-md border border-border-2 bg-bg-panel"
     >
-      <header className="flex items-baseline justify-between border-b border-app px-3 py-2">
-        <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
-          Recent events
-        </h2>
+      <header className="flex items-baseline justify-between border-b border-border-2 px-3 py-2">
+        <h2 className="text-xs font-medium text-text-3">Recent events</h2>
         <Link to="/developer/observability" className="text-xs link-inline">
           View all
         </Link>
@@ -529,7 +521,7 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
           action: { label: "Open Compute", to: "/developer/compute" },
         }}
         renderItems={(items) => (
-          <ul className="divide-y divide-app">
+          <ul className="divide-y divide-border-2">
             {items.slice(0, 20).map((event) => (
               <EventRow key={String(event._id)} event={event} />
             ))}
@@ -589,11 +581,11 @@ function FeedBody({
         className="flex flex-1 flex-col items-center justify-center gap-1 px-3 py-6 text-center"
         data-testid={`${testid}-empty`}
       >
-        <p className="text-xs text-default">{empty.title}</p>
-        <p className="max-w-[40ch] text-xs text-muted">{empty.body}</p>
+        <p className="text-xs text-text-1">{empty.title}</p>
+        <p className="max-w-[40ch] text-xs text-text-3">{empty.body}</p>
         <Link
           to={empty.action.to}
-          className="mt-2 rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default"
+          className="mt-2 rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-raised hover:text-text-1"
           data-testid={`${testid}-empty-cta`}
         >
           {empty.action.label}
@@ -616,7 +608,7 @@ function FeedNotice({
   return (
     <p
       className={`flex flex-1 items-center justify-center px-3 py-6 text-center text-xs ${
-        tone === "danger" ? "text-danger" : "text-muted"
+        tone === "danger" ? "text-error" : "text-text-3"
       }`}
       title={title}
     >
@@ -638,16 +630,16 @@ function EventRow({ event }: { event: AnyDoc }) {
         ? event._id
         : null;
   return (
-    <li className="group flex flex-col gap-1 px-3 py-2 hover:bg-surface-2">
+    <li className="group flex flex-col gap-1 px-3 py-2 hover:bg-bg-raised">
       <div className="flex items-center gap-2">
         <StateChip state={level} />
-        <span className="font-mono text-xs text-muted">{source}</span>
+        <span className="font-mono text-xs text-text-3">{source}</span>
         {correlationId ? (
           <CopyChip
             label="event id"
             value={correlationId}
             hideUntilHover
-            className="text-muted"
+            className="text-text-3"
             testid="event-id"
           >
             {shortId(correlationId)}
@@ -657,7 +649,7 @@ function EventRow({ event }: { event: AnyDoc }) {
           {createdAt ? <RelativeTime epochMs={createdAt} /> : null}
         </span>
       </div>
-      <p className="truncate text-xs text-default">{message}</p>
+      <p className="truncate text-xs text-text-1">{message}</p>
     </li>
   );
 }
@@ -666,12 +658,10 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-runs"
-      className="flex min-h-[200px] flex-col rounded-md border border-app bg-surface"
+      className="flex min-h-[200px] flex-col rounded-md border border-border-2 bg-bg-panel"
     >
-      <header className="flex items-baseline justify-between border-b border-app px-3 py-2">
-        <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
-          Recent runs
-        </h2>
+      <header className="flex items-baseline justify-between border-b border-border-2 px-3 py-2">
+        <h2 className="text-xs font-medium text-text-3">Recent runs</h2>
         <Link to="/developer/observability" className="text-xs link-inline">
           View all
         </Link>
@@ -685,7 +675,7 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
           action: { label: "Open Compute", to: "/developer/compute" },
         }}
         renderItems={(items) => (
-          <ul className="divide-y divide-app">
+          <ul className="divide-y divide-border-2">
             {items.slice(0, 10).map((run) => (
               <RunRow key={String(run._id)} run={run} />
             ))}
@@ -705,9 +695,9 @@ function RunRow({ run }: { run: AnyDoc }) {
   const startedAt = typeof run.startedAt === "number" ? run.startedAt : null;
   const runId = typeof run._id === "string" ? run._id : null;
   return (
-    <li className="group flex items-center gap-2 px-3 py-2 hover:bg-surface-2">
+    <li className="group flex items-center gap-2 px-3 py-2 hover:bg-bg-raised">
       <StateChip state={status} />
-      <span className="truncate font-mono text-xs text-default">
+      <span className="truncate font-mono text-xs text-text-1">
         {functionPath}
       </span>
       {runId ? (
@@ -715,13 +705,13 @@ function RunRow({ run }: { run: AnyDoc }) {
           label="run id"
           value={runId}
           hideUntilHover
-          className="text-muted"
+          className="text-text-3"
           testid="run-id"
         >
           {shortId(runId)}
         </CopyChip>
       ) : null}
-      <span className="ml-auto tabular font-mono text-xs text-muted">
+      <span className="ml-auto tabular font-mono text-xs text-text-3">
         {formatDuration(durationMs)}
       </span>
       <span className="text-xs">

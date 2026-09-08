@@ -18,7 +18,7 @@ export function NotFound() {
       body={
         <>
           Nothing is mounted at{" "}
-          <code className="rounded border border-app bg-surface-2 px-1 font-mono text-default">
+          <code className="rounded-xs border border-border-2 bg-bg-raised px-1 font-mono text-text-1">
             {pathname}
           </code>
           . The link is stale, or the view moved to a different path.

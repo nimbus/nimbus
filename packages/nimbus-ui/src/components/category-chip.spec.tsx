@@ -43,8 +43,11 @@ describe("CategoryChip", () => {
   it("is a filled pill, not a labeled dot (DESIGN.md categorical badges)", () => {
     const { container } = render(<CategoryChip value="convex" />);
     const chip = container.querySelector("[data-category]");
-    expect(chip?.className).toContain("bg-surface-2");
-    expect(chip?.className).toContain("font-mono");
+    expect(chip?.className).toContain("bg-bg-raised");
+    // Sentence case in the sans: a category is a label, and mono is the voice
+    // of data, never of labels.
+    expect(chip?.className).toContain("font-medium");
+    expect(chip?.className).not.toContain("font-mono");
     expect(chip?.className).toContain("text-xs");
     // No dot: a category says what a thing is, not how it is doing.
     expect(container.querySelector("[aria-hidden=true]")).toBeNull();

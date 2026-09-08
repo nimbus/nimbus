@@ -45,14 +45,14 @@ export function CellValue({
   // actually holds, and telling them apart is a routine schema question.
   if (value === undefined) {
     return (
-      <span className="text-muted" title="field not present in this document">
+      <span className="text-text-3" title="field not present in this document">
         —
       </span>
     );
   }
   if (value === null) {
     return (
-      <span className="italic text-muted" title="null">
+      <span className="italic text-text-3" title="null">
         null
       </span>
     );
@@ -60,7 +60,7 @@ export function CellValue({
   if (typeof value === "string") {
     if (value === "") {
       return (
-        <span className="text-muted" title="empty string">
+        <span className="text-text-3" title="empty string">
           &quot;&quot;
         </span>
       );
@@ -90,7 +90,7 @@ export function CellValue({
   }
   if (typeof value === "boolean") {
     return (
-      <span className={value ? "text-default" : "text-muted"}>
+      <span className={value ? "text-text-1" : "text-text-3"}>
         {String(value)}
       </span>
     );
@@ -113,8 +113,8 @@ function ContainerChip({
   const json = safeStringify(value);
   const summary = describeContainer(value);
   const className = cn(
-    "inline-flex max-w-[38ch] items-baseline gap-1 truncate rounded border border-app px-1.5 text-xs text-default",
-    onExpand && "cursor-pointer hover:bg-surface-2",
+    "inline-flex max-w-[38ch] items-baseline gap-1 truncate rounded-xs border border-border-2 px-1.5 text-xs text-text-1",
+    onExpand && "cursor-pointer hover:bg-bg-raised",
   );
   if (!onExpand) {
     return (

@@ -31,7 +31,7 @@ export function PageSection({
   children: React.ReactNode;
 }) {
   const danger = tone === "danger";
-  const ruleClass = danger ? "border-danger/40" : "border-app";
+  const ruleClass = danger ? "border-error/40" : "border-border-2";
   return (
     <section
       data-testid={testid}
@@ -42,13 +42,13 @@ export function PageSection({
     >
       <header className={cn("border-b pb-2", ruleClass)}>
         <h2
-          className={cn("text-sm", danger ? "text-danger" : "text-default")}
+          className={cn("text-sm", danger ? "text-error" : "text-text-1")}
           style={{ fontSize: "var(--text-base)" }}
         >
           {title}
         </h2>
         {description ? (
-          <p className="text-xs text-muted">{description}</p>
+          <p className="text-xs text-text-3">{description}</p>
         ) : null}
       </header>
       {children}
@@ -81,10 +81,8 @@ export function Definition({
 }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-xs uppercase tracking-[0.14em] text-muted">
-        {label}
-      </dt>
-      <dd className="text-sm text-default">{children}</dd>
+      <dt className="text-xs font-medium text-text-3">{label}</dt>
+      <dd className="text-sm text-text-1">{children}</dd>
     </div>
   );
 }
@@ -97,10 +95,8 @@ export function Cell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-xs uppercase tracking-[0.14em] text-muted">
-        {label}
-      </span>
+    <div className="flex flex-col gap-1 bg-bg-panel px-3 py-2">
+      <span className="text-xs font-medium text-text-3">{label}</span>
       <span className="text-sm">{children}</span>
     </div>
   );
@@ -143,15 +139,15 @@ export function DialogShell({
         aria-modal="true"
         aria-label={title}
         data-testid={testid}
-        className="relative z-10 w-full max-w-md rounded-md border border-app bg-surface p-4 shadow-lg"
+        className="relative z-10 w-full max-w-md rounded-md border border-border-2 bg-bg-panel p-4 shadow-lg"
       >
         <header className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-sm text-default">{title}</h2>
+          <h2 className="text-sm text-text-1">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Dismiss"
-            className="font-mono text-xs text-muted hover:text-default"
+            className="font-mono text-xs text-text-3 hover:text-text-1"
           >
             ✕
           </button>

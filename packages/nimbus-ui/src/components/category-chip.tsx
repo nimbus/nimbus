@@ -27,10 +27,10 @@ export function CategoryChip({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded border border-app bg-surface-2 px-1.5 py-0.5",
+        "inline-flex items-center rounded-xs border border-border-2 bg-bg-raised px-1.5 py-0.5",
         // `leading-none` pins the pill to a known 17px so a row of pills and
         // a row of 8px state dots occupy the same reserved line.
-        "font-mono text-xs leading-none uppercase tracking-wide text-muted",
+        "text-xs font-medium leading-none text-text-3",
         className,
       )}
       data-category={label.toLowerCase()}

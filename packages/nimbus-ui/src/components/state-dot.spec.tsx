@@ -33,9 +33,9 @@ describe("StateDot", () => {
 
   it("takes its colour from the shared state palette, not a private copy", () => {
     const expected: Array<[ConnState, StateKind, string]> = [
-      ["connected", "connected", "--nimbus-success"],
-      ["reconnecting", "reconnecting", "--nimbus-warning"],
-      ["offline", "offline", "--nimbus-danger"],
+      ["connected", "connected", "--success"],
+      ["reconnecting", "reconnecting", "--warning"],
+      ["offline", "offline", "--error"],
     ];
     for (const [state, kind, token] of expected) {
       const { container, unmount } = render(<StateDot state={state} />);

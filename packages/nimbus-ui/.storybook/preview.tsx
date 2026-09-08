@@ -10,8 +10,8 @@ const preview: Preview = {
     backgrounds: {
       default: "dark",
       values: [
-        { name: "dark", value: "oklch(0.15 0.015 240)" },
-        { name: "light", value: "oklch(0.98 0.005 240)" },
+        { name: "dark", value: "#0a0b0c" },
+        { name: "light", value: "#ffffff" },
       ],
     },
   },

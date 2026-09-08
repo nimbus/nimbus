@@ -103,7 +103,7 @@ export function SegmentedControl<T extends string>({
       // focus invisible while arrowing between segments. The end segments carry
       // the corner treatment themselves instead.
       className={cn(
-        "inline-flex rounded-md border border-app text-xs",
+        "inline-flex rounded-md border border-border-2 text-xs",
         className,
       )}
     >
@@ -127,10 +127,10 @@ export function SegmentedControl<T extends string>({
               // segments show a hairline corner mismatch.
               first && "rounded-l-[5px]",
               last && "rounded-r-[5px]",
-              idx > 0 && "border-l border-app",
+              idx > 0 && "border-l border-border-2",
               active
-                ? "bg-surface-2 text-default"
-                : "text-muted hover:bg-surface-2 hover:text-default",
+                ? "bg-bg-raised text-text-1"
+                : "text-text-3 hover:bg-bg-raised hover:text-text-1",
               "relative cursor-pointer",
               segmentClassName,
             )}

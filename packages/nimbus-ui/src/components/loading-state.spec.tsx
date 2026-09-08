@@ -105,7 +105,7 @@ describe("SkeletonRows", () => {
       <SkeletonRows columns={3} head={HEAD} label="Loading…" />,
     );
     const row = container.querySelector("tbody tr");
-    expect(row).toHaveClass("border-t", "border-app");
+    expect(row).toHaveClass("border-t", "border-border-2");
     expect(row?.querySelector("td")).toHaveClass(
       "px-3",
       "py-2",

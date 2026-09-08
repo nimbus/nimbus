@@ -149,7 +149,7 @@ export function Select<T extends string>({
   return (
     <label
       htmlFor={buttonId}
-      className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted"
+      className="flex items-center gap-1.5 text-xs font-medium text-text-3"
     >
       <span>{label}</span>
       <span className="relative inline-flex">
@@ -164,8 +164,8 @@ export function Select<T extends string>({
           onKeyDown={onTriggerKeyDown}
           data-testid={testid}
           className={cn(
-            "flex h-[26px] items-center gap-1.5 rounded border border-app bg-surface px-2 font-mono text-xs text-default focus-visible:border-strong",
-            open && "border-strong",
+            "flex h-[26px] items-center gap-1.5 rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 focus-visible:border-accent",
+            open && "border-border-3",
           )}
         >
           <span className="truncate normal-case tracking-normal">
@@ -175,7 +175,7 @@ export function Select<T extends string>({
             size={12}
             aria-hidden
             className={cn(
-              "shrink-0 text-muted transition-transform",
+              "shrink-0 text-text-3 transition-transform",
               open && "rotate-180",
             )}
           />
@@ -199,7 +199,7 @@ export function Select<T extends string>({
             // painted over the first option and swallowed its clicks (hitting
             // a column header, which sorts and dismisses the menu). The
             // sibling ColumnChooser in the same bar already sits at z-30.
-            className="absolute left-0 top-full z-30 mt-1 max-h-72 min-w-full overflow-auto rounded-md border border-app bg-surface shadow-lg focus:outline-none"
+            className="absolute left-0 top-full z-30 mt-1 max-h-72 min-w-full overflow-auto rounded-md border border-border-2 bg-bg-panel shadow-lg focus:outline-none"
           >
             <ul className="flex flex-col gap-px py-1">
               {options.map((option, idx) => {
@@ -222,21 +222,21 @@ export function Select<T extends string>({
                       className={cn(
                         "flex h-8 w-full items-center justify-between gap-2 px-3 text-left normal-case tracking-normal font-mono text-xs",
                         isFocused
-                          ? "bg-surface-2 text-default"
-                          : "text-muted hover:bg-surface-2 hover:text-default",
-                        isActive && "text-default",
+                          ? "bg-bg-raised text-text-1"
+                          : "text-text-3 hover:bg-bg-raised hover:text-text-1",
+                        isActive && "text-text-1",
                       )}
                     >
                       <span className="flex-1 truncate">{option.label}</span>
                       {isActive ? (
-                        // Carries the active row's own tone, not `text-brand`:
+                        // Carries the active row's own tone, not `text-accent`:
                         // the brand hue rendered this 11px glyph at 2.48:1 on
                         // --surface in the warm palette, under both the 4.5:1
                         // text floor and the 3:1 non-text floor it qualifies
                         // for as an aria-hidden state marker.
                         <span
                           aria-hidden
-                          className="font-mono text-xs text-default"
+                          className="font-mono text-xs text-text-1"
                         >
                           ●
                         </span>

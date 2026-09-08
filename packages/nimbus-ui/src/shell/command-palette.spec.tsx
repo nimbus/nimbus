@@ -138,7 +138,7 @@ describe("CommandPalette", () => {
     // resolved against the nav list, so every stored resource would come back
     // as a dead row.
     const stored = JSON.parse(
-      window.localStorage.getItem("nimbus-ui:palette:recent") ?? "[]",
+      window.localStorage.getItem("nimbus-ui:commands:recent") ?? "[]",
     );
     expect(stored[0]).toMatchObject({
       kind: "table",
@@ -174,9 +174,9 @@ describe("CommandPalette", () => {
     // other utilities — which is exactly the form this input carried.
     expect(input.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
     for (const [, token] of input.className.matchAll(
-      /var\((--nimbus-[a-z0-9-]+)\)/g,
+      /var\((--[a-z0-9-]+)\)/g,
     )) {
-      expect(token).toBe("--nimbus-focus");
+      expect(token).toBe("--accent");
     }
   });
 

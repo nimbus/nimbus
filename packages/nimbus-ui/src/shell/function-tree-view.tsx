@@ -78,7 +78,7 @@ export function FunctionTreeView({
     tree.count === 0
   ) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         <p>No functions registered.</p>
         <p className="mt-2">
           Deploy a Convex, Nimbus, or Cloud Functions app to populate this list.
@@ -88,7 +88,7 @@ export function FunctionTreeView({
   }
   if (filtered.folders.length === 0 && filtered.modules.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         No functions match the filter.
       </div>
     );
@@ -149,7 +149,7 @@ function FolderRow({
         onClick={() => rest.toggle(key)}
         aria-expanded={!collapsed}
         className={cn(
-          "flex h-7 w-full items-center gap-1 rounded-md px-1 text-left text-muted hover:bg-surface-2 hover:text-default",
+          "flex h-7 w-full items-center gap-1 rounded-md px-1 text-left text-text-3 hover:bg-bg-raised hover:text-text-1",
         )}
         style={{ paddingLeft: `${rest.depth * 12 + 4}px` }}
         data-testid={`${rest.testidPrefix}-folder-toggle-${folder.fullPath}`}
@@ -164,9 +164,7 @@ function FolderRow({
         ) : (
           <FolderOpen size={13} aria-hidden className="shrink-0" />
         )}
-        <span className="truncate font-mono text-xs uppercase tracking-wide">
-          {folder.name}
-        </span>
+        <span className="truncate text-xs font-medium">{folder.name}</span>
       </button>
       {collapsed ? null : (
         <>
@@ -212,7 +210,7 @@ function ModuleRow({
         type="button"
         onClick={() => rest.toggle(key)}
         aria-expanded={!collapsed}
-        className="flex h-7 w-full items-center gap-1 rounded-md px-1 text-left text-muted hover:bg-surface-2 hover:text-default"
+        className="flex h-7 w-full items-center gap-1 rounded-md px-1 text-left text-text-3 hover:bg-bg-raised hover:text-text-1"
         style={{ paddingLeft: `${rest.depth * 12 + 4}px` }}
         data-testid={`${rest.testidPrefix}-module-toggle-${mod.fullPath}`}
       >
@@ -254,17 +252,15 @@ function LeafRow({
       params={{ function: leaf.path }}
       search={{ tab: "source" }}
       data-testid={`${testidPrefix}-fn-${leaf.path}`}
-      className="flex h-7 items-center gap-2 rounded-md px-1 text-sm text-muted hover:bg-surface-2 hover:text-default"
+      className="flex h-7 items-center gap-2 rounded-md px-1 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
       style={{ paddingLeft: `${depth * 12 + 16}px` }}
     >
       <Icon size={13} aria-hidden className="shrink-0" />
       <span className="flex-1 truncate font-mono text-xs">{leaf.name}</span>
       {leaf.fnKind ? (
-        <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-          {leaf.fnKind}
-        </span>
+        <span className="text-xs font-medium text-text-3">{leaf.fnKind}</span>
       ) : leaf.lastStatus ? (
-        <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
+        <span className="tabular text-xs font-medium text-text-3">
           {leaf.lastStatus}
         </span>
       ) : null}

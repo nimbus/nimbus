@@ -67,7 +67,7 @@ function StoragePage() {
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         {!tenant ? (
           // `useTenantList` reports three kinds and this panel has to honour
           // all three. Reducing them to a boolean sent "Select a tenant" —
@@ -85,9 +85,9 @@ function StoragePage() {
               body={
                 <>
                   This deployment can&apos;t reach{" "}
-                  <code className="font-mono text-default">/api/tenants</code>:{" "}
+                  <code className="font-mono text-text-1">/api/tenants</code>:{" "}
                   <span
-                    className="font-mono text-default"
+                    className="font-mono text-text-1"
                     data-testid="tenant-tables-tenants-error-message"
                   >
                     {tenantList.message}
@@ -147,7 +147,7 @@ function StoragePage() {
  */
 function TablesTableHead() {
   return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
       <tr>
         <Th>Table</Th>
         <Th>Schema</Th>

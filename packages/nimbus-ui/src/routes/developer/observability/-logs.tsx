@@ -244,7 +244,7 @@ function LogFilterBar({
           <button
             type="button"
             onClick={onResume}
-            className="rounded border border-danger px-2 py-1 font-mono text-xs uppercase tracking-wide text-danger hover:bg-surface-2"
+            className="rounded-xs border border-error px-2 py-1 text-xs font-medium text-error hover:bg-bg-raised"
             data-testid="observability-log-resume"
           >
             paused · resume
@@ -267,7 +267,7 @@ function LogFilterBar({
         <button
           type="button"
           onClick={onClear}
-          className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          className="rounded-xs border border-border-2 px-2 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
           data-testid="observability-filter-clear"
         >
           clear
@@ -298,10 +298,10 @@ function Toggle({
       aria-checked={value}
       onClick={() => onChange(!value)}
       className={cn(
-        "rounded border px-2 py-1 font-mono text-xs uppercase tracking-wide",
+        "rounded-xs border px-2 py-1 text-xs font-medium",
         value
-          ? "border-strong bg-surface text-default"
-          : "border-app text-muted hover:bg-surface hover:text-default",
+          ? "border-border-3 bg-bg-panel text-text-1"
+          : "border-border-2 text-text-3 hover:bg-bg-panel hover:text-text-1",
       )}
       data-testid={testid}
     >
@@ -401,7 +401,7 @@ function LogStream({
   return (
     <div
       ref={containerRef}
-      className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
+      className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel"
       data-testid="observability-log-stream"
     >
       {events === undefined ? (
@@ -426,7 +426,7 @@ function LogStream({
             <col />
             <col className="w-[112px]" />
           </colgroup>
-          <thead className="sticky top-0 z-10 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+          <thead className="sticky top-0 z-10 bg-bg-raised text-xs font-medium text-text-3">
             <tr className="h-8">
               <Th align="right" className="py-1.5">
                 Time
@@ -452,8 +452,8 @@ function LogStream({
                   // rather than wrap, so the height is exact, not a minimum that
                   // a long source or message can push past.
                   className={cn(
-                    "h-9 border-t border-app",
-                    "hover:bg-surface-2",
+                    "h-9 border-t border-border-2",
+                    "hover:bg-bg-raised",
                   )}
                 >
                   <Td align="right" className="whitespace-nowrap py-1.5">
@@ -467,7 +467,7 @@ function LogStream({
                   <Td className="py-1.5">
                     <span
                       title={source}
-                      className="block truncate font-mono text-xs uppercase tracking-wide text-muted"
+                      className="block truncate text-xs font-medium text-text-3"
                     >
                       {source}
                     </span>
@@ -475,7 +475,7 @@ function LogStream({
                   <Td className="py-1.5">
                     <span
                       title={message}
-                      className="block truncate font-mono text-default"
+                      className="block truncate font-mono text-text-1"
                     >
                       {message}
                     </span>
@@ -487,7 +487,7 @@ function LogStream({
                         eventId={event._id}
                       />
                     ) : (
-                      <span className="tabular text-muted">—</span>
+                      <span className="tabular text-text-3">—</span>
                     )}
                   </Td>
                 </tr>
@@ -501,7 +501,7 @@ function LogStream({
           role="menu"
           aria-label="Log entry actions"
           style={{ top: menu.y, left: menu.x }}
-          className="fixed z-50 min-w-[160px] rounded-md border border-app bg-surface py-1 font-mono text-xs shadow-lg"
+          className="fixed z-50 min-w-[160px] rounded-md border border-border-2 bg-bg-panel py-1 font-mono text-xs shadow-lg"
           data-testid="observability-log-context-menu"
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
@@ -512,12 +512,12 @@ function LogStream({
             to="/developer/compute/runs/$runId"
             params={{ runId: menu.correlationId }}
             role="menuitem"
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-default hover:bg-surface-2"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-text-1 hover:bg-bg-raised"
             data-testid="observability-log-open-run"
             onClick={() => setMenu(null)}
           >
             Open run
-            <span className="ml-auto text-muted">
+            <span className="ml-auto text-text-3">
               {shortId(menu.correlationId, 8)}
             </span>
           </Link>
@@ -572,7 +572,7 @@ function CorrelationBadge({
       <Link
         to="/developer/compute/runs/$runId"
         params={{ runId: correlationId }}
-        className="inline-flex items-center gap-1 rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2 focus-visible:text-default"
+        className="inline-flex items-center gap-1 rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-raised hover:text-text-1 focus-visible:bg-bg-raised focus-visible:text-text-1"
         data-testid={`observability-log-jump-${eventId}`}
         aria-label={`Jump to run ${correlationId}`}
         title={`Jump to run ${correlationId}`}

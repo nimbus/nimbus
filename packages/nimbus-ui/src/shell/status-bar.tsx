@@ -55,7 +55,7 @@ export function StatusBar() {
       // reached the document and put a horizontal scrollbar on the whole
       // shell. DESIGN.md: "The bar never wraps. Truncate aggressively; rely
       // on title attributes for full values."
-      className="flex h-[var(--statusbar-height)] items-center justify-between gap-3 overflow-hidden whitespace-nowrap border-t border-app bg-surface px-3 text-xs font-mono text-muted"
+      className="flex h-[var(--statusbar-height)] items-center justify-between gap-3 overflow-hidden whitespace-nowrap border-t border-border-2 bg-bg-panel px-3 text-xs font-mono text-text-3"
     >
       {/* Left: keyboard hints (least important — Chrome's link-hover URL
           preview covers this corner, so the connection/url/tenant info lives
@@ -75,16 +75,16 @@ export function StatusBar() {
           <span className="inline-flex items-center gap-1">
             <Kbd>{metaGlyph}</Kbd>
             <Kbd>\</Kbd>
-            <span className="text-muted">system tenant lens</span>
+            <span className="text-text-3">system tenant lens</span>
           </span>
           <span className="inline-flex items-center gap-1">
             <Kbd>{metaGlyph}</Kbd>
             <Kbd>K</Kbd>
-            <span className="text-muted">palette</span>
+            <span className="text-text-3">palette</span>
           </span>
           <span className="inline-flex items-center gap-1">
             <Kbd>/</Kbd>
-            <span className="text-muted">filter</span>
+            <span className="text-text-3">filter</span>
           </span>
         </span>
       )}
@@ -155,7 +155,7 @@ function VersionSlot({
           className="inline-flex items-center gap-1.5"
         >
           <UpgradeDot tone="upgrading" />
-          <span className="text-default">
+          <span className="text-text-1">
             Updating to {targetLatest ?? info.latest}…
           </span>
         </span>
@@ -174,7 +174,7 @@ function VersionSlot({
           className="inline-flex items-center gap-1.5"
         >
           <UpgradeDot tone="upgraded" />
-          <span className="text-default">{baseValue}</span>
+          <span className="text-text-1">{baseValue}</span>
         </span>
       </>
     );
@@ -206,9 +206,9 @@ function VersionSlot({
           trigger={
             <>
               <UpgradeDot tone="available" />
-              <span className="text-default">v{currentVersion}</span>
-              <span className="text-muted">·</span>
-              <span className="text-default">update to {info.latest} →</span>
+              <span className="text-text-1">v{currentVersion}</span>
+              <span className="text-text-3">·</span>
+              <span className="text-text-1">update to {info.latest} →</span>
             </>
           }
         />
@@ -256,7 +256,7 @@ export const UPGRADE_TONE_KINDS = UPGRADE_TONES;
 
 function Divider() {
   return (
-    <span aria-hidden className="text-muted/40">
+    <span aria-hidden className="text-text-3/40">
       ·
     </span>
   );

@@ -13,7 +13,7 @@ describe("cn", () => {
 
   it("collapses tailwind conflicts via tailwind-merge", () => {
     expect(cn("px-2", "px-4")).toBe("px-4");
-    expect(cn("text-default", "text-muted")).toBe("text-muted");
+    expect(cn("text-text-1", "text-text-3")).toBe("text-text-3");
   });
 
   it("merges arrays and conditional records", () => {

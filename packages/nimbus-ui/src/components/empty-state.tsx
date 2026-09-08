@@ -29,7 +29,7 @@ export function EmptyState({
       data-testid={testid}
     >
       <h2
-        className="font-mono text-default"
+        className="font-mono text-text-1"
         style={{ fontSize: "var(--text-lg)" }}
         data-testid={testid ? `${testid}-title` : undefined}
       >
@@ -37,7 +37,7 @@ export function EmptyState({
       </h2>
       {body !== undefined ? (
         <p
-          className="max-w-md text-sm text-muted"
+          className="max-w-md text-sm text-text-3"
           data-testid={testid ? `${testid}-body` : undefined}
         >
           {body}
@@ -58,7 +58,7 @@ function EmptyStateCtaButton({
   testid?: string;
 }) {
   const className =
-    "mt-2 rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default";
+    "mt-2 rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1";
   const ctaTestid = testid ? `${testid}-cta` : undefined;
   if ("to" in cta) {
     return (

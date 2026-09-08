@@ -10,7 +10,7 @@ export function RelativeTime({ epochMs }: { epochMs: number }) {
   const now = useNow(15_000);
   return (
     <time
-      className="tabular text-muted"
+      className="tabular text-text-3"
       dateTime={new Date(epochMs).toISOString()}
       title={formatAbsoluteTime(epochMs)}
     >

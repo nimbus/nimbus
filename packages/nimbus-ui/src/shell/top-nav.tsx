@@ -46,11 +46,11 @@ export function TopNav() {
   const buildHash = status?.buildHash ?? null;
   return (
     <header
-      className="flex h-10 shrink-0 items-center gap-4 border-b border-app bg-surface px-3"
+      className="flex h-10 shrink-0 items-center gap-4 border-b border-border-2 bg-bg-panel px-3"
       data-testid="top-nav"
       data-view={view}
     >
-      <div className="flex items-center gap-2 text-default">
+      <div className="flex items-center gap-2 text-text-1">
         <LogoMark className="h-6 w-[38px] shrink-0" />
         <div className="flex flex-col leading-tight">
           <span className="text-sm">
@@ -65,16 +65,16 @@ export function TopNav() {
                   label="build hash"
                   value={buildHash}
                   testid="top-nav-version"
-                  className="ml-1 text-muted"
+                  className="ml-1 text-text-3"
                 >
                   v{version}
-                  <span className="text-muted/70">
+                  <span className="text-text-3/70">
                     +{buildHash.slice(0, 7)}
                   </span>
                 </CopyChip>
               ) : (
                 <span
-                  className="ml-1 font-mono text-muted"
+                  className="ml-1 font-mono text-text-3"
                   data-testid="top-nav-version"
                 >
                   v{version}
@@ -83,7 +83,7 @@ export function TopNav() {
             ) : null}
           </span>
           <span
-            className="text-xs font-mono uppercase tracking-[0.18em] text-muted"
+            className="text-xs font-medium text-text-3"
             data-testid="top-nav-wordmark"
           >
             {view === "operator" ? "operator console" : "developer console"}

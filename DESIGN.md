@@ -614,94 +614,87 @@ native chrome surface in `nimbus/desktop`. For the logo, marketing surfaces,
 favicon, app icon, and the desktop setup card, see **Brand Palette** below —
 the two tiers are intentionally distinct.
 
-The product palette has two orthogonal axes:
+The product palette has one axis: **mode**, `light` / `dark` / `system`.
+There is one palette: neutral grounds and one amber accent. Mode is user
+controlled from Settings → Appearance and from the appearance menu in the
+shell, and persists to `localStorage` (`nimbus-ui:theme`). The shell sets
+`data-theme` on `<html>`. Dark is the default token set on `:root`; light is
+the override under `[data-theme="light"]`.
 
-- **Mode** — `light` / `dark` / `system`. Controls neutrals + reading direction.
-- **Palette** — `blue` (default) / `mono` / `warm`. Controls brand + accent +
-  link identity. Each palette pairs a light variant with a dark variant from
-  the Nimbus Color Palette (see Brand Palette below).
+Tokens live in `packages/nimbus-ui/src/styles/tokens.css` as hex and rgba
+literals. `@theme inline` bridges them to Tailwind utilities (`bg-bg-panel`,
+`text-text-3`, `border-border-2`, `text-accent-link`, ...) and to the shadcn
+registry names (`background`, `muted`, `ring`, ...), so a registry component
+paints the same tokens without edits.
 
-Both are user-controlled from Settings → Appearance and persist to
-`localStorage` (`nimbus-ui:theme`, `nimbus-ui:palette`). The shell sets
-`data-theme` and `data-palette` on `<html>` so the cascade resolves the
-right token set per request.
+Grounds and borders:
 
-Palette pairs (light → dark):
-
-| Palette | Light variant     | Dark variant     | Use                              |
-| ---     | ---               | ---              | ---                              |
-| `warm`  | Warm              | Night Blue       | Product default — the "sky cycle": golden daylight, night-blue dark |
-| `blue`  | Cool Blue         | Night Blue       | Cool alternative                 |
-| `mono`  | Monochrome        | Reverse Mono     | Minimal / enterprise / print     |
-
-Dark mode is Night Blue for every palette except `mono` (Reverse Mono).
-The light-mode choice is the palette's identity; night looks the same
-sky for everyone.
-
-Colors are defined in OKLCH so light and dark perceptual lightness stay
-parity-matched. Semantic state tokens (`--success`, `--warning`, `--danger`,
-`--running`, `--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are
-stable across all palettes — `Ready` is green and `Running` is teal in every
-theme, so a status never changes meaning when the palette does.
-
-Tokens that swap per palette (the default shown: Warm light / Night Blue
-dark; the Cool Blue light column lives in `globals.css` under
-`[data-palette="blue"]`):
-
-| Token | Default light (Warm, OKLCH) | Default dark (Night Blue, OKLCH) | Use |
+| Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--bg` | `oklch(96.5% 0.020 82)` | `oklch(13% 0.026 263)` | App background |
-| `--surface` | `oklch(100% 0 0)` | `oklch(19% 0.030 258)` | Panels, tables, popovers |
-| `--surface-2` | `oklch(96% 0.025 82)` | `oklch(24% 0.030 258)` | Secondary panels, selected rows |
-| `--border` | `oklch(90% 0.025 82)` | `oklch(32% 0.030 258)` | Hairline borders and dividers |
-| `--border-strong` | `oklch(82% 0.040 78)` | `oklch(40% 0.030 258)` | Emphasis borders |
-| `--text` | `oklch(20% 0.020 60)` | `oklch(91% 0.014 252)` | Primary text |
-| `--muted` | `oklch(53% 0.013 75)` | `oklch(67% 0.026 248)` | Secondary text |
-| `--brand` | `oklch(73% 0.17 65)` (`#F59E0B`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
-| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Selection identity: the selected row's left bar, `::selection`. Never a focus ring in a light palette — 1.71:1 on `--surface-2` in Warm, under the 3:1 floor. Not a state colour — `Running` has its own `--running` |
-| `--focus` | `oklch(62% 0.17 55)` | `var(--accent)` | The focus ring, and the only token that paints one. Set against `--surface-2`, the darkest ground a light palette paints on: 3.42:1 Warm, 3.94:1 Blue, 4.15:1 Mono, against WCAG 2.2 SC 1.4.11's 3:1 non-text floor. Resolves to `--accent` in the dark palettes, where that measures 9.87:1 and clears the floor easily |
-| `--link` | `oklch(55% 0.17 52)` | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
+| `--bg-canvas` | `#0a0b0c` | `#ffffff` | The page |
+| `--bg-panel` | `#101112` | `#fafafa` | Sidebar, cards, tables, popovers |
+| `--bg-raised` | `#18191b` | `#f4f4f5` | Inputs, code chips, menus, selected rows |
+| `--bg-hover` | `#1f2124` | `#ececee` | Hovered rows and controls |
+| `--border-1` | `rgba(255,255,255,.05)` | `rgba(0,0,0,.06)` | Hairlines inside a panel |
+| `--border-2` | `rgba(255,255,255,.08)` | `rgba(0,0,0,.10)` | Panel and control edges |
+| `--border-3` | `rgba(255,255,255,.12)` | `rgba(0,0,0,.15)` | Emphasis edges, checkbox boxes |
 
-Semantic tokens (stable across all palettes):
+Text:
 
-Every light value here is set against `--surface-2`, the darkest ground a
-light palette paints text on — not against `--surface`, which is pure white in
-all three light palettes and clears AA for colours that fail everywhere else.
-
-| Token | Light (OKLCH) | Dark (OKLCH) | Use |
+| Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--success` | `oklch(52% 0.14 145)` | `oklch(72% 0.16 145)` | `Ready`, `Healthy` |
-| `--running` | `oklch(60% 0.13 207)` | `oklch(85% 0.10 197)` | `Running` |
-| `--warning` | `oklch(54.5% 0.15 72)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
-| `--starting` | `oklch(70% 0.17 50)` | `oklch(80% 0.18 50)` | `Starting`, `Provisioning` |
-| `--draining` | `oklch(55% 0.13 280)` | `oklch(72% 0.14 280)` | `Draining`, `Stopping` |
-| `--queued` | `oklch(60% 0.020 240)` | `oklch(70% 0.020 240)` | `Queued`, `Pending` |
-| `--danger` | `oklch(56% 0.20 25)` | `oklch(70% 0.20 25)` | `Failed`, destructive |
-| `--stale` | `oklch(50% 0.012 240)` | `oklch(60% 0.012 240)` | Disconnected/stale (strikethrough) |
-| `--violet` | `oklch(55% 0.18 295)` | `oklch(75% 0.16 295)` | Functions/runs only |
+| `--text-1` | `#f6f7f8` | `#18181b` | Primary text, headings, values |
+| `--text-2` | `#c9ced6` | `#3f3f46` | Body copy, cell text |
+| `--text-3` | `#8b909a` | `#66666e` | Labels, metadata, icons at rest |
+| `--text-4` | `#62666d` | `#a1a1aa` | Disabled only; below AA by design |
+
+Accent:
+
+| Token | Dark | Light | Use |
+| --- | --- | --- | --- |
+| `--accent` | `#f0b23e` | `#b45309` | Identity, selection, the focus ring, `::selection` |
+| `--accent-hover` | `#f6c35c` | `#92400e` | Hovered accent fill |
+| `--accent-ink` | `#1a1204` | `#ffffff` | Text on an accent fill |
+| `--accent-link` | `#f0b23e` | `#975c06` | Hyperlinks only |
+| `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(180,83,9,.14)` | Selected-row wash |
+
+Semantic tokens (each has a `-tint` at 14% for washes):
+
+| Token | Dark | Light | Use |
+| --- | --- | --- | --- |
+| `--success` | `#4ade80` | `#15753a` | `Ready`, `Healthy`, additions |
+| `--warning` | `#fb923c` | `#b53b0a` | `Degraded`, `Starting`, `Reconnecting` |
+| `--error` | `#f87171` | `#b91c1c` | `Failed`, destructive, removals |
+| `--error-ink` | `#1f0a0a` | `#ffffff` | Text on an error fill |
+| `--info` | `#60a5fa` | `#1d4ed8` | `Running`, informational |
 
 Rules:
 
-- **Four identity tokens, four different jobs.** `--brand` carries
-  primary identity (active nav, primary CTA, dominant brand fill).
-  `--accent` is selection. `--focus` is the focus ring, and no other token
-  paints one: `--accent` at 1.71:1 and `--brand` at 2.21:1 both miss the
-  3:1 non-text floor on `--surface-2` in Warm light. In the dark palettes
-  `--focus` is defined as `var(--accent)`, so the two coincide there — the
-  rule is that a focus ring names `--focus`, never `--accent` directly.
-  `--link` is hyperlinks. Never paint buttons with `--link`. Never paint
-  active nav with `--accent` — that's `--brand`'s job.
-- **State colors are universal.** Status state colors do not vary by
-  palette. A red `Failed` chip looks the same in Mono as in Blue.
-- **Status colors must always have text or icon labels.** Color alone is
+- **One accent, four jobs.** `--accent` carries identity (the active nav
+  item, the primary CTA), selection (the selected row's bar and wash), the
+  focus ring, and `::selection`. There is no second identity colour.
+  `--accent-link` is hyperlinks and nothing else: never paint a button or
+  a nav item with it.
+- **Semantic colours never use the accent hue.** `Running` is `--info`
+  (blue), never amber. A state token and the accent are never the same
+  literal, so a status never reads as "selected".
+- **Contrast is measured, not assumed.** `src/styles/contrast.spec.ts`
+  reads `tokens.css` and holds every text token to 4.5:1 on all four
+  grounds, `--accent` to 3:1 on all four grounds (SC 1.4.11), the two ink
+  tokens to 4.5:1 on their fills, and `--text-4` below `--text-3`. The
+  light deviations from the exemplar (`--text-3`, `--success`, `--warning`,
+  `--accent-link`) exist to pass those gates.
+- **Status colours must always have text or icon labels.** Colour alone is
   never the only signal.
-- **Surfaces never use accent or brand as a fill.** Identity colors appear
-  as a 1–2px left bar, an inline dot, a 2px `--focus` ring, a small icon, or a
-  small CTA — never as a section background.
-- Tailwind v4 `@theme` directive should expose the non-palette tokens as
-  CSS variables; palette-scoped tokens live in `@layer base` under
-  `[data-palette=…]` selectors.
-
+- **Surfaces never use the accent as a fill.** The accent appears as a
+  1–2px bar, an inline dot, the ring, a small icon, or a small CTA — never
+  as a section background. A wash uses the `-tint`.
+- **One focus ring.** The unlayered `:focus-visible` rule in `globals.css`
+  paints a 2px ring of `--accent` at 40% and a 4px halo at 20% on every
+  focusable element, registry primitives included. No Nimbus-owned
+  component binds its own ring or outline colour under a focus variant. A
+  text field may add `focus-visible:border-accent` so the edge and the ring
+  agree.
 ### Brand Palette
 
 The brand palette is **distinct from the product palette above**. Use it
@@ -722,24 +715,17 @@ surface, pick the equivalent product-tier token instead.
 
 #### Two-Tier Bridge
 
-Four values cross tiers, by design:
+One family crosses tiers, by design:
 
-- **Golden Hour.** Brand `#D97706` (Golden Hour stroke) drives the
-  default light `--link` `oklch(62% 0.17 55)`, with the amber family
-  (`#F59E0B` / `#FFB84D`) as the default light `--brand` / `--accent`.
-  The Warm logo variant's golden fill `#FFE7B3` stays brand-tier.
-- **Brand blue.** Brand `#3B82F6` (Cool Blue primary, solid form) drives
-  `--brand` in the `blue` palette's light variant; Night Blue `#60A5FA`
-  drives the default dark `--brand` — same hexes inside the app.
-- **Teal accent.** Brand "Interactive Elements" gradient
-  `#67E8F9 → #06B6D4` (Tailwind cyan-300 → cyan-500) drives the dark
-  `--accent` `oklch(85% 0.10 197)` (and the blue palette's light accent)
-  in solid form. The brand gradient is reserved for logos and marketing;
-  the solid form is the in-app accent.
-- **Ink.** Hex `#0F172A` is shared across tiers as primary text on light
-  surfaces and as the Warm logo variant's stroke.
+- **Golden Hour.** Brand `#D97706` (Golden Hour stroke) is the amber the
+  product accent is built from. `--accent` is `#f0b23e` in dark and
+  `#b45309` in light, and `--accent-link` is `#975c06` in light. Each is
+  measured against the product grounds rather than copied from the brand
+  sheet.
 
-No other color crosses tiers.
+No other colour crosses tiers. The blue, teal, and slate brand variants stay
+on the logo and marketing surfaces. The product has no blue identity and no
+teal accent.
 
 #### Variants
 
@@ -767,15 +753,14 @@ docs hero, the docs top-nav, README badges. The wordmark is lowercase
 
 #### Usage Guidelines
 
-- **Warm** — the light-mode identity of the sky-cycle default: product UI
-  and docs light-mode favicon/logo, marketing pages, app icon, and the
-  desktop setup card.
+- **Warm** — the light-mode identity: docs light-mode favicon/logo,
+  marketing pages, app icon, and the desktop setup card.
 - **Golden Hour** — brand-forward marketing accents; its `#D97706` stroke
-  is the tier bridge into the default light `--link`.
-- **Cool Blue** — the `blue` palette's light variant (explicit choice in
-  Settings → Appearance), and cool-toned marketing touchpoints.
-- **Night Blue** — the dark-mode identity everywhere: product UI and docs
-  dark-mode favicon/logo, and the default dark palette.
+  is the tier bridge into the product `--accent`.
+- **Cool Blue** — cool-toned marketing touchpoints only. The product has no
+  blue palette.
+- **Night Blue** — docs dark-mode favicon/logo and dark marketing
+  surfaces. The product dark mode is neutral, not blue.
 - **Monochrome** / **Reverse Mono** — minimal, enterprise, print. Tray
   icon uses monochrome on light menu bars; macOS auto-inverts for dark.
 - **Sunset Red**, **Soft Purple**, **Slate** — reserved for future
@@ -793,16 +778,13 @@ governing rule: **the doc body is product-tier; the splash hero is the
 site's single brand-tier moment.** Renderer: Astro Starlight in
 `website/`; tokens live in `website/src/styles/custom.css`.
 
-- **Doc body = product tier.** Starlight's gray scale maps to the default
-  palette's OKLCH neutrals — Warm light / Night Blue dark
-  (`--bg`/`--surface`/`--border`/`--text`/`--muted`, the sky-cycle columns
-  verbatim). Starlight has a single accent family: light
-  `--sl-color-accent` ← warm `--link` (#D97706) with accent-high deepened
-  to amber-800 strength for link text on paper; dark `--sl-color-accent`
-  ← `--brand` (#60A5FA) with accent-high ← `--link`. The product tier's
-  brand/accent/link three-way split intentionally collapses to one
-  identity family per mode in docs — teal stays out of the doc body. No
-  gradients in the doc body.
+- **Doc body = product tier.** Starlight's gray scale maps to the product
+  neutrals (`--bg-canvas`/`--bg-panel`/`--border-2`/`--text-1`/`--text-3`,
+  both modes verbatim). Starlight has a single accent family: light
+  `--sl-color-accent` ← `--accent-link` (#975c06) with accent-high deepened
+  for link text on paper; dark `--sl-color-accent` ← `--accent` (#f0b23e).
+  One identity family per mode — teal and blue stay out of the doc body.
+  No gradients in the doc body.
 - **Splash hero = brand tier, once.** Dark mode renders the hero title in
   the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`
   over Night Blue. Light mode is golden daylight, so its hero composes
@@ -840,30 +822,44 @@ the short spoken hook (README banner headline). Nimbus is
 
 ### Typography
 
-- Body / UI: system UI stack
-  (`-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif`).
-- Monospace: **JetBrains Mono** (self-hosted via `@fontsource/jetbrains-mono`)
-  with `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace` as
-  fallbacks. Used for IDs, digests, request IDs, function paths, ports,
-  bytes/duration values, code blocks, JSON/BSON values, and shell snippets.
-- Body: 14px desktop, 15px mobile.
-- Compact table text: 13px.
-- Page title: 22px (single value, not a range).
-- Section heading: 16px.
-- Label/caption: 12px.
-- Monospace baseline: matches body line-height so monospace IDs in a row
-  align with surrounding sans-serif text.
+- Body / UI: **Geist** (self-hosted from `packages/nimbus-ui/public/fonts/`,
+  weights 400, 500, 600) with `system-ui, "Segoe UI", sans-serif` as
+  fallbacks.
+- Monospace: **Geist Mono** (self-hosted, weights 400, 500, 600) with
+  `"JetBrains Mono", ui-monospace, monospace` as fallbacks. Used for IDs,
+  digests, request IDs, function paths, ports, bytes/duration values, code
+  blocks, JSON/BSON values, and shell snippets.
+- Scale (`--text-*` in `tokens.css`; the Tailwind defaults are reset, so
+  only these steps exist):
+
+| Step | Size / line | Tracking | Use |
+| --- | --- | --- | --- |
+| `xs` | 12 / 16 | 0 | Labels, captions, table metadata |
+| `sm` | 13 / 18 | 0 | Compact table text, menus, chips |
+| `base` | 14 / 20 | 0 | Body |
+| `md` | 16 / 24 | 0 | Section heading |
+| `lg` | 20 / 28 | `-0.01em` | Page title |
+| `xl` | 24 / 32 | `-0.01em` | Empty states and onboarding |
+| `2xl` | 32 / 38 | `-0.02em` | Metric values |
+
+- Monospace inline runs at `0.93em` with `-0.01em` tracking so an ID in a
+  row reads at the same cadence as the sans around it. Code blocks run at
+  `1em`.
 
 Rules:
 
 - Do not scale type with viewport width.
-- Letter spacing is `0`. Monospace letter spacing is `-0.01em` so JetBrains
-  Mono reads at the same visual cadence as body text inline.
-- Reserve large display type for empty states and onboarding, not dashboards.
-- Code, IDs, digests, function paths, ports, and bytes use monospace.
-- **All numeric columns** (durations, counts, sizes, ports, rates, percentages,
-  timestamps) must apply `font-variant-numeric: tabular-nums`. Without this,
-  live tables jitter on every tick. This is a hard requirement, not a polish.
+- **Labels are sentence case** in the sans at `text-xs font-medium
+  text-text-3`. Tracked small caps (`uppercase` + `tracking-*`) are retired;
+  the sidebar group heading is the one place that may keep them.
+- **Mono is the voice of data, never of labels.** A category chip, a column
+  header, or a form label is sans. A value, an ID, or a path is mono.
+- Reserve `xl` and `2xl` for empty states, onboarding, and metric values,
+  not for dashboard chrome.
+- **All numeric columns** (durations, counts, sizes, ports, rates,
+  percentages, timestamps) must apply `font-variant-numeric: tabular-nums`.
+  Without this, live tables jitter on every tick. This is a hard
+  requirement, not a polish.
 - Status badges use tabular lining figures so counters do not reflow.
 
 ### Spacing And Shape
@@ -873,7 +869,11 @@ Rules:
 - Comfortable row: 44-48px.
 - Panel padding: 12-16px.
 - Page gap: 16-24px.
-- Radius: 6px default, 8px maximum for cards/panels.
+- Radius scale (`--radius-*` in `tokens.css`; the Tailwind defaults are
+  reset): `xs` 4px for chips and inline code, `sm` 6px for controls and
+  inputs, `md` 8px for cards, panels and popovers, `lg` 12px for dialogs,
+  `xl` 16px for onboarding cards, `full` for dots and pills. Bare `rounded`
+  and the `2xl`+ steps compile to nothing; a spec gates them.
 - Icon button: 32px square, 36px on touch surfaces.
 
 Stable dimensions are required for tables, metric panels, toolbars, counters,
@@ -925,15 +925,15 @@ State → token binding (mandatory; do not improvise mappings):
 | State | Token | Dot glyph |
 | --- | --- | --- |
 | `Ready`, `Healthy`, `OK`, `Active`, `Connected`, `Completed` | `--success` | ● solid |
-| `Running` | `--running` | ● pulsing (respects `prefers-reduced-motion`) |
-| `Starting`, `Provisioning`, `Restarting` | `--starting` | ◐ half-filled |
-| `Draining`, `Stopping`, `Deleting` | `--draining` | ◐ half-filled |
-| `Queued`, `Pending` | `--queued` | ○ outline |
+| `Running` | `--info` | ● pulsing (respects `prefers-reduced-motion`) |
+| `Starting`, `Provisioning`, `Restarting` | `--warning` | ◐ half-filled |
+| `Draining`, `Stopping`, `Deleting` | `--text-3` | ◐ half-filled |
+| `Queued`, `Pending` | `--text-3` | ○ outline |
 | `NotReady`, `Degraded`, `Reconnecting` | `--warning` | ● solid |
-| `Stopped`, `Created`, `Idle`, `Paused`, `Uninitialized` | `--muted` | ○ outline |
-| `Failed`, `Crashed`, `Offline` | `--danger` | ● solid |
-| `Stale` (post-disconnect) | `--stale` | ● solid + label strikethrough |
-| `Unknown` | `--muted` | ? glyph |
+| `Stopped`, `Created`, `Idle`, `Paused`, `Uninitialized` | `--text-3` | ○ outline |
+| `Failed`, `Crashed`, `Offline` | `--error` | ● solid |
+| `Stale` (post-disconnect) | `--text-3` | ● solid + label strikethrough |
+| `Unknown` | `--text-3` | ? glyph |
 
 Each row is a state *family*. Names after the first are aliases that fold onto
 that family — they do not get their own tone. Add a new state by folding it onto
@@ -946,7 +946,8 @@ console lost track of this resource"), which makes an unlisted state a visible
 bug rather than a silent miscolour. Lock the two sides together with a test that
 asserts every state a route or hook can emit renders a non-`?` glyph.
 
-Categorical (filled pill, monospace label, 11px):
+Categorical (filled pill on `--bg-raised`, sentence case, `text-xs
+font-medium` in the sans):
 
 - Function kind: `Query`, `Mutation`, `Action`, `HTTP`, `Scheduled`, `Cron`.
 - Adapter: `Convex`, `MongoDB`, `Firebase`, `CloudFn`, `Native`.
@@ -1090,9 +1091,9 @@ comparison, and document edits before save. Pattern:
 
 - Side-by-side on desktop, unified on tablet/mobile.
 - Line-level diff with intra-line highlights.
-- Removed: `--danger` left border + `--danger`-tinted surface.
-- Added: `--success` left border + `--success`-tinted surface.
-- No saturated reds/greens — use the same OKLCH state tokens.
+- Removed: `--error` left border + `--error-tint` surface.
+- Added: `--success` left border + `--success-tint` surface.
+- No saturated reds/greens — use the same state tokens.
 - Diffs over 200 lines collapse unchanged regions to `… N unchanged lines`.
 
 ### Keyboard Hints
@@ -1294,10 +1295,11 @@ Tone:
 - Cross-tenant user data browsing uses the REST API unless a safe generated
   function surface exists for that exact tenant.
 - Do not introduce a second data orchestration path for the UI.
-- Prefer shadcn/ui source components, Base UI (MUI) primitives, Tailwind v4
-  with `@theme` OKLCH tokens, `cmdk` for the command palette, `sonner` for
-  toasts, `shiki` for syntax highlighting, JetBrains Mono for monospace
-  (via `@fontsource/jetbrains-mono`), Lucide for icons, TanStack Router,
+- Prefer shadcn `base-nova` registry components on Base UI primitives,
+  Tailwind v4 with the hex role tokens in `tokens.css` bridged through
+  `@theme inline`, `cmdk` for the command palette, `sonner` for toasts,
+  `shiki` for syntax highlighting, Geist and Geist Mono self-hosted for
+  type, Lucide for icons, TanStack Router, Table, Virtual and Charts,
   Zustand, Vitest, React Testing Library, and Playwright as described in
   `docs/private/plans/archive/desktop-ui-plan.md`.
 

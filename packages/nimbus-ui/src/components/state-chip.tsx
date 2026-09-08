@@ -61,50 +61,47 @@ export const statePalette: Record<
   StateKind,
   { token: string; glyph: Glyph; strike?: boolean }
 > = {
-  ready: { token: "--nimbus-success", glyph: "solid" },
-  healthy: { token: "--nimbus-success", glyph: "solid" },
-  ok: { token: "--nimbus-success", glyph: "solid" },
-  active: { token: "--nimbus-success", glyph: "solid" },
-  connected: { token: "--nimbus-success", glyph: "solid" },
+  ready: { token: "--success", glyph: "solid" },
+  healthy: { token: "--success", glyph: "solid" },
+  ok: { token: "--success", glyph: "solid" },
+  active: { token: "--success", glyph: "solid" },
+  connected: { token: "--success", glyph: "solid" },
   /* A scheduled job that ran to completion is the terminal success of a
      run, so it folds onto the Ready/OK family rather than earning a row of
      its own. */
-  completed: { token: "--nimbus-success", glyph: "solid" },
-  /* Running owns `--running` (teal, hue 207), not `--accent`. In the warm
-     palette `--accent` is hue 70 and `--warning` — which carries NotReady and
-     Degraded — is hue 72, so binding Running to the accent painted two
-     semantically opposite states in one hue family, separated only by
-     lightness. `--running` is also palette-stable, where `--accent` shifts with
-     the brand, so a palette switch can no longer change what Running looks
-     like relative to Degraded. */
-  running: { token: "--nimbus-running", glyph: "pulsing" },
-  starting: { token: "--nimbus-starting", glyph: "half" },
-  provisioning: { token: "--nimbus-starting", glyph: "half" },
-  restarting: { token: "--nimbus-starting", glyph: "half" },
-  draining: { token: "--nimbus-draining", glyph: "half" },
-  stopping: { token: "--nimbus-draining", glyph: "half" },
-  deleting: { token: "--nimbus-draining", glyph: "half" },
-  pending: { token: "--nimbus-queued", glyph: "outline" },
-  queued: { token: "--nimbus-queued", glyph: "outline" },
-  stopped: { token: "--nimbus-muted", glyph: "outline" },
-  created: { token: "--nimbus-muted", glyph: "outline" },
-  idle: { token: "--nimbus-muted", glyph: "outline" },
+  completed: { token: "--success", glyph: "solid" },
+  /* Running owns `--info` (blue), never `--accent`. The accent is amber and
+     `--warning`, which carries NotReady and Degraded, is orange, so binding
+     Running to the accent would paint two opposite states in one hue family,
+     separated only by lightness. Semantic colours never use the accent hue. */
+  running: { token: "--info", glyph: "pulsing" },
+  starting: { token: "--warning", glyph: "half" },
+  provisioning: { token: "--warning", glyph: "half" },
+  restarting: { token: "--warning", glyph: "half" },
+  draining: { token: "--text-3", glyph: "half" },
+  stopping: { token: "--text-3", glyph: "half" },
+  deleting: { token: "--text-3", glyph: "half" },
+  pending: { token: "--text-3", glyph: "outline" },
+  queued: { token: "--text-3", glyph: "outline" },
+  stopped: { token: "--text-3", glyph: "outline" },
+  created: { token: "--text-3", glyph: "outline" },
+  idle: { token: "--text-3", glyph: "outline" },
   /* Paused (a disabled cron) and uninitialized (a machine with no host yet)
      are both "exists, not doing anything", which is the Stopped family. */
-  paused: { token: "--nimbus-muted", glyph: "outline" },
-  uninitialized: { token: "--nimbus-muted", glyph: "outline" },
-  notready: { token: "--nimbus-warning", glyph: "solid" },
-  degraded: { token: "--nimbus-warning", glyph: "solid" },
-  reconnecting: { token: "--nimbus-warning", glyph: "solid" },
-  warning: { token: "--nimbus-warning", glyph: "solid" },
-  warn: { token: "--nimbus-warning", glyph: "solid" },
-  error: { token: "--nimbus-danger", glyph: "solid" },
-  failed: { token: "--nimbus-danger", glyph: "solid" },
-  crashed: { token: "--nimbus-danger", glyph: "solid" },
-  danger: { token: "--nimbus-danger", glyph: "solid" },
-  offline: { token: "--nimbus-danger", glyph: "solid" },
-  stale: { token: "--nimbus-stale", glyph: "solid", strike: true },
-  unknown: { token: "--nimbus-muted", glyph: "question" },
+  paused: { token: "--text-3", glyph: "outline" },
+  uninitialized: { token: "--text-3", glyph: "outline" },
+  notready: { token: "--warning", glyph: "solid" },
+  degraded: { token: "--warning", glyph: "solid" },
+  reconnecting: { token: "--warning", glyph: "solid" },
+  warning: { token: "--warning", glyph: "solid" },
+  warn: { token: "--warning", glyph: "solid" },
+  error: { token: "--error", glyph: "solid" },
+  failed: { token: "--error", glyph: "solid" },
+  crashed: { token: "--error", glyph: "solid" },
+  danger: { token: "--error", glyph: "solid" },
+  offline: { token: "--error", glyph: "solid" },
+  stale: { token: "--text-3", glyph: "solid", strike: true },
+  unknown: { token: "--text-3", glyph: "question" },
 };
 
 export function resolveStateKind(value: string | null | undefined): StateKind {
@@ -187,7 +184,7 @@ export function StateChip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 font-mono text-xs uppercase tracking-wide tabular text-default",
+        "inline-flex items-center gap-1.5 text-xs font-medium tabular text-text-1",
         className,
       )}
       data-state={kind}

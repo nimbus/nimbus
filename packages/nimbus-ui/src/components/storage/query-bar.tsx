@@ -50,7 +50,7 @@ export function QueryBar({
 
   return (
     <div
-      className="flex shrink-0 flex-col gap-2 border-b border-app bg-surface-2 px-3 py-2"
+      className="flex shrink-0 flex-col gap-2 border-b border-border-2 bg-bg-raised px-3 py-2"
       data-testid="documents-query-bar"
     >
       <div className="flex items-center gap-2">
@@ -77,7 +77,7 @@ export function QueryBar({
             />
           ) : null}
           {filters.length === 0 && !order ? (
-            <span className="font-mono text-xs text-muted">
+            <span className="font-mono text-xs text-text-3">
               no filters · natural order
             </span>
           ) : null}
@@ -87,10 +87,10 @@ export function QueryBar({
           onClick={() => setAdding((v) => !v)}
           aria-expanded={adding}
           className={cn(
-            "flex h-[26px] shrink-0 items-center gap-1 rounded border border-app px-2 font-mono text-xs uppercase tracking-wide hover:bg-surface",
+            "flex h-[26px] shrink-0 items-center gap-1 rounded-xs border border-border-2 px-2 text-xs font-medium hover:bg-bg-panel",
             adding
-              ? "bg-surface text-default"
-              : "text-muted hover:text-default",
+              ? "bg-bg-panel text-text-1"
+              : "text-text-3 hover:text-text-1",
           )}
           data-testid="documents-add-filter"
         >
@@ -113,22 +113,22 @@ export function QueryBar({
 
       {pendingScanSort ? (
         <div
-          className="flex flex-wrap items-center gap-2 rounded border border-warning/40 bg-surface px-2 py-1.5 font-mono text-xs text-default"
+          className="flex flex-wrap items-center gap-2 rounded-xs border border-warning/40 bg-bg-panel px-2 py-1.5 font-mono text-xs text-text-1"
           data-testid="documents-scan-warning"
           role="alert"
         >
           <span>
             <span className="text-warning">unindexed sort</span> —{" "}
-            <span className="text-muted">
+            <span className="text-text-3">
               no index leads with{" "}
-              <b className="text-default">{pendingScanSort}</b>, so the engine
+              <b className="text-text-1">{pendingScanSort}</b>, so the engine
               sorts the whole filtered table in memory.
             </span>
           </span>
           <button
             type="button"
             onClick={onConfirmScanSort}
-            className="rounded border border-app px-2 py-0.5 uppercase tracking-wide text-warning hover:bg-surface-2"
+            className="font-medium rounded-xs border border-border-2 px-2 py-0.5 text-warning hover:bg-bg-raised"
             data-testid="documents-scan-confirm"
           >
             scan anyway
@@ -136,7 +136,7 @@ export function QueryBar({
           <button
             type="button"
             onClick={onCancelScanSort}
-            className="rounded border border-app px-2 py-0.5 uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default"
+            className="font-medium rounded-xs border border-border-2 px-2 py-0.5 text-text-3 hover:bg-bg-raised hover:text-text-1"
             data-testid="documents-scan-cancel"
           >
             cancel
@@ -163,8 +163,8 @@ function Chip({
   return (
     <span
       className={cn(
-        "inline-flex h-[22px] max-w-[32ch] items-center gap-1 rounded border px-1.5 font-mono text-xs",
-        warn ? "border-warning/40 text-warning" : "border-app text-default",
+        "inline-flex h-[22px] max-w-[32ch] items-center gap-1 rounded-xs border px-1.5 font-mono text-xs",
+        warn ? "border-warning/40 text-warning" : "border-border-2 text-text-1",
       )}
       data-testid={testid}
     >
@@ -184,7 +184,7 @@ function Chip({
         type="button"
         aria-label={removeLabel}
         onClick={onRemove}
-        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded text-muted hover:text-default"
+        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-xs text-text-3 hover:text-text-1"
       >
         <X size={12} aria-hidden />
       </button>
@@ -250,12 +250,12 @@ function FilterEditor({
         // `:focus-visible` outline it used to cancel is what marks focus,
         // exactly as on every other input in the console (select.tsx,
         // -filters.tsx, tenants.tsx).
-        className="h-[26px] w-56 rounded border border-app bg-surface px-2 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
+        className="h-[26px] w-56 rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent"
         data-testid="documents-filter-value"
       />
       <button
         type="submit"
-        className="h-[26px] rounded border border-app px-2 font-mono text-xs uppercase tracking-wide text-default hover:bg-surface"
+        className="h-[26px] rounded-xs border border-border-2 px-2 text-xs font-medium text-text-1 hover:bg-bg-panel"
         data-testid="documents-filter-apply"
       >
         apply
@@ -263,7 +263,7 @@ function FilterEditor({
       <button
         type="button"
         onClick={onCancel}
-        className="h-[26px] rounded border border-app px-2 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="h-[26px] rounded-xs border border-border-2 px-2 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
       >
         cancel
       </button>

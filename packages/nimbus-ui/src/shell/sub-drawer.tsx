@@ -136,7 +136,7 @@ export function SubDrawer() {
                 aria-label={spec.title}
                 data-testid="sub-drawer-overlay"
                 data-kind={spec.kind}
-                className="fixed bottom-[var(--statusbar-height)] left-8 top-10 z-50 flex w-64 flex-col border-r border-app bg-surface shadow-lg outline-none"
+                className="fixed bottom-[var(--statusbar-height)] left-8 top-10 z-50 flex w-64 flex-col border-r border-border-2 bg-bg-panel shadow-lg outline-none"
               >
                 <SubDrawerPanelBody
                   spec={spec}
@@ -161,7 +161,7 @@ export function SubDrawer() {
       onDoubleClick={(e) => {
         if (!isInteractiveTarget(e.target)) toggle();
       }}
-      className="flex h-full w-64 shrink-0 flex-col border-r border-app bg-surface"
+      className="flex h-full w-64 shrink-0 flex-col border-r border-border-2 bg-bg-panel"
     >
       <SubDrawerPanelBody
         spec={spec}
@@ -243,7 +243,7 @@ function SubDrawerRail({
       onDoubleClick={(e) => {
         if (!isInteractiveTarget(e.target)) onToggle();
       }}
-      className="flex h-full w-8 shrink-0 flex-col gap-1 border-r border-app bg-surface py-2"
+      className="flex h-full w-8 shrink-0 flex-col gap-1 border-r border-border-2 bg-bg-panel py-2"
     >
       <button
         type="button"
@@ -256,7 +256,7 @@ function SubDrawerRail({
         // target than the rail items stacked directly under it, which is the
         // one control that must not be fiddly -- it is the only way back to
         // the expanded panel.
-        className="flex h-8 w-full items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
+        className="flex h-8 w-full items-center justify-center rounded-md text-text-3 transition-colors hover:bg-bg-raised hover:text-text-1"
       >
         <ChevronsRight size={14} aria-hidden />
       </button>
@@ -273,13 +273,11 @@ function SubDrawerRail({
             data-testid={`sub-drawer-rail-item-${item.id}`}
             data-active={item.active ? "true" : "false"}
             className={cn(
-              "flex h-8 w-full items-center justify-center border-l-2 border-transparent text-muted transition-colors hover:bg-surface-2 hover:text-default",
-              item.active && "bg-surface-2 text-default",
+              "flex h-8 w-full items-center justify-center border-l-2 border-transparent text-text-3 transition-colors hover:bg-bg-raised hover:text-text-1",
+              item.active && "bg-bg-raised text-text-1",
             )}
             style={
-              item.active
-                ? { borderLeftColor: "var(--nimbus-brand)" }
-                : undefined
+              item.active ? { borderLeftColor: "var(--accent)" } : undefined
             }
           >
             <Icon size={14} aria-hidden />
@@ -303,10 +301,8 @@ function SubDrawerPanelBody({
 }) {
   return (
     <>
-      <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-app px-3">
-        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
-          {spec.title}
-        </span>
+      <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border-2 px-3">
+        <span className="text-xs font-medium text-text-3">{spec.title}</span>
         <button
           type="button"
           onClick={onCollapse}
@@ -316,13 +312,13 @@ function SubDrawerPanelBody({
           // Same 32px square as the rail toggle it swaps places with: at 24 it
           // was the smallest target in the shell, sitting in a 40px header
           // beside 32px rail items and a 40px search field.
-          className="flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-3 transition-colors hover:bg-bg-raised hover:text-text-1"
         >
           <ChevronsLeft size={14} aria-hidden />
         </button>
       </header>
       {spec.kind === "dynamic" && spec.search ? (
-        <div className="border-b border-app px-3 py-2">
+        <div className="border-b border-border-2 px-3 py-2">
           <input
             type="search"
             value={search}
@@ -334,7 +330,7 @@ function SubDrawerPanelBody({
             // of its own — `--brand` is identity, `--accent` is focus, and the
             // global :focus-visible rule already paints the accent ring.
             data-inline-search="drawer"
-            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted"
+            className="h-7 w-full rounded-md border border-border-2 bg-bg-canvas px-2 text-xs text-text-1 placeholder:text-text-3"
           />
         </div>
       ) : null}
@@ -383,10 +379,10 @@ function SubDrawerStaticList({
         const row = cn(
           "flex h-8 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",
           item.disabled
-            ? "text-muted"
+            ? "text-text-3"
             : active
-              ? "bg-surface-2 text-default"
-              : "text-muted hover:bg-surface-2 hover:text-default",
+              ? "bg-bg-raised text-text-1"
+              : "text-text-3 hover:bg-bg-raised hover:text-text-1",
         );
         const label = <span className="flex-1 truncate">{item.label}</span>;
         /* A sub-view that does not exist yet is not a link. Rendering it as
@@ -416,7 +412,7 @@ function SubDrawerStaticList({
                 {label}
                 <span
                   aria-hidden
-                  className="inline-flex items-center rounded border border-app bg-surface-2 px-1.5 py-0.5 font-mono text-xs leading-none uppercase tracking-wide text-muted"
+                  className="inline-flex items-center rounded-xs border border-border-2 bg-bg-raised px-1.5 py-0.5 text-xs font-medium leading-none text-text-3"
                   data-testid={`sub-drawer-item-${item.id}-coming-soon`}
                 >
                   coming soon
@@ -434,13 +430,11 @@ function SubDrawerStaticList({
               data-testid={`sub-drawer-item-${item.id}`}
               data-active={active ? "true" : "false"}
               className={row}
-              style={
-                active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
-              }
+              style={active ? { borderLeftColor: "var(--accent)" } : undefined}
             >
               {label}
               {typeof item.count === "number" ? (
-                <span className="tabular font-mono text-xs text-muted">
+                <span className="tabular font-mono text-xs text-text-3">
                   {item.count}
                 </span>
               ) : null}

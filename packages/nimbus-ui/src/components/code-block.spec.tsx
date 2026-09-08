@@ -24,6 +24,6 @@ describe("CodeBlock", () => {
   it("sits on the surface-2 background with 12px padding", () => {
     render(<CodeBlock code={"const a = 1;\n"} testid="cb" />);
     const pre = screen.getByTestId("cb");
-    expect(pre).toHaveClass("bg-surface-2", "p-3");
+    expect(pre).toHaveClass("bg-bg-raised", "p-3");
   });
 });

@@ -92,7 +92,7 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
           <button
             type="button"
             onClick={clearFilters}
-            className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+            className="rounded-xs border border-border-2 px-2 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
             data-testid="observability-run-filter-clear"
           >
             clear
@@ -107,10 +107,10 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
 function AdapterHonesty() {
   return (
     <div
-      className="rounded-md border border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
+      className="rounded-md border border-border-2 bg-bg-raised px-3 py-2 font-mono text-xs text-text-3"
       data-testid="observability-adapter-honesty"
     >
-      <span className="text-default">
+      <span className="text-text-1">
         Convex / Nimbus runtime invocation history.
       </span>{" "}
       Native HTTP, scheduler, MongoDB, Firebase, and Cloud Functions traffic is
@@ -118,7 +118,7 @@ function AdapterHonesty() {
       <Link
         to="/developer/observability"
         search={(prev) => ({ ...prev, tab: "logs" })}
-        className="underline hover:text-default focus-visible:text-default"
+        className="underline hover:text-text-1 focus-visible:text-text-1"
         data-testid="observability-adapter-honesty-events-link"
       >
         Events view
@@ -186,7 +186,7 @@ function RunsTable({
         className="w-full border-collapse text-sm"
         data-testid="observability-runs-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
           <tr>
             <Th>Function</Th>
             <Th>Status</Th>
@@ -200,14 +200,14 @@ function RunsTable({
           {runs.map((run) => (
             <tr
               key={run._id}
-              className="border-t border-app hover:bg-surface-2"
+              className="border-t border-border-2 hover:bg-bg-raised"
               data-testid={`observability-run-row-${run._id}`}
             >
               <Td>
                 <Link
                   to="/developer/compute/runs/$runId"
                   params={{ runId: run._id }}
-                  className="font-mono text-default hover:underline"
+                  className="font-mono text-text-1 hover:underline"
                   data-testid={`observability-run-link-${run._id}`}
                 >
                   {run.functionPath ?? shortId(run._id, 12)}
@@ -226,7 +226,7 @@ function RunsTable({
                 {typeof run.startedAt === "number" ? (
                   <RelativeTime epochMs={run.startedAt} />
                 ) : (
-                  <span className="tabular text-muted">—</span>
+                  <span className="tabular text-text-3">—</span>
                 )}
               </Td>
               <Td>
@@ -248,7 +248,7 @@ function RunsTable({
 
 function RunsFrame({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface">
+    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel">
       {children}
     </div>
   );

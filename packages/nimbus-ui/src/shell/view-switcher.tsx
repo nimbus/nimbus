@@ -39,7 +39,7 @@ export function ViewSwitcher() {
       onChange={switchTo}
       testid="view-switcher"
       className="h-7 text-xs"
-      segmentClassName="h-7 px-3 py-0 font-mono uppercase tracking-[0.12em]"
+      segmentClassName="font-medium h-7 px-3 py-0"
     />
   );
 }

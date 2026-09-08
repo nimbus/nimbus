@@ -162,7 +162,7 @@ function TenantsPage() {
       search: { placeholder: "Filter tenants" },
       children:
         tenants.length === 0 ? (
-          <div className="px-3 py-6 text-xs text-muted">
+          <div className="px-3 py-6 text-xs text-text-3">
             <p>No tenants yet.</p>
             <p className="mt-2">Use Create tenant above to add one.</p>
           </div>
@@ -174,7 +174,7 @@ function TenantsPage() {
                   to="/developer/storage"
                   search={{ as: tenantId }}
                   data-testid={`sub-drawer-item-op-${tenantId}`}
-                  className="flex h-8 items-center rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+                  className="flex h-8 items-center rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
                 >
                   <span className="flex-1 truncate font-mono text-xs">
                     {tenantId}
@@ -199,8 +199,8 @@ function TenantsPage() {
         subtitle={
           <>
             Tenants own tables and documents. The{" "}
-            <code className="font-mono text-default">_nimbus</code> system
-            tenant is operator-only and not listed here.
+            <code className="font-mono text-text-1">_nimbus</code> system tenant
+            is operator-only and not listed here.
           </>
         }
         trailing={
@@ -218,7 +218,7 @@ function TenantsPage() {
               value={newTenant}
               onChange={(e) => setNewTenant(e.target.value)}
               placeholder="tenant-id"
-              className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
+              className="rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent"
               data-testid="storage-create-input"
               disabled={creating}
             />
@@ -226,10 +226,10 @@ function TenantsPage() {
               type="submit"
               disabled={creating || !newTenant.trim()}
               className={cn(
-                "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
+                "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium",
                 creating || !newTenant.trim()
-                  ? "text-muted"
-                  : "text-default hover:bg-surface",
+                  ? "text-text-3"
+                  : "text-text-1 hover:bg-bg-panel",
               )}
               data-testid="storage-create-submit"
             >
@@ -239,16 +239,16 @@ function TenantsPage() {
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         {serverError ? (
           <EmptyState
             title="Tenants endpoint unavailable"
             body={
               <>
                 This deployment can&apos;t reach{" "}
-                <code className="font-mono text-default">/api/tenants</code>:{" "}
+                <code className="font-mono text-text-1">/api/tenants</code>:{" "}
                 <span
-                  className="font-mono text-default"
+                  className="font-mono text-text-1"
                   data-testid="storage-server-error"
                 >
                   {serverError}
@@ -275,7 +275,7 @@ function TenantsPage() {
               className="w-full border-collapse text-sm"
               data-testid="storage-tenants-table"
             >
-              <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+              <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
                 <tr>
                   <Th>Tenant</Th>
                   <Th align="right">Tables</Th>
@@ -287,7 +287,7 @@ function TenantsPage() {
                 {rows.map((row) => (
                   <tr
                     key={row.tenantId}
-                    className="group cursor-pointer border-t border-app hover:bg-surface-2"
+                    className="group cursor-pointer border-t border-border-2 hover:bg-bg-raised"
                     data-testid={`storage-tenant-row-${row.tenantId}`}
                     onClick={(event: ReactMouseEvent<HTMLTableRowElement>) => {
                       if ((event.target as HTMLElement).closest(INTERACTIVE)) {
@@ -300,7 +300,7 @@ function TenantsPage() {
                       <Link
                         to="/developer/storage"
                         search={{ as: row.tenantId }}
-                        className="font-mono text-default hover:underline"
+                        className="font-mono text-text-1 hover:underline"
                         data-testid={`storage-tenant-link-${row.tenantId}`}
                       >
                         {row.tenantId}
@@ -339,10 +339,10 @@ function TenantsPage() {
                         }}
                         aria-disabled={deletingTenant === row.tenantId}
                         className={cn(
-                          "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide aria-disabled:cursor-not-allowed",
+                          "rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium aria-disabled:cursor-not-allowed",
                           deletingTenant === row.tenantId
-                            ? "text-muted"
-                            : "text-danger hover:bg-surface-2",
+                            ? "text-text-3"
+                            : "text-error hover:bg-bg-raised",
                         )}
                         data-testid={`storage-tenant-delete-${row.tenantId}`}
                       >
@@ -368,7 +368,7 @@ function TenantsPage() {
           confirmTenantRow && confirmTenantRow.tableCount > 0 ? (
             <p>
               This removes{" "}
-              <span className="font-mono text-default tabular">
+              <span className="font-mono text-text-1 tabular">
                 {confirmTenantRow.tableCount}
               </span>{" "}
               table{confirmTenantRow.tableCount === 1 ? "" : "s"} and all

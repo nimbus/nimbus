@@ -68,7 +68,7 @@ export function Th({
   return (
     <th
       className={cn(
-        "border-b border-app px-3 py-2 font-normal",
+        "border-b border-border-2 px-3 py-2 font-normal",
         align === "right" ? "text-right" : "text-left",
         className,
       )}

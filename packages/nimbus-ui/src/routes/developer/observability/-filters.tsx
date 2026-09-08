@@ -43,7 +43,7 @@ export function FilterInput({
   return (
     <label
       htmlFor={id}
-      className="flex min-w-0 items-center gap-1.5 text-xs uppercase tracking-wide text-muted"
+      className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text-3"
     >
       <span className="shrink-0">{label}</span>
       <input
@@ -56,7 +56,7 @@ export function FilterInput({
         // (~20ch) and, as a flex item, `min-width: auto` pins it there. Left
         // unbounded, four filters plus the action cluster overflow the toolbar
         // and the trailing controls get clipped away with no scrollbar.
-        className="w-[14ch] min-w-0 rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
+        className="w-[14ch] min-w-0 rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent"
         data-testid={testid}
       />
     </label>

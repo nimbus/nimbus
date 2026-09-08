@@ -47,7 +47,7 @@ function ShellLayout() {
       <KeyboardContract />
       <StalenessProvider>
         <SubDrawerProvider>
-          <div className="flex h-screen flex-col bg-canvas text-default">
+          <div className="flex h-screen flex-col bg-bg-canvas text-text-1">
             {/* The first tab stop in the console, and the only way past the
                 chrome. Everything the shell renders ahead of <main> is a tab
                 stop: the build-hash chip, the view switcher, the tenant
@@ -62,7 +62,7 @@ function ShellLayout() {
                 it out of the tab order and leave nothing to skip with. */}
             <a
               href="#main-content"
-              className="fixed top-2 left-2 z-50 -translate-y-16 rounded border px-3 py-2 text-sm border-app bg-surface text-default focus:translate-y-0"
+              className="fixed top-2 left-2 z-50 -translate-y-16 rounded-xs border px-3 py-2 text-sm border-border-2 bg-bg-panel text-text-1 focus:translate-y-0"
             >
               Skip to content
             </a>
@@ -106,9 +106,9 @@ function ShellLayout() {
             // does not appear only on the failures.
             closeButton: true,
             style: {
-              background: "var(--nimbus-surface)",
-              color: "var(--nimbus-text)",
-              border: "1px solid var(--nimbus-border)",
+              background: "var(--bg-panel)",
+              color: "var(--text-1)",
+              border: "1px solid var(--border-2)",
               fontFamily: "var(--font-mono)",
               fontSize: "12px",
             },
@@ -261,7 +261,7 @@ function ToastOverflow({ region }: { region: HTMLElement | null }) {
     // appears and again whenever the count changes.
     <li
       data-testid="toast-overflow"
-      className="absolute right-0 bottom-[calc(var(--front-toast-height)_+_2_*_var(--gap)_+_8px)] rounded border px-2 py-0.5 font-mono text-xs border-app bg-surface text-muted"
+      className="absolute right-0 bottom-[calc(var(--front-toast-height)_+_2_*_var(--gap)_+_8px)] rounded-xs border px-2 py-0.5 font-mono text-xs border-border-2 bg-bg-panel text-text-3"
     >
       +{hidden} more
     </li>,

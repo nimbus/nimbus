@@ -112,7 +112,7 @@ function WebSocketSection() {
         {
           label: "Clients",
           render: (row) => (
-            <span className="tabular text-default">
+            <span className="tabular text-text-1">
               {typeof row.clientCount === "number" ? row.clientCount : "—"}
             </span>
           ),
@@ -123,7 +123,7 @@ function WebSocketSection() {
             typeof row.lastDeliveryAt === "number" ? (
               <RelativeTime epochMs={row.lastDeliveryAt} />
             ) : (
-              <span className="text-muted">never</span>
+              <span className="text-text-3">never</span>
             ),
         },
         { label: "Error", render: (row) => <ErrorText value={row.error} /> },
@@ -268,7 +268,7 @@ function InventoryPage<T extends InventoryDoc>({
         subtitle={subtitle}
         trailing={
           <span
-            className="font-mono text-xs text-muted"
+            className="font-mono text-xs text-text-3"
             data-testid="network-total"
           >
             {records === undefined ? "loading…" : `${records.length} ${noun}`}
@@ -276,7 +276,7 @@ function InventoryPage<T extends InventoryDoc>({
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         {records === undefined ? (
           <SkeletonRows
             columns={columns.length}
@@ -305,7 +305,7 @@ function InventoryPage<T extends InventoryDoc>({
 
 function InventoryTableHead<T>({ columns }: { columns: InventoryColumn<T>[] }) {
   return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
       <tr>
         {columns.map((column) => (
           <Th key={column.label}>{column.label}</Th>
@@ -337,7 +337,7 @@ function InventoryTable<T extends InventoryDoc>({
           {records.map((record) => (
             <tr
               key={record._id}
-              className="border-t border-app hover:bg-surface-2"
+              className="border-t border-border-2 hover:bg-bg-raised"
             >
               {columns.map((column) => (
                 <Td key={column.label}>{column.render(record)}</Td>
@@ -351,12 +351,12 @@ function InventoryTable<T extends InventoryDoc>({
 }
 
 function Mono({ children }: { children: string | undefined }) {
-  return <span className="font-mono text-default">{children ?? "—"}</span>;
+  return <span className="font-mono text-text-1">{children ?? "—"}</span>;
 }
 
 function NumberCell({ value }: { value: number | undefined }) {
   return (
-    <span className="font-mono tabular text-default">
+    <span className="font-mono tabular text-text-1">
       {typeof value === "number" ? value : "—"}
     </span>
   );
@@ -376,7 +376,7 @@ function Truncated({
   } as const;
   return (
     <span
-      className={cn("block truncate font-mono text-default", widths[width])}
+      className={cn("block truncate font-mono text-text-1", widths[width])}
       title={value}
     >
       {value ?? "—"}
@@ -389,7 +389,7 @@ function ErrorText({ value }: { value: string | undefined }) {
     <span
       className={cn(
         "block max-w-[34ch] truncate font-mono",
-        value ? "text-danger" : "text-muted",
+        value ? "text-error" : "text-text-3",
       )}
       title={value}
     >
@@ -410,13 +410,9 @@ function StatusText({ value }: { value: string | undefined }) {
       : normalized === "error" ||
           normalized === "failed" ||
           normalized === "unsupported"
-        ? "text-danger"
+        ? "text-error"
         : normalized === "partial" || normalized === "degraded"
           ? "text-warning"
-          : "text-muted";
-  return (
-    <span className={cn("font-mono uppercase tracking-wide", tone)}>
-      {value ?? "—"}
-    </span>
-  );
+          : "text-text-3";
+  return <span className={cn("font-medium", tone)}>{value ?? "—"}</span>;
 }

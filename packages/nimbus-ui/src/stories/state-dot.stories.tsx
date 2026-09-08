@@ -17,7 +17,7 @@ export const Offline: Story = { args: { state: "offline" } };
 
 export const All: Story = {
   render: () => (
-    <div className="flex items-center gap-4 text-xs text-muted">
+    <div className="flex items-center gap-4 text-xs text-text-3">
       <span className="inline-flex items-center gap-1">
         <StateDot state="connected" /> connected
       </span>

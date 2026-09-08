@@ -162,7 +162,7 @@ function ScopeChip({ scope }: { scope: TenantScope }) {
   if (requested === undefined) {
     return (
       <span
-        className="shrink-0 whitespace-nowrap rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted"
+        className="shrink-0 whitespace-nowrap rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-3"
         data-testid="admin-observability-scope"
         title="Tenant filter unavailable until events table exposes tenant column"
       >
@@ -172,7 +172,7 @@ function ScopeChip({ scope }: { scope: TenantScope }) {
   }
   return (
     <span
-      className="shrink-0 whitespace-nowrap rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted"
+      className="shrink-0 whitespace-nowrap rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-3"
       data-testid="admin-observability-scope"
       title="Tenant filter requested but not honored — events table does not expose tenant column yet"
     >
@@ -196,7 +196,7 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
   if (events === undefined) {
     return (
       <div
-        className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-app bg-surface font-mono text-xs text-muted"
+        className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-border-2 bg-bg-panel font-mono text-xs text-text-3"
         data-testid="admin-observability-logs-loading"
       >
         Loading events…
@@ -215,25 +215,25 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
   return (
     <ScrollRegion
       label="Event log"
-      className="min-h-0 flex-1 rounded-md border border-app bg-surface"
+      className="min-h-0 flex-1 rounded-md border border-border-2 bg-bg-panel"
       data-testid="admin-observability-logs"
     >
-      <ul className="divide-y divide-app">
+      <ul className="divide-y divide-border-2">
         {events.map((event) => (
           <li key={event._id}>
             <article
-              className="grid grid-cols-[auto_auto_auto_1fr] items-baseline gap-2 px-3 py-1.5 text-xs hover:bg-surface-2"
+              className="grid grid-cols-[auto_auto_auto_1fr] items-baseline gap-2 px-3 py-1.5 text-xs hover:bg-bg-raised"
               data-testid={`admin-observability-log-${event._id}`}
             >
               <RelativeTime
                 epochMs={event.createdAt ?? event._creationTime ?? 0}
               />
               <StateChip state={event.level ?? "info"} />
-              <span className="font-mono text-xs uppercase tracking-wide text-muted">
+              <span className="text-xs font-medium text-text-3">
                 {event.source ?? "—"}
                 {event.category ? ` · ${event.category}` : ""}
               </span>
-              <span className="font-mono text-default truncate">
+              <span className="font-mono text-text-1 truncate">
                 {event.message ?? "(no message)"}
               </span>
             </article>
@@ -254,7 +254,7 @@ function RunsTab() {
   if (runs === undefined) {
     return (
       <div
-        className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-app bg-surface font-mono text-xs text-muted"
+        className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-border-2 bg-bg-panel font-mono text-xs text-text-3"
         data-testid="admin-observability-runs-loading"
       >
         Loading runs…
@@ -272,11 +272,11 @@ function RunsTab() {
   }
   return (
     <div
-      className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
+      className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel"
       data-testid="admin-observability-runs"
     >
       <table className="w-full border-collapse text-sm">
-        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
           <tr>
             <Th>Function</Th>
             <Th>Status</Th>
@@ -289,11 +289,11 @@ function RunsTab() {
           {runs.map((run) => (
             <tr
               key={run._id}
-              className="border-t border-app hover:bg-surface-2"
+              className="border-t border-border-2 hover:bg-bg-raised"
               data-testid={`admin-observability-run-${run._id}`}
             >
               <Td>
-                <span className="font-mono text-default">
+                <span className="font-mono text-text-1">
                   {run.functionPath ?? shortId(run._id, 12)}
                 </span>
               </Td>
@@ -301,7 +301,7 @@ function RunsTab() {
                 <StateChip state={run.status} />
               </Td>
               <Td>
-                <span className="font-mono text-xs uppercase tracking-wide text-muted">
+                <span className="text-xs font-medium text-text-3">
                   {run.kind ?? "—"}
                 </span>
               </Td>
@@ -309,11 +309,11 @@ function RunsTab() {
                 {typeof run.startedAt === "number" ? (
                   <RelativeTime epochMs={run.startedAt} />
                 ) : (
-                  <span className="tabular text-muted">—</span>
+                  <span className="tabular text-text-3">—</span>
                 )}
               </Td>
               <Td>
-                <span className="font-mono text-xs text-default">
+                <span className="font-mono text-xs text-text-1">
                   {shortId(run._id, 10)}
                 </span>
               </Td>

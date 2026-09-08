@@ -39,8 +39,8 @@ export function CopyChip({
       data-testid={testid}
       data-copied={copied || undefined}
       className={cn(
-        "inline-flex max-w-[28ch] truncate rounded px-1 font-mono text-xs",
-        "hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2",
+        "inline-flex max-w-[28ch] truncate rounded-xs px-1 font-mono text-xs",
+        "hover:bg-bg-raised hover:text-text-1 focus-visible:bg-bg-raised",
         // Collapse the box, do not just fade it: `opacity-0` alone keeps the
         // chip's full width reserved, which punches a hole into the row (and
         // detaches the breadcrumb chevron from its segment). The element stays

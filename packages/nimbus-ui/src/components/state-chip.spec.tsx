@@ -68,18 +68,17 @@ describe("StateChip", () => {
     expect(chip).toHaveAttribute("data-glyph", "pulsing");
   });
 
-  it("binds running to --running and never to the brand accent", () => {
-    expect(statePalette.running.token).toBe("--nimbus-running");
-    expect(statePalette.running.token).not.toBe("--nimbus-accent");
+  it("binds running to --info and never to the accent", () => {
+    expect(statePalette.running.token).toBe("--info");
+    expect(statePalette.running.token).not.toBe("--accent");
   });
 
-  it("keeps no state on --accent, which the brand palette redefines", () => {
-    // DESIGN.md's state table names only semantic tokens. A state bound to
-    // --accent inherits the brand hue, which in the warm palette (hue 70)
-    // lands on top of --warning (hue 72) — Running and Degraded then differ
-    // by lightness alone.
+  it("keeps no state on --accent", () => {
+    // DESIGN.md's state table names only semantic tokens. The accent is amber
+    // and --warning is orange, so a state bound to --accent would sit in the
+    // warning hue family and differ from Degraded by lightness alone.
     const onAccent = Object.entries(statePalette)
-      .filter(([, entry]) => entry.token === "--nimbus-accent")
+      .filter(([, entry]) => entry.token === "--accent")
       .map(([state]) => state);
     expect(onAccent).toEqual([]);
   });

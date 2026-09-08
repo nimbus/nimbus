@@ -79,9 +79,7 @@ function NodesPage() {
       <NodeCard status={statusLv} />
 
       <section className="flex flex-col gap-2">
-        <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
-          Hosted on this node
-        </h2>
+        <h2 className="text-xs font-medium text-text-3">Hosted on this node</h2>
         <div
           className="grid grid-cols-2 gap-3 md:grid-cols-4"
           data-testid="nodes-hosted"
@@ -131,10 +129,10 @@ function NodesPage() {
 function NodeCard({ status }: { status: LoadingValue<SystemStatus> }) {
   return (
     <article
-      className="flex flex-col overflow-hidden rounded-md border border-app bg-surface"
+      className="flex flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
       data-testid="node-row"
     >
-      <header className="flex items-start justify-between gap-3 border-b border-app px-4 py-3">
+      <header className="flex items-start justify-between gap-3 border-b border-border-2 px-4 py-3">
         <div className="flex flex-col gap-1">
           <LoadingCell value={status} testid="node-address">
             {(s) =>
@@ -147,13 +145,13 @@ function NodeCard({ status }: { status: LoadingValue<SystemStatus> }) {
                   {s.details.listenAddress}
                 </CopyChip>
               ) : (
-                <span className="font-mono text-sm text-default">
+                <span className="font-mono text-sm text-text-1">
                   local node
                 </span>
               )
             }
           </LoadingCell>
-          <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
+          <span className="text-xs font-medium text-text-3">
             local host · standalone
           </span>
         </div>
@@ -161,14 +159,14 @@ function NodeCard({ status }: { status: LoadingValue<SystemStatus> }) {
           {(s) => <StateChip state={s.health ?? "unknown"} />}
         </LoadingCell>
       </header>
-      <div className="grid grid-cols-2 gap-px bg-surface-2 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-px bg-bg-raised md:grid-cols-4">
         <Cell label="Nimbus version">
           <LoadingCell value={status} testid="node-version">
             {(s) => (
               <>
                 {s.version ?? "—"}
                 {s.buildHash ? (
-                  <span className="text-muted">
+                  <span className="text-text-3">
                     {" "}
                     +{s.buildHash.slice(0, 7)}
                   </span>
@@ -232,10 +230,8 @@ function Field({
 }) {
   const body = (
     <>
-      <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
-        {label}
-      </span>
-      <span className="font-mono text-sm text-default">{children}</span>
+      <span className="text-xs font-medium text-text-3">{label}</span>
+      <span className="font-mono text-sm text-text-1">{children}</span>
     </>
   );
   if (to) {
@@ -243,7 +239,7 @@ function Field({
       <Link
         to={to}
         data-testid={testid}
-        className="flex flex-col gap-1 rounded-md border border-app bg-surface px-3 py-2 hover:border-strong"
+        className="flex flex-col gap-1 rounded-md border border-border-2 bg-bg-panel px-3 py-2 hover:border-border-3"
       >
         {body}
       </Link>
@@ -251,7 +247,7 @@ function Field({
   }
   return (
     <div
-      className="flex flex-col gap-1 rounded-md border border-app bg-surface px-3 py-2"
+      className="flex flex-col gap-1 rounded-md border border-border-2 bg-bg-panel px-3 py-2"
       data-testid={testid}
     >
       {body}
@@ -267,11 +263,9 @@ function Cell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-xs uppercase tracking-[0.14em] text-muted">
-        {label}
-      </span>
-      <span className="font-mono text-sm text-default">{children}</span>
+    <div className="flex flex-col gap-1 bg-bg-panel px-3 py-2">
+      <span className="text-xs font-medium text-text-3">{label}</span>
+      <span className="font-mono text-sm text-text-1">{children}</span>
     </div>
   );
 }

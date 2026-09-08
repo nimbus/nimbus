@@ -4,7 +4,7 @@ import { CopyChip } from "./copy-chip";
 import { EmptyState } from "./empty-state";
 
 const ACTION_CLASS =
-  "rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default";
+  "rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1";
 
 export type RouteErrorProps = {
   error: unknown;
@@ -38,7 +38,7 @@ export function RouteError({ error, reset }: RouteErrorProps) {
         title="This view failed to render"
         body={
           <>
-            <code className="rounded border border-app bg-surface-2 px-1 font-mono text-default">
+            <code className="rounded-xs border border-border-2 bg-bg-raised px-1 font-mono text-text-1">
               {pathname}
             </code>{" "}
             threw while rendering. Navigation still works — every other view is
@@ -51,7 +51,7 @@ export function RouteError({ error, reset }: RouteErrorProps) {
         label="error details"
         value={details}
         testid="route-error-copy"
-        className="max-w-[64ch] border border-app px-2 py-1 text-danger"
+        className="max-w-[64ch] border border-border-2 px-2 py-1 text-error"
       >
         {message}
       </CopyChip>

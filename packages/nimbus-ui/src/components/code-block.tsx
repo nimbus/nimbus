@@ -155,7 +155,7 @@ export function CodeBlock({
   if (html === null) {
     return (
       <pre
-        className="m-0 h-full overflow-auto whitespace-pre bg-surface-2 p-3 font-mono text-sm leading-[1.5] text-default"
+        className="m-0 h-full overflow-auto whitespace-pre bg-bg-raised p-3 font-mono text-sm leading-[1.5] text-text-1"
         data-testid={testid}
       >
         {code}

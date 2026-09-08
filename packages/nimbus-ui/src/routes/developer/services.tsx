@@ -68,7 +68,7 @@ function ServicesPage() {
         trailing={<ScopeChip activeTenant={activeTenant} />}
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         <ServicesTable
           services={services}
           activeTenant={activeTenant}
@@ -83,11 +83,11 @@ function ScopeChip({ activeTenant }: { activeTenant: string | null }) {
   if (activeTenant === null) return null;
   return (
     <span
-      className="inline-flex items-center gap-1 rounded border border-app px-2 py-0.5 font-mono text-xs text-muted"
+      className="inline-flex items-center gap-1 rounded-xs border border-border-2 px-2 py-0.5 font-mono text-xs text-text-3"
       data-testid="services-scope"
     >
-      <span className="uppercase tracking-wide">tenant</span>
-      <span className="font-mono text-default">{activeTenant}</span>
+      <span className="font-medium">tenant</span>
+      <span className="font-mono text-text-1">{activeTenant}</span>
     </span>
   );
 }
@@ -110,7 +110,7 @@ function ServicesSubDrawer({
     : services;
   if (services.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         <p>No services declared.</p>
         <p className="mt-2">
           Author a <code>compose.yaml</code> and run{" "}
@@ -123,7 +123,7 @@ function ServicesSubDrawer({
   }
   if (filtered.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         No services match the filter.
       </div>
     );
@@ -136,13 +136,13 @@ function ServicesSubDrawer({
             to="/developer/services/$service"
             params={{ service: svc._id }}
             data-testid={`sub-drawer-item-dev-service-${svc.name ?? svc._id}`}
-            className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+            className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
           >
             <span className="flex-1 truncate font-mono text-xs">
               {svc.name ?? shortId(svc._id, 12)}
             </span>
             {svc.state ? (
-              <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
+              <span className="tabular text-xs font-medium text-text-3">
                 {svc.state}
               </span>
             ) : null}
@@ -187,7 +187,7 @@ export function ServicesTable({
         className="w-full border-collapse text-base"
         data-testid="services-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
           <tr>
             <Th>Name</Th>
             <Th>Kind</Th>
@@ -204,7 +204,7 @@ export function ServicesTable({
             return (
               <tr
                 key={svc._id}
-                className="border-t border-app hover:bg-surface-2"
+                className="border-t border-border-2 hover:bg-bg-raised"
                 data-testid={`services-row-${svc.name ?? svc._id}`}
               >
                 <Td>
@@ -215,13 +215,13 @@ export function ServicesTable({
                         : "/developer/services/$service"
                     }
                     params={{ service: svc._id }}
-                    className="font-mono text-default hover:underline"
+                    className="font-mono text-text-1 hover:underline"
                   >
                     {svc.name ?? shortId(svc._id, 12)}
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono uppercase tracking-wide text-muted">
+                  <span className="font-medium text-text-3">
                     {svc.kind ?? "—"}
                   </span>
                 </Td>
@@ -230,14 +230,14 @@ export function ServicesTable({
                 </Td>
                 {showTenantColumn ? <Td mono>{svc.tenantId ?? "—"}</Td> : null}
                 <Td mono>{svc.machineId ?? "—"}</Td>
-                <Td mono className="text-muted">
+                <Td mono className="text-text-3">
                   {endpoints.length}
                 </Td>
                 <Td>
                   {typeof svc._updateTime === "number" ? (
                     <RelativeTime epochMs={svc._updateTime} />
                   ) : (
-                    <span className="tabular text-muted">—</span>
+                    <span className="tabular text-text-3">—</span>
                   )}
                 </Td>
               </tr>

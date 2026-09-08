@@ -12,15 +12,13 @@ export function PanelHeader({
   onClose: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between border-b border-app px-3 py-2">
-      <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-        {title}
-      </h2>
+    <div className="flex items-center justify-between border-b border-border-2 px-3 py-2">
+      <h2 className="text-xs font-medium text-text-3">{title}</h2>
       <button
         type="button"
         onClick={onClose}
         aria-label={`Close ${title}`}
-        className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
       >
         close
       </button>
@@ -86,7 +84,7 @@ export function Slideover({
         // through an aspect ratio, which no panel here has). This panel is
         // edge-anchored and should meet the viewport edge; that card is
         // centred and needs a gutter to still read as a card.
-        className="relative flex h-full w-[480px] max-w-full flex-col gap-2 border-l border-app bg-surface p-4 shadow-xl outline-none"
+        className="relative flex h-full w-[480px] max-w-full flex-col gap-2 border-l border-border-2 bg-bg-panel p-4 shadow-xl outline-none"
         data-testid={testid}
       >
         <PanelHeader title={title} onClose={onClose} />

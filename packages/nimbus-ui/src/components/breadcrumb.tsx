@@ -21,7 +21,7 @@ export function Breadcrumb({
   return (
     <nav
       aria-label="Resource breadcrumb"
-      className="flex items-center gap-1 font-mono text-xs text-muted"
+      className="flex items-center gap-1 font-mono text-xs text-text-3"
       data-testid={testid ?? "resource-breadcrumb"}
     >
       {segments.map((segment, idx) => (
@@ -33,7 +33,7 @@ export function Breadcrumb({
         // biome-ignore lint/suspicious/noArrayIndexKey: breadcrumb segments are positional by design and cannot reorder
         <Fragment key={`${segment.label}-${idx}`}>
           {idx > 0 ? (
-            <span aria-hidden="true" className="text-muted">
+            <span aria-hidden="true" className="text-text-3">
               ›
             </span>
           ) : null}
@@ -41,14 +41,14 @@ export function Breadcrumb({
             {segment.href && !segment.active ? (
               <Link
                 to={segment.href}
-                className="text-muted hover:text-default focus-visible:text-default"
+                className="text-text-3 hover:text-text-1 focus-visible:text-text-1"
                 data-testid={`breadcrumb-link-${idx}`}
               >
                 {segment.label}
               </Link>
             ) : (
               <span
-                className={segment.active ? "text-default" : "text-muted"}
+                className={segment.active ? "text-text-1" : "text-text-3"}
                 data-testid={`breadcrumb-segment-${idx}`}
               >
                 {segment.label}
@@ -66,7 +66,7 @@ export function Breadcrumb({
                 value={segment.copyValue}
                 hideUntilHover
                 testid={`breadcrumb-copy-${idx}`}
-                className="absolute left-0 top-full z-10 mt-1 rounded border border-app bg-surface-2 text-xs shadow-sm"
+                className="absolute left-0 top-full z-10 mt-1 rounded-xs border border-border-2 bg-bg-raised text-xs shadow-sm"
               >
                 copy
               </CopyChip>

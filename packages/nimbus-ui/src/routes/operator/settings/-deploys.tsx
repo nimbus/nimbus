@@ -68,9 +68,9 @@ export function DeploysSection({
       }
     >
       {bundles === undefined ? (
-        <p className="text-sm text-muted">Loading bundles…</p>
+        <p className="text-sm text-text-3">Loading bundles…</p>
       ) : sorted.length === 0 ? (
-        <p className="text-sm text-muted" data-testid="settings-deploys-empty">
+        <p className="text-sm text-text-3" data-testid="settings-deploys-empty">
           No bundles deployed yet. Run <code>nimbus deploy</code> against this
           server to publish a Convex or Cloud Functions app.
         </p>
@@ -86,21 +86,19 @@ export function DeploysSection({
           ) : null}
           <div className="mt-4">
             <div className="mb-2 flex items-baseline justify-between">
-              <h3 className="text-xs uppercase tracking-[0.14em] text-muted">
-                History
-              </h3>
+              <h3 className="text-xs font-medium text-text-3">History</h3>
               <button
                 type="button"
                 data-testid="settings-deploys-compare"
                 disabled={!canCompare}
                 onClick={() => setShowDiff(true)}
-                className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs uppercase tracking-[0.14em] text-default hover:border-strong disabled:cursor-not-allowed disabled:text-muted"
+                className="rounded-xs border border-border-2 bg-bg-panel px-2 py-1 text-xs font-medium text-text-1 hover:border-border-3 disabled:cursor-not-allowed disabled:text-text-3"
               >
                 Compare ({selectedIds.length}/2)
               </button>
             </div>
             <ul
-              className="divide-y divide-app overflow-hidden rounded-md border border-app"
+              className="divide-y divide-border-2 overflow-hidden rounded-md border border-border-2"
               data-testid="settings-deploys-history"
             >
               {sorted.slice(0, 20).map((b) => {
@@ -110,7 +108,7 @@ export function DeploysSection({
                 return (
                   <li
                     key={id}
-                    className={`flex items-center gap-3 px-3 py-2 text-xs ${isSelected ? "bg-surface-2" : "bg-surface"}`}
+                    className={`flex items-center gap-3 px-3 py-2 text-xs ${isSelected ? "bg-bg-raised" : "bg-bg-panel"}`}
                   >
                     <input
                       type="checkbox"
@@ -129,10 +127,10 @@ export function DeploysSection({
                         {shortHash(b.sha256 ?? id, 12)}
                       </span>
                     </CopyChip>
-                    <span className="font-mono text-xs text-muted">
+                    <span className="font-mono text-xs text-text-3">
                       {b.sourceRef ?? "—"}
                     </span>
-                    <span className="ml-auto tabular text-muted">
+                    <span className="ml-auto tabular text-text-3">
                       {fns.length} fn
                     </span>
                     {/* The newest bundle is usually the active one, so this
@@ -144,7 +142,7 @@ export function DeploysSection({
                     {b._creationTime ? (
                       <RelativeTime epochMs={b._creationTime} />
                     ) : (
-                      <span className="tabular text-muted">—</span>
+                      <span className="tabular text-text-3">—</span>
                     )}
                   </li>
                 );
@@ -175,13 +173,11 @@ function ActiveBundlePanel({
 }) {
   return (
     <article
-      className="rounded-md bg-surface-2 p-3"
+      className="rounded-md bg-bg-raised p-3"
       data-testid="settings-deploys-active"
     >
       <header className="mb-2 flex items-baseline justify-between">
-        <span className="text-xs uppercase tracking-[0.14em] text-muted">
-          Active bundle
-        </span>
+        <span className="text-xs font-medium text-text-3">Active bundle</span>
         <StateChip state={bundle.status ?? "active"} />
       </header>
       <DefinitionList compact>
@@ -206,7 +202,7 @@ function ActiveBundlePanel({
           {bundle._creationTime ? (
             <RelativeTime epochMs={bundle._creationTime} />
           ) : (
-            <span className="text-muted">—</span>
+            <span className="text-text-3">—</span>
           )}
         </Definition>
         <Definition label="Functions">
@@ -215,7 +211,7 @@ function ActiveBundlePanel({
       </DefinitionList>
       {functions.length > 0 ? (
         <details className="mt-2">
-          <summary className="cursor-pointer text-xs text-muted hover:text-default">
+          <summary className="cursor-pointer text-xs text-text-3 hover:text-text-1">
             Function inventory ({functions.length})
           </summary>
           <ul
@@ -224,8 +220,8 @@ function ActiveBundlePanel({
           >
             {functions.map((fn) => (
               <li key={fn._id} className="flex items-baseline gap-2">
-                <span className="font-mono text-default">{fn.path ?? "—"}</span>
-                <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
+                <span className="font-mono text-text-1">{fn.path ?? "—"}</span>
+                <span className="text-xs font-medium text-text-3">
                   {fn.kind ?? "—"}
                 </span>
               </li>
@@ -273,18 +269,18 @@ function DiffPanel({
   changed.sort();
   return (
     <div
-      className="mt-4 rounded-md bg-surface-2 p-3"
+      className="mt-4 rounded-md bg-bg-raised p-3"
       data-testid="settings-deploys-diff"
     >
       <header className="mb-2 flex items-baseline justify-between">
-        <h3 className="text-xs uppercase tracking-[0.14em] text-muted">
+        <h3 className="text-xs font-medium text-text-3">
           Diff: {shortHash(a?.sha256 ?? "")} → {shortHash(b?.sha256 ?? "")}
         </h3>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close diff"
-          className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs uppercase tracking-[0.14em] hover:border-strong"
+          className="rounded-xs border border-border-2 bg-bg-panel px-2 py-1 text-xs font-medium hover:border-border-3"
         >
           Close
         </button>
@@ -329,14 +325,14 @@ function DiffColumn({
       ? "text-success"
       : tone === "warning"
         ? "text-warning"
-        : "text-danger";
+        : "text-error";
   return (
     <div data-testid={testid}>
-      <h4 className={`mb-1 text-xs uppercase tracking-[0.14em] ${toneClass}`}>
+      <h4 className={`mb-1 text-xs font-medium ${toneClass}`}>
         {title} ({items.length})
       </h4>
       {items.length === 0 ? (
-        <p className="text-xs text-muted">—</p>
+        <p className="text-xs text-text-3">—</p>
       ) : (
         <ul className="space-y-0.5">
           {items.map((path) => (

@@ -31,7 +31,7 @@ import {
 
 type Mode = "navigate" | "run" | "filter";
 
-const RECENT_KEY = "nimbus-ui:palette:recent";
+const RECENT_KEY = "nimbus-ui:commands:recent";
 const RECENT_LIMIT = 5;
 
 // Resource kinds the palette can jump to, plus "section" for the 15 drawer
@@ -168,11 +168,11 @@ export function CommandPalette() {
         loop
         role="dialog"
         aria-label="Command palette"
-        className="relative flex max-h-[80vh] w-[min(640px,90vw)] flex-col overflow-hidden rounded-lg border bg-surface shadow-2xl border-strong animate-in zoom-in-95 fade-in-0"
+        className="relative flex max-h-[80vh] w-[min(640px,90vw)] flex-col overflow-hidden rounded-lg border bg-bg-panel shadow-2xl border-border-3 animate-in zoom-in-95 fade-in-0"
         data-testid="command-palette"
       >
-        <div className="flex items-center gap-2 border-b border-app px-3 py-2">
-          <Search size={14} className="text-muted" aria-hidden />
+        <div className="flex items-center gap-2 border-b border-border-2 px-3 py-2">
+          <Search size={14} className="text-text-3" aria-hidden />
           <Command.Input
             value={search}
             onValueChange={setSearch}
@@ -190,7 +190,7 @@ export function CommandPalette() {
             // to the mode toggle and back left nothing to see. The outline is
             // taken, never repainted here — a ring bound at the call site is
             // how four of them drifted onto `--accent`, at 1.71:1.
-            className="h-7 flex-1 bg-transparent text-sm placeholder:text-muted text-default"
+            className="h-7 flex-1 bg-transparent text-sm placeholder:text-text-3 text-text-1"
             data-testid="command-palette-input"
           />
           <ModeToggle current={mode} onChange={setMode} />
@@ -199,7 +199,7 @@ export function CommandPalette() {
           className="min-h-0 flex-1 max-h-[60vh] overflow-y-auto px-1 py-1"
           data-testid="command-palette-list"
         >
-          <Command.Empty className="px-3 py-6 text-center text-sm text-muted">
+          <Command.Empty className="px-3 py-6 text-center text-sm text-text-3">
             No matches.
           </Command.Empty>
 
@@ -289,7 +289,7 @@ export function CommandPalette() {
           ) : null}
         </Command.List>
         <div
-          className="flex shrink-0 items-center gap-3 border-t border-app px-3 py-1.5 text-xs text-muted"
+          className="flex shrink-0 items-center gap-3 border-t border-border-2 px-3 py-1.5 text-xs text-text-3"
           data-testid="command-palette-footer"
         >
           <span className="inline-flex items-center gap-1">
@@ -492,7 +492,7 @@ function ResourceGroup({
           disabled
           forceMount
           value={`${heading} unavailable`}
-          className="flex h-9 cursor-default items-center gap-2 rounded px-2 text-sm text-muted"
+          className="flex h-9 cursor-default items-center gap-2 rounded-xs px-2 text-sm text-text-3"
           data-testid={`palette-group-${heading.toLowerCase()}-error`}
         >
           {heading} unavailable — {error}
@@ -528,7 +528,7 @@ function ModeToggle({
     { id: "filter", label: "Filter" },
   ];
   return (
-    <fieldset className="inline-flex overflow-hidden rounded-md border text-xs border-app">
+    <fieldset className="inline-flex overflow-hidden rounded-md border text-xs border-border-2">
       <legend className="sr-only">Palette mode</legend>
       {modes.map((m) => (
         <button
@@ -537,10 +537,10 @@ function ModeToggle({
           aria-pressed={current === m.id}
           onClick={() => onChange(m.id)}
           className={cn(
-            "px-2 py-1 font-mono text-xs uppercase tracking-wide transition-colors",
+            "px-2 py-1 text-xs font-medium transition-colors",
             current === m.id
-              ? "bg-surface-2 text-default"
-              : "text-muted hover:bg-surface-2",
+              ? "bg-bg-raised text-text-1"
+              : "text-text-3 hover:bg-bg-raised",
           )}
           data-testid={`palette-mode-${m.id}`}
         >
@@ -555,9 +555,9 @@ function ModeToggle({
 // accent bar — not the ~5% surface step the list used to reach for, which was
 // indistinguishable from the empty background.
 const ITEM_CLASS =
-  "flex h-9 cursor-default items-center gap-2 rounded px-2 text-sm text-muted " +
+  "flex h-9 cursor-default items-center gap-2 rounded-xs px-2 text-sm text-text-3 " +
   "data-[selected=true]:bg-accent/15 " +
-  "data-[selected=true]:shadow-[inset_2px_0_0_var(--nimbus-accent)]";
+  "data-[selected=true]:shadow-[inset_2px_0_0_var(--accent)]";
 
 function PaletteItem({
   target,
@@ -585,14 +585,14 @@ function PaletteItem({
       data-testid={`palette-item-${target.key}`}
     >
       <Icon size={14} className="shrink-0" />
-      <span className="flex-1 truncate text-default">{target.label}</span>
+      <span className="flex-1 truncate text-text-1">{target.label}</span>
       {shown ? (
-        <span className="shrink-0 font-mono text-xs uppercase tracking-wide text-muted">
+        <span className="shrink-0 text-xs font-medium text-text-3">
           {shown}
         </span>
       ) : null}
       {hint ? (
-        <span className="shrink-0 text-xs font-mono text-muted">{hint}</span>
+        <span className="shrink-0 text-xs font-mono text-text-3">{hint}</span>
       ) : null}
     </Command.Item>
   );
@@ -618,9 +618,9 @@ function ActionItem({
       data-testid={`palette-action-${label}`}
     >
       <Icon size={14} className="shrink-0" />
-      <span className="flex-1 text-default">{label}</span>
+      <span className="flex-1 text-text-1">{label}</span>
       {hint ? (
-        <span className="text-xs font-mono text-muted">{hint}</span>
+        <span className="text-xs font-mono text-text-3">{hint}</span>
       ) : null}
     </Command.Item>
   );

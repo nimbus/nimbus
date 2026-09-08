@@ -53,15 +53,15 @@ export function ConfigurationSection({
     >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
+          <h3 className="mb-2 text-xs font-medium text-text-3">
             Runtime limits
           </h3>
           {diagnosticsState === "loading" ? (
-            <p className="text-sm text-muted">Loading runtime metrics…</p>
+            <p className="text-sm text-text-3">Loading runtime metrics…</p>
           ) : diagnosticsState === "error" ? (
-            <p className="text-sm text-danger">Runtime metrics unavailable.</p>
+            <p className="text-sm text-error">Runtime metrics unavailable.</p>
           ) : limits === null || Object.keys(limits).length === 0 ? (
-            <p className="text-sm text-muted">
+            <p className="text-sm text-text-3">
               No active app generation — deploy a bundle to populate runtime
               limits.
             </p>
@@ -130,15 +130,15 @@ export function ConfigurationSection({
             </DefinitionList>
           )}
           <div>
-            <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
+            <h3 className="mb-2 text-xs font-medium text-text-3">
               Runtime lanes
             </h3>
             {diagnosticsState === "loading" ? (
-              <p className="text-sm text-muted">Loading runtime lanes…</p>
+              <p className="text-sm text-text-3">Loading runtime lanes…</p>
             ) : diagnosticsState === "error" ? (
-              <p className="text-sm text-danger">Runtime lanes unavailable.</p>
+              <p className="text-sm text-error">Runtime lanes unavailable.</p>
             ) : lanes.length === 0 ? (
-              <p className="text-sm text-muted">
+              <p className="text-sm text-text-3">
                 No runtime lanes advertised yet.
               </p>
             ) : (
@@ -147,33 +147,31 @@ export function ConfigurationSection({
           </div>
         </div>
         <div>
-          <h3 className="mb-2 text-xs uppercase tracking-[0.14em] text-muted">
+          <h3 className="mb-2 text-xs font-medium text-text-3">
             Auth & topology
           </h3>
           <DefinitionList compact>
             <Definition label="Auth provider">
               <span
-                className="font-mono text-xs text-default"
+                className="font-mono text-xs text-text-1"
                 data-testid="settings-auth-provider"
               >
                 {authProvider}
               </span>
             </Definition>
             <Definition label="Adapters enabled">
-              <span className="font-mono text-xs text-default">
+              <span className="font-mono text-xs text-text-1">
                 {adaptersEnabled
                   ? adaptersEnabled.join(", ")
                   : "convex, native, ui"}
               </span>
             </Definition>
           </DefinitionList>
-          <h3 className="mt-4 mb-2 text-xs uppercase tracking-[0.14em] text-muted">
-            License
-          </h3>
+          <h3 className="mt-4 mb-2 text-xs font-medium text-text-3">License</h3>
           {licenseState === "loading" ? (
-            <p className="text-sm text-muted">Loading license snapshot…</p>
+            <p className="text-sm text-text-3">Loading license snapshot…</p>
           ) : licenseState === "error" ? (
-            <p className="text-sm text-danger">License unavailable.</p>
+            <p className="text-sm text-error">License unavailable.</p>
           ) : (
             <DefinitionList compact>
               <Definition label="Kind">
@@ -208,7 +206,7 @@ export function ConfigurationSection({
                 {typeof licenseSnap?.expires_at_unix_ms === "number" ? (
                   <RelativeTime epochMs={licenseSnap.expires_at_unix_ms} />
                 ) : (
-                  <span className="text-muted">—</span>
+                  <span className="text-text-3">—</span>
                 )}
               </Definition>
             </DefinitionList>
@@ -232,11 +230,11 @@ export function ConfigurationSection({
 function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
   return (
     <div
-      className="overflow-x-auto rounded-md border border-app"
+      className="overflow-x-auto rounded-md border border-border-2"
       data-testid="settings-runtime-lanes"
     >
       <table className="min-w-full border-collapse text-left text-xs">
-        <thead className="bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+        <thead className="bg-bg-raised text-xs font-medium text-text-3">
           <tr>
             <th className="px-2 py-2 font-normal">Lane</th>
             <th className="px-2 py-2 font-normal">Backend</th>
@@ -256,15 +254,15 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
               <tr
                 key={lane.lane_name}
                 data-testid={`settings-runtime-lane-${testIdPart(lane.lane_name)}`}
-                className="border-t border-app"
+                className="border-t border-border-2"
               >
                 <td className="px-2 py-2 align-top">
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-mono text-xs text-default">
+                    <span className="font-mono text-xs text-text-1">
                       {lane.lane_name}
                     </span>
                     {lane.default_lane ? (
-                      <span className="font-mono text-xs uppercase tracking-wide text-muted">
+                      <span className="text-xs font-medium text-text-3">
                         default lane
                       </span>
                     ) : null}
@@ -272,41 +270,41 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
                 </td>
                 <td className="px-2 py-2 align-top">
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-mono text-xs text-default">
+                    <span className="font-mono text-xs text-text-1">
                       {limits.runtime_backend ?? "—"}
                     </span>
-                    <span className="font-mono text-xs text-muted">
+                    <span className="font-mono text-xs text-text-3">
                       {limits.compatibility_target ?? "—"}
                     </span>
                   </div>
                 </td>
                 <td className="px-2 py-2 align-top">
-                  <span className="font-mono text-xs text-default">
+                  <span className="font-mono text-xs text-text-1">
                     {lane.execution_adapter_state ?? "—"}
                   </span>
                 </td>
                 <td className="px-2 py-2 align-top">
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-mono text-xs text-default">
+                    <span className="font-mono text-xs text-text-1">
                       {artifact?.status ?? "—"}
                     </span>
-                    <span className="font-mono text-xs text-muted">
+                    <span className="font-mono text-xs text-text-3">
                       {artifact?.source ?? "—"}
                     </span>
                     {artifactRef ? (
-                      <span className="font-mono text-xs text-muted">
+                      <span className="font-mono text-xs text-text-3">
                         {artifactRef}
                       </span>
                     ) : null}
                   </div>
                 </td>
                 <td className="px-2 py-2 align-top">
-                  <span className="font-mono text-xs text-default">
+                  <span className="font-mono text-xs text-text-1">
                     {lane.executor_started ? "started" : "lazy"}
                   </span>
                 </td>
                 <td className="px-2 py-2 align-top">
-                  <span className="font-mono text-xs text-default">
+                  <span className="font-mono text-xs text-text-1">
                     {limits.memory_enforcement ?? "—"}
                   </span>
                 </td>

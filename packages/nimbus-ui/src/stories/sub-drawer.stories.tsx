@@ -32,15 +32,13 @@ function FakeSubDrawerHost({
       aria-label={spec.title}
       data-testid="sub-drawer"
       data-kind={spec.kind}
-      className="flex h-[420px] w-64 shrink-0 flex-col border-r border-app bg-surface"
+      className="flex h-[420px] w-64 shrink-0 flex-col border-r border-border-2 bg-bg-panel"
     >
-      <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-app px-3">
-        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
-          {spec.title}
-        </span>
+      <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border-2 px-3">
+        <span className="text-xs font-medium text-text-3">{spec.title}</span>
       </header>
       {spec.kind === "dynamic" && spec.search ? (
-        <div className="border-b border-app px-3 py-2">
+        <div className="border-b border-border-2 px-3 py-2">
           <input
             type="search"
             value={search}
@@ -49,9 +47,9 @@ function FakeSubDrawerHost({
             data-testid="sub-drawer-search"
             // A story is where the next author looks for the pattern, so the
             // failing `--brand` ring must not be modelled here either: 2.24:1
-            // in warm light on this field's own `bg-canvas` ground, under SC
+            // in warm light on this field's own `bg-bg-canvas` ground, under SC
             // 1.4.11's 3:1 floor.
-            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted"
+            className="h-7 w-full rounded-md border border-border-2 bg-bg-canvas px-2 text-xs text-text-1 placeholder:text-text-3"
           />
         </div>
       ) : null}
@@ -86,18 +84,16 @@ function FakeStaticList({
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm no-underline",
                 item.disabled
-                  ? "pointer-events-none text-muted opacity-60"
+                  ? "pointer-events-none text-text-3 opacity-60"
                   : active
-                    ? "bg-surface-2 text-default"
-                    : "text-muted hover:bg-surface-2 hover:text-default",
+                    ? "bg-bg-raised text-text-1"
+                    : "text-text-3 hover:bg-bg-raised hover:text-text-1",
               )}
-              style={
-                active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
-              }
+              style={active ? { borderLeftColor: "var(--accent)" } : undefined}
             >
               <span className="flex-1 truncate">{item.label}</span>
               {typeof item.count === "number" ? (
-                <span className="tabular font-mono text-xs text-muted">
+                <span className="tabular font-mono text-xs text-text-3">
                   {item.count}
                 </span>
               ) : null}
@@ -140,12 +136,12 @@ const DYNAMIC_SPEC: DynamicSubDrawerSpec = {
           <a
             href={`/developer/services/${svc.id}`}
             data-testid={`sub-drawer-item-dev-service-${svc.label}`}
-            className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default no-underline"
+            className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1 no-underline"
           >
             <span className="flex-1 truncate font-mono text-xs">
               {svc.label}
             </span>
-            <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
+            <span className="tabular text-xs font-medium text-text-3">
               {svc.state}
             </span>
           </a>
@@ -175,7 +171,7 @@ export const DynamicEmpty: Story = {
         title: "Services",
         search: { placeholder: "Filter services" },
         children: (
-          <div className="px-3 py-6 text-xs text-muted">
+          <div className="px-3 py-6 text-xs text-text-3">
             <p>No services declared.</p>
             <p className="mt-2">
               Author a compose.yaml and run{" "}

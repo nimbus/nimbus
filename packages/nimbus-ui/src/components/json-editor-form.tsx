@@ -48,10 +48,7 @@ export function JsonEditorForm({
     <>
       <label
         htmlFor={fieldId}
-        className={cn(
-          "font-mono text-xs uppercase tracking-wide text-muted",
-          labelClassName,
-        )}
+        className={cn("text-xs font-medium text-text-3", labelClassName)}
       >
         {label}
       </label>
@@ -60,12 +57,12 @@ export function JsonEditorForm({
         value={json}
         onChange={(e) => setJson(e.target.value)}
         spellCheck={false}
-        className="min-h-[240px] flex-1 resize-none rounded border border-app bg-surface-2 p-2 font-mono text-xs text-default focus-visible:border-strong"
+        className="min-h-[240px] flex-1 resize-none rounded-xs border border-border-2 bg-bg-raised p-2 font-mono text-xs text-text-1 focus-visible:border-accent"
         data-testid={`${testidPrefix}-textarea`}
       />
       {error ? (
         <p
-          className="font-mono text-xs text-danger"
+          className="font-mono text-xs text-error"
           data-testid={`${testidPrefix}-error`}
         >
           {error}
@@ -75,7 +72,7 @@ export function JsonEditorForm({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          className="rounded-xs border border-border-2 px-2 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
         >
           cancel
         </button>
@@ -84,8 +81,8 @@ export function JsonEditorForm({
           onClick={() => void submit()}
           disabled={submitting}
           className={cn(
-            "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
-            submitting ? "text-muted" : "text-default hover:bg-surface",
+            "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium",
+            submitting ? "text-text-3" : "text-text-1 hover:bg-bg-panel",
           )}
           data-testid={`${testidPrefix}-submit`}
         >

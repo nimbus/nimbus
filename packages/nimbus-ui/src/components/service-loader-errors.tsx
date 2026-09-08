@@ -29,14 +29,14 @@ function LoaderErrorState({
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid={pageTestId}
     >
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         <EmptyState
           title={title}
           body={
             <>
               {subject}:{" "}
               <span
-                className="font-mono text-default"
+                className="font-mono text-text-1"
                 data-testid="storage-server-error"
               >
                 {errorMessage(error)}
