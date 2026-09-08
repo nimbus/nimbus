@@ -2,8 +2,9 @@
 
 Date: 2026-09-08
 
-Result: the authorized supported release is public. The signed apt installation
-passes. This record supersedes the publication blockers in the v0.1.46 proof.
+Result: the authorized supported release is complete. The signed apt installation
+passes. PR #330 merged and the Homebrew hook repair is public.
+This record supersedes the publication blockers in the v0.1.46 proof.
 It does not change the historical 46-condition matrix or claim COPR coverage.
 
 ## Immutable Identity
@@ -106,22 +107,21 @@ The Pages environment permits deployments from `main` only.
 Dispatch from `main` with explicit input `release_tag=v0.1.47` passed.
 The recovery preserved Pages protection and the immutable source tag.
 
-The distribution plan owns these remaining checks and repairs:
+The distribution plan owned these publication checks and repairs:
 
-- Merge the dispatch repair described below.
-- Replace the deprecated Homebrew hook after verification against its current
-  API.
-- Maintain signing-key backup and rotation procedures.
+- The dispatch repair merged in PR #330.
+- The verified Homebrew hook is public at `661071c`.
+- Signing-key backup and future rotation remain ongoing channel maintenance.
 
 COPR remains disabled pending credentials and its public-project contract.
 Four public-cloud comparison endpoints remain unavailable. These exclusions
 remain visible and do not count as passing evidence.
 
-RRC7 must reconcile this proof with the active ledger before RRC99 archives
-the campaign. The historical broad NO-GO verdict must remain distinct from
-the owner's authorized supported release.
+RRC7 reconciled this proof with the ledger and RRC99 archived the campaign.
+The historical broad NO-GO verdict remains distinct from the owner's
+authorized supported release.
 
-## Dispatch Regression Repair
+## Dispatch Regression Repair Before Merge
 
 The local workflow now dispatches from `main` and retains the exact release
 tag input. The regression executes the real dispatch body with a recording
@@ -267,3 +267,16 @@ without the deprecated-hook warning.
 exited zero. It reinstalled the same published v0.1.47 archive with the new
 hook and no deprecated-hook warning. `/opt/homebrew/bin/nimbus --version`
 reported `nimbus 0.1.47`. The cask has no application-data removal hook.
+
+## Final Closeout
+
+PR #330 merged on 2026-09-08 as
+`14eb0eec935e972568513fd6825c281c3b8e721d`. Its exact reviewed head was
+`e62e0cf767176a330dee02d211852ac6ec2b6daa`. The final roster has 51
+successful checks and four expected skips. No check remains active.
+
+The [CI record](rrc7-channel-ci.json) and
+[merge record](rrc7-channel-merge.json) preserve the authoritative job metadata.
+The [completion audit](rrc7-completion-audit.md) maps each supported-release
+requirement to its evidence. RRC99 archived the plan after the repair merge.
+The v0.1.46 and v0.1.47 tags remain unchanged.

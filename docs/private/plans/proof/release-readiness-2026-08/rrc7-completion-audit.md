@@ -1,7 +1,7 @@
 # RRC7 Supported Release Completion Audit
 
 Date: 2026-09-08
-Status: incomplete pending PR #330 merge and RRC99 cleanup.
+Status: complete. PR #330 merged and RRC99 archived the campaign.
 
 ## Scope
 
@@ -27,9 +27,9 @@ identities, archive hashes, install commands, reviews, and exclusions.
 | Publish signed apt packages | Run `34187740409` passed all six jobs from Nimbus `c05b17125`; the fresh install verified the pinned public-key fingerprint | Pass |
 | Verify the apt upgrade | Real v0.1.45 packages upgraded through signed public apt to the exact Nimbus, crun, and libkrun tuple | Pass |
 | Verify Homebrew install and upgrade | Real v0.1.45 upgrade and v0.1.47 reinstall passed; public hook commit `661071c` passed direct execution and Sol review | Pass |
-| Repair automatic apt dispatch | Exact regression and Sol review pass for `e62e0cf76`; main CI passes, but PR #330 awaits Rust CodeQL and merge | Incomplete |
+| Repair automatic apt dispatch | Exact regression and Sol review pass for `e62e0cf76`; PR #330 merged as `14eb0eec9` after all required checks passed | Pass |
 | Keep review and privacy constraints | Isolated Sol reviews found no remaining actionable issue; no Opus or Fable review ran; additional private plan text stayed local | Pass |
-| Close the control plane | RRC7 remains active and RRC99 awaits the final repair merge | Incomplete |
+| Close the control plane | RRC7 and RRC99 are done; the plan is archived and its index entry routes residual work to existing owners | Pass |
 
 The ten release assets comprise three archives and seven support files.
 The seven files are `install.sh`, `LICENSE`, `checksums-sha256.txt`,
@@ -49,11 +49,28 @@ and `nimbus_oci_vulns.sarif.json`.
 - `runtime-strategy-lifecycle-plan.md` stays proposed. This release does not
   activate it or start a new runtime experiment.
 
-## Next Action
+## Final Merge and Cleanup
 
 CI run `34190502568` passed 48 jobs and declared four expected skips.
 Its full job roster is [rrc7-channel-ci.json](rrc7-channel-ci.json).
-CodeQL run `34190502684` still has an active Rust analysis job.
+CodeQL run `34190502684` passed both analyses. The final PR roster contains
+51 successful checks and four expected skips, with no remaining active check.
+The [merge record](rrc7-channel-merge.json) binds those results to the exact
+reviewed head and merge `14eb0eec935e972568513fd6825c281c3b8e721d`.
 
-Merge PR #330 only after its required checks pass. Record the exact merge,
-verify the public workflow repair, and complete RRC99 in a docs-only change.
+RRC99 archived the plan after that merge. The final checkpoint changes only
+private documentation and retains the proof root. The release tags remain
+immutable. This closeout activates no new runtime experiment or unsupported
+channel.
+
+## Closeout Verification
+
+The post-merge dispatch regression and both Homebrew parser checks pass.
+The docs gate checks 109 pages with no link, source-map, or private-fence error.
+Whitespace checks pass. All four edited release documents pass prose lint.
+The two changed index entries also pass prose lint.
+
+The complete plans index retains 66 pre-existing prose diagnostics, down from
+67 on the merge baseline. Comparison by rule, message, and excerpt finds no
+new diagnostic. The architecture-review plan owns the existing prose cleanup.
+This closeout does not claim a clean whole-index prose result.

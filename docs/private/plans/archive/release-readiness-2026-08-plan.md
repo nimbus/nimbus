@@ -1,21 +1,21 @@
 # Nimbus Release Readiness 2026-08
 
-Status: `active`.
+Status: `complete` (2026-09-08, final repair PR #330).
 Owner: this plan.
 Created: 2026-08-27.
 Baseline branch: `codex/storage-review-repairs`.
 Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
-Proof root: `proof/release-readiness-2026-08/`
+Proof root: `../proof/release-readiness-2026-08/`
 
-Next action: monitor PR #330 at `e62e0cf767176a330dee02d211852ac6ec2b6daa`.
-CI run `34190502568` and CodeQL run `34190502684` are active.
-Merge only after the required checks pass. The public Homebrew hook is now
-commit `661071c` and passed a real reinstall. Finish the publication audit,
-then run RRC99.
-The local plan checkpoint remains on `codex/release-channel-cleanup` in
-`/private/tmp/nimbus-release-publication.iXq0Oj`.
-Do not push the earlier local release branch history.
+Next action: none for this completed campaign. PR #330 merged as
+`14eb0eec935e972568513fd6825c281c3b8e721d` after 51 successful checks and
+four expected skips. The public Homebrew hook is commit `661071c` and
+passed a real reinstall. The publication audit passes.
+
+The distribution plan owns COPR and future channel maintenance. The runtime
+strategy plan remains proposed pending owner activation. Paths in the retained
+execution history are relative to the original plans directory.
 
 Nimbus `v0.1.47` is public at `c05b17125`. GitHub, GHCR, machine-os,
 Homebrew, and signed apt publication passed. Fresh signed apt installation,
@@ -113,9 +113,9 @@ renamed, duplicated, or unsupported condition.
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `done` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `done` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `done` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
-| RRC7 | Validate archives, installers, packages, OCI artifacts, and upgrades, then publish the supported release graph. | `in_progress` | v0.1.47 publication, signed apt install and upgrade, Homebrew upgrade and repaired-hook reinstall, and exact OCI smoke pass. Channel repair `e62e0cf76` passes the Sol xhigh pre-PR gate and focused checks. PR #330 merge and final audit remain. See `proof/release-readiness-2026-08/rrc7-v0.1.47-publication.md` and `rrc7-completion-audit.md` in the same proof root. |
+| RRC7 | Validate archives, installers, packages, OCI artifacts, and upgrades, then publish the supported release graph. | `done` | v0.1.47 publication, signed apt install and upgrade, Homebrew upgrade and repaired-hook reinstall, and exact OCI smoke pass. PR #330 merged as `14eb0eec9` after 51 successful checks and four expected skips. The final audit passes. See `../proof/release-readiness-2026-08/rrc7-v0.1.47-publication.md` and `rrc7-completion-audit.md` in that proof root. |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol-only reviews, and issue the GO or NO-GO report. | `done` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
-| RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
+| RRC99 | Clean up this plan after the final repair pull request merges. | `done` | PR #330 merged on 2026-09-08. This plan is archived, the index routes residual work to its existing owners, and the proof root remains available. |
 
 ## Tasks
 
@@ -274,7 +274,7 @@ renamed, duplicated, or unsupported condition.
 - Verification: search for `release-readiness-2026-08` and confirm the final
   routing.
 
-## Goal
+## Historical Goal
 
 ```text
 Execute docs/private/plans/release-readiness-2026-08-plan.md to completion.
@@ -666,3 +666,5 @@ release blocker to remain.
 | 2026-09-08 | RRC7 | publication | PR #330 publishes only reviewed commit `e62e0cf767176a330dee02d211852ac6ec2b6daa` from `codex/release-channel-fixes`. The plan-only checkpoint stays local because the harness did not authorize sending its additional text to Sol. CI run `34190502568` and CodeQL run `34190502684` are active. No published tag changed. |
 | 2026-09-08 | RRC7 | evidence | Tap commit `661071c` passed Ruby syntax, whitespace, complete-cask parsing, recursive quarantine cleanup, error propagation, and a simulated Linux guard check. The isolated Sol xhigh pre-PR review found no actionable P0 through P3 issue with confidence `0.98`. TruffleHog passed. |
 | 2026-09-08 | RRC7 | publication | The intended tap feature-branch push updated remote main directly, before PR #330 merged. The publication proof records this ordering deviation. Remote verification confirms only the reviewed commit `661071c`. The registered tap update and real v0.1.47 reinstall pass without a deprecated-hook warning. PR #330 still has active checks and no reported failure. |
+| 2026-09-08 | RRC7 | done | PR #330 merged as `14eb0eec935e972568513fd6825c281c3b8e721d` after 51 successful checks and four expected skips. `rrc7-channel-ci.json` and `rrc7-channel-merge.json` preserve the exact job rosters. The supported-release completion audit passes. |
+| 2026-09-08 | RRC99 | done | Archived this completed campaign after the final repair merge. The index preserves distribution ownership and the runtime strategy activation gate. Historical broad-matrix exclusions remain explicit. No published tag changed. |

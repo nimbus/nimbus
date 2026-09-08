@@ -1,0 +1,339 @@
+{
+  "checks": [
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Format",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406230"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Analyze (javascript-typescript)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502684/job/101947406713"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Analyze (rust)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502684/job/101947406859"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Clippy",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406322"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Dependency Audit",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406136"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Root-only container PEP egress",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406326"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Runtime Tests",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406314"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Ptrcomp Check",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406206"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Ptrcomp Cage",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406358"
+    },
+    {
+      "conclusion": "SKIPPED",
+      "name": "Profile-Aware Runtime Crossover",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406937"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Bun/JSC Runtime Contract",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406268"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Compatibility Metadata",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406360"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node D-Bus Integration",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406520"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "UI Artifacts",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406357"
+    },
+    {
+      "conclusion": "SKIPPED",
+      "name": "Nightly ${{ matrix.surface-label }} Verification Harness",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406828"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "JavaScript Build and Test",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406492"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Proof Helper Checks",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947406515"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Test Archive",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587853"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Nimbus Bin Build",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587864"
+    },
+    {
+      "conclusion": "SKIPPED",
+      "name": "Linux Release Candidate",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947588468"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Doctests",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587875"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Warm sccache",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101947587834"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Workspace Tests (shard 1/3)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481946"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Workspace Tests (shard 2/3)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481945"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Workspace Tests (shard 3/3)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482111"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Workspace Node-Dependent Tests",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481904"
+    },
+    {
+      "conclusion": "SKIPPED",
+      "name": "Nightly Rust Workspace Tests (shard ${{ matrix.partition }})",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482599"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "External Provider Integration Tests (postgres)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482022"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "External Provider Integration Tests (mysql)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482123"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "External Provider Integration Tests (libsql)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482049"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Elle Serializability Proof",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481915"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "PPSC Seed Farm (1/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482081"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "PPSC Seed Farm (2/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481949"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "PPSC Seed Farm (3/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952481987"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "PPSC Seed Farm (4/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482015"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Storage Verification Harness",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482108"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Engine Verification Harness (shard 1/2)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482045"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Engine Verification Harness (shard 2/2)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482020"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Server Verification Harness (shard 1/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482057"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Server Verification Harness (shard 2/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482185"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Server Verification Harness (shard 3/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482162"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Server Verification Harness (shard 4/4)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101952482066"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Canaries (application node22)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295230"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Canaries (application node24)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295207"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Canaries (application node26)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295204"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Canaries (tooling node22)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295231"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Canaries (tooling node24)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295186"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Oracle (node22)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295141"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Oracle (node24)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295195"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Oracle (node26)",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295164"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Examples Verify",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101951295132"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Runtime Verification Harness",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101949516717"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node FaaS Compatibility",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101955320033"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Rust Gate Summary",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/actions/runs/34190502568/job/101955372717"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "CodeQL",
+      "status": "COMPLETED",
+      "url": "https://github.com/nimbus/nimbus/runs/101947633013"
+    }
+  ],
+  "head_sha": "e62e0cf767176a330dee02d211852ac6ec2b6daa",
+  "merge_sha": "14eb0eec935e972568513fd6825c281c3b8e721d",
+  "merged_at": "2026-09-08T06:15:35Z",
+  "state": "MERGED",
+  "url": "https://github.com/nimbus/nimbus/pull/330"
+}
