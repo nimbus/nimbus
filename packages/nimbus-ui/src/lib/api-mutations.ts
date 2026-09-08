@@ -200,6 +200,98 @@ export const machines = {
   },
 };
 
+// Service lifecycle. Start and stop take no body; restart names the source
+// generation the caller saw and a request id so the server can refuse a
+// restart of a definition that changed under the operator. The routes answer
+// with the service resource (start, stop) or a 202 restart receipt.
+export type ServiceRestartRequest = {
+  sourceGeneration: number;
+  requestId: string;
+};
+
+export type ServiceLifecycleResponse = {
+  tenant_id?: string;
+  name?: string;
+  state?: string;
+  lifecycle_state?: string;
+  readiness?: string;
+  health?: string;
+  endpoints?: unknown[];
+};
+
+export const services = {
+  start(
+    tenant: string,
+    name: string,
+  ): Promise<ApiResult<ServiceLifecycleResponse>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/services/${enc(name)}/start`, {
+      method: "POST",
+    });
+  },
+  stop(
+    tenant: string,
+    name: string,
+  ): Promise<ApiResult<ServiceLifecycleResponse>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/services/${enc(name)}/stop`, {
+      method: "POST",
+    });
+  },
+  restart(
+    tenant: string,
+    name: string,
+    request: ServiceRestartRequest,
+  ): Promise<ApiResult<{ request_id?: string; disposition?: string }>> {
+    return apiFetch(
+      `/api/tenants/${enc(tenant)}/services/${enc(name)}/restart`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  },
+};
+
+/** One engine mutation as the scheduler stores it (`nimbus_core::Mutation`). */
+export type ScheduleMutation =
+  | { type: "insert"; table: string; id?: string; fields: unknown }
+  | { type: "update"; table: string; id: string; patch: unknown }
+  | { type: "delete"; table: string; id: string };
+
+export type CronEntry = {
+  name: string;
+  schedule: { type: "interval"; seconds: number };
+  mutation: ScheduleMutation;
+  enabled: boolean;
+  last_run?: number | null;
+  next_run?: number;
+  created_at?: number;
+};
+
+// Scheduler control. `runNow` enqueues a mutation for immediate execution,
+// which is how Run now re-plays a job or a cron entry: the scheduler holds
+// the mutation, the console only asks for another run of it.
+export const schedules = {
+  runNow(
+    tenant: string,
+    mutation: ScheduleMutation,
+  ): Promise<ApiResult<{ job_id?: string }>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/schedule`, {
+      method: "POST",
+      body: JSON.stringify({ run_after_ms: 0, mutation }),
+    });
+  },
+  cancel(tenant: string, jobId: string): Promise<ApiResult<unknown>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/schedule/${enc(jobId)}`, {
+      method: "DELETE",
+    });
+  },
+  listCrons(tenant: string): Promise<ApiResult<{ crons?: CronEntry[] }>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/crons`, { method: "GET" });
+  },
+  removeCron(tenant: string, name: string): Promise<ApiResult<unknown>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/crons/${enc(name)}`, {
+      method: "DELETE",
+    });
+  },
+};
+
 // Session lifecycle. `rotateToken` authenticates with the current admin bearer
 // (the only Authorization-header write); `shutdown` rides the session cookie.
 export const system = {

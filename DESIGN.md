@@ -243,31 +243,56 @@ play (query / mutation / action / HTTP route / scheduled job).
 
 Services owns long-running placement for the active tenant. Same surface
 as the Operator-side `/operator/services` (see §Services below); the
-Developer side filters `ServicesTable` to the active tenant and hides
+Developer side renders `ServicesTable` for the active tenant and hides
 the cross-tenant column.
 
-- Service list: name, kind, lifecycle state, placement (machine),
-  health, endpoints, restart policy. Scoped to the active tenant.
-- Service detail: backing image, environment, ports, dependencies,
-  lifecycle history. Cross-links to **Operator → Machines** for the
-  underlying machine record.
-- Actions: start, stop, restart, drain, remove — gated by tenant
-  permissions, not visible if the active tenant lacks placement rights.
+- Service list on `DataTable`: name, lifecycle state as a `StatePill`,
+  kind, placement (machine), endpoint count, updated. Scoped to the
+  active tenant. Row activation opens the detail; right-click or the
+  trailing actions button opens a `RowContextMenu` with `Open service`,
+  the lifecycle actions the state allows, and `Show logs` (the
+  Observability Logs tab narrowed to `source=service`).
+- Lifecycle actions: `start`, `stop`, `restart`. A live service offers
+  stop and restart, a stopped one offers start, a failed one offers
+  start and restart, and a service in flight offers none. The row shows
+  the optimistic state (`starting`, `stopping`, `restarting`) while the
+  request is out, returns to the real state when it settles, and keeps
+  the real state plus the refusal text under the pill when the route
+  says no. `restart` sends the row's `sourceGeneration` and a fresh
+  request id.
+- Service detail: header with kind, state pill, bundle chip, and the
+  same lifecycle buttons; tabs `Overview` (stats, endpoints, health),
+  `Logs` (the live `source=service` event stream for the tenant, with a
+  link to Observability), `Config` (bundle and endpoints). Cross-links
+  to **Operator → Machines** for the underlying machine record.
 
 The Services sub-panel (Developer) is a **dynamic list** of services
-declared in the active tenant's `compose.yaml`. The Developer side
-never lists system services from `_nimbus`; the System Tenant Lens
-(⌘\\) is the only Developer-side path to system service state.
+declared in the active tenant's `compose.yaml`, each with a `StateDot`.
+The Developer side never lists system services from `_nimbus`; the
+System Tenant Lens (⌘\\) is the only Developer-side path to system
+service state.
 
 ### Schedules (Developer)
 
 Schedules owns periodic and future-dated work for the active tenant.
 
-- Scheduled jobs list: function path, next run, last run, status,
-  cancel / retry where supported.
-- Cron jobs list: name, cron expression, next run, last run, history
-  link to a run-level detail page.
-- Schedule detail: queued runs, recent runs, error history, retry policy.
+- Scheduled jobs on `DataTable`: function path, status pill, scheduled
+  time, finished time, outcome (with the error text when the job
+  failed). Row activation opens the job sheet through `?job=`; the row
+  menu offers `Open job`, `Run now`, and `Cancel job` on a pending job.
+- Cron jobs on `DataTable`: name, function path, schedule as an
+  operator would say it (`every 30s`), status pill, next run, last run.
+  Row activation opens the cron sheet through `?cron=`; the row menu
+  offers `Open cron`, `Run now`, and `Delete cron` behind a
+  `ConfirmDialog`.
+- Schedule sheet: facts, the recorded mutation, the error when there
+  is one, and the footer actions. `Run now` re-enqueues the job's
+  mutation as a new one-shot job with no delay; for a cron it reads the
+  cron's mutation from the crons route first, because the system record
+  does not hold it. The scheduler writes a job's outcome into its
+  system record when the job history route is read, so a row can sit on
+  `pending` after it ran; recording outcomes as they happen belongs to
+  the scheduler, not the console.
 
 The Schedules sub-panel is a **static menu** with two items
 (`Scheduled` / `Cron`).
@@ -506,14 +531,16 @@ described under **Services (Developer)** above. The same
 `ServicesTable` component backs both routes; only the query and the
 visible columns differ.
 
-- Service list: cross-tenant, grouped by tenant. Adds a `Tenant` column
-  not present on the Developer side. Includes system services
-  (`_nimbus`-owned) that the Developer console hides.
-- Service detail: identical schema to the Developer side — backing
-  image, environment, ports, dependencies, lifecycle history. The
-  difference is permissions: Operator actions are not tenant-gated.
-- Actions: start, stop, restart, drain, remove. Operator can act on
-  any tenant's services and on system services.
+- Service list: cross-tenant, with a `Tenant` column not present on
+  the Developer side, the same row menu and optimistic lifecycle
+  states. Includes system services (`_nimbus`-owned) that the Developer
+  console hides.
+- Service detail: the same header, state pill, and lifecycle buttons;
+  tabs `Placement` (machine, attachment, provider) and `Logs` (the same
+  live service stream). The difference is permissions: Operator actions
+  are not tenant-gated.
+- Actions: start, stop, restart. Operator can act on any tenant's
+  services and on system services.
 
 A service has both a service identity (here) and a machine placement
 (under **Operator → Machines**). Cross-link both ways; do not duplicate

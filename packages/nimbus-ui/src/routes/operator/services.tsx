@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { PageHeader } from "../../components/page-header";
 import { AdminServicesLoaderError } from "../../components/service-loader-errors";
+import { StateDot } from "../../components/state-dot";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -49,7 +50,7 @@ function AdminServicesPage() {
     >
       <PageHeader
         title="Services"
-        subtitle="Every service on this cluster by tenant. Operator-only: placement, restarts, density, bundle drift."
+        subtitle="Every service on this cluster by tenant, with placement, lifecycle actions, and logs."
         trailing={<SummaryChip services={services} />}
       />
 
@@ -126,6 +127,7 @@ function AdminServicesSubPanel({ services }: { services: ServiceDoc[] }) {
                 "flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1",
               )}
             >
+              <StateDot state={svc.state} />
               <span className="flex-1 truncate font-mono text-xs">
                 {svc.name ?? shortId(svc._id, 12)}
               </span>

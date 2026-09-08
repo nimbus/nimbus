@@ -60,13 +60,15 @@ afterEach(() => {
 });
 
 describe("Admin service detail tabs (DR6 / F6)", () => {
-  it("TABS has exactly one entry: Placement", () => {
-    expect(TABS).toHaveLength(1);
+  it("TABS has exactly two entries: Placement and Logs", () => {
+    expect(TABS).toHaveLength(2);
     expect(TABS[0]).toEqual({ id: "placement", label: "Placement" });
+    expect(TABS[1]).toEqual({ id: "logs", label: "Logs" });
   });
 
-  it("isTab accepts only 'placement'", () => {
+  it("isTab accepts only placement and logs", () => {
     expect(isTab("placement")).toBe(true);
+    expect(isTab("logs")).toBe(true);
     expect(isTab("restarts")).toBe(false);
     expect(isTab("density")).toBe(false);
     expect(isTab("drift")).toBe(false);

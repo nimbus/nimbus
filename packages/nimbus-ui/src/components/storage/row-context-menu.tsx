@@ -93,9 +93,17 @@ export function RowContextMenu({
       onClose();
     };
     window.addEventListener("pointerdown", close, true);
-    window.addEventListener("scroll", close, true);
     window.addEventListener("keydown", onKey, true);
+    // Scroll events dispatch asynchronously, in the rendering step before
+    // animation frame callbacks. A scroll that was already pending when the
+    // menu opened, such as the scroll-into-view a browser performs for the
+    // press on an actions button at the table edge, would otherwise close
+    // the menu on the frame it appeared. Listen from the next frame on.
+    const frame = window.requestAnimationFrame(() => {
+      window.addEventListener("scroll", close, true);
+    });
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("pointerdown", close, true);
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("keydown", onKey, true);

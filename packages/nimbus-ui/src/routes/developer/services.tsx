@@ -1,13 +1,24 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Ellipsis } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import {
+  DataTable,
+  dataColumns,
+  type RowAnchor,
+} from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
-import { StatePill } from "../../components/pill";
+import { CategoryPill, StatePill } from "../../components/pill";
 import { ServicesLoaderError } from "../../components/service-loader-errors";
-import { Td, Th } from "../../components/table-cells";
+import { StateDot } from "../../components/state-dot";
+import {
+  RowContextMenu,
+  type RowMenuItem,
+} from "../../components/storage/row-context-menu";
 import { RelativeTime } from "../../components/time";
+import { Button } from "../../components/ui/button";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -17,6 +28,13 @@ import {
   useSubPanelSearch,
 } from "../../shell/sub-panel";
 import { useUiStore } from "../../store/ui-store";
+import {
+  ACTION_LABELS,
+  actionsForState,
+  OPTIMISTIC_STATES,
+  type ServiceAction,
+  useServiceActions,
+} from "./services/-service-lifecycle";
 
 export const Route = createFileRoute("/developer/services")({
   loaderDeps: () => ({
@@ -138,6 +156,7 @@ function ServicesSubPanel({
             data-testid={`sub-panel-item-dev-service-${svc.name ?? svc._id}`}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
           >
+            <StateDot state={svc.state} />
             <span className="flex-1 truncate font-mono text-xs">
               {svc.name ?? shortId(svc._id, 12)}
             </span>
@@ -153,6 +172,25 @@ function ServicesSubPanel({
   );
 }
 
+// A row of the table: the service plus the state it shows right now, which
+// is the optimistic state while a lifecycle request is in flight.
+type ServiceRow = ServiceDoc & {
+  shownState: string | undefined;
+  actionError: string | undefined;
+};
+
+type MenuState = RowAnchor & { row: ServiceRow };
+
+const col = dataColumns<ServiceRow>();
+
+function nameOf(row: ServiceDoc): string {
+  return row.name ?? shortId(row._id, 12);
+}
+
+// ServicesTable backs both the developer list (one tenant) and the operator
+// list (every tenant, with the tenant column). Row activation opens the
+// detail page for the surface; the row menu holds the lifecycle actions the
+// state allows and a jump to the service's log lines.
 export function ServicesTable({
   services,
   activeTenant,
@@ -162,6 +200,203 @@ export function ServicesTable({
   activeTenant: string | null;
   showTenantColumn: boolean;
 }) {
+  const navigate = useNavigate();
+  const { pending, errors, runAction } = useServiceActions();
+  const [menu, setMenu] = useState<MenuState | null>(null);
+
+  const detailTo = showTenantColumn
+    ? "/operator/services/$service"
+    : "/developer/services/$service";
+
+  const rows = useMemo<ServiceRow[]>(
+    () =>
+      services.map((svc) => {
+        const inFlight = pending[svc._id];
+        return {
+          ...svc,
+          shownState: inFlight ? OPTIMISTIC_STATES[inFlight] : svc.state,
+          actionError: errors[svc._id],
+        };
+      }),
+    [services, pending, errors],
+  );
+
+  const openRow = useCallback(
+    (row: ServiceRow) =>
+      navigate({ to: detailTo, params: { service: row._id } }),
+    [navigate, detailTo],
+  );
+
+  const menuItems = useCallback(
+    (row: ServiceRow): RowMenuItem[] => {
+      const lifecycle = actionsForState(row.shownState).map(
+        (action): RowMenuItem => ({
+          id: action,
+          label: ACTION_LABELS[action],
+          onSelect: () => void runAction(row, action),
+        }),
+      );
+      return [
+        {
+          id: "open",
+          label: "Open service",
+          onSelect: () => void openRow(row),
+        },
+        ...lifecycle,
+        {
+          id: "logs",
+          label: "Show logs",
+          onSelect: () =>
+            void navigate({
+              to: "/developer/observability",
+              search: {
+                tab: "logs",
+                source: "service",
+                tenant: row.tenantId ?? undefined,
+              },
+            }),
+        },
+      ];
+    },
+    [navigate, openRow, runAction],
+  );
+
+  const columns = useMemo(
+    () => [
+      col.accessor("name", {
+        header: "Name",
+        size: 128,
+        cell: (ctx) => {
+          const row = ctx.row.original;
+          return (
+            <Link
+              to={detailTo}
+              params={{ service: row._id }}
+              className="block truncate font-mono text-text-1 hover:underline"
+              data-testid={`services-link-${nameOf(row)}`}
+            >
+              {nameOf(row)}
+            </Link>
+          );
+        },
+      }),
+      col.accessor("shownState", {
+        header: "State",
+        size: 104,
+        cell: (ctx) => {
+          const row = ctx.row.original;
+          return (
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <StatePill
+                state={ctx.getValue()}
+                data-testid={`services-state-${nameOf(row)}`}
+              />
+              {row.actionError ? (
+                <span
+                  className="truncate text-xs text-[color:var(--error)]"
+                  title={row.actionError}
+                  data-testid={`services-row-error-${nameOf(row)}`}
+                >
+                  {row.actionError}
+                </span>
+              ) : null}
+            </span>
+          );
+        },
+      }),
+      col.accessor("kind", {
+        header: "Kind",
+        size: 100,
+        cell: (ctx) => <CategoryPill value={ctx.getValue()} />,
+      }),
+      ...(showTenantColumn
+        ? [
+            col.accessor("tenantId", {
+              header: "Tenant",
+              size: 96,
+              cell: (ctx) => (
+                <span className="block truncate font-mono text-xs text-text-1">
+                  {ctx.getValue() ?? "—"}
+                </span>
+              ),
+            }),
+          ]
+        : []),
+      col.accessor("machineId", {
+        header: "Machine",
+        size: 92,
+        cell: (ctx) => {
+          const id = ctx.getValue();
+          return (
+            <span
+              className="block truncate font-mono text-xs text-text-3"
+              title={id ?? undefined}
+            >
+              {id ? shortId(id, 14) : "—"}
+            </span>
+          );
+        },
+      }),
+      col.accessor(
+        (row) => (Array.isArray(row.endpoints) ? row.endpoints.length : 0),
+        {
+          id: "endpoints",
+          header: () => <span className="block text-right">Endpoints</span>,
+          size: 88,
+          cell: (ctx) => (
+            <span className="block text-right font-mono text-xs tabular text-text-3">
+              {ctx.getValue()}
+            </span>
+          ),
+        },
+      ),
+      col.accessor("_updateTime", {
+        header: "Updated",
+        size: 88,
+        cell: (ctx) => {
+          const at = ctx.getValue();
+          return typeof at === "number" ? (
+            <RelativeTime epochMs={at} />
+          ) : (
+            <span className="tabular text-text-3">—</span>
+          );
+        },
+      }),
+      col.display({
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        size: 40,
+        enableSorting: false,
+        cell: (ctx) => {
+          const row = ctx.row.original;
+          return (
+            <span className="flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Actions for ${nameOf(row)}`}
+                data-testid={`services-row-actions-${nameOf(row)}`}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setMenu({
+                    row,
+                    x: rect.left,
+                    y: rect.bottom + 2,
+                    element: event.currentTarget,
+                  });
+                }}
+              >
+                <Ellipsis />
+              </Button>
+            </span>
+          );
+        },
+      }),
+    ],
+    [detailTo, showTenantColumn],
+  );
+
   if (services.length === 0) {
     return (
       <EmptyState
@@ -181,70 +416,33 @@ export function ServicesTable({
       />
     );
   }
+
   return (
-    <div className="h-full overflow-auto">
-      <table
-        className="w-full border-collapse text-base"
-        data-testid="services-table"
-      >
-        <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
-          <tr>
-            <Th>Name</Th>
-            <Th>Kind</Th>
-            <Th>State</Th>
-            {showTenantColumn ? <Th>Tenant</Th> : null}
-            <Th>Machine</Th>
-            <Th>Endpoints</Th>
-            <Th>Updated</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {services.map((svc) => {
-            const endpoints = Array.isArray(svc.endpoints) ? svc.endpoints : [];
-            return (
-              <tr
-                key={svc._id}
-                className="border-t border-border-2 hover:bg-bg-raised"
-                data-testid={`services-row-${svc.name ?? svc._id}`}
-              >
-                <Td>
-                  <Link
-                    to={
-                      showTenantColumn
-                        ? "/operator/services/$service"
-                        : "/developer/services/$service"
-                    }
-                    params={{ service: svc._id }}
-                    className="font-mono text-text-1 hover:underline"
-                  >
-                    {svc.name ?? shortId(svc._id, 12)}
-                  </Link>
-                </Td>
-                <Td>
-                  <span className="font-medium text-text-3">
-                    {svc.kind ?? "—"}
-                  </span>
-                </Td>
-                <Td>
-                  <StatePill state={svc.state} />
-                </Td>
-                {showTenantColumn ? <Td mono>{svc.tenantId ?? "—"}</Td> : null}
-                <Td mono>{svc.machineId ?? "—"}</Td>
-                <Td mono className="text-text-3">
-                  {endpoints.length}
-                </Td>
-                <Td>
-                  {typeof svc._updateTime === "number" ? (
-                    <RelativeTime epochMs={svc._updateTime} />
-                  ) : (
-                    <span className="tabular text-text-3">—</span>
-                  )}
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <DataTable
+        columns={columns}
+        data={rows}
+        getRowId={(row) => row._id}
+        ariaLabel="Services"
+        onRowActivate={(row) => void openRow(row)}
+        onRowContextMenu={(row, anchor) => setMenu({ ...anchor, row })}
+        rowTestid={(row) => `services-row-${nameOf(row)}`}
+        testid="services-table"
+        className="h-full"
+      />
+      {menu ? (
+        <RowContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={`Actions for ${nameOf(menu.row)}`}
+          items={menuItems(menu.row)}
+          restoreFocus={menu.element}
+          onClose={() => setMenu(null)}
+          testid="services-row-menu"
+        />
+      ) : null}
+    </>
   );
 }
+
+export type { ServiceAction };
