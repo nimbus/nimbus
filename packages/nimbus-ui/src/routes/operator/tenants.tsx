@@ -18,11 +18,13 @@ import {
   type RowAnchor,
 } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
+import { createTenantCommand } from "../../components/onboarding/next-action";
 import { PageHeader } from "../../components/page-header";
 import {
   RowContextMenu,
   type RowMenuItem,
 } from "../../components/storage/row-context-menu";
+import { useServerUrl } from "../../hooks/use-server-url";
 import { fetchTenants } from "../../hooks/use-tenant-list";
 import { tenants as tenantApi } from "../../lib/api-mutations";
 import { getNimbusClient } from "../../lib/nimbus-client";
@@ -111,6 +113,7 @@ function TenantsPage() {
   const { create } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate();
+  const serverUrl = useServerUrl();
   const tenants = data.kind === "ok" ? data.tenants : [];
   const tables = data.kind === "ok" ? data.tables : [];
   const serverError = data.kind === "error" ? data.message : null;
@@ -380,8 +383,9 @@ function TenantsPage() {
         ) : rows.length === 0 ? (
           <EmptyState
             title="No tenants yet"
-            body="A tenant owns tables, documents, and services. Create one and the console starts writing data to it."
+            body="A tenant owns tables, documents, files, and services. Create one here or with the API, and the console starts writing data to it."
             cta={{ label: "Create tenant", onClick: openCreate }}
+            snippet={createTenantCommand({ serverUrl })}
             testid="tenants-empty"
           />
         ) : (

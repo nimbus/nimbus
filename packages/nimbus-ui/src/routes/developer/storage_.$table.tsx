@@ -8,6 +8,7 @@ import { Breadcrumb } from "../../components/breadcrumb";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState } from "../../components/loading-state";
+import { insertDocumentCommand } from "../../components/onboarding/next-action";
 import { PageHeader } from "../../components/page-header";
 import { PageTabs } from "../../components/page-tabs";
 import { BulkToolbar } from "../../components/storage/bulk-toolbar";
@@ -33,6 +34,7 @@ import {
   useDiscoveredFields,
 } from "../../components/storage/use-column-prefs";
 import { useDocumentPage } from "../../components/storage/use-document-page";
+import { useServerUrl } from "../../hooks/use-server-url";
 import { documents } from "../../lib/api-mutations";
 import { shortId } from "../../lib/format";
 import type {
@@ -157,6 +159,7 @@ function TableDocumentsPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const tenant = useUiStore((s) => s.activeTenant) ?? "";
+  const serverUrl = useServerUrl();
 
   const tableMeta = useQuery(
     api.tables.byName,
@@ -615,7 +618,12 @@ function TableDocumentsPage() {
           ) : (
             <EmptyState
               title="No documents"
-              body={`Insert a document using the toolbar or POST /api/tenants/${tenant}/documents with body { table: "${table}", fields: {...} }.`}
+              body="Insert the first document here, or write one through the API. The table takes any fields until a schema constrains it."
+              cta={{
+                label: "Insert document",
+                onClick: () => setShowInsert(true),
+              }}
+              snippet={insertDocumentCommand({ serverUrl, tenant, table })}
               testid="documents-empty"
             />
           )}

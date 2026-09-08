@@ -47,6 +47,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (_ref: unknown, args: unknown) => useQueryMock(args),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../shell/sub-panel", () => ({

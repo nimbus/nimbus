@@ -33,6 +33,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 vi.mock("../../shell/sub-panel", () => ({
   useContributeSubPanel: () => undefined,
@@ -73,6 +74,10 @@ describe("RunsTab", () => {
     expect(screen.getByTestId("function-tab-runs-empty")).toBeTruthy();
     expect(screen.getByText("No runs yet")).toBeTruthy();
     expect(screen.queryAllByTestId("skeleton-row")).toHaveLength(0);
+    // The command calls this function by its own path.
+    expect(
+      screen.getByTestId("function-tab-runs-empty-snippet"),
+    ).toHaveTextContent("functions messages:list");
   });
 
   it("renders the runs as a DataTable with a state pill and a mono duration", () => {

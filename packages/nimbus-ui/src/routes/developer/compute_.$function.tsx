@@ -18,10 +18,12 @@ import { EmptyState } from "../../components/empty-state";
 import { parseArgsValidator } from "../../components/function-runner/args-validator";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
 import { LoadingState, SkeletonRows } from "../../components/loading-state";
+import { callFunctionCommand } from "../../components/onboarding/next-action";
 import { PageTabs } from "../../components/page-tabs";
 import { CategoryPill, StatePill } from "../../components/pill";
 import { RelativeTime } from "../../components/time";
 import { useApiRead } from "../../hooks/use-api-read";
+import { useServerUrl } from "../../hooks/use-server-url";
 import { formatDuration, shortHash, shortId } from "../../lib/format";
 import type { FunctionDoc } from "../../lib/types/function";
 import { FunctionSubPanel } from "../../shell/function-sub-panel";
@@ -29,6 +31,7 @@ import {
   type SubPanelSpec,
   useContributeSubPanel,
 } from "../../shell/sub-panel";
+import { useUiStore } from "../../store/ui-store";
 import { GraphView } from "./-graph-view";
 
 type DetailTab = "overview" | "source" | "runs" | "graph";
@@ -612,6 +615,8 @@ const RUN_COLUMNS = [
 /** Exported for spec coverage of the loading, empty, and loaded branches. */
 export function RunsTab({ fn }: { fn: FunctionDoc }) {
   const navigate = useNavigate();
+  const tenant = useUiStore((s) => s.activeTenant);
+  const serverUrl = useServerUrl();
   const runs = useQuery(api.runs.recent, {
     bundleId: null,
     functionPath: fn.path ?? null,
@@ -634,7 +639,12 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
     return (
       <EmptyState
         title="No runs yet"
-        body="Once this function has run, its recent runs show here. Open a run for its trace and error."
+        body="Run this function from the runner on this page or from the CLI. Each run lands here with its status and duration; open one for its trace and error."
+        snippet={callFunctionCommand({
+          serverUrl,
+          tenant,
+          functionPath: fn.path ?? null,
+        })}
         testid="function-tab-runs-empty"
       />
     );

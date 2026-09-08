@@ -36,6 +36,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../../hooks/use-tenant-list", () => ({
@@ -352,6 +353,14 @@ describe("LogsTab read states", () => {
       /current filters/i,
     );
     expect(screen.queryByTestId("observability-log-loading")).toBeNull();
+    // The next action is a function call on this tenant, not another page.
+    expect(
+      screen.getByTestId("observability-log-empty-snippet"),
+    ).toHaveTextContent("nimbus run http://nimbus.example:9000 functions");
+    expect(
+      screen.getByTestId("observability-log-empty-snippet"),
+    ).toHaveTextContent("--tenant acme");
+    expect(screen.queryByTestId("observability-log-empty-cta")).toBeNull();
   });
 
   it("names the filters, and offers to clear them, only when some are set", () => {

@@ -33,6 +33,7 @@ const { useQueryMock } = vi.hoisted(() => ({
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../shell/sub-panel", () => ({
@@ -75,8 +76,16 @@ describe("StoragePage empty states", () => {
         /No tenants yet/i,
       );
     });
-    expect(screen.getByTestId("tenant-tables-empty")).toHaveTextContent(
-      /CREATE TENANT/i,
+    // The next action is the command that creates a tenant on this
+    // server, plus the operator page's create dialog as a shortcut.
+    expect(screen.getByTestId("tenant-tables-empty-snippet")).toHaveTextContent(
+      "POST http://nimbus.example:9000/api/tenants",
+    );
+    expect(screen.getByTestId("tenant-tables-empty-cta")).toHaveTextContent(
+      "Create tenant",
+    );
+    expect(screen.getByTestId("tenant-tables-empty")).not.toHaveTextContent(
+      /top nav/i,
     );
   });
 
@@ -95,9 +104,7 @@ describe("StoragePage empty states", () => {
     expect(screen.getByTestId("tenant-tables-empty")).toHaveTextContent(
       /Pick a tenant from the sidebar selector/i,
     );
-    expect(screen.getByTestId("tenant-tables-empty")).not.toHaveTextContent(
-      /CREATE TENANT/i,
-    );
+    expect(screen.queryByTestId("tenant-tables-empty-snippet")).toBeNull();
   });
 });
 
@@ -298,6 +305,11 @@ describe("StoragePage loading state", () => {
       );
     });
     expect(screen.queryByTestId("tenant-tables-table")).toBeNull();
+    // A table exists once it holds a document, so the next action is the
+    // insert, addressed to this server and tenant.
+    expect(screen.getByTestId("tenant-tables-empty-snippet")).toHaveTextContent(
+      "http://nimbus.example:9000/api/tenants/demo/documents",
+    );
   });
 
   // One component draws both states, so the skeleton and the rows share a

@@ -27,6 +27,7 @@ const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../shell/sub-panel", () => ({

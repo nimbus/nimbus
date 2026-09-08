@@ -10,9 +10,11 @@ import {
   FacetButton,
   FacetInput,
 } from "../../../components/facet-bar";
+import { callFunctionCommand } from "../../../components/onboarding/next-action";
 import { CategoryPill, StatePill } from "../../../components/pill";
 import { Select } from "../../../components/select";
 import { RelativeTime } from "../../../components/time";
+import { useServerUrl } from "../../../hooks/use-server-url";
 import { formatDuration, shortId } from "../../../lib/format";
 import {
   ALL_OPTION,
@@ -182,7 +184,11 @@ export function RunsTab({
       <AdapterHonesty onShowLogs={() => setSearchAction({ tab: "logs" })} />
       {settledEmpty ? (
         <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel">
-          <RunsEmptyState filtered={filtered} onClear={clearFilters} />
+          <RunsEmptyState
+            filtered={filtered}
+            tenantId={tenantId}
+            onClear={clearFilters}
+          />
         </div>
       ) : (
         <DataTable
@@ -237,11 +243,14 @@ function AdapterHonesty({ onShowLogs }: { onShowLogs: () => void }) {
 
 function RunsEmptyState({
   filtered,
+  tenantId,
   onClear,
 }: {
   filtered: boolean;
+  tenantId: string | null;
   onClear: () => void;
 }) {
+  const serverUrl = useServerUrl();
   if (filtered) {
     return (
       <EmptyState
@@ -255,8 +264,12 @@ function RunsEmptyState({
   return (
     <EmptyState
       title="No runs yet"
-      body="A run is one query, mutation, or action invocation. Call a function and its row lands here with its status, duration, and correlated log lines."
-      cta={{ label: "Open Compute", to: "/developer/compute" }}
+      body="A run is one query, mutation, or action invocation. Deploy an app with nimbus dev, then call a function; its row lands here with its status, duration, and log lines."
+      snippet={callFunctionCommand({
+        serverUrl,
+        tenant: tenantId,
+        functionPath: null,
+      })}
       testid="observability-runs-empty"
     />
   );

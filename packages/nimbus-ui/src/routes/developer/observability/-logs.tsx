@@ -21,6 +21,7 @@ import {
   FacetToggle,
 } from "../../../components/facet-bar";
 import { LoadingState } from "../../../components/loading-state";
+import { callFunctionCommand } from "../../../components/onboarding/next-action";
 import { CategoryPill, StatePill } from "../../../components/pill";
 import { Select } from "../../../components/select";
 import {
@@ -29,6 +30,7 @@ import {
 } from "../../../components/storage/row-context-menu";
 import { Td, Th } from "../../../components/table-cells";
 import { RelativeTime } from "../../../components/time";
+import { useServerUrl } from "../../../hooks/use-server-url";
 import { formatDuration, shortId } from "../../../lib/format";
 import {
   ALL_OPTION,
@@ -205,6 +207,7 @@ export function LogsTab({
         follow={follow}
         paused={paused}
         filtered={hasLineFilters(search)}
+        tenantId={tenantId}
         setSearch={setSearch}
         onClear={clearFilters}
       />
@@ -342,6 +345,7 @@ function LogStream({
   follow,
   paused,
   filtered,
+  tenantId,
   setSearch,
   onClear,
 }: {
@@ -349,6 +353,7 @@ function LogStream({
   follow: boolean;
   paused: boolean;
   filtered: boolean;
+  tenantId: string | null;
   setSearch: (patch: Partial<ObservabilitySearch>) => void;
   onClear: () => void;
 }) {
@@ -435,7 +440,11 @@ function LogStream({
           testid="observability-log-loading"
         />
       ) : groups.length === 0 ? (
-        <LogEmptyState filtered={filtered} onClear={onClear} />
+        <LogEmptyState
+          filtered={filtered}
+          tenantId={tenantId}
+          onClear={onClear}
+        />
       ) : (
         // Fixed tracks, not per-row intrinsic sizing: a log reader scans down a
         // constant left edge, so time / level / source / message / run must
@@ -648,11 +657,14 @@ function LogRow({
  */
 function LogEmptyState({
   filtered,
+  tenantId,
   onClear,
 }: {
   filtered: boolean;
+  tenantId: string | null;
   onClear: () => void;
 }) {
+  const serverUrl = useServerUrl();
   if (filtered) {
     return (
       <EmptyState
@@ -666,8 +678,12 @@ function LogEmptyState({
   return (
     <EmptyState
       title="No runs or log lines yet"
-      body="Every query, mutation, and action is a run, and the lines it writes sit under it. Invoke a function and it appears here without a reload."
-      cta={{ label: "Open Compute", to: "/developer/compute" }}
+      body="Every query, mutation, and action is a run, and the lines it writes sit under it. Deploy an app with nimbus dev, then call a function; the run appears here without a reload."
+      snippet={callFunctionCommand({
+        serverUrl,
+        tenant: tenantId,
+        functionPath: null,
+      })}
       testid="observability-log-empty"
     />
   );

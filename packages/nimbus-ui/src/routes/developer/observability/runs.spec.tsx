@@ -25,6 +25,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../../hooks/use-tenant-list", () => ({
@@ -144,9 +145,14 @@ describe("RunsTab read states", () => {
     expect(
       screen.getByTestId("observability-runs-empty-body").textContent ?? "",
     ).not.toHaveLength(0);
+    // The next action is a function call on this tenant, not another page.
     expect(
-      screen.getByTestId("observability-runs-empty-cta"),
-    ).toBeInTheDocument();
+      screen.getByTestId("observability-runs-empty-snippet"),
+    ).toHaveTextContent("nimbus run http://nimbus.example:9000 functions");
+    expect(
+      screen.getByTestId("observability-runs-empty-snippet"),
+    ).toHaveTextContent("--tenant acme");
+    expect(screen.queryByTestId("observability-runs-empty-cta")).toBeNull();
     expect(screen.queryByTestId("observability-runs-table")).toBeNull();
   });
 

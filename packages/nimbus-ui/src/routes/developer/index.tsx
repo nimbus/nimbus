@@ -1,8 +1,4 @@
-import {
-  useNimbus,
-  useNimbusConnectionState,
-  useQuery,
-} from "@nimbus/nimbus/react";
+import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
@@ -21,6 +17,7 @@ import { resolveStateKind } from "../../components/state-dot";
 import { RelativeTime } from "../../components/time";
 import { CHART, type ChartPoint, Sparkline } from "../../components/ui/chart";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { useServerUrl } from "../../hooks/use-server-url";
 import { formatCount, formatDuration } from "../../lib/format";
 import { cn } from "../../lib/utils";
 import {
@@ -140,20 +137,6 @@ function useConnSnapshot(): ConnectionSnapshot {
     isWebSocketConnected: conn.isWebSocketConnected,
     hasEverConnected: conn.hasEverConnected,
   };
-}
-
-// The client's own URL is the console's Convex endpoint on the server
-// (`<origin>/convex/_nimbus`). Every route a developer connects to hangs
-// off the origin, so that is the server URL the page shows and pastes.
-function useServerUrl(): string {
-  const client = useNimbus();
-  const url =
-    client.url || (typeof window === "undefined" ? "" : window.location.origin);
-  try {
-    return new URL(url).origin;
-  } catch {
-    return url;
-  }
 }
 
 type SystemStatus = NonNullable<SystemStatusDoc>;

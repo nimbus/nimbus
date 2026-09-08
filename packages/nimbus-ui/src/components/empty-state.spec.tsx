@@ -93,6 +93,23 @@ describe("EmptyState", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it("renders a multi-line command as a block, whole, with one copy control", () => {
+    const snippet =
+      'curl -s -X POST http://localhost:3210/api/tenants \\\n  -d \'{"id": "demo"}\'';
+    render(
+      <TooltipProvider>
+        <EmptyState title="No tenants" snippet={snippet} testid="es" />
+      </TooltipProvider>,
+    );
+    const block = screen.getByTestId("es-snippet");
+    expect(block.querySelector("pre")).not.toBeNull();
+    expect(block.querySelector("code")).toHaveClass("font-mono");
+    expect(block.querySelector("code")?.textContent).toBe(snippet);
+    expect(
+      screen.getAllByRole("button", { name: "Copy command" }),
+    ).toHaveLength(1);
+  });
+
   it("renders the one command in mono with a copy control", () => {
     render(
       <TooltipProvider>

@@ -15,6 +15,10 @@ import {
   type RowAnchor,
 } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
+import {
+  createCronCommand,
+  scheduleJobCommand,
+} from "../../components/onboarding/next-action";
 import { PageHeader } from "../../components/page-header";
 import { StatePill } from "../../components/pill";
 import {
@@ -23,6 +27,7 @@ import {
 } from "../../components/storage/row-context-menu";
 import { RelativeTime } from "../../components/time";
 import { Button } from "../../components/ui/button";
+import { useServerUrl } from "../../hooks/use-server-url";
 import { shortId } from "../../lib/format";
 import {
   type SubPanelSpec,
@@ -185,12 +190,14 @@ function SchedulesPage() {
         {section === "scheduled" ? (
           <ScheduledTable
             jobs={scheduled}
+            tenant={activeTenant}
             onActivate={openJob}
             onMenu={(row, anchor) => setMenu({ ...anchor, kind: "job", row })}
           />
         ) : (
           <CronTable
             jobs={cron}
+            tenant={activeTenant}
             onActivate={openCron}
             onMenu={(row, anchor) => setMenu({ ...anchor, kind: "cron", row })}
           />
@@ -288,13 +295,16 @@ function timeCell(at: number | undefined, fallback = "—") {
 
 function ScheduledTable({
   jobs,
+  tenant,
   onActivate,
   onMenu,
 }: {
   jobs: ScheduledJobDoc[] | undefined;
+  tenant: string | null;
   onActivate: (row: ScheduledJobDoc) => void;
   onMenu: (row: ScheduledJobDoc, anchor: RowAnchor) => void;
 }) {
+  const serverUrl = useServerUrl();
   const columns = useMemo(
     () => [
       jobCol.accessor("functionPath", {
@@ -364,7 +374,8 @@ function ScheduledTable({
     return (
       <EmptyState
         title="No scheduled jobs"
-        body="Scheduler-driven invocations appear here. The list updates as jobs are enqueued."
+        body="A scheduled job is one mutation the server runs later. Enqueue one from a function with ctx.scheduler.runAfter, or through the API; it appears here until it runs."
+        snippet={scheduleJobCommand({ serverUrl, tenant, table: null })}
         testid="schedules-scheduled-empty"
       />
     );
@@ -389,13 +400,16 @@ const cronCol = dataColumns<CronJobDoc>();
 
 function CronTable({
   jobs,
+  tenant,
   onActivate,
   onMenu,
 }: {
   jobs: CronJobDoc[] | undefined;
+  tenant: string | null;
   onActivate: (row: CronJobDoc) => void;
   onMenu: (row: CronJobDoc, anchor: RowAnchor) => void;
 }) {
+  const serverUrl = useServerUrl();
   const columns = useMemo(
     () => [
       cronCol.accessor("name", {
@@ -464,7 +478,8 @@ function CronTable({
     return (
       <EmptyState
         title="No cron jobs"
-        body="Cron-scheduled functions appear here with their schedule and next-run time."
+        body="A cron job runs one mutation on a schedule. Register one through the API and it appears here with its schedule and next run."
+        snippet={createCronCommand({ serverUrl, tenant, table: null })}
         testid="schedules-cron-empty"
       />
     );

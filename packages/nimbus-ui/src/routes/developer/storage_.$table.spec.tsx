@@ -33,6 +33,7 @@ const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 const { removeMock, insertMock, updateMock } = vi.hoisted(() => ({
@@ -384,5 +385,32 @@ describe("table views", () => {
     renderPage({ tab: "indexes" });
     expect(screen.getByTestId("documents-indexes-tab")).toBeInTheDocument();
     expect(screen.queryByTestId("documents-table")).toBeNull();
+  });
+});
+
+describe("DocumentsPage empty state", () => {
+  it("offers the insert drawer and the insert command for this table", async () => {
+    pageRef.current = { data: [], next_cursor: null, has_more: false };
+    renderPage();
+
+    const empty = await screen.findByTestId("documents-empty");
+    expect(empty).toHaveTextContent("No documents");
+    expect(screen.getByTestId("documents-empty-snippet")).toHaveTextContent(
+      "http://nimbus.example:9000/api/tenants/acme/documents",
+    );
+    expect(screen.getByTestId("documents-empty-snippet")).toHaveTextContent(
+      '"table": "messages"',
+    );
+    await userEvent.setup().click(screen.getByTestId("documents-empty-cta"));
+    expect(await screen.findByTestId("documents-insert-drawer")).toBeVisible();
+  });
+
+  it("blames the filter, with no command, when a filter is set", async () => {
+    pageRef.current = { data: [], next_cursor: null, has_more: false };
+    renderPage({ filters: [{ field: "body", op: "eq", value: "x" }] });
+
+    const empty = await screen.findByTestId("documents-empty");
+    expect(empty).toHaveTextContent("No documents match the filter");
+    expect(screen.queryByTestId("documents-empty-snippet")).toBeNull();
   });
 });

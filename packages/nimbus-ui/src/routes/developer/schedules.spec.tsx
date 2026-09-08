@@ -41,6 +41,7 @@ const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../shell/sub-panel", () => ({
@@ -188,6 +189,12 @@ describe("SchedulesPage empty states", () => {
 
     expect(screen.getByText("No scheduled jobs")).toBeInTheDocument();
     expect(screen.queryByTestId("schedules-scheduled-table")).toBeNull();
+    // The next action is one scheduled mutation against this tenant.
+    const snippet = screen.getByTestId("schedules-scheduled-empty-snippet");
+    expect(snippet).toHaveTextContent(
+      "http://nimbus.example:9000/api/tenants/acme/schedule",
+    );
+    expect(snippet).toHaveTextContent('"run_after_ms"');
   });
 
   it("shows the cron empty state once the query settles on zero jobs", () => {
@@ -197,6 +204,11 @@ describe("SchedulesPage empty states", () => {
 
     expect(screen.getByText("No cron jobs")).toBeInTheDocument();
     expect(screen.queryByTestId("schedules-cron-table")).toBeNull();
+    const snippet = screen.getByTestId("schedules-cron-empty-snippet");
+    expect(snippet).toHaveTextContent(
+      "http://nimbus.example:9000/api/tenants/acme/crons",
+    );
+    expect(snippet).toHaveTextContent('"type": "interval"');
   });
 });
 

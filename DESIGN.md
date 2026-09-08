@@ -1330,6 +1330,27 @@ Three sizes, each with a clear next action:
 No illustrative artwork, no marketing-style blocks. Empty states are
 operational onboarding hints, not decoration.
 
+The next action is on the page, not on another page. An empty state that
+says "open Compute" or "click Create tenant in the top nav" sends the
+reader away without telling them what to do when they get there. Instead,
+every empty list on a tenant-scoped page carries the one command that puts
+the first row on it, addressed to this server and this tenant, with a copy
+control: create a tenant, insert a document (which also creates the table),
+call a function (which records a run and its log lines), schedule a job,
+register a cron, put an object (which also creates the bucket). The
+commands live in `src/components/onboarding/next-action.ts`, so they share
+one server address, one token convention (`$NIMBUS_TOKEN`), and the
+quick-start names (`demo`, `messages`, `messages:send`) as fallbacks. A
+one-line command is a chip that truncates; a multi-line command is a
+left-aligned block that scrolls sideways, because a truncated second line
+hides the part the reader came for. A button beside the command opens the
+console's own form for the same action when one exists (insert document,
+create tenant, new bucket).
+
+A filtered-empty result (a facet or a filter chip is set) blames the
+filter and offers to clear it; it carries no command, because the row the
+reader wants may already exist.
+
 ### Code Block
 
 Inline `code` uses monospace + subtle surface-2 background + 1px border.
