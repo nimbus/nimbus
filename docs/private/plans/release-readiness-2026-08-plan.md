@@ -8,24 +8,20 @@ Baseline commit: `1403bc780`.
 Baseline upstream: `origin/main` at `b57a2d680`.
 Proof root: `proof/release-readiness-2026-08/`
 
-Next action: finish rusty_v8 release run `34068851857` for immutable
-`v150.4.0-nimbus.2` and verify its published assets. Complete the Nimbus
-`v0.1.47` pin and version checks, review and merge the release pull request,
-then tag its merge commit. Monitor the GitHub, GHCR, machine-os, Homebrew,
-and apt release jobs. Keep COPR disabled until its credential and public-project
-contract exist.
+Next action: publish and merge the reviewed channel repair from
+`codex/release-channel-cleanup` in
+`/private/tmp/nimbus-release-publication.iXq0Oj`. Update the public Homebrew
+hook after that merge. Finish the publication audit, then run RRC99.
+Do not push the earlier local release branch history.
 
-Upstream published Bun 1.4.2 while the 1.4.1 host replay was active. The 1.4.1
-run passed its exact-SHA runtime preflight. RRC8 canceled the costly native
-builds because the candidate could no longer satisfy tracks-latest.
-Candidate branch `codex/bun-v1.4.2-release-readiness` applies the retained and
-reviewed Nimbus contracts on upstream `bun-v1.4.2` at `744846f844`. The latest
-stable upstream release is still Bun 1.4.2.
+Nimbus `v0.1.47` is public at `c05b17125`. GitHub, GHCR, machine-os,
+Homebrew, and signed apt publication passed. Fresh signed apt installation,
+the exact apt upgrade, Homebrew upgrade, and published OCI smoke passed.
 
-Both immutable fork tags now pass and the staged Nimbus candidate pins them.
-Bind every final proof to the committed candidate head. Rerun the 46-condition
-verifier. Public-cloud lanes remain fail-closed until their release credentials
-and endpoints are available.
+The detailed source is `proof/release-readiness-2026-08/rrc7-v0.1.47-publication.md`.
+The historical broad matrix verdict remains separate from this authorized
+supported release. COPR and unavailable public-cloud comparisons remain
+unverified. No immutable tag needs replacement.
 
 ## Outcome
 
@@ -64,10 +60,11 @@ After:
   apt, COPR, cloud-image, tag, and release publication work.
 - Does not own: multi-node clustering, continuous PITR, MongoDB change streams,
   or automatic server updates. The capability page marks these as not built.
-- The owner authorized the v0.1.46 Nimbus product release on 2026-09-06. Use
-  the established tag-driven release graph. Do not change release credentials
-  or enable an unconfigured COPR submission. Do not expand the supported
-  platform matrix as part of this release.
+- The owner authorized the supported Nimbus product release on 2026-09-06.
+  The corrected immutable version is `v0.1.47`. The owner later authorized
+  the dedicated apt signing key and isolated Sol review. Other credential
+  changes and an unconfigured COPR submission remain outside this authority.
+  Do not expand the supported platform matrix as part of this release.
 
 ## Invariants
 
@@ -113,7 +110,7 @@ renamed, duplicated, or unsupported condition.
 | RRC4 | Test storage providers, encryption, backup/restore, object storage, consistency, and restart recovery. | `done` | `proof/release-readiness-2026-08/rrc4-storage-recovery.md` |
 | RRC5 | Test services, sandboxes, network policy, Compose, macOS machines, and Linux execution on `nimbus@minicloud`. | `done` | `proof/release-readiness-2026-08/rrc5-workload-hosts.md` |
 | RRC6 | Test and repair the desktop app against the candidate server, including packaging and local Mac UI operation. | `done` | `proof/release-readiness-2026-08/rrc6-desktop.md` |
-| RRC7 | Validate archives, installers, packages, OCI artifacts, and upgrades, then publish the supported release graph. | `in_progress` | All local artifacts pass. The owner authorized the GitHub, GHCR, Homebrew, and apt release. The immutable v0.1.46 tag exposed a Linux V8 compatibility defect before publication; the corrected release is v0.1.47. COPR remains disabled pending its credential and project contract. See `proof/release-readiness-2026-08/rrc7-distribution.md`. |
+| RRC7 | Validate archives, installers, packages, OCI artifacts, and upgrades, then publish the supported release graph. | `in_progress` | v0.1.47 publication, signed apt install and upgrade, Homebrew upgrade, and exact OCI smoke pass. Channel repair `e62e0cf76` passes the Sol xhigh pre-PR gate and focused checks. Merge, public Homebrew hook update, and final publication audit remain. See `proof/release-readiness-2026-08/rrc7-v0.1.47-publication.md`. |
 | RRC8 | Run final repository gates, repeat critical smoke tests, run Sol-only reviews, and issue the GO or NO-GO report. | `done` | `proof/release-readiness-2026-08/rrc8-release-verdict.md` |
 | RRC99 | Clean up this plan after the final repair pull request merges. | `todo` | Trigger: merge of the final release-readiness repair pull request. |
 
@@ -282,8 +279,9 @@ This is a whole-plan goal, not a single-task goal. Read the plan fully, then
 read AGENTS.md, README.md, ARCHITECTURE.md,
 docs/private/operating/verification.md, docs/reference/current-capabilities.md,
 docs/private/plans/distribution-plan.md, and both repositories' release and
-security instructions. Work in /Users/jack/src/github.com/nimbus/nimbus on
-branch codex/release-readiness-2026-08. Coordinate desktop fixes in
+security instructions. Work in /private/tmp/nimbus-release-publication.iXq0Oj on
+branch codex/release-channel-cleanup. Preserve the original checkout and its
+unrelated edits. Coordinate desktop fixes in
 /Users/jack/src/github.com/nimbus/desktop on a matching codex branch when a
 confirmed defect requires a change. Chat history is not progress state. Resume
 from the status ledger, execution log, matrix, and git state. If compaction
@@ -659,3 +657,6 @@ release blocker to remain.
 | 2026-09-06 | RRC7 | evidence | Pull request 328 merged as `67a7f3ffa`, and its replacement CI run `34057323397` passed 50 required jobs with two expected nightly skips. The annotated v0.1.46 tag points to that immutable merge commit. |
 | 2026-09-06 | RRC7 | fail-before | Release run `34060223809` stopped before packaging or publication. The Linux x86_64 Node anchor generator could not link the V8 150.4 archive on Ubuntu 22.04 because the archive, built on Ubuntu 24.04, referenced `__isoc23_strtol`, `__isoc23_strtoll`, `__isoc23_strtoul`, `__isoc23_strtoull`, and `__isoc23_sscanf`. The v0.1.46 tag remains immutable and has no release artifacts. |
 | 2026-09-06 | RRC7 | finding | rusty_v8 pull request 3 moves the x86_64 GNU release lane to Ubuntu 22.04, adds a regression assertion for that compatibility floor, and reserves immutable revision v150.4.0-nimbus.2. Its release-tool tests, formatting, whitespace check, TruffleHog scan, and Sol xhigh pre-PR review pass. Nimbus v0.1.47 is staged to consume the rebuilt archive after its exact digests exist. |
+| 2026-09-08 | RRC7 | publication | V8 run `34068851857`, Nimbus PR #329 and release run `34086200385`, machine-os run `34092260758`, and signed apt run `34187740409` pass. The owner authorized the dedicated signing key. No old tag changed. |
+| 2026-09-08 | RRC7 | evidence | The exact public OCI digest passes the Linux smoke. Homebrew upgrades from v0.1.45 to v0.1.47. Signed apt passes fresh install and the v0.1.45 upgrade with exact crun and libkrun versions. The publication proof records checksums and exclusions. |
+| 2026-09-08 | RRC7 | checkpoint | Clean branch `codex/release-channel-cleanup` starts from public main and contains only the sanitized repair in `e62e0cf76`. The Sol xhigh pre-PR review reports no actionable P0 through P3 finding with confidence `0.95`. Secret scanning, focused helpers, Homebrew parsing, actionlint, formatting, docs, and shared-checkout workspace Clippy pass. The earlier local history will not be pushed. |
