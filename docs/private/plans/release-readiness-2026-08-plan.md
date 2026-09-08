@@ -10,8 +10,9 @@ Proof root: `proof/release-readiness-2026-08/`
 
 Next action: monitor PR #330 at `e62e0cf767176a330dee02d211852ac6ec2b6daa`.
 CI run `34190502568` and CodeQL run `34190502684` are active.
-Merge only after the required checks pass. Update the public Homebrew hook
-after that merge. Finish the publication audit, then run RRC99.
+Merge only after the required checks pass. The public Homebrew hook is now
+commit `661071c` and passed a real reinstall. Finish the publication audit,
+then run RRC99.
 The local plan checkpoint remains on `codex/release-channel-cleanup` in
 `/private/tmp/nimbus-release-publication.iXq0Oj`.
 Do not push the earlier local release branch history.
@@ -663,3 +664,5 @@ release blocker to remain.
 | 2026-09-08 | RRC7 | evidence | The exact public OCI digest passes the Linux smoke. Homebrew upgrades from v0.1.45 to v0.1.47. Signed apt passes fresh install and the v0.1.45 upgrade with exact crun and libkrun versions. The publication proof records checksums and exclusions. |
 | 2026-09-08 | RRC7 | checkpoint | Clean branch `codex/release-channel-cleanup` starts from public main and contains only the sanitized repair in `e62e0cf76`. The Sol xhigh pre-PR review reports no actionable P0 through P3 finding with confidence `0.95`. Secret scanning, focused helpers, Homebrew parsing, actionlint, formatting, docs, and shared-checkout workspace Clippy pass. The earlier local history will not be pushed. |
 | 2026-09-08 | RRC7 | publication | PR #330 publishes only reviewed commit `e62e0cf767176a330dee02d211852ac6ec2b6daa` from `codex/release-channel-fixes`. The plan-only checkpoint stays local because the harness did not authorize sending its additional text to Sol. CI run `34190502568` and CodeQL run `34190502684` are active. No published tag changed. |
+| 2026-09-08 | RRC7 | evidence | Tap commit `661071c` passed Ruby syntax, whitespace, complete-cask parsing, recursive quarantine cleanup, error propagation, and a simulated Linux guard check. The isolated Sol xhigh pre-PR review found no actionable P0 through P3 issue with confidence `0.98`. TruffleHog passed. |
+| 2026-09-08 | RRC7 | publication | The intended tap feature-branch push updated remote main directly, before PR #330 merged. The publication proof records this ordering deviation. Remote verification confirms only the reviewed commit `661071c`. The registered tap update and real v0.1.47 reinstall pass without a deprecated-hook warning. PR #330 still has active checks and no reported failure. |

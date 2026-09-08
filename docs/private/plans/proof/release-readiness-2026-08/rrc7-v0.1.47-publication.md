@@ -130,15 +130,15 @@ The prior workflow failed with `FAIL: expected main, got v0.1.47`.
 The corrected workflow passes. Hosted CI now includes this regression.
 
 Bash syntax, ShellCheck, actionlint, and whitespace checks pass locally.
-The repair still needs review and merge. It does not change the published tag
+The repair passed review and still needs merge. It does not change the published tag
 or redeploy the current release.
 
-The pre-PR review did not start. The harness rejected external transmission
+The first pre-PR review did not start. The harness rejected external transmission
 of the private diff to Sol without explicit approval for that destination.
 No Opus or Fable review ran. Commit `72f587454` contains the tested repair.
 
 The current apt index contains only `nimbus` version `0.1.47`.
-The exact apt upgrade test therefore needs an older package artifact.
+The exact apt upgrade test therefore used the older package artifact below.
 
 ## Signed Apt Upgrade
 
@@ -189,8 +189,8 @@ SC2016 diagnostics in the unrelated child-shell path probes. Their single
 quotes deliberately defer argument expansion to that child shell.
 The new hook has no ShellCheck diagnostic.
 
-The public tap remains unchanged. The local generator repair needs the
-same pending Sol review before publication.
+The public tap contains commit `661071c`. PR #330 contains the reviewed
+generator repair. Both apply the same hook.
 
 ## Sol Review
 
@@ -209,3 +209,57 @@ No Opus or Fable review ran.
 Earlier local commits contain the removed location. Publication must use a
 new branch from public main with only the corrected final diff. Do not push
 the earlier local commit history.
+
+## Publication Checkpoint
+
+PR #330 contains clean commit `e62e0cf767176a330dee02d211852ac6ec2b6daa`.
+Its exact six-file diff passed the Sol xhigh pre-PR gate with no actionable
+P0 through P3 finding and correctness confidence `0.95`. TruffleHog passed.
+The additional plan checkpoint stays local and was not sent to Sol.
+
+CI run `34190502568` and CodeQL run `34190502684` remain active.
+The new dispatch regression passed in hosted Proof Helper Checks.
+GitHub reported no failed check at this checkpoint. Merge remains pending.
+
+## Tap Hook Execution
+
+The separate tap worktree contains commit `661071c` on
+`codex/nimbus-install-steps`. Its cask keeps version `0.1.47`, all three
+archive hashes, and the release URLs unchanged.
+
+Homebrew 6.0.22 loaded the complete cask through `FromContentLoader`.
+The actual `Homebrew::InstallSteps::Runner` executed its postflight steps
+against a disposable directory with a nested file. The test first asserted
+quarantine attributes on all three paths. After execution, those attributes
+were absent and the file contents matched the fixture. The runner required
+no privilege.
+
+The same runner received a missing staged path. Its command error propagated
+instead of reporting success. Ruby syntax and whitespace checks passed.
+The execution proof is
+`/private/tmp/nimbus-homebrew-postflight-proof.rb`.
+
+This disposable test did not reinstall Nimbus or change the registered tap.
+The tap pre-PR Sol xhigh review passed with no actionable P0 through P3
+finding and correctness confidence `0.98`. TruffleHog passed.
+
+## Tap Publication
+
+The intended branch push updated remote `main` directly to
+`661071c257a563d76fab91879ae77c7c63cd6097`. GitHub then rejected PR creation
+because the proposed feature branch did not exist remotely. This published
+the reviewed hook before PR #330 merged, contrary to the planned order.
+
+The command used a source-only refspec. The local branch tracks `origin/main`,
+and global `push.default` is `upstream`. The precise mapping cause remains
+unconfirmed. Future pushes must specify both source and destination refs.
+No published history was rewritten. `git ls-remote` confirmed the exact commit.
+
+The registered tap had no local changes. Its fast-forward update to that
+commit passed. `brew info --cask nimbus/tap/nimbus` accepted the public cask
+without the deprecated-hook warning.
+
+`HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --cask nimbus/tap/nimbus` then
+exited zero. It reinstalled the same published v0.1.47 archive with the new
+hook and no deprecated-hook warning. `/opt/homebrew/bin/nimbus --version`
+reported `nimbus 0.1.47`. The cask has no application-data removal hook.
