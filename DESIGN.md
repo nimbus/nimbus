@@ -167,16 +167,32 @@ remain authoritative for the Developer side.
 
 ### Overview (Developer)
 
-The Overview screen is a dense control panel:
+The Overview answers one question first, then the three things a developer
+comes here for. Top to bottom:
 
-- Health: server status, uptime, version, storage backend, adapter listeners.
-- Compute: active functions, recent runs, failed runs, scheduler lag.
-- Storage: tenant count, table/collection count, write activity, index health.
-- Network: HTTP, WebSocket, MongoDB, Firebase, machine API listener state.
-- Machines and services: state counts with direct links to details.
-- Recent activity: unified event feed with level, source, request ID, time.
+- Headline: the mascot in the state the server is in (idle, working, error,
+  empty) and one sentence that says why, for example "The server is up. 2
+  runs failed in the last 24 hours." Under it, one mono fact line: tenant,
+  server URL, version. A fact the server did not report is left out.
+- Connect: the server URL and one snippet per client, as tabs: curl against
+  the native HTTP API, the TypeScript SDK, the Convex client. Each snippet
+  is addressed to the active tenant and names a function and a table the
+  server actually has, so it runs as pasted.
+- Stats: one row of at most four tiles — functions, tables, runs in the last
+  24 hours, errors in the last 24 hours — each a link to the page that owns
+  it. Runs and errors carry an hourly sparkline from the chart seam. A tile
+  with nothing behind it is not shown.
+- Recent runs: the five newest runs as a table, with a link to the Runs tab
+  of Observability.
 
-No large greeting, hero illustration, or marketing copy.
+A server with no functions, no tables in the active tenant, and no runs shows
+the first-run panel in place of the stats and the runs table: the empty
+mascot, three steps (install the CLI, run `nimbus dev` in an app, call a
+function) with the command for each, and live completion from the same
+queries that fill the stats. The connect panel stays.
+
+No greeting, no marketing copy, and no tile for a number the server has not
+reported.
 
 ### Compute (Developer)
 
