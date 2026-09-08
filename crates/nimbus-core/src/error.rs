@@ -208,6 +208,16 @@ pub enum Error {
     #[error("runtime promise cannot settle because the event loop is idle")]
     RuntimePromiseStalled,
 
+    /// The function's own code threw. The message and the stack are the
+    /// developer's, so they cross every boundary intact; a runtime fault
+    /// (timeout, stall) or a service fault (internal) is a different class.
+    #[error("function {function_path} threw: {message}")]
+    FunctionThrown {
+        function_path: String,
+        message: String,
+        stack: Option<String>,
+    },
+
     #[error("tenant not found: {0}")]
     TenantNotFound(TenantId),
 
@@ -429,6 +439,7 @@ impl Error {
             Self::Cancelled
             | Self::RuntimeTimeout { .. }
             | Self::RuntimePromiseStalled
+            | Self::FunctionThrown { .. }
             | Self::TenantNotFound(_)
             | Self::DocumentNotFound(_)
             | Self::ScheduledJobNotFound(_)
@@ -476,7 +487,20 @@ impl Error {
                 | Self::SchemaNotFound(_)
                 | Self::CapExceeded { .. }
                 | Self::RuntimePromiseStalled
+                | Self::FunctionThrown { .. }
         )
+    }
+
+    pub fn function_thrown(
+        function_path: impl Into<String>,
+        message: impl Into<String>,
+        stack: Option<String>,
+    ) -> Self {
+        Self::FunctionThrown {
+            function_path: function_path.into(),
+            message: message.into(),
+            stack,
+        }
     }
 
     pub fn runtime_timeout(kind: RuntimeTimeoutKind, timeout: Duration) -> Self {
@@ -702,6 +726,24 @@ mod tests {
         ] {
             assert_eq!(error.commit_class(), None, "{error}");
         }
+    }
+
+    #[test]
+    fn thrown_function_errors_are_terminal_deterministic_user_errors() {
+        let error = Error::function_thrown(
+            "messages:send",
+            "Message text must not be empty (at messages:12)",
+            Some("Error: Message text must not be empty\n    at handler".to_string()),
+        );
+
+        assert_eq!(error.retryability(), Retryability::Terminal);
+        assert!(error.is_deterministic_user_error());
+        assert!(!error.is_environmental());
+        assert_eq!(error.commit_class(), None);
+        assert_eq!(
+            error.to_string(),
+            "function messages:send threw: Message text must not be empty (at messages:12)"
+        );
     }
 
     #[test]

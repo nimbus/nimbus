@@ -44,7 +44,7 @@ pub use deployment::{
     SystemDeploymentRecordInput, record_deployment_state_async,
 };
 pub use machine::{delete_machine_state_async, record_machine_state_async};
-pub use run::{RunRecord, record_run_async};
+pub use run::{RunError, RunRecord, record_run_async};
 #[cfg(test)]
 pub(crate) use scheduler::record_scheduled_job_state_async;
 pub use scheduler::{

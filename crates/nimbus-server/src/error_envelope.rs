@@ -12,7 +12,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::execution::invocations::next_runtime_server_request_id;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ErrorSeverity {
     Fatal,
@@ -365,6 +365,21 @@ impl PublicError {
                     Some(ErrorRemediation::new("fix_request", remediation)),
                 )
             }
+            Error::FunctionThrown {
+                function_path,
+                message,
+                stack,
+            } => Self::new(
+                "function.thrown",
+                message.clone(),
+                ErrorSeverity::Error,
+                false,
+                json!({ "functionPath": function_path, "stack": stack }),
+                Some(ErrorRemediation::new(
+                    "fix_function",
+                    "Read the message and the stack, then fix the function or the input it received.",
+                )),
+            ),
             Error::RuntimePromiseStalled => Self::new(
                 "runtime.promise_stalled",
                 error.to_string(),
@@ -611,6 +626,11 @@ impl PublicError {
         public
     }
 
+    pub(crate) fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
+        self.request_id = request_id.into();
+        self
+    }
+
     pub(crate) fn websocket_error(
         code: &'static str,
         message: impl Into<String>,
@@ -714,7 +734,9 @@ impl StructuredHttpError {
                         Error::Cancelled | Error::RuntimeTimeout { .. } => {
                             StatusCode::REQUEST_TIMEOUT
                         }
-                        Error::RuntimePromiseStalled => StatusCode::UNPROCESSABLE_ENTITY,
+                        Error::RuntimePromiseStalled | Error::FunctionThrown { .. } => {
+                            StatusCode::UNPROCESSABLE_ENTITY
+                        }
                         Error::TenantNotFound(_)
                         | Error::DocumentNotFound(_)
                         | Error::ScheduledJobNotFound(_)
@@ -1049,6 +1071,42 @@ mod tests {
                 Some("fix_request")
             );
         }
+    }
+
+    #[test]
+    fn thrown_function_errors_keep_message_path_and_stack() {
+        let response = StructuredHttpError::from_app_error(crate::state::AppError::from(
+            Error::function_thrown(
+                "messages:send",
+                "Message text must not be empty (at messages:12)",
+                Some("Error: Message text must not be empty\n    at handler".to_string()),
+            ),
+        ));
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response.envelope.error.code, "function.thrown");
+        assert_eq!(
+            response.envelope.error.message,
+            "Message text must not be empty (at messages:12)"
+        );
+        assert_eq!(response.envelope.error.severity, ErrorSeverity::Error);
+        assert!(!response.envelope.error.retryable);
+        assert_eq!(
+            response.envelope.error.detail,
+            json!({
+                "functionPath": "messages:send",
+                "stack": "Error: Message text must not be empty\n    at handler",
+            })
+        );
+        assert_eq!(
+            response
+                .envelope
+                .error
+                .remediation
+                .as_ref()
+                .map(|remediation| remediation.action),
+            Some("fix_function")
+        );
     }
 
     #[test]

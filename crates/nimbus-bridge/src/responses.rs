@@ -228,6 +228,21 @@ impl RuntimeHostPublicError {
                     "Ensure every returned promise has a reachable resolution or rejection path.",
                 )),
             ),
+            Error::FunctionThrown {
+                function_path,
+                message,
+                stack,
+            } => Self::new(
+                "function.thrown",
+                message.clone(),
+                RuntimeHostErrorSeverity::Error,
+                false,
+                json!({ "functionPath": function_path, "stack": stack }),
+                Some(RuntimeHostErrorRemediation::new(
+                    "fix_function",
+                    "Read the message and the stack, then fix the function or the input it received.",
+                )),
+            ),
             Error::TenantNotFound(tenant_id) => Self::new(
                 "session.tenant_not_found",
                 error.to_string(),
@@ -594,6 +609,33 @@ mod tests {
         assert_eq!(
             encoded["error"]["message"],
             "runtime promise cannot settle because the event loop is idle"
+        );
+        assert_eq!(encoded["error"]["retryable"], false);
+        assert_eq!(encoded["error"]["remediation"]["action"], "fix_function");
+    }
+
+    #[test]
+    fn runtime_host_thrown_function_errors_keep_message_path_and_stack() {
+        let error = Error::function_thrown(
+            "messages:send",
+            "Message text must not be empty (at messages:12)",
+            Some("Error: Message text must not be empty\n    at handler".to_string()),
+        );
+
+        let encoded = serde_json::to_value(RuntimeHostResponseEnvelope::from_core_error(&error))
+            .expect("error envelope should serialize");
+
+        assert_eq!(encoded["status"], "error");
+        assert_eq!(encoded["error"]["code"], "function.thrown");
+        assert_eq!(
+            encoded["error"]["message"],
+            "Message text must not be empty (at messages:12)"
+        );
+        assert_eq!(encoded["error"]["detail"]["functionPath"], "messages:send");
+        assert!(
+            encoded["error"]["detail"]["stack"]
+                .as_str()
+                .is_some_and(|stack| stack.contains("at handler"))
         );
         assert_eq!(encoded["error"]["retryable"], false);
         assert_eq!(encoded["error"]["remediation"]["action"], "fix_function");

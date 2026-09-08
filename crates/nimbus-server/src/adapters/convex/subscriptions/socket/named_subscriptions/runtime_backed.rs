@@ -55,7 +55,7 @@ pub(super) async fn handle_runtime_named_subscription(
         {
             Ok(result) => result,
             Err(error) => {
-                super::send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
+                super::send_request_error(ctx.outbound_tx, request_id, &error).await;
                 return;
             }
         }
@@ -71,7 +71,7 @@ pub(super) async fn handle_runtime_named_subscription(
     {
         Ok(handle) => handle,
         Err(error) => {
-            super::send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
+            super::send_request_error(ctx.outbound_tx, request_id, &error).await;
             return;
         }
     };

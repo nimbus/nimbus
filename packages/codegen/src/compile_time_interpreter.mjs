@@ -1,6 +1,19 @@
 import ts from "typescript";
 
 import { unsupportedError } from "./errors.mjs";
+import { isArgumentDerived } from "./planner/args_proxy.mjs";
+
+// An argument-derived value cannot decide anything at compile time. Folding
+// it would silently drop the developer's guard, default, or comparison from
+// the plan (an `if (!text) throw` compiled to a bare insert). The thrown error
+// is a plain Error on purpose: evaluate.mjs reports it as runtime-only
+// resolver logic, and the parser then keeps the handler for runtime execution.
+function assertCompileTimeValue(value, what) {
+  if (isArgumentDerived(value)) {
+    throw new Error(`${what} depends on a handler argument`);
+  }
+  return value;
+}
 
 function evaluateCompileTimeExpressionSource(
   expressionText,
@@ -430,14 +443,23 @@ function evaluateBinaryExpression(node, scope, filePath) {
       return isTruthy(left) ? left : evaluateExpression(node.right, scope, filePath);
     }
     case ts.SyntaxKind.QuestionQuestionToken: {
-      const left = evaluateExpression(node.left, scope, filePath);
+      const left = assertCompileTimeValue(
+        evaluateExpression(node.left, scope, filePath),
+        "a default",
+      );
       return left ?? evaluateExpression(node.right, scope, filePath);
     }
     default:
       return applyBinaryOperator(
         node.operatorToken.kind,
-        evaluateExpression(node.left, scope, filePath),
-        evaluateExpression(node.right, scope, filePath),
+        assertCompileTimeValue(
+          evaluateExpression(node.left, scope, filePath),
+          "a binary operand",
+        ),
+        assertCompileTimeValue(
+          evaluateExpression(node.right, scope, filePath),
+          "a binary operand",
+        ),
         filePath,
       );
   }
@@ -480,7 +502,10 @@ function applyBinaryOperator(operatorKind, left, right, filePath) {
 }
 
 function evaluatePrefixUnaryExpression(node, scope, filePath) {
-  const operand = evaluateExpression(node.operand, scope, filePath);
+  const operand = assertCompileTimeValue(
+    evaluateExpression(node.operand, scope, filePath),
+    "a unary operand",
+  );
   switch (node.operator) {
     case ts.SyntaxKind.ExclamationToken:
       return !isTruthy(operand);
@@ -617,7 +642,7 @@ function readCompileTimeProperty(target, key, filePath) {
 }
 
 function isTruthy(value) {
-  return !!value;
+  return !!assertCompileTimeValue(value, "a condition");
 }
 
 function renderCallableExpression(expression) {

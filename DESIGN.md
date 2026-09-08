@@ -1230,6 +1230,16 @@ Do not place more than two categorical badges on the same row.
   in a text field does not submit, so a mutation never runs by accident.
 - Tenant is implicit from the sidebar tenant selector. The runner shows it and
   never offers a second chooser.
+- A failed run renders one of two cards. `function.thrown` (the handler's own
+  `throw`) is the developer's error: the card says which function threw,
+  shows the thrown message with its `(at module:line)` location, folds the
+  stack under a **Stack** disclosure, and offers **View runs**, which opens
+  the function's Runs tab where the run row keeps the same message, location,
+  and stack. Every other code (`op.*`, `runtime.*`, `service.*`) is a request,
+  runtime, or service fault, and the card keeps the server's remediation copy
+  (for `service.internal`, the operator-investigation instruction keyed by
+  request id). The card never shows a stack for a service fault, because the
+  server does not have one to show.
 - Query runs can auto-refresh/react when backed by subscriptions.
 - Mutations and actions run only on explicit submit.
 - Results and logs share the same request/run correlation ID; the result panel

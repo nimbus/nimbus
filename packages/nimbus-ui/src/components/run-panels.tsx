@@ -209,7 +209,7 @@ export function RunErrorPanel({
   functionPath?: string;
   testid?: string;
 }) {
-  const { message, location } = parseRunError(error);
+  const { message, location, stack } = parseRunError(error);
   const line = location ? locationLine(location) : undefined;
   return (
     <div
@@ -240,6 +240,16 @@ export function RunErrorPanel({
       <pre className="overflow-auto font-mono text-xs text-text-1 whitespace-pre-wrap">
         {message}
       </pre>
+      {stack ? (
+        <details className="mt-2 text-xs" data-testid={`${testid}-error-stack`}>
+          <summary className="cursor-pointer text-text-3 hover:text-text-1">
+            Stack
+          </summary>
+          <pre className="mt-1 max-h-64 overflow-auto font-mono text-xs text-text-3 whitespace-pre">
+            {stack}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }

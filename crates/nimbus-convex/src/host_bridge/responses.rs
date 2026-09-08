@@ -20,6 +20,12 @@ pub enum ConvexRuntimeEncodedError {
         timeout: Duration,
     },
     RuntimePromiseStalled,
+    FunctionThrown {
+        function_path: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stack: Option<String>,
+    },
     TenantNotFound {
         tenant_id: String,
     },
@@ -215,6 +221,15 @@ impl ConvexRuntimeEncodedError {
                 timeout,
             },
             Error::RuntimePromiseStalled => Self::RuntimePromiseStalled,
+            Error::FunctionThrown {
+                function_path,
+                message,
+                stack,
+            } => Self::FunctionThrown {
+                function_path,
+                message,
+                stack,
+            },
             Error::TenantNotFound(tenant_id) => Self::TenantNotFound {
                 tenant_id: tenant_id.to_string(),
             },
@@ -271,6 +286,15 @@ impl ConvexRuntimeEncodedError {
                 timeout,
             } => Error::runtime_timeout(timeout_kind, timeout),
             Self::RuntimePromiseStalled => Error::RuntimePromiseStalled,
+            Self::FunctionThrown {
+                function_path,
+                message,
+                stack,
+            } => Error::FunctionThrown {
+                function_path,
+                message,
+                stack,
+            },
             Self::TenantNotFound { tenant_id } => TenantId::new(tenant_id)
                 .map(Error::TenantNotFound)
                 .unwrap_or_else(|error| Error::Internal(error.to_string())),
@@ -491,6 +515,36 @@ mod tests {
             .into_core_error();
 
         assert!(matches!(decoded, Error::RuntimePromiseStalled));
+    }
+
+    #[test]
+    fn thrown_function_errors_round_trip_with_message_and_stack() {
+        let encoded: ConvexRuntimeEncodedError = serde_json::from_value(serde_json::json!({
+            "kind": "function_thrown",
+            "function_path": "messages:send",
+            "message": "Message text must not be empty (at messages:12)",
+            "stack": "Error: Message text must not be empty\n    at handler",
+        }))
+        .expect("the generated wrapper's envelope should decode");
+
+        let decoded = encoded.into_core_error();
+        assert!(matches!(
+            &decoded,
+            Error::FunctionThrown { function_path, message, stack: Some(stack) }
+                if function_path == "messages:send"
+                    && message == "Message text must not be empty (at messages:12)"
+                    && stack.starts_with("Error: Message text must not be empty")
+        ));
+
+        let serialized = serde_json::to_value(ConvexRuntimeEncodedError::from_core_error(decoded))
+            .expect("encoded error should serialize");
+        assert_eq!(serialized["kind"], "function_thrown");
+        assert_eq!(serialized["function_path"], "messages:send");
+        assert_eq!(
+            serialized["message"],
+            "Message text must not be empty (at messages:12)"
+        );
+        assert!(serialized["stack"].as_str().is_some());
     }
 
     #[test]

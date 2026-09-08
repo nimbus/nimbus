@@ -90,6 +90,7 @@ type RunDoc = {
 function FunctionDetailPage() {
   const { function: functionPath } = Route.useParams();
   const search = useSearch({ from: "/developer/compute_/$function" });
+  const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "overview";
 
   const functions = useQuery(api.functions.list, {
@@ -187,7 +188,19 @@ function FunctionDetailPage() {
         )}
       </div>
 
-      {fn ? <FunctionRunner key={fn._id} fn={fn} /> : null}
+      {fn ? (
+        <FunctionRunner
+          key={fn._id}
+          fn={fn}
+          onOpenRuns={() =>
+            void navigate({
+              to: "/developer/compute/$function",
+              params: { function: functionPath },
+              search: { tab: "runs" },
+            })
+          }
+        />
+      ) : null}
     </section>
   );
 }

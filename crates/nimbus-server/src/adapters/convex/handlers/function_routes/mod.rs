@@ -38,16 +38,19 @@ impl RunTrace {
         self,
         service: &Arc<nimbus_engine::Engine>,
         tenant_id: &TenantId,
-        status: &str,
-        error: Option<&str>,
+        error: Option<&nimbus_core::Error>,
     ) {
+        let display = error.map(ToString::to_string);
+        let error = error
+            .zip(display.as_deref())
+            .map(|(error, display)| nimbus_system::RunError::from_core_error(error, display));
         let record = nimbus_system::RunRecord {
             tenant_id,
             function_path: &self.function_path,
             kind: self.kind,
             started_at: self.started_at,
             duration_ms: self.started.elapsed().as_secs_f64() * 1000.0,
-            status,
+            status: if error.is_some() { "error" } else { "ok" },
             error,
         };
         if let Err(record_error) = nimbus_system::record_run_async(service, record).await {

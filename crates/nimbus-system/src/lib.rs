@@ -32,7 +32,7 @@ pub use records::{
     read_source_package_modules_async,
 };
 pub use records::{
-    RunRecord, SystemConnectivityObservationError, SystemDeploymentFunctionRecordInput,
+    RunError, RunRecord, SystemConnectivityObservationError, SystemDeploymentFunctionRecordInput,
     SystemDeploymentHttpRouteRecordInput, SystemDeploymentRecordInput,
     SystemPortListenerObservation, SystemPublishedEndpointObservation,
     SystemServiceConnectivityObservation, SystemUnixListenerObservation,

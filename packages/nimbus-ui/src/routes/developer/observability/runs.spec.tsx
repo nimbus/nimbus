@@ -51,7 +51,10 @@ const RUNS: RunDoc[] = [
     status: "error",
     durationMs: 1200,
     startedAt: NOW + 3_000,
-    error: { message: "commit rejected" },
+    error: {
+      message: "commit rejected",
+      stack: "Error: commit rejected\n    at anonymous (<anonymous>:5:11)",
+    },
   },
   {
     _id: "run-2",
@@ -257,6 +260,9 @@ describe("RunsTab detail sheet", () => {
     expect(
       within(sheet).getByTestId("observability-run-sheet-error"),
     ).toHaveTextContent("commit rejected");
+    expect(
+      within(sheet).getByTestId("observability-run-sheet-error-stack"),
+    ).toHaveTextContent("at anonymous (<anonymous>:5:11)");
     expect(
       within(sheet).getByTestId("observability-run-sheet-open-run"),
     ).toHaveAttribute("href", "/developer/compute/runs/$runId");

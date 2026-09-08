@@ -26,6 +26,7 @@ async function runRuntimeFixtures() {
   await testRuntimeOnlyMutationImportedScheduledFunctionsFixture();
   await testRuntimeOnlyMutationImportedScheduledFunctionsWithJsExtensionFixture();
   await testHostDispatchedInternalMutationInvocationFixture();
+  await testThrownHandlerErrorEnvelopeFixture();
   await testMixedDefaultAndNodeRuntimeSharedBundleFixture();
   await testSingleRuntimeNodeBundleImportsEagerlyAtLoadFixture();
   await testRuntimeProgramBundleCandidateFixture();
@@ -410,6 +411,94 @@ export const store = internalMutation({
   assert.ok(mismatchedError, "expected the mismatched-visibility call to reject");
   assert.match(mismatchedError.message, /digests:store is internal, not public/);
   assert.equal(insertedDocuments.length, 2);
+}
+
+// A handler that throws answers through __nimbusInvoke with a
+// `function_thrown` envelope (the developer's message, location, and stack)
+// instead of escaping into the runtime as a service fault. A returning
+// handler and a non-handler failure (the visibility gate, covered above) keep
+// their existing shapes.
+async function testThrownHandlerErrorEnvelopeFixture() {
+  const appDir = await createAppFixture({
+    "messages.ts": `
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const send = mutation({
+  args: {
+    text: v.string(),
+  },
+  handler: async (ctx, { text }) => {
+    if (text.length === 0) {
+      throw new Error("Message text must not be empty");
+    }
+    return await ctx.db.insert("messages", { text });
+  },
+});
+`,
+  });
+
+  const result = runCli(appDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  // The guard reads an argument, so the planner cannot fold it: the handler
+  // keeps its source for runtime execution instead of compiling to a bare
+  // insert plan that would drop the throw.
+  const manifest = await readConvexJson(appDir, "functions.json");
+  assert.equal(manifest.functions[0].name, "messages:send");
+  assert.equal(manifest.functions[0].plan, null);
+  assert.match(manifest.functions[0].runtime_handler, /must not be empty/);
+  assert.equal(manifest.functions[0].runtime_handler_line, 9);
+
+  const bundleUrl = pathToFileURL(
+    path.join(appDir, ".nimbus", "convex", "bundle.mjs"),
+  ).href;
+
+  const source = `
+(async () => {
+  const { parentPort, workerData } = await import("node:worker_threads");
+  try {
+    globalThis.__nimbusCreateContext = () => ({
+      db: { insert: async () => "id-1" },
+    });
+    await import(workerData.bundleUrl);
+    const thrown = await globalThis.__nimbusInvoke({
+      kind: "mutation",
+      function_name: "messages:send",
+      args: { text: "" },
+    });
+    const ok = await globalThis.__nimbusInvoke({
+      kind: "mutation",
+      function_name: "messages:send",
+      args: { text: "hello" },
+    });
+    parentPort.postMessage({ ok: true, value: { thrown, ok } });
+  } catch (error) {
+    parentPort.postMessage({
+      ok: false,
+      error: { message: error?.message ?? String(error), stack: error?.stack ?? null },
+    });
+  }
+})();
+`;
+
+  const { thrown, ok } = await runInWorkerRealm(source, { bundleUrl });
+
+  assert.equal(thrown.status, "error");
+  assert.equal(thrown.error.kind, "function_thrown");
+  assert.equal(thrown.error.function_path, "messages:send");
+  // The source above opens with a blank line, so the throw sits on module
+  // line 11 and the lifted location names messages:11.
+  assert.equal(
+    thrown.error.message,
+    "Message text must not be empty (at messages:11)",
+  );
+  assert.match(
+    thrown.error.stack,
+    /Message text must not be empty/,
+    "the developer's stack travels in the envelope",
+  );
+  assert.deepEqual(ok, { status: "ok", value: "id-1" });
 }
 
 // Regression test for a NodeNext-moduleResolution app whose relative

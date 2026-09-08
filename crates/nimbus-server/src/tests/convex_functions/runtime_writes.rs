@@ -6,3 +6,5 @@ mod context_apis;
 mod contracts;
 #[path = "runtime_writes/mutation_handlers/mod.rs"]
 mod mutation_handlers;
+#[path = "runtime_writes/thrown_errors.rs"]
+mod thrown_errors;

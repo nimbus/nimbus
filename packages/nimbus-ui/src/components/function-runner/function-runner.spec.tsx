@@ -180,4 +180,93 @@ describe("FunctionRunner", () => {
         .textContent,
     ).toContain("req-9");
   });
+
+  it("renders a thrown-error card with the function path, message, stack, and a runs link", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 422,
+      headers: new Headers(),
+      json: async () => ({
+        error: {
+          code: "function.thrown",
+          message: "Message text must not be empty (at agent:41)",
+          requestId: "req-12",
+          severity: "error",
+          retryable: false,
+          detail: {
+            functionPath: "agent:send",
+            stack:
+              "Error: Message text must not be empty\n    at anonymous (<anonymous>:5:11)",
+          },
+          remediation: {
+            action: "fix_function",
+            message:
+              "Read the message and the stack, then fix the function or the input it received.",
+          },
+        },
+      }),
+    } as unknown as Response);
+    const onOpenRuns = vi.fn();
+    render(<FunctionRunner fn={sendFn} onOpenRuns={onOpenRuns} />);
+    openRunner();
+    fireEvent.click(screen.getByTestId("function-runner-submit"));
+
+    const card = await screen.findByTestId("function-runner-result-error");
+    expect(card).toHaveAttribute("data-error-class", "function");
+    expect(card.textContent).toContain("threw");
+    expect(
+      screen.getByTestId("function-runner-result-error-function").textContent,
+    ).toContain("agent:send");
+    expect(
+      screen.getByTestId("function-runner-result-error-message").textContent,
+    ).toBe("Message text must not be empty (at agent:41)");
+    expect(
+      screen.getByTestId("function-runner-result-error-stack").textContent,
+    ).toContain("at anonymous (<anonymous>:5:11)");
+    // The card itself is the remediation; the server's generic copy stays off.
+    expect(card.textContent).not.toContain("fix the function or the input");
+    expect(
+      screen.getByTestId("function-runner-result-error-correlation")
+        .textContent,
+    ).toContain("req-12");
+
+    fireEvent.click(screen.getByTestId("function-runner-result-error-runs"));
+    expect(onOpenRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the operator copy and no stack for a service fault", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 500,
+      headers: new Headers(),
+      json: async () => ({
+        error: {
+          code: "service.internal",
+          message: "An internal server error occurred.",
+          requestId: "req-500",
+          severity: "fatal",
+          retryable: false,
+          remediation: {
+            action: "contact_operator",
+            message:
+              "Correlate the request id with the server diagnostics, then contact the operator.",
+          },
+        },
+      }),
+    } as unknown as Response);
+    render(<FunctionRunner fn={sendFn} onOpenRuns={vi.fn()} />);
+    openRunner();
+    fireEvent.click(screen.getByTestId("function-runner-submit"));
+
+    const card = await screen.findByTestId("function-runner-result-error");
+    expect(card).toHaveAttribute("data-error-class", "service");
+    expect(card.textContent).toContain("service.internal");
+    expect(card.textContent).toContain("contact the operator");
+    expect(
+      screen.queryByTestId("function-runner-result-error-stack"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("function-runner-result-error-runs"),
+    ).toBeNull();
+  });
 });
