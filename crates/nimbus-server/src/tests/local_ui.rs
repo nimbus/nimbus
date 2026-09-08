@@ -653,17 +653,23 @@ async fn ui_auth_page_renders_brand_and_cli_hint_for_unauthenticated_visitors() 
         "auth GET should not render an inline error block"
     );
     assert!(
-        body.contains("@font-face") && body.contains("JetBrains Mono"),
-        "auth page should embed JetBrains Mono via @font-face"
+        body.contains("@font-face") && body.contains("Geist Mono"),
+        "auth page should embed Geist Mono via @font-face"
     );
     assert!(
-        body.contains("/ui/assets/") && body.contains("jetbrains-mono-latin-400-normal"),
-        "auth page should reference the embedded JetBrains Mono asset path"
+        body.contains("/ui/fonts/GeistMono-Regular.woff2")
+            && body.contains("/ui/fonts/GeistMono-Medium.woff2"),
+        "auth page should reference the embedded Geist Mono font files"
     );
-    // DA1 — canonical Nimbus brand mark replaces the arcs+dot placeholder.
+    // The solid mascot (the sticker) is the sign-in mark: the 120x92 body
+    // with the amber fill and the ink face, the same drawing as the favicon.
     assert!(
-        body.contains("viewBox=\"0 0 322 201\"") && body.contains("<title>Nimbus</title>"),
-        "auth page should embed the canonical nimbus-mark SVG (322x201 viewBox + Nimbus title)"
+        body.contains("viewBox=\"0 0 120 92\"") && body.contains("<title>Nimbus</title>"),
+        "auth page should embed the solid mascot SVG (120x92 viewBox + Nimbus title)"
+    );
+    assert!(
+        body.contains("fill=\"#f0b23e\"") && !body.contains("viewBox=\"0 0 322 201\""),
+        "auth page should carry the amber sticker body and no wisp mark"
     );
     assert!(
         !body.contains("M4 20c0-6 4-10 10-10"),

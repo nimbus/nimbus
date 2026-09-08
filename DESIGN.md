@@ -700,10 +700,10 @@ Rules:
 The brand palette is **distinct from the product palette above**. Use it
 only for:
 
-- The logo mark and its variants (`docs/brand/logo/`, `nimbus-logo.svg`,
-  `nimbus-mark.svg`)
+- The marketing logo variants (`docs/brand/logo/`)
 - README hero images and marketing pages
-- The favicon and desktop app icon
+- The solid mascot as favicon, app icon, and sign-in sticker (see
+  **Mascot** below)
 - The desktop "CLI not found" setup card (`cli-not-found.html`) — this is
   the user's *first* contact with the app and is intentionally brand-tier
 - Print, social-media images, and external touchpoints
@@ -741,10 +741,12 @@ teal accent.
 | `golden-hour` | `#D97706`                | `#FFFFFF`            | `#FFFBEB`  |
 | `slate`       | `#475569`                | `#FFFFFF`            | `#F1F5F9`  |
 
-The canonical logo SVG (`packages/nimbus-ui/public/nimbus-logo.svg`) and
-tight mark (`nimbus-mark.svg`) accept `--logo-stroke` and `--logo-fill` as
-CSS variables. Variant rendering is parameter substitution — the path data
-is identical across all variants. `gen-variants.sh` also emits a
+The marketing variants under `docs/brand/logo/` still carry the original
+wisp cloud; they are the marketing tier and change on their own schedule.
+The console mark (`packages/nimbus-ui/public/nimbus-logo.svg`) is the
+mascot body with the idle face, and it accepts the same `--logo-stroke` and
+`--logo-fill` CSS variables. Variant rendering is parameter substitution — the
+path data is identical across all variants. `gen-variants.sh` also emits a
 `-transparent` companion for every variant (same colors, no background
 rect, viewBox cropped to the ink bounds so lockups control their own
 spacing) for placement on surfaces that own their own background: the
@@ -769,6 +771,37 @@ docs hero, the docs top-nav, README badges. The wordmark is lowercase
 The completed execution record for brand rollout, including the variant
 regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
 in `docs/private/plans/archive/brand-system-plan.md`.
+
+#### Mascot
+
+The Nimbus mark is a cloud with a face. The body is the union of three
+circles and a rounded base in a 120×92 box, with no wisp, so it reads as
+one shape from 16px up. The face carries the state; nothing else moves.
+`packages/nimbus-ui/src/components/mascot.tsx` is the single source of the
+drawing; the static assets are exports of it.
+
+| Variant   | Where                                                   | Colour                                                  |
+|-----------|---------------------------------------------------------|---------------------------------------------------------|
+| `outline` | The mark: top nav lockup, sidebar, inline next to text  | `currentColor` stroke, `--bg-panel` fill                |
+| `solid`   | The sticker: favicon, app icon, sign-in card, empty states at 32px and above | `--accent` body, `--accent-ink` face (fixed `#f0b23e` / `#1a1204` in static assets) |
+
+- **States.** `idle` (dot eyes, smile), `working` (eyes to the side, flat
+  mouth, thought dots), `error` (crossed eyes, wobble, one drop), `empty`
+  (closed eyes, flat mouth, zz), `celebrate` (arc eyes, grin, sparks). A
+  state is a prop, never a separate asset.
+- **Motion.** The eyes blink once every six seconds and nothing else
+  animates. The component leaves the animation out of the DOM under
+  `prefers-reduced-motion: reduce`; the `globals.css` backstop is the
+  second net.
+- **Sizes.** 16 in a tab, 24 to 30 in the nav, 32 in a card header, 48 and
+  up in an empty state. Below 24px the outline stroke thickens from 5 to 7
+  units so it survives the tab bar.
+- **Static exports.** `favicon.svg` and `favicon.ico` (16, 32, 48) and
+  `icon-512.png` (solid face on a `#0a0b0c` tile) under
+  `packages/nimbus-ui/public/`. The favicon is one fixed-colour drawing, so
+  the console does not swap it when the theme changes.
+- **Accent rule.** The amber body is the accent, so the solid variant appears
+  only where the accent may appear: once per surface, never as a wash.
 
 ### Documentation Site (nimbusdocs.com)
 
@@ -799,9 +832,9 @@ site's single brand-tier moment.** Renderer: Astro Starlight in
   on `data-theme` changes (an SVG `prefers-color-scheme` query can only
   see the OS, so a light page on a dark OS would otherwise show the night
   favicon). The auto media-query `favicon.svg` stays as the no-JS
-  fallback. All three files are byte-identical to the operator console
-  set under `packages/nimbus-ui/public/`, and the console's
-  `ThemeController` does the same swap.
+  fallback. The docs site keeps its own copies of these files; the
+  operator console ships the solid mascot as its favicon instead (see
+  **Mascot** above) and swaps nothing.
 - **Typography.** Body uses the system UI stack; code/IDs/paths use
   JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
   letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px

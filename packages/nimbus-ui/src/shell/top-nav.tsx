@@ -2,8 +2,8 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { useRouterState } from "@tanstack/react-router";
 import { api } from "../../convex/_generated/api";
 import { CopyChip } from "../components/copy-chip";
+import { Mascot } from "../components/mascot";
 import { AppearanceMenu } from "./appearance-menu";
-import { LogoMark } from "./logo-mark";
 import { viewFromPathname } from "./nav-entries";
 import { EVENTS_TABLE_HAS_TENANT_COLUMN } from "./tenant-scope";
 import { TenantSelector, type TenantSelectorMode } from "./tenant-selector";
@@ -51,7 +51,7 @@ export function TopNav() {
       data-view={view}
     >
       <div className="flex items-center gap-2 text-text-1">
-        <LogoMark className="h-6 w-[38px] shrink-0" />
+        <Mascot size={30} />
         <div className="flex flex-col leading-tight">
           <span className="text-sm">
             <span className="font-semibold">nimbus</span>

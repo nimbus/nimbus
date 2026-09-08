@@ -151,6 +151,20 @@
    * 1.8 s. The reduced-motion block in globals.css collapses it with every
    * other animation. */
   --animate-shimmer: shimmer 1.8s linear infinite;
+  /* Mascot blink: the eye group closes once every six seconds. The mascot
+   * leaves the class out under reduced motion, so the backstop below is a
+   * second net, not the first. */
+  --animate-blink: blink 6s ease-in-out infinite;
+  @keyframes blink {
+    0%,
+    94%,
+    100% {
+      transform: scaleY(1);
+    }
+    97% {
+      transform: scaleY(0.08);
+    }
+  }
   @keyframes shimmer {
     from {
       background-position: 100% 0;
