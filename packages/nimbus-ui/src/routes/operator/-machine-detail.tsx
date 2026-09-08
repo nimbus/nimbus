@@ -3,7 +3,7 @@ import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { CopyChip } from "../../components/copy-chip";
-import { StateChip } from "../../components/state-chip";
+import { StatePill } from "../../components/pill";
 import { RelativeTime } from "../../components/time";
 import { formatMemory, shortId } from "../../lib/format";
 import type { EventDoc, MachineDoc } from "./-machine-types";
@@ -69,7 +69,7 @@ export function MachineDetail({
 
       <Section title="Status">
         <KvRow label="state">
-          <StateChip state={machine.state} />
+          <StatePill state={machine.state} />
         </KvRow>
         <KvRow label="provider">
           <span className="font-mono text-xs text-text-1">
@@ -135,7 +135,7 @@ export function MachineDetail({
                 <span className="truncate text-text-1">
                   {svc.name ?? svc._id}
                 </span>
-                <StateChip state={svc.state} />
+                <StatePill state={svc.state} />
               </li>
             ))}
           </ul>
@@ -164,7 +164,7 @@ export function MachineDetail({
                   key={evt._id}
                   className="flex items-baseline gap-2 font-mono text-xs"
                 >
-                  <StateChip state={evt.level ?? "info"} showDot={false} />
+                  <StatePill state={evt.level ?? "info"} />
                   <span className="flex-1 truncate text-text-1">
                     {evt.message ?? evt.category ?? "(event)"}
                   </span>

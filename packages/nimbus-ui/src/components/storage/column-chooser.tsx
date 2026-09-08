@@ -1,8 +1,7 @@
 import { ChevronDown, ChevronUp, Columns3 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { Checkbox } from "../checkbox";
 
 /**
  * Column visibility and order for the document browser.
@@ -108,10 +107,10 @@ export function ColumnChooser({
                   className="flex h-8 items-center gap-2 px-3 hover:bg-bg-raised"
                 >
                   <Checkbox
-                    label={`Show column ${field}`}
+                    aria-label={`Show column ${field}`}
                     checked={isVisible}
-                    onChange={(checked) => onToggle(field, checked)}
-                    testid={`documents-column-toggle-${field}`}
+                    onCheckedChange={(checked) => onToggle(field, checked)}
+                    data-testid={`documents-column-toggle-${field}`}
                   />
                   <span
                     className={cn(

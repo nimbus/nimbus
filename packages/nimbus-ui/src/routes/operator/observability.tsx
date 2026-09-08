@@ -4,11 +4,11 @@ import { Play, Radio, ScrollText, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
+import { StatePill } from "../../components/pill";
 import { ScrollRegion } from "../../components/scroll-region";
-import { StateChip } from "../../components/state-chip";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { shortId } from "../../lib/format";
 import {
@@ -228,7 +228,7 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
               <RelativeTime
                 epochMs={event.createdAt ?? event._creationTime ?? 0}
               />
-              <StateChip state={event.level ?? "info"} />
+              <StatePill state={event.level ?? "info"} />
               <span className="text-xs font-medium text-text-3">
                 {event.source ?? "—"}
                 {event.category ? ` · ${event.category}` : ""}
@@ -298,7 +298,7 @@ function RunsTab() {
                 </span>
               </Td>
               <Td>
-                <StateChip state={run.status} />
+                <StatePill state={run.status} />
               </Td>
               <Td>
                 <span className="text-xs font-medium text-text-3">

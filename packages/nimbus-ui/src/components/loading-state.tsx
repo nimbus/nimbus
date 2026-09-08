@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { Td } from "./data-table";
+import { Td } from "./table-cells";
 
 // Full-panel loading placeholder: a single centered status line that fills its
 // container. The sibling `LoadingCell` handles inline value-cell loading via a

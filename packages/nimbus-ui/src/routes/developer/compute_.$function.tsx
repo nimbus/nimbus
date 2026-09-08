@@ -9,14 +9,13 @@ import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { CategoryChip } from "../../components/category-chip";
 import { CodeBlock } from "../../components/code-block";
 import { CopyChip } from "../../components/copy-chip";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
 import { LoadingState, SkeletonRows } from "../../components/loading-state";
-import { StateChip } from "../../components/state-chip";
+import { CategoryPill, StatePill } from "../../components/pill";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { useApiRead } from "../../hooks/use-api-read";
 import { formatDuration, shortHash, shortId } from "../../lib/format";
@@ -158,9 +157,9 @@ function FunctionDetailPage() {
           >
             {functionPath}
           </h1>
-          {fn?.kind ? <CategoryChip value={fn.kind} /> : null}
-          {fn?.adapter ? <CategoryChip value={fn.adapter} /> : null}
-          {fn?.lastStatus ? <StateChip state={fn.lastStatus} /> : null}
+          {fn?.kind ? <CategoryPill value={fn.kind} /> : null}
+          {fn?.adapter ? <CategoryPill value={fn.adapter} /> : null}
+          {fn?.lastStatus ? <StatePill state={fn.lastStatus} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
               label="bundle sha256"
@@ -672,7 +671,7 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
                 </Link>
               </Td>
               <Td>
-                <StateChip state={run.status} />
+                <StatePill state={run.status} />
               </Td>
               <Td>
                 {typeof run.durationMs === "number" ? (

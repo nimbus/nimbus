@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { TableDoc } from "../../lib/types/table";
 import { CopyChip } from "../copy-chip";
-import { Td, Th } from "../data-table";
+import { Td, Th } from "../table-cells";
 import { RelativeTime } from "../time";
 import { RowContextMenu, type RowMenuItem } from "./row-context-menu";
 

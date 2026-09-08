@@ -95,3 +95,8 @@ export function formatMemory(mib: number | undefined | null): string {
   }
   return `${mib} MiB`;
 }
+
+/** Format a count for prose and table footers: `1,000`. */
+export function formatCount(n: number): string {
+  return n.toLocaleString("en-US");
+}

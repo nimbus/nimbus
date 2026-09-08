@@ -7,7 +7,7 @@ import type { Doc } from "../../../convex/_generated/dataModel";
 import { CopyChip } from "../../components/copy-chip";
 import { LoadingCell } from "../../components/loading-cell";
 import { PageHeader } from "../../components/page-header";
-import { StateChip } from "../../components/state-chip";
+import { StatePill } from "../../components/pill";
 import { RelativeTime, Uptime } from "../../components/time";
 import { loadTenantList } from "../../hooks/use-tenant-list";
 import {
@@ -156,7 +156,7 @@ function NodeCard({ status }: { status: LoadingValue<SystemStatus> }) {
           </span>
         </div>
         <LoadingCell value={status} testid="node-health">
-          {(s) => <StateChip state={s.health ?? "unknown"} />}
+          {(s) => <StatePill state={s.health ?? "unknown"} />}
         </LoadingCell>
       </header>
       <div className="grid grid-cols-2 gap-px bg-bg-raised md:grid-cols-4">

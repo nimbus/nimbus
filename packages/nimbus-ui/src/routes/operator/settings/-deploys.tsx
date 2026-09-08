@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { CopyChip } from "../../../components/copy-chip";
-import { StateChip } from "../../../components/state-chip";
+import { StatePill } from "../../../components/pill";
 import { RelativeTime } from "../../../components/time";
 import { shortHash } from "../../../lib/format";
 import { Definition, DefinitionList, PageSection } from "./-primitives";
@@ -117,7 +117,7 @@ export function DeploysSection({
                       aria-label={`Select bundle ${shortHash(b.sha256 ?? id)}`}
                       data-testid={`settings-deploys-row-${b.sha256 ?? id}`}
                     />
-                    <StateChip state={b.status ?? "—"} />
+                    <StatePill state={b.status ?? "—"} />
                     <CopyChip
                       label="bundle sha256"
                       value={b.sha256 ?? "—"}
@@ -178,7 +178,7 @@ function ActiveBundlePanel({
     >
       <header className="mb-2 flex items-baseline justify-between">
         <span className="text-xs font-medium text-text-3">Active bundle</span>
-        <StateChip state={bundle.status ?? "active"} />
+        <StatePill state={bundle.status ?? "active"} />
       </header>
       <DefinitionList compact>
         <Definition label="sha256">

@@ -2,12 +2,12 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
+import { StatePill } from "../../components/pill";
 import { ScrollRegion } from "../../components/scroll-region";
-import { StateChip } from "../../components/state-chip";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { formatDuration, shortId } from "../../lib/format";
 import {
@@ -164,7 +164,7 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
                   </span>
                 </Td>
                 <Td>
-                  <StateChip state={job.status} />
+                  <StatePill state={job.status} />
                 </Td>
                 <Td>
                   <span className="font-mono text-xs text-text-1">
@@ -259,7 +259,7 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
                 </span>
               </Td>
               <Td>
-                <StateChip state={job.status} />
+                <StatePill state={job.status} />
               </Td>
               <Td>
                 {typeof job.nextRunAt === "number" ? (

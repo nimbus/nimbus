@@ -26,7 +26,7 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
 
-import { resolveStateKind } from "../../../components/state-chip";
+import { resolveStateKind } from "../../../components/state-dot";
 import { RUN_STATUSES, RunsTab } from "./-runs";
 
 /**

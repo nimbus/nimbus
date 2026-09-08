@@ -5,11 +5,11 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
-import { PIN_R, Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
-import { StateChip } from "../../components/state-chip";
+import { StatePill } from "../../components/pill";
+import { PIN_R, Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { formatMemory } from "../../lib/format";
 import {
@@ -268,7 +268,7 @@ function MachineTable({
                     className="flex flex-col gap-1"
                     data-testid={`machines-state-${machine.name}`}
                   >
-                    <StateChip state={optimisticState} />
+                    <StatePill state={optimisticState} />
                     {error ? (
                       <span
                         className="font-mono text-xs text-error"

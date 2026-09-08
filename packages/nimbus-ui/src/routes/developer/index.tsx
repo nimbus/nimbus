@@ -2,11 +2,10 @@ import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
-import { CategoryChip } from "../../components/category-chip";
 import { CopyChip } from "../../components/copy-chip";
 import { LoadingCell } from "../../components/loading-cell";
 import { PageHeader } from "../../components/page-header";
-import { StateChip } from "../../components/state-chip";
+import { CategoryPill, StatePill } from "../../components/pill";
 import { RelativeTime, Uptime } from "../../components/time";
 import { formatDuration, shortId } from "../../lib/format";
 import {
@@ -181,7 +180,7 @@ function TopStrip({ status }: { status: LoadingValue<SystemStatus> }) {
     >
       <Cell label="Server">
         <LoadingCell value={status} testid="overview-server">
-          {(s) => <StateChip state={s.health ?? "unknown"} />}
+          {(s) => <StatePill state={s.health ?? "unknown"} />}
         </LoadingCell>
       </Cell>
       <Cell label="Version">
@@ -362,7 +361,7 @@ function ResourceCountsGrid({
  *
  * `groupKind` decides the badge. A state gets a labeled dot from the
  * DESIGN.md token table; a category (function kind, adapter, backend) gets
- * a filled pill. Routing a category through `StateChip` is what made the
+ * a filled pill. Routing a category through `StatePill` is what made the
  * landing page read "? QUERY 3   ? MUTATION 3".
  */
 function CountPanel({
@@ -471,9 +470,9 @@ function CountPanelSubline({
       {breakdown.map(([key, count]) => (
         <li key={key} className="inline-flex items-center gap-1">
           {groupKind === "category" ? (
-            <CategoryChip value={key} />
+            <CategoryPill value={key} />
           ) : (
-            <StateChip state={key} />
+            <StatePill state={key} />
           )}
           <span className="tabular font-mono text-xs text-text-1">{count}</span>
         </li>
@@ -632,7 +631,7 @@ function EventRow({ event }: { event: AnyDoc }) {
   return (
     <li className="group flex flex-col gap-1 px-3 py-2 hover:bg-bg-raised">
       <div className="flex items-center gap-2">
-        <StateChip state={level} />
+        <StatePill state={level} />
         <span className="font-mono text-xs text-text-3">{source}</span>
         {correlationId ? (
           <CopyChip
@@ -696,7 +695,7 @@ function RunRow({ run }: { run: AnyDoc }) {
   const runId = typeof run._id === "string" ? run._id : null;
   return (
     <li className="group flex items-center gap-2 px-3 py-2 hover:bg-bg-raised">
-      <StateChip state={status} />
+      <StatePill state={status} />
       <span className="truncate font-mono text-xs text-text-1">
         {functionPath}
       </span>

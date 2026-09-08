@@ -2,11 +2,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
+import { StatePill } from "../../components/pill";
 import { ServicesLoaderError } from "../../components/service-loader-errors";
-import { StateChip } from "../../components/state-chip";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
@@ -226,7 +226,7 @@ export function ServicesTable({
                   </span>
                 </Td>
                 <Td>
-                  <StateChip state={svc.state} />
+                  <StatePill state={svc.state} />
                 </Td>
                 {showTenantColumn ? <Td mono>{svc.tenantId ?? "—"}</Td> : null}
                 <Td mono>{svc.machineId ?? "—"}</Td>

@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../../components/page-header";
+import { CategoryPill } from "../../components/pill";
 import {
   type StaticSubDrawerSpec,
   useContributeSubDrawer,
@@ -137,19 +138,13 @@ function DisabledTab({ id, label }: { id: ObservabilityTab; label: string }) {
       )}
     >
       {label}
-      {/* The bordered, filled chip carries the disabled state. The previous
-          `opacity-60` on the wrapper was the only signal separating this from
-          an enabled-but-inactive tab, and it stacked on 9px muted text — below
-          any legible floor. 11px (`text-xs`) is the smallest sanctioned step.
-          The treatment is `components/category-chip.tsx` verbatim; it stays
-          inline only because CategoryChip takes no testid. */}
-      <span
+      {/* The neutral pill carries the disabled state at the smallest
+          sanctioned step; a muted wrapper alone did not read as disabled. */}
+      <CategoryPill
         aria-hidden
-        className="inline-flex items-center rounded-xs border border-border-2 bg-bg-raised px-1.5 py-0.5 text-xs font-medium leading-none text-text-3"
+        value="coming soon"
         data-testid={`observability-tab-${id}-coming-soon`}
-      >
-        coming soon
-      </span>
+      />
     </span>
   );
 }

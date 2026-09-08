@@ -1,4 +1,4 @@
-import { Kbd } from "../kbd";
+import { Kbd } from "@/components/ui/kbd";
 
 /**
  * The bulk action toolbar (DESIGN.md:1120-1123).

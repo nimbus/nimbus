@@ -1,146 +1,107 @@
-import { useRef } from "react";
-import { cn } from "@/lib/utils";
-import { useModalFocus } from "../hooks/use-modal-focus";
+import { type ReactNode, useRef } from "react";
 
-export type ConfirmDialogProps = {
-  open: boolean;
-  title: string;
-  description?: React.ReactNode;
-  confirmLabel: string;
-  cancelLabel?: string;
-  danger?: boolean;
-  busy?: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-  testid?: string;
-};
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogError,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
+// ConfirmDialog is the one shape for a write the operator cannot take back.
+// The title names the verb, the body restates the object and what the write
+// reaches, and the footer keeps Cancel first and focused, so Enter on an
+// unread dialog does nothing. While the write is in flight the dialog stays
+// open, every dismissal is refused, and both buttons stay in the tab order
+// with `aria-disabled` so focus does not fall off the page. A refused write
+// lands in the error strip next to the control that drew it.
 export function ConfirmDialog({
   open,
   title,
   description,
   confirmLabel,
   cancelLabel = "Cancel",
-  danger,
+  danger = false,
   busy = false,
+  error,
   onConfirm,
   onCancel,
   testid = "confirm-dialog",
-}: ConfirmDialogProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
+  children,
+}: {
+  open: boolean;
+  title: string;
+  description?: ReactNode;
+  confirmLabel: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  busy?: boolean;
+  error?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  testid?: string;
+  children?: ReactNode;
+}) {
   const cancelRef = useRef<HTMLButtonElement>(null);
-
-  // `busy` means the confirmed work is already running, and the caller's loop
-  // does not stop when the dialog closes — the storage bulk delete keeps
-  // deleting every remaining document. Escape, the backdrop and the ✕ used to
-  // dismiss anyway while both action buttons were frozen, which reads as
-  // "cancelled": the modal is gone, nothing on the page says work is in
-  // flight, and a "Deleted 25 documents" toast arrives seconds later. Every
-  // informal exit runs through this guard, so while the work is in flight the
-  // dialog stays and says what is happening.
-  const dismiss = () => {
-    if (busy) return;
-    onCancel();
-  };
-
-  // Focus opens on Cancel, never on the confirm button. Every call site is
-  // destructive — delete tenant, delete machine, drop schema, bulk delete
-  // documents — so an operator who answers a dialog on reflex with Enter, or
-  // who hits it before a screen reader has read the description, would commit
-  // the deletion with one keystroke and no undo. There is no non-destructive
-  // caller and no tone prop to switch on, so this is unconditional rather than
-  // a choice the caller can get wrong.
-  useModalFocus({
-    open,
-    panelRef,
-    initialFocusRef: cancelRef,
-    onEscape: dismiss,
-  });
-
-  if (!open) return null;
-
-  const confirmTone = danger
-    ? "border-error text-error hover:bg-bg-raised"
-    : "border-border-2 text-text-1 hover:bg-bg-raised";
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-      data-testid={`${testid}-backdrop`}
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !busy) onCancel();
+      }}
     >
-      <button
-        type="button"
-        aria-label="Close dialog"
-        onClick={dismiss}
-        disabled={busy}
-        className="absolute inset-0 cursor-default"
-      />
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
+      <DialogContent
         data-testid={testid}
-        // tabIndex -1 so the panel can hold focus if it ever has no focusable
-        // child; outline-none so that lands without ringing the whole dialog.
-        tabIndex={-1}
-        className="relative z-10 w-full max-w-md rounded-md border border-border-2 bg-bg-panel p-4 shadow-lg outline-none"
+        initialFocus={cancelRef}
+        showCloseButton={!busy}
       >
-        <header className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-sm text-text-1">{title}</h2>
-          <button
-            type="button"
-            onClick={dismiss}
-            aria-disabled={busy}
-            aria-label="Dismiss"
-            className="font-mono text-xs text-text-3 hover:text-text-1 aria-disabled:cursor-not-allowed"
-          >
-            ✕
-          </button>
-        </header>
-        {description ? (
-          <div
-            className="mb-4 text-sm text-text-1"
-            data-testid={`${testid}-description`}
-          >
-            {description}
-          </div>
-        ) : null}
-        {/* `aria-disabled`, not `disabled`. `busy` flips while the dialog is
-            open and focus is sitting on one of these two buttons, and a
-            `disabled` attribute on the focused element hands focus to <body>:
-            the operator was left with a "Working…" dialog on screen, nothing
-            focused, and Tab restarting from the top of the page behind it.
-            These keep their tab stop and announce the state instead; the
-            handlers are what refuse the action. */}
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          {description && (
+            <DialogDescription data-testid={`${testid}-description`}>
+              {description}
+            </DialogDescription>
+          )}
+        </DialogHeader>
+        {(children || danger) && (
+          <DialogBody className="flex flex-col gap-2 text-sm text-text-2">
+            {children}
+            {danger && <p className="text-xs text-text-3">There is no undo.</p>}
+          </DialogBody>
+        )}
+        <DialogError>{error}</DialogError>
+        <DialogFooter>
+          <Button
             ref={cancelRef}
-            onClick={dismiss}
-            aria-disabled={busy}
+            type="button"
+            variant="outline"
+            size="sm"
             data-testid={`${testid}-cancel`}
-            className="rounded-xs border border-border-2 bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-1 hover:border-border-3 aria-disabled:cursor-not-allowed aria-disabled:text-text-3"
+            aria-disabled={busy}
+            onClick={() => {
+              if (!busy) onCancel();
+            }}
           >
             {cancelLabel}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            onClick={() => {
-              if (busy) return;
-              onConfirm();
-            }}
-            aria-disabled={busy}
+            variant={danger ? "destructive" : "default"}
+            size="sm"
             data-testid={`${testid}-confirm`}
-            className={cn(
-              "rounded-xs border bg-bg-panel px-3 py-1.5 text-xs font-medium aria-disabled:cursor-not-allowed aria-disabled:text-text-3",
-              confirmTone,
-            )}
+            aria-disabled={busy}
+            onClick={() => {
+              if (!busy) onConfirm();
+            }}
           >
             {busy ? "Working…" : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

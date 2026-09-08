@@ -3,11 +3,11 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { ScrollRegion } from "../../components/scroll-region";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import {
   type SubDrawerSpec,

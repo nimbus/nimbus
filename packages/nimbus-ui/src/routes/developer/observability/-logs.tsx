@@ -12,10 +12,10 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { api } from "../../../../convex/_generated/api";
-import { Td, Th } from "../../../components/data-table";
 import { EmptyState } from "../../../components/empty-state";
 import { LoadingState } from "../../../components/loading-state";
-import { StateChip } from "../../../components/state-chip";
+import { StatePill } from "../../../components/pill";
+import { Td, Th } from "../../../components/table-cells";
 import { RelativeTime } from "../../../components/time";
 import { shortId } from "../../../lib/format";
 import { FilterInput, FilterSelect } from "./-filters";
@@ -462,7 +462,7 @@ function LogStream({
                     />
                   </Td>
                   <Td className="py-1.5">
-                    <StateChip state={event.level ?? "info"} />
+                    <StatePill state={event.level ?? "info"} />
                   </Td>
                   <Td className="py-1.5">
                     <span

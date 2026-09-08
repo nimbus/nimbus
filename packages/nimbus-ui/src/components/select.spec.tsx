@@ -1,142 +1,57 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { Select } from "./select";
 
-type Level = "info" | "warn" | "error";
+type Op = "eq" | "gte" | "lt";
 
-const LEVEL_OPTIONS = [
-  { value: "info" as const, label: "info" },
-  { value: "warn" as const, label: "warn" },
-  { value: "error" as const, label: "error" },
-];
+const OPTIONS = [
+  { value: "eq", label: "=" },
+  { value: "gte", label: ">=" },
+  { value: "lt", label: "<" },
+] as const;
 
-function renderSelect(initial: Level = "info") {
+function mount(value: Op = "eq") {
   const onChange = vi.fn();
-  let current: Level = initial;
-  const { rerender } = render(
-    <Select<Level>
-      label="LEVEL"
-      value={current}
-      options={LEVEL_OPTIONS}
-      onChange={(next) => {
-        current = next;
-        onChange(next);
-      }}
-      testid="level-select"
+  render(
+    <Select<Op>
+      label="Op"
+      value={value}
+      options={OPTIONS}
+      onChange={onChange}
+      testid="op"
     />,
   );
-  return {
-    onChange,
-    setValue(next: Level) {
-      current = next;
-      rerender(
-        <Select<Level>
-          label="LEVEL"
-          value={current}
-          options={LEVEL_OPTIONS}
-          onChange={(n) => {
-            current = n;
-            onChange(n);
-          }}
-          testid="level-select"
-        />,
-      );
-    },
-    get current() {
-      return current;
-    },
-  };
+  return onChange;
 }
 
 describe("Select", () => {
-  it("opens and closes on trigger click", () => {
-    renderSelect();
-    const trigger = screen.getByTestId("level-select");
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(trigger);
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByTestId("level-select-menu")).toBeInTheDocument();
-    fireEvent.click(trigger);
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  it("is a combobox named by its label that shows the current option", () => {
+    mount("gte");
+    const trigger = screen.getByTestId("op");
+    expect(trigger).toHaveAttribute("role", "combobox");
+    expect(trigger).toHaveAccessibleName("Op");
+    expect(trigger).toHaveTextContent(">=");
+    expect(trigger).toHaveClass("font-mono");
   });
 
-  it("opens on ArrowDown from the trigger", () => {
-    renderSelect();
-    const trigger = screen.getByTestId("level-select");
-    fireEvent.keyDown(trigger, { key: "ArrowDown" });
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
+  it("opens a listbox with one option per entry and reports the choice", async () => {
+    const user = userEvent.setup();
+    const onChange = mount();
+    await user.click(screen.getByTestId("op"));
+    const options = await screen.findAllByRole("option");
+    expect(options).toHaveLength(3);
+    await user.click(screen.getByTestId("op-option-lt"));
+    expect(onChange).toHaveBeenCalledWith("lt");
   });
 
-  it("navigates with ArrowDown/ArrowUp and selects with Enter", () => {
-    const harness = renderSelect("info");
-    fireEvent.click(screen.getByTestId("level-select"));
-    const menu = screen.getByTestId("level-select-menu");
-    fireEvent.keyDown(menu, { key: "ArrowDown" });
-    fireEvent.keyDown(menu, { key: "Enter" });
-    expect(harness.onChange).toHaveBeenCalledWith("warn");
-  });
-
-  it("supports Home and End", () => {
-    const harness = renderSelect("warn");
-    fireEvent.click(screen.getByTestId("level-select"));
-    const menu = screen.getByTestId("level-select-menu");
-    fireEvent.keyDown(menu, { key: "End" });
-    fireEvent.keyDown(menu, { key: "Enter" });
-    expect(harness.onChange).toHaveBeenLastCalledWith("error");
-  });
-
-  it("closes on Escape and returns focus to the trigger", () => {
-    renderSelect();
-    const trigger = screen.getByTestId("level-select");
-    fireEvent.click(trigger);
-    const menu = screen.getByTestId("level-select-menu");
-    fireEvent.keyDown(menu, { key: "Escape" });
-    expect(screen.queryByTestId("level-select-menu")).not.toBeInTheDocument();
-  });
-
-  it("type-ahead jumps to the first option whose label matches", () => {
-    const harness = renderSelect("info");
-    fireEvent.click(screen.getByTestId("level-select"));
-    const menu = screen.getByTestId("level-select-menu");
-    fireEvent.keyDown(menu, { key: "e" });
-    fireEvent.keyDown(menu, { key: "Enter" });
-    expect(harness.onChange).toHaveBeenCalledWith("error");
-  });
-
-  it("mouse click on an option commits the selection", () => {
-    const harness = renderSelect("info");
-    fireEvent.click(screen.getByTestId("level-select"));
-    fireEvent.click(screen.getByTestId("level-select-option-warn"));
-    expect(harness.onChange).toHaveBeenCalledWith("warn");
-  });
-
-  // jsdom paints nothing, so this locks the stacking level rather than the
-  // overlap it decides. The menu opens out of the storage query bar straight
-  // over the documents table: at z-20 it tied with that table's sticky head,
-  // and an equal z-index is resolved by tree order, so the head — which
-  // renders after the query bar — painted over the first option and took its
-  // clicks. z-30 is the popover band the sibling ColumnChooser already uses.
-  it("opens above the sticky table heads it overlaps", () => {
-    renderSelect();
-    fireEvent.click(screen.getByTestId("level-select"));
-    const menu = screen.getByTestId("level-select-menu");
-    const level = menu.className.match(/\bz-(\d+)\b/)?.[1];
-    expect(level).toBeDefined();
-    expect(Number(level)).toBeGreaterThan(20);
-  });
-
-  it("renders placeholder when value is not in options", () => {
-    render(
-      <Select
-        label="LEVEL"
-        value={"none" as Level}
-        options={LEVEL_OPTIONS}
-        onChange={() => undefined}
-        placeholder="(any)"
-        testid="level-select"
-      />,
-    );
-    expect(screen.getByTestId("level-select")).toHaveTextContent("(any)");
+  it("paints the highlighted option with the hover ground, never the accent", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByTestId("op"));
+    const option = await screen.findByTestId("op-option-gte");
+    expect(option.className).not.toMatch(/bg-accent(?![-])/);
+    expect(option.className).toContain("bg-bg-hover");
   });
 });

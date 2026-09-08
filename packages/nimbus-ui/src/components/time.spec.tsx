@@ -38,6 +38,14 @@ describe("RelativeTime", () => {
   });
 });
 
+describe("RelativeTime without a stamp", () => {
+  it("renders the dash and no time element", () => {
+    render(<RelativeTime epochMs={null} />);
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(document.querySelector("time")).toBeNull();
+  });
+});
+
 describe("Uptime", () => {
   it("renders human-readable uptime from the start timestamp", () => {
     render(<Uptime startedAtMs={FROZEN_NOW - (2 * 3_600_000 + 5 * 60_000)} />);

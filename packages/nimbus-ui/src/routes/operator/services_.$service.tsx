@@ -11,8 +11,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
+import { StatePill } from "../../components/pill";
 import { AdminServiceDetailLoaderError } from "../../components/service-loader-errors";
-import { StateChip } from "../../components/state-chip";
 import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -127,7 +127,7 @@ function AdminServiceDetailPage() {
               {service.kind}
             </span>
           ) : null}
-          {service.state ? <StateChip state={service.state} /> : null}
+          {service.state ? <StatePill state={service.state} /> : null}
           {service.tenantId ? (
             <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3">
               {service.tenantId}
@@ -214,7 +214,7 @@ function PlacementTab({
       />
       <Stat
         label="Machine state"
-        value={machine?.state ? <StateChip state={machine.state} /> : "—"}
+        value={machine?.state ? <StatePill state={machine.state} /> : "—"}
       />
     </div>
   );

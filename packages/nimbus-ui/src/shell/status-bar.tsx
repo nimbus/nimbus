@@ -3,12 +3,15 @@ import {
   useNimbusConnectionState,
   useQuery,
 } from "@nimbus/nimbus/react";
-
+import { Kbd } from "@/components/ui/kbd";
 import { api } from "../../convex/_generated/api";
 import { CopyChip } from "../components/copy-chip";
-import { Kbd } from "../components/kbd";
-import { type StateKind, statePalette } from "../components/state-chip";
-import { type ConnState, StateDot } from "../components/state-dot";
+import {
+  type ConnState,
+  StateDot,
+  type StateKind,
+  statePalette,
+} from "../components/state-dot";
 import { UpgradePopover } from "../components/upgrade-popover";
 import { useStalenessContext } from "../hooks/use-staleness";
 import { metaGlyph } from "../lib/platform";
@@ -218,8 +221,8 @@ function VersionSlot({
 }
 
 // Upgrade tones are states, so the colour comes from the shared `statePalette`
-// in components/state-chip.tsx. A private tone->colour table here was the third
-// copy of that binding in the console, after StateChip and StateDot; three
+// in components/state-dot.tsx. A private tone->colour table here was the third
+// copy of that binding in the console, after StatePill and StateDot; three
 // tables owning one vocabulary is how they drift apart.
 //
 // The prop names the upgrade state rather than a colour. A tone called

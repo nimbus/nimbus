@@ -12,8 +12,8 @@ import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
+import { StatePill } from "../../components/pill";
 import { ServiceDetailLoaderError } from "../../components/service-loader-errors";
-import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
@@ -135,7 +135,7 @@ function ServiceDetailPage() {
               {service.kind}
             </span>
           ) : null}
-          {service.state ? <StateChip state={service.state} /> : null}
+          {service.state ? <StatePill state={service.state} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
               label="bundle sha256"
@@ -205,7 +205,7 @@ function OverviewTab({ service }: { service: ServiceDoc }) {
     >
       <Stat label="Name" value={service.name ?? "—"} />
       <Stat label="Kind" value={service.kind ?? "—"} />
-      <Stat label="State" value={<StateChip state={service.state} />} />
+      <Stat label="State" value={<StatePill state={service.state} />} />
       <Stat label="Tenant" value={service.tenantId ?? "—"} />
       <Stat label="Machine" value={service.machineId ?? "—"} />
       <Stat

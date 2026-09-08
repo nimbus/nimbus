@@ -3,12 +3,11 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useCallback } from "react";
 
 import { api } from "../../../../convex/_generated/api";
-import { CategoryChip } from "../../../components/category-chip";
 import { CopyChip } from "../../../components/copy-chip";
-import { Td, Th } from "../../../components/data-table";
 import { EmptyState } from "../../../components/empty-state";
 import { LoadingState } from "../../../components/loading-state";
-import { StateChip } from "../../../components/state-chip";
+import { CategoryPill, StatePill } from "../../../components/pill";
+import { Td, Th } from "../../../components/table-cells";
 import { RelativeTime } from "../../../components/time";
 import { formatDuration, shortId } from "../../../lib/format";
 import { FilterInput, FilterSelect } from "./-filters";
@@ -214,10 +213,10 @@ function RunsTable({
                 </Link>
               </Td>
               <Td>
-                <StateChip state={run.status} />
+                <StatePill state={run.status} />
               </Td>
               <Td>
-                <CategoryChip value={run.kind} />
+                <CategoryPill value={run.kind} />
               </Td>
               <Td align="right" mono>
                 {formatDuration(run.durationMs)}

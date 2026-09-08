@@ -5,11 +5,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
-import {
-  resolveStateKind,
-  StateChip,
-  statePalette,
-} from "../../components/state-chip";
+import { StatePill } from "../../components/pill";
+import { resolveStateKind, statePalette } from "../../components/state-dot";
 import { RelativeTime } from "../../components/time";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
@@ -118,7 +115,7 @@ function Summary({ run, runId }: { run: RunDoc; runId: string }) {
         </span>
       </Field>
       <Field label="Status" testid="run-detail-status">
-        <StateChip state={run.status} />
+        <StatePill state={run.status} />
       </Field>
       <Field label="Kind" testid="run-detail-kind">
         <span className="text-xs font-medium text-text-3">
@@ -291,11 +288,11 @@ const toneFills: Record<WaterfallTone, string> = {
 /**
  * A bar's fill is a status color, and DESIGN.md rules that color is never the
  * only signal. Each status tone therefore also carries a glyph the eye can
- * separate by *shape* — ✓ against ✗, the way `StateChip` separates its states
+ * separate by *shape* — ✓ against ✗, the way `StatePill` separates its states
  * — and that glyph names its state to assistive tech. `muted` is the absence
  * of a status rather than a status, so it claims neither a glyph nor a name.
  *
- * A full `StateChip` per row was rejected: the waterfall is a dense trace and
+ * A full `StatePill` per row was rejected: the waterfall is a dense trace and
  * a state word on every row would out-weigh the bars it annotates.
  */
 const toneMarkers: Record<
@@ -417,7 +414,7 @@ function CorrelatedEvents({
               <RelativeTime
                 epochMs={event.createdAt ?? event._creationTime ?? 0}
               />
-              <StateChip state={event.level ?? "info"} />
+              <StatePill state={event.level ?? "info"} />
               <span className="text-xs font-medium text-text-3">
                 {event.source ?? "—"}
                 {event.category ? ` · ${event.category}` : ""}

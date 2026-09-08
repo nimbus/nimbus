@@ -88,54 +88,6 @@
     }
   }
 
-  /* Checkbox (components/checkbox.tsx). The platform control paints an
-     unchecked box as a light fill, which reads as *checked* on a dark surface,
-     so the console draws its own box from role tokens. */
-  .nimbus-checkbox {
-    appearance: none;
-    -webkit-appearance: none;
-    margin: 0;
-    position: relative;
-    border: 1px solid var(--border-3);
-    border-radius: var(--radius-xs);
-    background: var(--bg-panel);
-    transition:
-      background-color 100ms var(--ease-standard),
-      border-color 100ms var(--ease-standard);
-  }
-
-  .nimbus-checkbox:hover:not(:checked):not(:indeterminate) {
-    border-color: var(--accent);
-  }
-
-  .nimbus-checkbox:checked,
-  .nimbus-checkbox:indeterminate {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-
-  .nimbus-checkbox:checked::after {
-    content: "";
-    position: absolute;
-    left: 3.5px;
-    top: 0.5px;
-    width: 4px;
-    height: 8px;
-    border: solid var(--accent-ink);
-    border-width: 0 1.5px 1.5px 0;
-    transform: rotate(45deg);
-  }
-
-  .nimbus-checkbox:indeterminate::after {
-    content: "";
-    position: absolute;
-    left: 2.5px;
-    top: 5.5px;
-    width: 7px;
-    height: 1.5px;
-    background: var(--accent-ink);
-  }
-
   ::selection {
     background: color-mix(in srgb, var(--accent) 30%, transparent);
   }

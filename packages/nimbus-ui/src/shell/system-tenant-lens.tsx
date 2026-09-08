@@ -2,9 +2,8 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { useRouterState } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
-
+import { Kbd } from "@/components/ui/kbd";
 import { api } from "../../convex/_generated/api";
-import { Kbd } from "../components/kbd";
 import { metaGlyph } from "../lib/platform";
 import { useUiStore } from "../store/ui-store";
 

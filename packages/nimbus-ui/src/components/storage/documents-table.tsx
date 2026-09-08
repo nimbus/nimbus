@@ -1,12 +1,11 @@
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 import { type MouseEvent as ReactMouseEvent, useRef, useState } from "react";
 import { toast } from "sonner";
-
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { shortId } from "../../lib/format";
 import type { DocumentJson, PageResponse } from "../../lib/types/table";
-import { Checkbox } from "../checkbox";
-import { PIN_L, PIN_R, Td, Th } from "../data-table";
+import { PIN_L, PIN_R, Td, Th } from "../table-cells";
 import { CellValue } from "./cell-value";
 import { RowContextMenu, type RowMenuItem } from "./row-context-menu";
 import type { DocumentOrder } from "./table-query";
@@ -14,7 +13,8 @@ import type { DocumentOrder } from "./table-query";
 // Anything that handles its own click. A row click must not hijack the
 // checkbox, the `_id` copy chip, a container-value chip, or the row's own
 // action buttons — all of which sit inside the row.
-const INTERACTIVE = "button, a, input, label, [role='menuitem']";
+const INTERACTIVE =
+  "button, a, input, label, [role='menuitem'], [role='checkbox']";
 
 /** Rows shown while a page is in flight, matching PAGE_SIZE. */
 const SKELETON_ROWS = 25;
@@ -138,16 +138,16 @@ export function DocumentsTable({
             <tr className="bg-bg-raised">
               <Th className={cn("left-0 w-px px-3", PIN_L)}>
                 <Checkbox
-                  label="Select all on page"
+                  aria-label="Select all on page"
                   checked={!loading && allSelected}
                   indeterminate={!loading && selectedOnPage > 0}
                   // While a page is in flight the rows on screen are
                   // placeholders: a select-all here would select the documents
                   // of the page being replaced.
-                  onChange={(checked) => {
+                  onCheckedChange={(checked) => {
                     if (!loading) onToggleAll(checked);
                   }}
-                  testid="documents-select-all"
+                  data-testid="documents-select-all"
                 />
               </Th>
               {columns.map((col, i) => (
@@ -272,10 +272,12 @@ export function DocumentsTable({
                     >
                       <Td className={cn("left-0 w-px px-3", PIN_L)}>
                         <Checkbox
-                          label={`Select document ${shortId(id)}`}
+                          aria-label={`Select document ${shortId(id)}`}
                           checked={isSelected}
-                          onChange={(checked) => onToggleOne(id, checked)}
-                          testid={`documents-select-${id}`}
+                          onCheckedChange={(checked) =>
+                            onToggleOne(id, checked)
+                          }
+                          data-testid={`documents-select-${id}`}
                         />
                       </Td>
                       {columns.map((col, i) => (

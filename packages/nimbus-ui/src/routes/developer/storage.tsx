@@ -3,12 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState, SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { TablesListTable } from "../../components/storage/tables-list-table";
 import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
+import { Th } from "../../components/table-cells";
 import { useTenantList } from "../../hooks/use-tenant-list";
 import type { TableDoc } from "../../lib/types/table";
 import { useUiStore } from "../../store/ui-store";

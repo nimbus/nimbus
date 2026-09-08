@@ -1,6 +1,5 @@
-import { CategoryChip } from "../../../components/category-chip";
 import { CopyChip } from "../../../components/copy-chip";
-import { StateChip } from "../../../components/state-chip";
+import { CategoryPill, StatePill } from "../../../components/pill";
 import { RelativeTime, Uptime } from "../../../components/time";
 import { UpgradePopover } from "../../../components/upgrade-popover";
 import { useStalenessContext } from "../../../hooks/use-staleness";
@@ -126,7 +125,7 @@ export function ServerInfoSection({
     >
       <DefinitionList>
         <Definition label="Health">
-          <StateChip state={status?.health ?? "unknown"} />
+          <StatePill state={status?.health ?? "unknown"} />
         </Definition>
         <Definition label="Version">
           <CopyChip
@@ -193,7 +192,7 @@ export function ServerInfoSection({
             >
               on
               {encryptedFamilies.map((family) => (
-                <CategoryChip key={family} value={family} />
+                <CategoryPill key={family} value={family} />
               ))}
             </span>
           ) : (
@@ -235,7 +234,7 @@ function UpdatesValue() {
   }
 
   // Version freshness is not a lifecycle state either, so it takes neither
-  // StateChip's closed vocabulary nor a state dot. It reads as the plain
+  // StatePill's closed vocabulary nor a state dot. It reads as the plain
   // sentence it is, instead of being the one chip in the console whose label
   // is tinted.
   if (state === "upgraded") {

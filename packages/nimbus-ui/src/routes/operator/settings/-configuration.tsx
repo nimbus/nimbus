@@ -1,4 +1,4 @@
-import { StateChip } from "../../../components/state-chip";
+import { StatePill } from "../../../components/pill";
 import { RelativeTime } from "../../../components/time";
 import type { LoadingValue } from "../../../shell/loading-value";
 import { Definition, DefinitionList, PageSection } from "./-primitives";
@@ -180,7 +180,7 @@ export function ConfigurationSection({
                 </span>
               </Definition>
               <Definition label="Status">
-                <StateChip state={licenseSnap?.status ?? "unknown"} />
+                <StatePill state={licenseSnap?.status ?? "unknown"} />
               </Definition>
               <Definition label="Issued to">
                 <span className="font-mono text-xs">
