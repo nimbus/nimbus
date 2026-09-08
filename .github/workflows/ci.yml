@@ -2720,6 +2720,9 @@ jobs:
       - name: Verify machine-os release ref contract helper
         run: bash scripts/verify-machine-os-release-ref-contract-helper.sh
 
+      - name: Verify Linux distribution dispatch helper
+        run: bash scripts/verify-linux-distribution-dispatch-helper.sh
+
       - name: Verify Bun/JSC adapter package helper
         run: bash scripts/verify-bun-jsc-adapter-package-helper.sh
 
