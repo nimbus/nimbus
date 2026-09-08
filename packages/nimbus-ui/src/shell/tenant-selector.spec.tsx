@@ -94,7 +94,6 @@ describe("TenantSelector", () => {
         mode={{
           kind: "operator-filter",
           currentFilter: null,
-          unavailable: false,
         }}
       />,
     );
@@ -164,30 +163,6 @@ describe("TenantSelector", () => {
     expect(menu.getAttribute("aria-activedescendant")).toBe(first);
   });
 
-  it("renders an inert trigger when the filter is unavailable", async () => {
-    mockTenants(["acme", "beta"]);
-    render(
-      <TenantSelector
-        mode={{
-          kind: "operator-filter",
-          currentFilter: null,
-          unavailable: true,
-        }}
-      />,
-    );
-    const trigger = screen.getByTestId("tenant-selector-trigger");
-    expect(trigger).toBeDisabled();
-    expect(trigger).toHaveAttribute("data-unavailable", "true");
-    expect(
-      screen.getByTestId("tenant-selector-coming-soon"),
-    ).toBeInTheDocument();
-    fireEvent.click(trigger);
-    await act(async () => {});
-    expect(
-      screen.queryByTestId("tenant-selector-menu"),
-    ).not.toBeInTheDocument();
-  });
-
   it("arrow-key navigation cycles option focus and Enter selects", async () => {
     mockTenants(["acme", "beta"]);
     render(<TenantSelector mode={{ kind: "developer" }} />);
@@ -250,7 +225,6 @@ describe("TenantSelector", () => {
         mode={{
           kind: "operator-filter",
           currentFilter: "beta",
-          unavailable: false,
         }}
       />,
     );

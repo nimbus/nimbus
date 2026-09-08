@@ -20,6 +20,7 @@ import {
   FacetInput,
   FacetToggle,
 } from "../../../components/facet-bar";
+import { LoadFailed } from "../../../components/load-failed";
 import { LoadingState } from "../../../components/loading-state";
 import { callFunctionCommand } from "../../../components/onboarding/next-action";
 import { CategoryPill, StatePill } from "../../../components/pill";
@@ -30,6 +31,7 @@ import {
 } from "../../../components/storage/row-context-menu";
 import { Td, Th } from "../../../components/table-cells";
 import { RelativeTime } from "../../../components/time";
+import { useApiRead } from "../../../hooks/use-api-read";
 import { useServerUrl } from "../../../hooks/use-server-url";
 import { formatDuration, shortId } from "../../../lib/format";
 import {
@@ -37,17 +39,24 @@ import {
   type ObservabilityTabProps,
   SystemLensButton,
   TenantFacet,
-  TenantScopeNote,
 } from "./-facets";
 import { groupLogs, type LogGroup } from "./-log-groups";
 import {
   type EventDoc,
   hasLineFilters,
+  type LogSearchPage,
   type ObservabilitySearch,
   type RunDoc,
 } from "./-types";
 
 const LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
+
+// How long the search field waits after the last keystroke before it
+// commits to the address and the server reads the page.
+export const SEARCH_DEBOUNCE_MS = 300;
+
+// The page size the search asks for; the server clamps to its own limit.
+const SEARCH_PAGE_LIMIT = 200;
 
 interface NimbusPerfEventStore {
   snapshot: () => EventDoc[];
@@ -178,9 +187,16 @@ export function LogsTab({
         category: undefined,
         source: undefined,
         correlationId: undefined,
+        q: undefined,
       }),
     [setSearchAction],
   );
+
+  // A search reads a page from the server instead of the live stream. The
+  // attempt counter remounts the read after a failure, so Try again is a
+  // fresh request on the same address.
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const searching = search.q !== undefined;
 
   return (
     <div
@@ -201,17 +217,187 @@ export function LogsTab({
         }}
         onClear={clearFilters}
       />
-      <TenantScopeNote />
+      {searching ? (
+        <LogSearchResults
+          key={searchAttempt}
+          search={search}
+          tenantId={tenantId}
+          runs={runs}
+          setSearch={setSearch}
+          onClear={clearFilters}
+          onRetry={() => setSearchAttempt((n) => n + 1)}
+        />
+      ) : (
+        <LogStream
+          groups={groups}
+          follow={follow}
+          paused={paused}
+          filtered={hasLineFilters(search)}
+          tenantId={tenantId}
+          setSearch={setSearch}
+          onClear={clearFilters}
+        />
+      )}
+    </div>
+  );
+}
+
+// The address of the search page for the current facets. The tenant scope,
+// run, level, source, and category are the same facets the live stream
+// reads; `q` is the text and the server matches it against the message.
+export function logSearchPath(
+  search: ObservabilitySearch,
+  tenantId: string | null,
+): string {
+  const params = new URLSearchParams();
+  if (tenantId !== null) params.set("tenant", tenantId);
+  if (search.correlationId) params.set("run", search.correlationId);
+  if (search.level) params.set("level", search.level);
+  if (search.source) params.set("source", search.source);
+  if (search.category) params.set("category", search.category);
+  params.set("q", search.q ?? "");
+  params.set("limit", String(SEARCH_PAGE_LIMIT));
+  return `/api/console/logs?${params.toString()}`;
+}
+
+// LogSearchResults is the Logs tab while `?q=` is set: one request for the
+// newest matching lines, a count line that says how far the search looked,
+// and the same run-grouped stream over the matches. Runs still come from
+// the live read, so a match under a run the runs page holds shows its
+// function and status.
+function LogSearchResults({
+  search,
+  tenantId,
+  runs,
+  setSearch,
+  onClear,
+  onRetry,
+}: {
+  search: ObservabilitySearch;
+  tenantId: string | null;
+  runs: RunDoc[] | undefined;
+  setSearch: (patch: Partial<ObservabilitySearch>) => void;
+  onClear: () => void;
+  onRetry: () => void;
+}) {
+  const page = useApiRead<LogSearchPage>(logSearchPath(search, tenantId));
+  const groups = useMemo(() => {
+    if (page.kind !== "ok" || runs === undefined) return undefined;
+    return groupLogs(runs, page.value.lines, {
+      correlationId: search.correlationId,
+      lineFiltered: true,
+    });
+  }, [page, runs, search.correlationId]);
+  if (page.kind === "error") {
+    return (
+      <LoadFailed
+        what="log search"
+        error={page.message}
+        onRetry={onRetry}
+        testid="observability-log-search-failed"
+      />
+    );
+  }
+  return (
+    <>
+      {page.kind === "ok" ? (
+        <LogSearchCount
+          page={page.value}
+          q={search.q ?? ""}
+          onClear={() => setSearch({ q: undefined })}
+        />
+      ) : null}
       <LogStream
         groups={groups}
-        follow={follow}
-        paused={paused}
-        filtered={hasLineFilters(search)}
+        follow={false}
+        paused={false}
+        filtered
         tenantId={tenantId}
         setSearch={setSearch}
-        onClear={clearFilters}
+        onClear={onClear}
       />
+    </>
+  );
+}
+
+// The count says how many lines matched and how far the server looked: the
+// whole table when the scan window held every candidate line, else the
+// newest lines the window covered. A page shorter than the match count
+// says so, because a reader who sees 200 rows must not take that for all.
+function LogSearchCount({
+  page,
+  q,
+  onClear,
+}: {
+  page: LogSearchPage;
+  q: string;
+  onClear: () => void;
+}) {
+  const { matched, scanned, exhaustive, lines } = page;
+  const count = matched === 1 ? "1 line matches" : `${matched} lines match`;
+  const reach = exhaustive
+    ? "in every recorded line"
+    : `in the newest ${scanned.toLocaleString("en-US")} lines`;
+  const shown =
+    matched > lines.length ? ` The newest ${lines.length} are shown.` : "";
+  return (
+    <div
+      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-3"
+      data-testid="observability-log-search-count"
+    >
+      <span>
+        <span className="font-medium text-text-1">{count}</span> “{q}” {reach}.
+        {shown} The live stream resumes when the search clears.
+      </span>
+      <FacetButton onClick={onClear} testid="observability-log-search-clear">
+        clear search
+      </FacetButton>
     </div>
+  );
+}
+
+// SearchFacet owns the draft between keystrokes. The address holds the
+// committed text; the field commits after SEARCH_DEBOUNCE_MS of quiet so a
+// reader typing a word sends one request, not one per letter. A change
+// that arrives from outside (clear, a link with ?q=) replaces the draft; a
+// change the field itself committed does not, so typing is never undone by
+// its own echo.
+function SearchFacet({
+  value,
+  placeholder,
+  onCommit,
+}: {
+  value: string;
+  placeholder: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const committedRef = useRef(value);
+  const onCommitRef = useRef(onCommit);
+  onCommitRef.current = onCommit;
+  useEffect(() => {
+    if (value === committedRef.current) return;
+    committedRef.current = value;
+    setDraft(value);
+  }, [value]);
+  useEffect(() => {
+    if (draft === committedRef.current) return;
+    const timer = setTimeout(() => {
+      committedRef.current = draft;
+      onCommitRef.current(draft);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [draft]);
+  return (
+    <FacetInput
+      id="log-search"
+      label="Search"
+      value={draft}
+      placeholder={placeholder}
+      onChange={setDraft}
+      wide
+      testid="observability-log-search"
+    />
   );
 }
 
@@ -271,6 +457,11 @@ function LogFacetBar({
         </>
       }
     >
+      <SearchFacet
+        value={search.q ?? ""}
+        placeholder={search.correlationId ? "search this run" : "message text"}
+        onCommit={(q) => setSearch({ q: q.trim() || undefined })}
+      />
       <TenantFacet
         tenantId={tenantId}
         allowAllTenants={allowAllTenants}
@@ -669,7 +860,7 @@ function LogEmptyState({
     return (
       <EmptyState
         title="Nothing matches the current filters"
-        body="Level, category, source, and correlation narrow the same stream, so a line has to satisfy every one that is set. Clear them to see every run."
+        body="Search, level, category, source, and correlation narrow the same stream, so a line has to satisfy every one that is set. Clear them to see every run."
         cta={{ label: "Clear filters", onClick: onClear }}
         testid="observability-log-empty"
       />

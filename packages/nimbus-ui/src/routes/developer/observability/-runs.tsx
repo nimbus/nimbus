@@ -21,7 +21,6 @@ import {
   type ObservabilityTabProps,
   SystemLensButton,
   TenantFacet,
-  TenantScopeNote,
 } from "./-facets";
 import { RunSheet } from "./-run-sheet";
 import type { RunDoc } from "./-types";
@@ -180,7 +179,6 @@ export function RunsTab({
           testid="observability-filter-run-function"
         />
       </FacetBar>
-      <TenantScopeNote />
       <AdapterHonesty onShowLogs={() => setSearchAction({ tab: "logs" })} />
       {settledEmpty ? (
         <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel">

@@ -50,6 +50,7 @@ pub async fn record_run_async(engine: &Arc<Engine>, record: RunRecord<'_>) -> Re
     }
     ensure_system_tenant_async(engine).await?;
     let mut fields = object_fields(json!({
+        "tenantId": record.tenant_id.as_str(),
         "functionPath": record.function_path,
         "kind": record.kind,
         "durationMs": record.duration_ms,

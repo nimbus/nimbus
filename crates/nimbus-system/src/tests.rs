@@ -130,6 +130,32 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
         "by_tenantId_and_status",
         &["tenantId", "status"],
     );
+    assert_system_index_fields(
+        &schemas,
+        SystemTable::Events,
+        "by_tenantId_and_createdAt",
+        &["tenantId", "createdAt"],
+    );
+    assert_system_index_fields(
+        &schemas,
+        SystemTable::Runs,
+        "by_tenantId_and_startedAt",
+        &["tenantId", "startedAt"],
+    );
+    assert_system_field(
+        &schemas,
+        SystemTable::Runs,
+        "tenantId",
+        FieldType::String,
+        true,
+    );
+    assert_system_field(
+        &schemas,
+        SystemTable::Events,
+        "tenantId",
+        FieldType::String,
+        false,
+    );
     assert_system_field(
         &schemas,
         SystemTable::WorkloadStatus,

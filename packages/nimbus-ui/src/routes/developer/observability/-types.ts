@@ -21,6 +21,9 @@ export type ObservabilitySearch = {
   category?: string;
   source?: string;
   correlationId?: string;
+  // Free text over the line message. Set, the Logs tab reads a search page
+  // from the server instead of the live stream.
+  q?: string;
   status?: string;
   functionPath?: string;
   // The run whose detail sheet is open on the Runs tab.
@@ -83,6 +86,7 @@ export function parseObservabilitySearch(
     category: parseString(search.category),
     source: parseString(search.source),
     correlationId: parseString(search.correlationId),
+    q: parseString(search.q),
     status: parseString(search.status),
     functionPath: parseString(search.functionPath),
     run: parseString(search.run),
@@ -98,6 +102,18 @@ export function hasLineFilters(search: ObservabilitySearch): boolean {
     search.level !== undefined ||
     search.category !== undefined ||
     search.source !== undefined ||
-    search.correlationId !== undefined
+    search.correlationId !== undefined ||
+    search.q !== undefined
   );
 }
+
+// The answer to GET /api/console/logs: the newest matching lines, how many
+// lines matched in the scanned window, and whether that window held every
+// candidate line.
+export type LogSearchPage = {
+  lines: EventDoc[];
+  matched: number;
+  scanned: number;
+  exhaustive: boolean;
+  limit: number;
+};

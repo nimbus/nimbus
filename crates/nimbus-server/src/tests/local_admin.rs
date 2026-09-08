@@ -225,3 +225,70 @@ async fn system_shutdown_endpoint_rejects_when_local_security_unconfigured() {
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The console's log search: the route scopes the lines to the tenant,
+/// matches the text against the message, and answers with the count.
+#[tokio::test]
+async fn console_log_search_scopes_to_the_tenant_and_matches_text() {
+    let temp = tempdir().expect("tempdir should build");
+    let paths = sample_paths(temp.path());
+    let current = load_or_create_local_admin_token(&paths).expect("token should exist");
+    let local_server_security = Arc::new(LocalServerSecurityState::new(paths, current.clone()));
+    let fixture = EngineFixture::new(|path| nimbus_engine::Engine::new(path));
+    let engine = fixture.engine();
+    let acme = nimbus_core::TenantId::new("acme").expect("tenant id");
+    let beta = nimbus_core::TenantId::new("beta").expect("tenant id");
+    for (tenant, message) in [
+        (&acme, "payment accepted for order 7"),
+        (&acme, "cache miss on user 3"),
+        (&beta, "Payment refused: card expired"),
+    ] {
+        nimbus_system::record_system_event_async(
+            &engine,
+            nimbus_system::SystemEvent {
+                tenant_id: Some(tenant),
+                source: "runtime",
+                level: "info",
+                category: "function",
+                message,
+                data: serde_json::json!({}),
+                correlation_id: Some("run-a"),
+            },
+        )
+        .await
+        .expect("event should record");
+    }
+    let server = ServerFixture::start(
+        RouterBuildConfig::core(engine)
+            .with_local_server_security(local_server_security)
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .get(server.http_url("/api/console/logs?tenant=acme&q=PAYMENT&limit=50"))
+        .bearer_auth(&current.token)
+        .send()
+        .await
+        .expect("search request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    let page: serde_json::Value = response.json().await.expect("search page should parse");
+    assert_eq!(page["matched"], 1);
+    assert_eq!(page["scanned"], 2);
+    assert_eq!(page["exhaustive"], true);
+    assert_eq!(page["limit"], 50);
+    let lines = page["lines"].as_array().expect("lines should be an array");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["message"], "payment accepted for order 7");
+    assert_eq!(lines[0]["tenantId"], "acme");
+
+    let rejected = server
+        .client()
+        .get(server.http_url("/api/console/logs?tenant=not%20a%20tenant"))
+        .bearer_auth(&current.token)
+        .send()
+        .await
+        .expect("bad tenant request should send");
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+}

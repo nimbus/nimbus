@@ -3,7 +3,6 @@ import { useMemo } from "react";
 import { FacetButton } from "../../../components/facet-bar";
 import { Select } from "../../../components/select";
 import { useTenantList } from "../../../hooks/use-tenant-list";
-import { EVENTS_TABLE_HAS_TENANT_COLUMN } from "../../../shell/tenant-scope";
 import { useUiStore } from "../../../store/ui-store";
 import type { ObservabilitySearch } from "./-types";
 
@@ -59,22 +58,6 @@ export function TenantFacet({
       }
       testid="observability-filter-tenant"
     />
-  );
-}
-
-// TenantScopeNote says what the tenant facet can and cannot do today. Runs
-// and log lines carry no tenant column yet, so the scope narrows nothing
-// on the server; the note goes away with the column.
-export function TenantScopeNote() {
-  if (EVENTS_TABLE_HAS_TENANT_COLUMN) return null;
-  return (
-    <p
-      className="shrink-0 text-xs text-text-3"
-      data-testid="observability-tenant-honesty"
-    >
-      Runs and log lines do not carry a tenant yet, so every tenant scope shows
-      the whole server.
-    </p>
   );
 }
 

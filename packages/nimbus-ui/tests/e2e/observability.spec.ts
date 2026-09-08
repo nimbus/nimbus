@@ -2,6 +2,10 @@
  * UIR12 Observability e2e: the Logs tab groups log lines under the runs
  * that wrote them, the Runs tab opens a detail sheet that hands off to the
  * Logs tab, and the operator page reads every tenant by default.
+ *
+ * UIR19: the search field reads a page of matching lines from the server
+ * with a count, and a run detail page opens the Logs tab narrowed to that
+ * run, where the same field searches the run alone.
  */
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures/nimbus-server";
@@ -79,6 +83,7 @@ async function seed(page: Page, baseURL: string): Promise<Seed> {
 
   const now = Date.now();
   const erroredRunId = await insertSystemRow(page, baseURL, "runs", {
+    tenantId: TENANT_ID,
     functionPath: "messages:send",
     kind: "mutation",
     status: "error",
@@ -87,6 +92,7 @@ async function seed(page: Page, baseURL: string): Promise<Seed> {
     startedAt: now - 3_000,
   });
   const listRunId = await insertSystemRow(page, baseURL, "runs", {
+    tenantId: TENANT_ID,
     functionPath: "messages:list",
     kind: "query",
     status: "ok",
@@ -94,6 +100,7 @@ async function seed(page: Page, baseURL: string): Promise<Seed> {
     startedAt: now - 2_000,
   });
   const cronRunId = await insertSystemRow(page, baseURL, "runs", {
+    tenantId: TENANT_ID,
     functionPath: "crons:sweep",
     kind: "action",
     status: "ok",
@@ -101,6 +108,7 @@ async function seed(page: Page, baseURL: string): Promise<Seed> {
     startedAt: now - 1_000,
   });
   await insertSystemRow(page, baseURL, "events", {
+    tenantId: TENANT_ID,
     source: "runtime",
     level: "error",
     category: "function",
@@ -109,6 +117,7 @@ async function seed(page: Page, baseURL: string): Promise<Seed> {
     createdAt: now - 2_900,
   });
   await insertSystemRow(page, baseURL, "events", {
+    tenantId: TENANT_ID,
     source: "http",
     level: "info",
     category: "request",
@@ -207,6 +216,68 @@ test.describe("observability", () => {
     await expect(
       page.getByTestId(`observability-log-group-${erroredRunId}`),
     ).toContainText("commit rejected");
+  });
+
+  test("searches the lines and reads one run's lines from its detail page", async ({
+    page,
+    nimbusServer,
+  }) => {
+    const { baseURL, readToken } = nimbusServer;
+    await authenticate(page, baseURL, readToken());
+    const { erroredRunId } = await seed(page, baseURL);
+    await page.addInitScript(
+      ([key, tenant]) => localStorage.setItem(key, tenant),
+      ["nimbus-ui:active-tenant", TENANT_ID],
+    );
+
+    // ?q= reads the search page: one seeded line says "commit", so the
+    // count is one and the only group is the run that wrote it.
+    await page.goto(`${baseURL}/ui/developer/observability?tab=logs&q=commit`);
+    await hideToasts(page);
+    const count = page.getByTestId("observability-log-search-count");
+    await expect(count).toContainText("1 line matches");
+    await expect(count).toContainText("in every recorded line");
+    await expect(
+      page.locator('[data-testid^="observability-log-group-head-"]'),
+    ).toHaveCount(1);
+    await expect(
+      page.getByTestId(`observability-log-group-${erroredRunId}`),
+    ).toContainText("commit rejected");
+    await expect(page.getByTestId("observability-log-search")).toHaveValue(
+      "commit",
+    );
+    await page.screenshot({ path: `${PROOF_DIR}/UIR19-search.png` });
+
+    // The run detail page links to the Logs tab narrowed to the run; the
+    // field there searches the run's lines and commits after a quiet gap.
+    await page.goto(`${baseURL}/ui/developer/compute/runs/${erroredRunId}`);
+    await hideToasts(page);
+    await expect(page.getByTestId("run-detail-events-count")).toContainText(
+      "1 line",
+    );
+    await page.getByTestId("run-detail-open-logs").click();
+    await expect(page).toHaveURL(/tab=logs/);
+    await expect(page).toHaveURL(
+      new RegExp(`correlationId=${encodeURIComponent(erroredRunId)}`),
+    );
+    const field = page.getByTestId("observability-log-search");
+    await expect(field).toHaveAttribute("placeholder", "search this run");
+    await field.fill("missing");
+    await expect(page).toHaveURL(/q=missing/);
+    await expect(count).toContainText("1 line matches");
+    await expect(
+      page.getByTestId(`observability-log-group-${erroredRunId}`),
+    ).toContainText("conversation missing");
+    await page.screenshot({ path: `${PROOF_DIR}/UIR19-run-logs.png` });
+
+    // A search the run's lines do not satisfy is a zero, not an empty
+    // stream blamed on nothing.
+    await field.fill("health");
+    await expect(page).toHaveURL(/q=health/);
+    await expect(count).toContainText("0 lines match");
+    await expect(page.getByTestId("observability-log-empty")).toContainText(
+      "Nothing matches the current filters",
+    );
   });
 
   test("reads every tenant on the operator page until one is chosen", async ({

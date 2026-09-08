@@ -83,6 +83,7 @@ type DocumentByTable = {
     _id: Id<"events">;
     _creationTime: number;
     _updateTime: number;
+    "tenantId": string | undefined;
     "source": string;
     "level": string;
     "category": string;
@@ -95,6 +96,7 @@ type DocumentByTable = {
     _id: Id<"runs">;
     _creationTime: number;
     _updateTime: number;
+    "tenantId": string;
     "bundleId": string | undefined;
     "functionPath": string;
     "kind": string;
@@ -220,8 +222,8 @@ type IndexNamesByTable = {
   "source_packages": "by_digest" | "by_status";
   "modules": "by_path" | "by_sourcePackageId";
   "tables": "by_tenantId" | "by_name" | "by_tenantId_and_name";
-  "events": "by_source" | "by_level" | "by_category" | "by_correlationId" | "by_createdAt";
-  "runs": "by_bundleId" | "by_functionPath" | "by_status" | "by_startedAt";
+  "events": "by_source" | "by_level" | "by_category" | "by_correlationId" | "by_createdAt" | "by_tenantId" | "by_tenantId_and_createdAt";
+  "runs": "by_bundleId" | "by_functionPath" | "by_status" | "by_startedAt" | "by_tenantId" | "by_tenantId_and_startedAt";
   "scheduled_jobs": "by_tenantId" | "by_status" | "by_scheduledTime";
   "cron_jobs": "by_tenantId" | "by_status" | "by_nextRunAt";
   "routes": "by_adapter" | "by_path";

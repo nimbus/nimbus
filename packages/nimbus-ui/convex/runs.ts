@@ -7,11 +7,9 @@ export const recent = query({
     bundleId: v.union(v.string(), v.null()),
     functionPath: v.union(v.string(), v.null()),
     status: v.union(v.string(), v.null()),
-    // The tenant the reader is scoped to, or null for every tenant. Run rows
-    // carry no tenant column yet (the writer only uses the tenant to skip
-    // system-tenant runs), so a row without a tenant passes every scope.
-    // When the server records tenantId on each run, this becomes an index
-    // read on by_tenantId.
+    // The tenant the reader is scoped to, or null for every tenant. Every
+    // run row names its tenant, so a tenant scope is an index read on
+    // by_tenantId_and_startedAt.
     tenantId: v.union(v.string(), v.null()),
     limit: v.union(v.number(), v.null()),
   },
@@ -21,43 +19,49 @@ export const recent = query({
       limit === null || !Number.isFinite(limit)
         ? 100
         : Math.max(1, Math.min(200, Math.floor(limit)));
-    const rows = await (async () => {
-      if (bundleId) {
-        return await ctx.db
-          .query("runs")
-          .withIndex("by_bundleId", (q) => q.eq("bundleId", bundleId))
-          .take(boundedLimit);
-      }
-      if (functionPath) {
-        return await ctx.db
-          .query("runs")
-          .withIndex("by_functionPath", (q) =>
-            q.eq("functionPath", functionPath),
-          )
-          .take(boundedLimit);
-      }
-      if (status) {
-        return await ctx.db
-          .query("runs")
-          .withIndex("by_status", (q) => q.eq("status", status))
-          .take(boundedLimit);
-      }
+    if (tenantId !== null) {
       return await ctx.db
         .query("runs")
-        .withIndex("by_startedAt")
+        .withIndex("by_tenantId_and_startedAt", (q) =>
+          q.eq("tenantId", tenantId),
+        )
+        .filter((q) => {
+          let narrowed = q;
+          if (bundleId) narrowed = narrowed.eq(q.field("bundleId"), bundleId);
+          if (functionPath) {
+            narrowed = narrowed.eq(q.field("functionPath"), functionPath);
+          }
+          if (status) narrowed = narrowed.eq(q.field("status"), status);
+          return narrowed;
+        })
         .order("desc")
         .take(boundedLimit);
-    })();
-    // The bundle ships the handler body alone, so the scope check stays
-    // inline. A row that names no tenant passes every scope.
-    if (tenantId === null) return rows;
-    return rows.filter(
-      (row) =>
-        typeof row !== "object" ||
-        row === null ||
-        !("tenantId" in row) ||
-        row.tenantId === tenantId,
-    );
+    }
+    if (bundleId) {
+      return await ctx.db
+        .query("runs")
+        .withIndex("by_bundleId", (q) => q.eq("bundleId", bundleId))
+        .take(boundedLimit);
+    }
+    if (functionPath) {
+      return await ctx.db
+        .query("runs")
+        .withIndex("by_functionPath", (q) =>
+          q.eq("functionPath", functionPath),
+        )
+        .take(boundedLimit);
+    }
+    if (status) {
+      return await ctx.db
+        .query("runs")
+        .withIndex("by_status", (q) => q.eq("status", status))
+        .take(boundedLimit);
+    }
+    return await ctx.db
+      .query("runs")
+      .withIndex("by_startedAt")
+      .order("desc")
+      .take(boundedLimit);
   },
 });
 

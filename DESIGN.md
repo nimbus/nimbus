@@ -387,9 +387,14 @@ page exists: the strip never names a view the operator cannot open.
 
 Every filter lives in the address (`?tenant=`, `?level=`, `?category=`,
 `?source=`, `?correlationId=`, `?status=`, `?functionPath=`, `?run=`), so
-a view is a link. Run and event rows carry no tenant column yet; the
-tenant facet is honest about that with a note under the bar and the
-query applies the scope to rows that name a tenant.
+a view is a link. Run and event rows name their tenant, so the tenant
+facet is an index read on both tables; a line the server writes outside
+any tenant shows only under the operator page's `all tenants` scope.
+`?q=` is the log search: the field commits 300 ms after the last
+keystroke, the tab reads `GET /api/console/logs` with the same facets the
+stream reads, and a count line says how many lines matched and how far
+the server looked (every line, or the newest 2,000). The live stream
+resumes when the search clears.
 
 ### Settings (tenant)
 
@@ -1194,9 +1199,14 @@ Do not place more than two categorical badges on the same row.
 - Required columns: time, level, source, message, run.
 - The run sheet shows the run summary, the error, and the correlated
   lines. A log line jumps to its run page; a run row opens the sheet.
-- Filters are a facet bar: tenant, level, category, source, and
+- Filters are a facet bar: search, tenant, level, category, source, and
   correlation on Logs; tenant, status, and function on Runs. Every facet
   lives in the address.
+- Search is a request, not a subscription: `?q=` reads a bounded page of
+  the newest matching lines from the server, with the match count and
+  the reach of the scan, and the matches group under their runs like the
+  stream. A run detail page links to the Logs tab narrowed to that run,
+  where the same field searches the run's lines alone.
 - `Follow` keeps the newest line in view. `Pause on error` freezes the
   stream at the first line at `error` level or above and `Resume` picks
   the stream back up.

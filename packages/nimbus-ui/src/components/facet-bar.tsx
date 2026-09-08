@@ -39,15 +39,17 @@ export function FacetBar({
   );
 }
 
-// FacetInput is a labelled free-text facet. It is bounded (`w-[14ch]`,
-// `min-w-0`) so the bar cannot be widened past its container by the input's
-// intrinsic size.
+// FacetInput is a labelled free-text facet. It is bounded (`w-[14ch]`, or
+// `w-[26ch]` for a `wide` facet such as a search field, and `min-w-0`) so
+// the bar cannot be widened past its container by the input's intrinsic
+// size.
 export function FacetInput({
   id,
   label,
   value,
   placeholder,
   onChange,
+  wide = false,
   testid,
 }: {
   id: string;
@@ -55,6 +57,7 @@ export function FacetInput({
   value: string;
   placeholder?: string;
   onChange: (value: string) => void;
+  wide?: boolean;
   testid?: string;
 }) {
   return (
@@ -69,7 +72,10 @@ export function FacetInput({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="w-[14ch] min-w-0 rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent"
+        className={cn(
+          "min-w-0 rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent",
+          wide ? "w-[26ch]" : "w-[14ch]",
+        )}
         data-testid={testid}
       />
     </label>

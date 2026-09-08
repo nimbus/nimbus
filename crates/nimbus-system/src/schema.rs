@@ -203,6 +203,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
         table(
             SystemTable::Events,
             &[
+                string("tenantId", false),
                 string("source", true),
                 string("level", true),
                 string("category", true),
@@ -217,11 +218,14 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 index("by_category", &["category"]),
                 index("by_correlationId", &["correlationId"]),
                 index("by_createdAt", &["createdAt"]),
+                index("by_tenantId", &["tenantId"]),
+                index("by_tenantId_and_createdAt", &["tenantId", "createdAt"]),
             ],
         )?,
         table(
             SystemTable::Runs,
             &[
+                string("tenantId", true),
                 string("bundleId", false),
                 string("functionPath", true),
                 string("kind", true),
@@ -235,6 +239,8 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 index("by_functionPath", &["functionPath"]),
                 index("by_status", &["status"]),
                 index("by_startedAt", &["startedAt"]),
+                index("by_tenantId", &["tenantId"]),
+                index("by_tenantId_and_startedAt", &["tenantId", "startedAt"]),
             ],
         )?,
         table(

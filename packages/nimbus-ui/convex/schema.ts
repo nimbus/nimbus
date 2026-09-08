@@ -82,6 +82,7 @@ export default defineSchema({
     .index("by_tenantId_and_name", ["tenantId", "name"]),
 
   events: defineTable({
+    tenantId: v.optional(v.string()),
     source: v.string(),
     level: v.string(),
     category: v.string(),
@@ -94,9 +95,12 @@ export default defineSchema({
     .index("by_level", ["level"])
     .index("by_category", ["category"])
     .index("by_correlationId", ["correlationId"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_tenantId", ["tenantId"])
+    .index("by_tenantId_and_createdAt", ["tenantId", "createdAt"]),
 
   runs: defineTable({
+    tenantId: v.string(),
     bundleId: v.optional(v.string()),
     functionPath: v.string(),
     kind: v.string(),
@@ -108,7 +112,9 @@ export default defineSchema({
     .index("by_bundleId", ["bundleId"])
     .index("by_functionPath", ["functionPath"])
     .index("by_status", ["status"])
-    .index("by_startedAt", ["startedAt"]),
+    .index("by_startedAt", ["startedAt"])
+    .index("by_tenantId", ["tenantId"])
+    .index("by_tenantId_and_startedAt", ["tenantId", "startedAt"]),
 
   scheduled_jobs: defineTable({
     tenantId: v.string(),
