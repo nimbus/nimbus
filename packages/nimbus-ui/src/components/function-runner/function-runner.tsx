@@ -1,8 +1,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-
+import { cn } from "@/lib/utils";
 import { useTenantList } from "../../hooks/use-tenant-list";
-import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { useUiStore } from "../../store/ui-store";
 import { CopyChip } from "../copy-chip";

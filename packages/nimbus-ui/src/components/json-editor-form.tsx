@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 // A labelled JSON textarea with a cancel/submit footer that owns the draft
 // text, the submitting flag, and the error surface. Callers pass only the

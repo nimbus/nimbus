@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 import { Td } from "./data-table";
 
 // Full-panel loading placeholder: a single centered status line that fills its

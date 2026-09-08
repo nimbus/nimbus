@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useId } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 import {
   PALETTES,
   type Palette,

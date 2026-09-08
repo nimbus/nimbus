@@ -2,12 +2,11 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
-import { cn } from "../../lib/cn";
 import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";

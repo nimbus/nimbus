@@ -70,6 +70,28 @@
   --color-danger: var(--nimbus-danger);
   --color-stale: var(--nimbus-stale);
   --color-violet: var(--nimbus-violet);
+
+  /* shadcn vocabulary. Registry primitives under components/ui use these
+     names. They point at the same raw tokens as the Nimbus names above, so
+     one palette switch restyles both. `muted` keeps its Nimbus meaning
+     (muted text) until the token rebuild replaces this block. */
+  --color-background: var(--nimbus-bg);
+  --color-foreground: var(--nimbus-text);
+  --color-card: var(--nimbus-surface);
+  --color-card-foreground: var(--nimbus-text);
+  --color-popover: var(--nimbus-surface);
+  --color-popover-foreground: var(--nimbus-text);
+  --color-primary: var(--nimbus-brand);
+  --color-primary-foreground: var(--nimbus-on-brand);
+  --color-secondary: var(--nimbus-surface-2);
+  --color-secondary-foreground: var(--nimbus-text);
+  --color-muted-foreground: var(--nimbus-muted);
+  --color-accent-foreground: var(--nimbus-on-brand);
+  --color-destructive: var(--nimbus-danger);
+  --color-destructive-foreground: var(--nimbus-on-brand);
+  --color-border: var(--nimbus-border);
+  --color-input: var(--nimbus-border);
+  --color-ring: var(--nimbus-focus);
 }
 
 @layer base {
@@ -337,6 +359,17 @@
   ::selection {
     background: color-mix(in oklch, var(--nimbus-accent) 30%, transparent);
   }
+}
+
+/* Focus ring colour for every control, registry primitives included.
+   Tailwind emits utilities inside `@layer utilities`, and an unlayered
+   declaration beats every layered one, so this wins over
+   `focus-visible:ring-ring/50` and `focus-visible:ring-destructive/20` alike.
+   Files under components/ui are CLI-owned and keep their shadcn ring classes
+   as written; this rule is what makes those rings name `--focus` (DESIGN.md).
+   contrast.spec.ts asserts the rule stays here and stays unlayered. */
+:focus-visible {
+  --tw-ring-color: var(--nimbus-focus);
 }
 
 @layer components {

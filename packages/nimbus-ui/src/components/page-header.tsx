@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 /**
  * Canonical page header for every route surface: a title, an optional muted

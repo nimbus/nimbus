@@ -1,7 +1,6 @@
 import { useRef } from "react";
-
+import { cn } from "@/lib/utils";
 import { useModalFocus } from "../hooks/use-modal-focus";
-import { cn } from "../lib/cn";
 
 export type ConfirmDialogProps = {
   open: boolean;

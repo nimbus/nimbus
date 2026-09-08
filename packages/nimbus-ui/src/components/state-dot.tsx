@@ -1,4 +1,4 @@
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 import { type StateKind, statePalette } from "./state-chip";
 
 export type ConnState = "connected" | "reconnecting" | "offline";

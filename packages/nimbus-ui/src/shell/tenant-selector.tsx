@@ -9,8 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { cn } from "@/lib/utils";
 import { useTenantList } from "../hooks/use-tenant-list";
-import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 
 export type TenantSelectorMode =

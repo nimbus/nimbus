@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 export type EmptyStateCta =
   | { label: string; to: string }

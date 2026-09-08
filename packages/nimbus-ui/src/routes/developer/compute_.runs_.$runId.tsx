@@ -1,6 +1,6 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
@@ -11,7 +11,6 @@ import {
   statePalette,
 } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import { locationLine, parseRunError } from "../../lib/run-error";

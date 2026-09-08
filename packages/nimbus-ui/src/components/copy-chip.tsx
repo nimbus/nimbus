@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 export function CopyChip({
   label,

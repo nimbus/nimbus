@@ -1,8 +1,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-
+import { cn } from "@/lib/utils";
 import { schema as schemaApi } from "../../lib/api-mutations";
-import { cn } from "../../lib/cn";
 import type { TableSchemaShape } from "../../lib/types/table";
 import { ConfirmDialog } from "../confirm-dialog";
 import { PanelHeader } from "../slideover";

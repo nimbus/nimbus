@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../../components/page-header";
-import { cn } from "../../lib/cn";
 import {
   type StaticSubDrawerSpec,
   useContributeSubDrawer,

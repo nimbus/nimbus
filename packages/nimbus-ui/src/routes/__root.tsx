@@ -274,10 +274,13 @@ export function useLastRouteTracker() {
   // A location that matches no route must not become the view's remembered
   // route: persisting it makes the dead end self-restoring on the next reload
   // and on every view switch.
+  // `_notFound` is the flag the router sets on the match that renders the
+  // global not-found component. It is the same predicate router-core uses
+  // for its own first-error lookup.
   const isNotFound = useRouterState({
     select: (s) =>
       s.matches.some(
-        (match) => match.status === "notFound" || match.globalNotFound === true,
+        (match) => match.status === "notFound" || match._notFound === true,
       ),
   });
   const setLastView = useUiStore((s) => s.setLastView);

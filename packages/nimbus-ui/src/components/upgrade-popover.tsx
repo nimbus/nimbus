@@ -1,7 +1,6 @@
 import { Popover } from "@base-ui/react/popover";
-
+import { cn } from "@/lib/utils";
 import type { VersionInfo } from "../api/system";
-import { cn } from "../lib/cn";
 
 type UpgradePopoverProps = {
   open: boolean;

@@ -1,10 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { PageHeader } from "../../components/page-header";
 import { AdminServicesLoaderError } from "../../components/service-loader-errors";
-import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";

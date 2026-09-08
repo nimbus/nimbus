@@ -1,7 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib/utils";
 import type { TableDoc } from "../../lib/types/table";
 import {
   type SubDrawerSpec,

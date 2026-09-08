@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 export type SelectOption<T extends string> = {
   value: T;

@@ -9,7 +9,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 import { useUiStore } from "../store/ui-store";
 import { useViewportTier, type ViewportTier } from "./use-viewport-tier";
 

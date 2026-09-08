@@ -16,10 +16,10 @@ import {
   Search,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 import { Kbd } from "../components/kbd";
 import { useTenantList } from "../hooks/use-tenant-list";
-import { cn } from "../lib/cn";
 import { metaGlyph } from "../lib/platform";
 import { useUiStore } from "../store/ui-store";
 import {

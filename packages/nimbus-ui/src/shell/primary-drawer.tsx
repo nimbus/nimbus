@@ -2,9 +2,9 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 import { useTenantList } from "../hooks/use-tenant-list";
-import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 import {
   type NavCountEntry,

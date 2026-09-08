@@ -1,9 +1,8 @@
 import { Popover } from "@base-ui/react/popover";
 import type { LucideIcon } from "lucide-react";
 import { Monitor, Moon, Sun } from "lucide-react";
-
+import { cn } from "@/lib/utils";
 import { SegmentedControl } from "../components/segmented-control";
-import { cn } from "../lib/cn";
 import {
   PALETTES,
   type Palette,

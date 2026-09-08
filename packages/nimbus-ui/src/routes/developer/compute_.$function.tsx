@@ -6,7 +6,7 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CategoryChip } from "../../components/category-chip";
@@ -19,7 +19,6 @@ import { LoadingState, SkeletonRows } from "../../components/loading-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { useApiRead } from "../../hooks/use-api-read";
-import { cn } from "../../lib/cn";
 import { formatDuration, shortHash, shortId } from "../../lib/format";
 import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";

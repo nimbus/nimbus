@@ -2,7 +2,7 @@ import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 import { type MouseEvent as ReactMouseEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib/utils";
 import { shortId } from "../../lib/format";
 import type { DocumentJson, PageResponse } from "../../lib/types/table";
 import { Checkbox } from "../checkbox";

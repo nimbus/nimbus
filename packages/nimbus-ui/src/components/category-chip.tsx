@@ -1,4 +1,4 @@
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 /**
  * A categorical badge: function kind (`Query`, `Mutation`, `Action`, `HTTP`,

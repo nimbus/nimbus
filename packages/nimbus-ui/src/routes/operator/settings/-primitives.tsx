@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { cn } from "../../../lib/cn";
+import { cn } from "@/lib/utils";
 
 /**
  * A settings page section: a titled header rule plus its content.

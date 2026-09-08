@@ -262,6 +262,10 @@ describe("focus indicators", () => {
     const failures: string[] = [];
     for (const file of tsxFiles(SRC)) {
       const name = relative(SRC, file).replaceAll("\\", "/");
+      // Registry primitives (shadcn CLI output) keep their own ring classes.
+      // The unlayered `:focus-visible` rule in globals.css recolours them to
+      // `--focus`; the test below holds that rule in place.
+      if (name.startsWith("components/ui/")) continue;
       const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
         for (const [, arbitrary, utility] of line.matchAll(FOCUS_RING)) {
@@ -291,6 +295,42 @@ describe("focus indicators", () => {
     // Named, not counted: a ratio without the file that paints it sends the
     // next person back to the browser to re-derive which ring is invisible.
     expect(failures).toEqual([]);
+  });
+
+  /* Registry primitives under components/ui set `focus-visible:ring-ring/50`
+     and, on the destructive button, `focus-visible:ring-destructive/20`. They
+     are CLI output and are not edited by hand, so the scan above skips them.
+     What keeps their rings on `--focus` is one unlayered `:focus-visible`
+     rule that sets `--tw-ring-color`: Tailwind puts utilities in
+     `@layer utilities`, and an unlayered declaration beats every layered one.
+     Moving that rule inside `@layer base` would silently hand the ring colour
+     back to the utility, so the check parses nesting depth rather than
+     searching for the text. */
+  it("recolours registry focus rings through an unlayered rule", () => {
+    const unlayered: string[] = [];
+    let depth = 0;
+    let start = -1;
+    for (let i = 0; i < CSS.length; i++) {
+      const ch = CSS[i];
+      if (ch === "{") {
+        if (depth === 0) start = CSS.lastIndexOf("}", i) + 1;
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          unlayered.push(CSS.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+    // A block's own selector is what is left once the comment above it goes.
+    const selectorOf = (block: string) =>
+      block.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+    const rule = unlayered.find((block) =>
+      selectorOf(block).startsWith(":focus-visible"),
+    );
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/--tw-ring-color:\s*var\(--nimbus-focus\)/);
   });
 });
 

@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib/utils";
 import type { TableDoc } from "../../lib/types/table";
 import { CopyChip } from "../copy-chip";
 import { Td, Th } from "../data-table";

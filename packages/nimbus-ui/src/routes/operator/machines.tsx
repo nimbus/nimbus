@@ -2,7 +2,7 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { PIN_R, Td, Th } from "../../components/data-table";
@@ -11,7 +11,6 @@ import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { formatMemory } from "../../lib/format";
 import {
   type SubDrawerSpec,

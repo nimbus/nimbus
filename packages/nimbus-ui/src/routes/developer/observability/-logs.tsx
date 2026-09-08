@@ -10,14 +10,13 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../../convex/_generated/api";
 import { Td, Th } from "../../../components/data-table";
 import { EmptyState } from "../../../components/empty-state";
 import { LoadingState } from "../../../components/loading-state";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
-import { cn } from "../../../lib/cn";
 import { shortId } from "../../../lib/format";
 import { FilterInput, FilterSelect } from "./-filters";
 import type { EventDoc, ObservabilitySearch } from "./-types";

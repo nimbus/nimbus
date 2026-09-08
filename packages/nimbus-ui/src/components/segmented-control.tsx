@@ -1,7 +1,7 @@
 import type { ComponentType, KeyboardEvent, ReactNode } from "react";
 import { useCallback, useId, useRef } from "react";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 export type SegmentedControlOption<T extends string> = {
   value: T;

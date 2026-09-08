@@ -6,14 +6,13 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { AdminServiceDetailLoaderError } from "../../components/service-loader-errors";
 import { StateChip } from "../../components/state-chip";
-import { cn } from "../../lib/cn";
 import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";

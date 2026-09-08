@@ -2,7 +2,7 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { ConfirmDialog } from "../../components/confirm-dialog";
@@ -32,7 +32,6 @@ import {
 } from "../../components/storage/use-column-prefs";
 import { useDocumentPage } from "../../components/storage/use-document-page";
 import { documents } from "../../lib/api-mutations";
-import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import type {
   DocumentJson,
