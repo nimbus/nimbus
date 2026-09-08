@@ -5,7 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
-import { StatePill } from "../../components/pill";
+import { CategoryPill, StatePill } from "../../components/pill";
 import { resolveStateKind, statePalette } from "../../components/state-dot";
 import { RelativeTime } from "../../components/time";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
@@ -53,8 +53,12 @@ function RunDetailPage() {
       <header className="flex flex-col gap-2">
         <Breadcrumb
           segments={[
-            { label: "observability", href: "/observability" },
-            { label: "runs", href: "/observability" },
+            { label: "Compute", href: "/developer/compute" },
+            {
+              label: "Runs",
+              href: "/developer/observability",
+              search: { tab: "runs" },
+            },
             {
               label: shortId(runId, 12),
               copyValue: runId,
@@ -118,9 +122,7 @@ function Summary({ run, runId }: { run: RunDoc; runId: string }) {
         <StatePill state={run.status} />
       </Field>
       <Field label="Kind" testid="run-detail-kind">
-        <span className="text-xs font-medium text-text-3">
-          {run.kind ?? "—"}
-        </span>
+        <CategoryPill value={run.kind} className="self-start" />
       </Field>
       <Field label="Duration" testid="run-detail-duration">
         <span className="font-mono tabular text-sm text-text-1">

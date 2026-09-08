@@ -200,25 +200,33 @@ Compute owns request-scoped function execution for the active tenant.
 Service lifecycle lives in `Services` — a dual-persona surface present
 in both consoles. Compute and Services are siblings, not parent/child.
 
-- Compute has two **compute types**, Functions and Sandboxes, selected in the
-  secondary nav (the sub-panel); Services and Sessions stay top-level. Search
-  and filters live in the main section's toolbar (shadcn data-table convention).
-- Functions: a bundle → module → function **tree** with folder/file/kind icons,
-  built from the deployed functions. Open one for its detail (Statistics,
-  Source, Logs, Runs).
+- The sub-panel is the **function tree**: bundle → module → function, built
+  from the deployed functions, with a filter box at the top. The same tree
+  backs the Compute page and every function page, so the list an operator is
+  scanning keeps its shape when they open an item from it.
+- The Compute page has three **page tabs**: Functions (a DataTable of path,
+  kind, adapter, last status, last run), Sandboxes (live runtime state, no
+  placeholder data), and Graph (the call graph of the deployed bundle). Search
+  and filters stay in the sub-panel; the table has no second toolbar.
+- A function page has four tabs: **Overview** (kind, adapter, bundle, last
+  status, last run, and the argument list read from the validator), **Source**,
+  **Runs**, and **Graph** (the call graph focused on this function). Logs are
+  not a function tab; Observability owns logs and the run page links there.
 - Source tab: the deployed module source, served from the **content-addressed
   source-package store** (`GET /api/console/source`), hash-verified, syntax-
   highlighted, with the source-package digest shown as provenance. Source is the
   read-artifact (original TS), distinct from the runtime bundle; it is captured
   at `nimbus deploy` and deduplicated by content digest. A navigable
-  **DEFINES / CALLS** symbols strip (oxc structural index — exports + `api.*` /
-  `internal.*` references) links across functions.
-- Function runner: schema-aware argument editor, identity/mock identity
-  controls where supported, query result panel, logs/result correlation,
-  and clear execution mode for queries, mutations, actions, HTTP
-  handlers, and scheduled functions.
-- Runs: status, function/action/route, request ID, duration, error,
-  logs, trace waterfall. Filtered to the active tenant.
+  **DEFINES / CALLS / CALLED BY** symbols strip (oxc structural index — exports
+  + `api.*` / `internal.*` references) links across functions. When no source
+  was captured the tab is an empty state that shows the exact
+  `nimbus dev --app-dir <dir>` command with a copy control.
+- Function runner: the bottom drawer of every function page. See
+  [Function Runner](#function-runner) for the contract.
+- Runs: a DataTable of status, run id, duration, and start time. A row opens
+  the run page, whose breadcrumb is Compute › Runs › id and whose kind is a
+  category pill and whose timings are monospaced. Filtered to the active
+  tenant.
 - Sandboxes: live runtime state (not a deployment record); the view reads from
   the sandbox runtime (wiring in progress) — no placeholder data.
 
@@ -1063,10 +1071,24 @@ Do not place more than two categorical badges on the same row.
 
 ### Function Runner
 
-- Argument editor must be schema-aware when `argsSchema` is available.
+- The runner is a bottom drawer on the function page. Its toggle bar shows the
+  kind and adapter as category pills, the active tenant as read-only text, and
+  the state of the last run as a pill (running, ok with duration, error).
+- The argument editor is schema-aware when `argsSchema` is available. Both the
+  SDK validator shape (`{kind, fields}`) and the Convex JSON shape
+  (`{type, value}`) produce **Form** mode: one field per argument, text for
+  string and id, number for number, a checkbox for boolean, a JSON textarea for
+  everything else, with the optional marker on the type. **JSON** mode is
+  always available and the two modes carry values across the switch. Without a
+  validator the editor is JSON only.
+- Submit is the **Run function** button or ⌘⏎ (Ctrl+⏎ elsewhere). Plain Enter
+  in a text field does not submit, so a mutation never runs by accident.
+- Tenant is implicit from the sidebar tenant selector. The runner shows it and
+  never offers a second chooser.
 - Query runs can auto-refresh/react when backed by subscriptions.
 - Mutations and actions run only on explicit submit.
-- Results and logs share the same request/run correlation ID.
+- Results and logs share the same request/run correlation ID; the result panel
+  shows it as a copy chip for both success and error envelopes.
 - Identity controls are labeled as simulated/admin-local identity unless a
   real auth provider is active.
 
