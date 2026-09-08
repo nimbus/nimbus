@@ -1254,9 +1254,9 @@ jobs:
               end
             end
 
-            postflight do
-              if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-                system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s], sudo: false
+            postflight_steps do
+              on_macos do
+                run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{staged_path}}"], sudo: false, must_succeed: true
               end
             end
 
@@ -1326,9 +1326,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Pages permits main deployments. The input still pins the package source.
           gh workflow run linux-distribution-release.yml \
             --repo "${{ github.repository }}" \
-            --ref "${{ github.ref_name }}" \
+            --ref main \
             -f release_tag="${{ github.ref_name }}" \
             -f publish_apt_repo=true \
             -f submit_to_copr=false \
