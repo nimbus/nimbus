@@ -1055,18 +1055,26 @@ A global command palette is table stakes for a developer console. Triggered
 by `⌘K` (macOS) / `Ctrl-K` (Windows/Linux), the palette must:
 
 - Open from anywhere — sidebar, table, drawer, modal, runner — without
-  losing the underlying view's scroll or focus state.
-- Provide three search modes in the same surface:
-  - **Navigate**: jump to a resource by name, ID, or path (machines,
-    tenants, tables, functions, runs, services, ports).
-  - **Run**: invoke an action (Start machine X, Rotate token, Shutdown,
-    Create tenant, Open function runner).
-  - **Filter**: when triggered from a list, filter the current view.
-- Show keyboard hints next to every action (`⏎ Run`, `⌘⏎ Open in new
-  tab`, `⌘C Copy ID`).
-- Surface recent commands at the top and persist across reloads.
+  losing the underlying view's scroll or focus state. Closing it returns
+  focus to the control that opened it.
+- Open on one list, 640px wide, with three fixed groups and no mode toggle:
+  - **Routes**: every page of the current console first, then the other
+    console's pages, each tagged `Developer` or `Operator`.
+  - **Tenants**: every tenant, the active one checked. A pick in the
+    developer console switches the active tenant in place; a pick from the
+    operator console switches and opens the developer console.
+  - **Actions**: switch console, open the system tenant lens (developer
+    only), refresh the current view, switch theme.
+- Add resource groups as the operator types: tables, functions, services,
+  machines, HTTP routes, each found by name, ID, or path.
+- Show recent picks at the top of the empty list, persisted under
+  `nimbus-ui:commands:recent`.
+- Write the keyboard contract in its footer: `↑ ↓` move, `⏎` open, `⎋`
+  close, `⌘K` palette, `⌘\` tenant lens, `/` filter page. Show the
+  shortcut beside every action that has one.
 
-Implementation: `cmdk` library, mounted at the app root.
+Implementation: the shadcn `command` primitive (`cmdk` inside a Base UI
+dialog), mounted at the app root.
 
 ### Bottom Status Bar
 

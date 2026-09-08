@@ -278,11 +278,16 @@ test.describe("console smoke walk", () => {
     await expect(page.getByTestId("command-palette")).toBeVisible();
     await expect(page.getByTestId("command-palette-input")).toBeVisible();
     await expect(page.getByTestId("command-palette-list")).toBeVisible();
-    // Mode chips render in the footer.
-    await expect(page.locator('[data-testid^="palette-mode-"]')).not.toHaveCount(
-      0,
+    // The palette opens on its three groups and writes the keyboard
+    // contract in its footer.
+    await expect(page.getByTestId("palette-group-routes")).toBeVisible();
+    await expect(page.getByTestId("palette-group-tenants")).toBeVisible();
+    await expect(page.getByTestId("palette-group-actions")).toBeVisible();
+    await expect(page.getByTestId("command-palette-footer")).toContainText(
+      "tenant lens",
     );
     await page.keyboard.press("Escape");
+    await expect(page.getByTestId("command-palette")).toBeHidden();
 
     // 9. Console hygiene gate.
     //

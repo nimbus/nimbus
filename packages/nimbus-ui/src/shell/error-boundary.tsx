@@ -1,10 +1,9 @@
 import { useRouterState } from "@tanstack/react-router";
 import { Component, type ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import { CopyChip } from "../components/copy-chip";
-
-const ACTION_CLASS =
-  "rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1";
+import { EmptyState } from "../components/empty-state";
 
 type Props = { children: ReactNode; pathname: string };
 type State = { error: Error | null; pathname: string };
@@ -84,39 +83,43 @@ class ShellErrorBoundary extends Component<Props, State> {
             into either suggestion. 90vw is chosen over it so the card keeps a
             gutter and still reads as a card rather than a full-bleed band. */}
         <div
-          className="w-[min(480px,90vw)] rounded-md border bg-bg-panel p-4 border-border-2"
+          className="flex w-[min(480px,90vw)] flex-col items-center gap-3 rounded-lg border border-border-2 bg-bg-panel p-6"
           data-testid="error-boundary-card"
         >
-          <div className="text-sm font-medium text-error">Error</div>
-          <p className="mt-1 text-base">
-            The console shell failed to render. Moving to another view clears
-            this screen.
-          </p>
+          <EmptyState
+            className="h-auto p-0"
+            mascot="error"
+            title="The console shell failed to render"
+            body="Moving to another view clears this screen."
+            testid="error-boundary-state"
+          />
           <CopyChip
             label="error details"
             value={details}
             testid="error-boundary-copy"
-            className="mt-3 max-w-full border border-border-2 px-2 py-1 text-error"
+            className="max-w-full border border-border-2 px-2 py-1 text-error"
           >
             {error.message}
           </CopyChip>
-          <div className="mt-3 flex gap-2">
-            <button
+          <div className="flex gap-2">
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={this.reset}
-              className={ACTION_CLASS}
               data-testid="error-boundary-retry"
             >
               Retry
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => window.location.reload()}
-              className={ACTION_CLASS}
               data-testid="error-boundary-reload"
             >
               Reload console
-            </button>
+            </Button>
           </div>
         </div>
       </div>

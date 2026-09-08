@@ -1,10 +1,8 @@
 import { useRouter, useRouterState } from "@tanstack/react-router";
 
+import { Button } from "@/components/ui/button";
 import { CopyChip } from "./copy-chip";
 import { EmptyState } from "./empty-state";
-
-const ACTION_CLASS =
-  "rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1";
 
 export type RouteErrorProps = {
   error: unknown;
@@ -35,6 +33,7 @@ export function RouteError({ error, reset }: RouteErrorProps) {
     >
       <EmptyState
         className="h-auto"
+        mascot="error"
         title="This view failed to render"
         body={
           <>
@@ -56,9 +55,10 @@ export function RouteError({ error, reset }: RouteErrorProps) {
         {message}
       </CopyChip>
       <div className="flex gap-2">
-        <button
+        <Button
           type="button"
-          className={ACTION_CLASS}
+          variant="outline"
+          size="sm"
           data-testid="route-error-retry"
           onClick={() => {
             reset?.();
@@ -66,15 +66,16 @@ export function RouteError({ error, reset }: RouteErrorProps) {
           }}
         >
           Retry
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className={ACTION_CLASS}
+          variant="outline"
+          size="sm"
           data-testid="route-error-reload"
           onClick={() => window.location.reload()}
         >
           Reload console
-        </button>
+        </Button>
       </div>
     </section>
   );

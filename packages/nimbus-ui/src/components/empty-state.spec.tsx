@@ -53,6 +53,17 @@ describe("EmptyState", () => {
     expect(container.querySelector("svg")).not.toBeNull();
   });
 
+  it("puts the solid mascot in the icon's place for the shell's own screens", () => {
+    render(
+      <EmptyState mascot="error" title="The console shell failed to render" />,
+    );
+    const mascot = document.querySelector("[data-mascot]");
+    expect(mascot).toHaveAttribute("data-mascot", "solid");
+    expect(mascot).toHaveAttribute("data-state", "error");
+    expect(mascot).toHaveAttribute("aria-hidden", "true");
+    expect(mascot?.getAttribute("width")).toBe("56");
+  });
+
   it("renders a Link cta when given to:", () => {
     render(
       <EmptyState

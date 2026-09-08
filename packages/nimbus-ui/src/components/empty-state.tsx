@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
+import { Mascot, type MascotState } from "./mascot";
 
 export type EmptyStateCta =
   | { label: string; to: string }
@@ -14,8 +15,13 @@ export type EmptyStateCta =
 // sentence that says why, one action that changes the answer, and, when the
 // answer is a command, that command with a copy control. It never looks like
 // a failed read; LoadFailed owns that.
+//
+// `mascot` puts the solid Nimbus mark in the icon's place. It is for the
+// shell's own screens — a crash, a lost connection, a first run — where the
+// console itself is the subject, not one list on it.
 export function EmptyState({
   icon: Icon,
+  mascot,
   title,
   body,
   cta,
@@ -24,6 +30,7 @@ export function EmptyState({
   className,
 }: {
   icon?: LucideIcon;
+  mascot?: MascotState;
   title: string;
   body?: ReactNode;
   cta?: EmptyStateCta;
@@ -40,13 +47,17 @@ export function EmptyState({
       )}
       data-testid={testid}
     >
-      {Icon && (
-        <span
-          aria-hidden
-          className="flex size-10 items-center justify-center rounded-full bg-bg-raised text-text-3"
-        >
-          <Icon className="size-5" />
-        </span>
+      {mascot ? (
+        <Mascot size={56} state={mascot} variant="solid" decorative />
+      ) : (
+        Icon && (
+          <span
+            aria-hidden
+            className="flex size-10 items-center justify-center rounded-full bg-bg-raised text-text-3"
+          >
+            <Icon className="size-5" />
+          </span>
+        )
       )}
       <div className="flex flex-col gap-1">
         <h2

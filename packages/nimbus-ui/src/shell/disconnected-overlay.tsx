@@ -1,7 +1,7 @@
 import { useNimbusConnectionState } from "@nimbus/nimbus/react";
 import { useEffect } from "react";
 
-import { StateDot } from "../components/state-dot";
+import { Mascot } from "../components/mascot";
 
 const DEFAULT_SESSION_PROBE_INTERVAL_MS = 1_000;
 const DEFAULT_SESSION_PROBE_TIMEOUT_MS = 3_000;
@@ -96,15 +96,24 @@ export function DisconnectedOverlay({
     // Initial load — wait for the first connection attempt to complete.
     return null;
   }
+  // A banner, not a screen: the page under it stays readable because the
+  // stale data it shows is still the best the console has. The EmptyState
+  // idiom (mark, one-line title, one-line body) is laid out as a row so the
+  // banner keeps to two lines at the top of the main column.
   return (
     <div
       role="status"
       aria-live="polite"
       data-testid="disconnected-overlay"
-      className="pointer-events-none fixed left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border bg-bg-panel px-3 py-1 text-xs font-mono shadow border-border-2 text-text-1"
+      className="pointer-events-none fixed left-1/2 top-3 z-30 flex w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-lg border border-border-2 bg-bg-raised px-3 py-2 text-text-1 shadow-overlay"
     >
-      <StateDot state="reconnecting" />
-      <span>Reconnecting · stale data shown, mutations disabled</span>
+      <Mascot size={32} state="error" variant="solid" decorative />
+      <span className="flex min-w-0 flex-col">
+        <span className="text-sm font-medium">Reconnecting</span>
+        <span className="text-xs text-text-3">
+          Stale data shown, mutations disabled.
+        </span>
+      </span>
     </div>
   );
 }

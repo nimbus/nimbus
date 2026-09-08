@@ -40,9 +40,14 @@ describe("DisconnectedOverlay", () => {
       />,
     );
 
-    expect(screen.getByTestId("disconnected-overlay")).toHaveTextContent(
-      "Reconnecting",
-    );
+    const overlay = screen.getByTestId("disconnected-overlay");
+    expect(overlay).toHaveTextContent("Reconnecting");
+    expect(overlay).toHaveTextContent("Stale data shown, mutations disabled.");
+    // The banner carries the mascot's error face, not a status dot: the shell
+    // itself is the subject, and the text beside it says what the face says.
+    const mascot = overlay.querySelector("[data-mascot]");
+    expect(mascot).toHaveAttribute("data-state", "error");
+    expect(mascot).toHaveAttribute("aria-hidden", "true");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(25);
     });

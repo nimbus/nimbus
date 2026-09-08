@@ -54,6 +54,16 @@ export const WithIcon: Story = {
   },
 };
 
+// The mascot stands in for the icon on the shell's own screens: a crash, a
+// lost connection, a first run. Solid at 56px, so it reads as a sticker.
+export const WithMascot: Story = {
+  args: {
+    mascot: "error",
+    title: "The console shell failed to render",
+    body: "Moving to another view clears this screen.",
+  },
+};
+
 // The snippet is the first command an operator runs from the empty state,
 // with the copy button the CLI examples share.
 export const WithSnippet: Story = {
