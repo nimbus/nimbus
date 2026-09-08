@@ -224,6 +224,13 @@ pub fn route_inventory() -> Vec<RouteInventoryEntry> {
         ),
         route(
             "POST",
+            "/api/tenants/{tenant_id}/schema/{table}/apply",
+            "native",
+            "apply_table_schema",
+            true,
+        ),
+        route(
+            "POST",
             "/convex/{tenant_id}/query",
             "convex",
             "query",

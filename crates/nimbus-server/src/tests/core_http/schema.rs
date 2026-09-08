@@ -143,6 +143,153 @@ async fn schema_crud_via_http() {
 }
 
 #[tokio::test]
+async fn schema_apply_reports_violations_and_never_applies_partially() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
+    let api = HttpApiFixture::new(&server);
+
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    // Three documents land before any schema exists. One of them breaks the
+    // schema the operator is about to apply in two ways, and one document
+    // carries only the required field.
+    for fields in [
+        json!({ "name": "Alice", "age": 30 }),
+        json!({ "age": "old" }),
+        json!({ "name": "Bob" }),
+    ] {
+        assert_eq!(
+            api.insert_document("demo", "users", fields).await.status(),
+            StatusCode::CREATED
+        );
+    }
+    let listed = api
+        .list_documents("demo", "users")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("document list should parse");
+    let violating_id = listed["data"]
+        .as_array()
+        .expect("data should be an array")
+        .iter()
+        .find(|document| document["age"] == json!("old"))
+        .and_then(|document| document["_id"].as_str())
+        .expect("violating document should be listed")
+        .to_string();
+
+    let schema = json!({
+        "table": "users",
+        "fields": [
+            { "name": "name", "field_type": "string", "required": true },
+            { "name": "age", "field_type": "number", "required": false }
+        ],
+        "indexes": [{ "name": "by_name", "fields": ["name"] }]
+    });
+
+    // A violating table refuses the whole schema and names the document.
+    let refused = api
+        .apply_table_schema("demo", "users", schema.clone(), false)
+        .await;
+    assert_eq!(refused.status(), StatusCode::OK);
+    let refused_body = refused
+        .json::<serde_json::Value>()
+        .await
+        .expect("apply response should parse");
+    assert_eq!(refused_body["applied"], json!(false));
+    assert_eq!(refused_body["scanned"], json!(3));
+    assert_eq!(refused_body["violation_count"], json!(1));
+    assert_eq!(
+        refused_body["violations"],
+        json!([{ "id": violating_id, "message": "missing required field: name" }])
+    );
+
+    // Nothing was applied: the table still has no schema and still accepts
+    // a document the schema would reject.
+    assert_eq!(
+        api.get_table_schema("demo", "users").await.status(),
+        StatusCode::NOT_FOUND
+    );
+    let unchecked = api
+        .insert_document("demo", "users", json!({ "age": "older" }))
+        .await;
+    assert_eq!(unchecked.status(), StatusCode::CREATED);
+    let unchecked_id = unchecked
+        .json::<serde_json::Value>()
+        .await
+        .expect("insert response should parse")["id"]
+        .as_str()
+        .expect("insert should return an id")
+        .to_string();
+
+    // Repair both violating documents, then check without applying.
+    for id in [&violating_id, &unchecked_id] {
+        assert_eq!(
+            api.delete_document("demo", "users", id).await.status(),
+            StatusCode::NO_CONTENT
+        );
+    }
+    let checked = api
+        .apply_table_schema("demo", "users", schema.clone(), true)
+        .await;
+    assert_eq!(checked.status(), StatusCode::OK);
+    let checked_body = checked
+        .json::<serde_json::Value>()
+        .await
+        .expect("dry-run response should parse");
+    assert_eq!(checked_body["applied"], json!(false));
+    assert_eq!(checked_body["dry_run"], json!(true));
+    assert_eq!(checked_body["scanned"], json!(2));
+    assert_eq!(checked_body["violations"], json!([]));
+    assert_eq!(
+        api.get_table_schema("demo", "users").await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // A clean table applies, and enforcement starts at once.
+    let applied = api
+        .apply_table_schema("demo", "users", schema.clone(), false)
+        .await;
+    assert_eq!(applied.status(), StatusCode::OK);
+    let applied_body = applied
+        .json::<serde_json::Value>()
+        .await
+        .expect("apply response should parse");
+    assert_eq!(applied_body["applied"], json!(true));
+    assert_eq!(applied_body["scanned"], json!(2));
+    assert_eq!(applied_body["violations"], json!([]));
+    let stored = api
+        .get_table_schema("demo", "users")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("table schema should parse");
+    assert_eq!(stored["indexes"][0]["name"], json!("by_name"));
+    assert_eq!(stored["indexes"][0]["state"], json!("enabled"));
+    assert_eq!(
+        api.insert_document("demo", "users", json!({ "age": "old" }))
+            .await
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    // A schema whose table name disagrees with the path is refused before
+    // any scan.
+    let mismatched = api
+        .apply_table_schema(
+            "demo",
+            "users",
+            json!({ "table": "people", "fields": [] }),
+            false,
+        )
+        .await;
+    assert_eq!(mismatched.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn schema_and_document_writes_project_table_state_into_system_tenant() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();

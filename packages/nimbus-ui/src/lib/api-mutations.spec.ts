@@ -129,16 +129,31 @@ describe("api-mutations request shapes", () => {
     expect(body).toEqual({ patch: { name: "grace" } });
   });
 
-  it("schema put sends the raw schema object", async () => {
+  it("schema apply POSTs the raw schema and reads the report back", async () => {
     let body: unknown = null;
+    let dryRun: string | null = null;
     server.use(
-      http.put("*/api/tenants/:t/schema/:table", async ({ request }) => {
+      http.post("*/api/tenants/:t/schema/:table/apply", async ({ request }) => {
         body = await request.json();
-        return HttpResponse.json({ ok: true });
+        dryRun = new URL(request.url).searchParams.get("dry_run");
+        return HttpResponse.json({
+          applied: false,
+          dry_run: false,
+          scanned: 3,
+          violation_count: 1,
+          violations: [{ id: "doc_1", message: "missing required field: id" }],
+        });
       }),
     );
-    await schema.put("demo", "users", { fields: [{ name: "id" }] });
+    const result = await schema.apply("demo", "users", {
+      fields: [{ name: "id" }],
+    });
     expect(body).toEqual({ fields: [{ name: "id" }] });
+    expect(dryRun).toBeNull();
+    expect(result.ok && result.data.violations[0]?.id).toBe("doc_1");
+
+    await schema.apply("demo", "users", {}, { dryRun: true });
+    expect(dryRun).toBe("true");
   });
 
   it("machine action POSTs an empty body with the accept hint", async () => {

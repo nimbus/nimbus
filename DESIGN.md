@@ -313,13 +313,20 @@ view assumes a tenant is selected.
 - Schema tab for optional Nimbus schemas and adapter-derived schema views,
   including create, edit, delete, and validation error display. The tab is
   a full-width view of the table page, addressed by `?tab=schema`, not a
-  side inspector beside the grid.
-- Indexes tab with name, fields, status, usage when available, create/drop
-  actions where implemented, and warnings about write cost or unsupported
-  index types. Addressed by `?tab=indexes`; read-only until the index API
-  exists.
-- Query builder that makes index use visible and refuses unbounded scans where
-  the backend would be unsafe.
+  side inspector beside the grid. Apply goes through the checked route
+  (`POST /schema/{table}/apply`): the server scans every document first and
+  refuses the whole draft with the violating ids when one breaks it, so a
+  schema never lands on a table that already violates it. Check runs the
+  same scan as a dry run.
+- Indexes tab with name, fields, and a polled status pill. Create and drop
+  re-apply the table schema with the index list edited, so they get the same
+  document check. Storage builds an index inside the schema commit, so a new
+  index reads `enabled` as soon as apply returns. Addressed by
+  `?tab=indexes`.
+- Query builder (`?tab=query`) that marks each field as indexed or scan,
+  refuses an unindexed sort until the operator says "scan anyway", and shows
+  the request it compiles to as code. The builder, the grid, and the pager
+  compile through one function, so the code shown is the request sent.
 
 The Storage sub-panel is a **dynamic list** of tables for the active
 tenant. URL is store-driven (`/developer/storage/<table>`), not

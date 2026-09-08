@@ -71,6 +71,21 @@ export function insertDocumentCommand({
   );
 }
 
+// paginatedQueryCommand runs one document query from a shell. The Query
+// tab shows it beside the request body, so the query an operator built in
+// the console is the one a script or a teammate can run verbatim.
+export function paginatedQueryCommand({
+  serverUrl,
+  tenant,
+  body,
+}: NextActionContext & { body: string }): string {
+  return curlJson(
+    "POST",
+    `${serverOf(serverUrl)}/api/tenants/${tenantOf(tenant)}/query/paginated`,
+    body,
+  );
+}
+
 // deployFunctionsCommand deploys the app in the working directory and keeps
 // deploying it on change. It is the same command the Compute page shows.
 export function deployFunctionsCommand(): string {

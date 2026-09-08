@@ -74,7 +74,9 @@ pub(crate) use scheduling::{
     cancel_scheduled_job, create_cron_job, delete_cron_job, get_scheduled_job_result,
     list_cron_jobs, list_scheduled_jobs, schedule_mutation,
 };
-pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_table_schema};
+pub(crate) use schema::{
+    apply_table_schema, delete_table_schema, get_schema, get_table_schema, set_table_schema,
+};
 pub(crate) use services::{
     create_service_definition, delete_service_definition, get_service, list_service_definitions,
     restart_service, start_service, stop_service, update_service_definition,

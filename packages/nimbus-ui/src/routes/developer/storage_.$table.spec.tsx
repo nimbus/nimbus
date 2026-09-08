@@ -36,14 +36,22 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
-const { removeMock, insertMock, updateMock } = vi.hoisted(() => ({
-  removeMock: vi.fn(),
-  insertMock: vi.fn(),
-  updateMock: vi.fn(),
-}));
+const { removeMock, insertMock, updateMock, schemaGetMock } = vi.hoisted(
+  () => ({
+    removeMock: vi.fn(),
+    insertMock: vi.fn(),
+    updateMock: vi.fn(),
+    schemaGetMock: vi.fn(async () => ({
+      ok: false,
+      error: "no schema",
+      status: 404,
+    })),
+  }),
+);
 
 vi.mock("../../lib/api-mutations", () => ({
   documents: { remove: removeMock, insert: insertMock, update: updateMock },
+  schema: { get: schemaGetMock, apply: vi.fn(), drop: vi.fn() },
 }));
 
 const { toastMock, refreshMock, pageRef } = vi.hoisted(() => {
@@ -344,8 +352,7 @@ describe("table views", () => {
     );
     expect(screen.getByTestId("documents-tab-schema")).toBeInTheDocument();
     expect(screen.getByTestId("documents-tab-indexes")).toBeInTheDocument();
-    // The Query tab lands with the query console; until then it is absent.
-    expect(screen.queryByTestId("documents-tab-query")).toBeNull();
+    expect(screen.getByTestId("documents-tab-query")).toBeInTheDocument();
   });
 
   it("gives the schema view the page instead of a side panel", () => {

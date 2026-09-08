@@ -819,6 +819,10 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
                 .delete(http::delete_table_schema),
         )
         .route(
+            "/api/tenants/{tenant_id}/schema/{table}/apply",
+            post(http::apply_table_schema),
+        )
+        .route(
             "/api/tenants/{tenant_id}/journal/bootstrap",
             get(http::bootstrap_journal),
         )

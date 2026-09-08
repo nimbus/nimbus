@@ -19,6 +19,7 @@ import { IndexesTab } from "../../components/storage/indexes-tab";
 import { InsertDrawer } from "../../components/storage/insert-drawer";
 import { PageError } from "../../components/storage/page-error";
 import { QueryBar } from "../../components/storage/query-bar";
+import { QueryTab } from "../../components/storage/query-tab";
 import { SchemaTab } from "../../components/storage/schema-tab";
 import {
   type DocumentFilter,
@@ -51,7 +52,9 @@ export const Route = createFileRoute("/developer/storage_/$table")({
     const filters = parseFilters(search.filters);
     return {
       tab:
-        search.tab === "schema" || search.tab === "indexes"
+        search.tab === "query" ||
+        search.tab === "schema" ||
+        search.tab === "indexes"
           ? search.tab
           : undefined,
       sort:
@@ -92,11 +95,12 @@ function parseCursors(raw: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-type TableTab = "schema" | "indexes";
+type TableTab = "query" | "schema" | "indexes";
 type TableTabId = "documents" | TableTab;
 
 const TABS = [
   { id: "documents", label: "Documents" },
+  { id: "query", label: "Query" },
   { id: "schema", label: "Schema" },
   { id: "indexes", label: "Indexes" },
 ] as const satisfies ReadonlyArray<{ id: TableTabId; label: string }>;
@@ -427,6 +431,24 @@ function TableDocumentsPage() {
     [patchSearch],
   );
 
+  // The Query tab hands its result to the grid through the URL: one write
+  // carries the filters, the sort, and the tab switch, so the Documents tab
+  // opens on the first page of exactly the query the builder showed.
+  const runQuery = useCallback(
+    (nextFilters: DocumentFilter[], nextOrder: DocumentOrder | null) => {
+      patchSearch({
+        tab: undefined,
+        filters: nextFilters.length > 0 ? nextFilters : undefined,
+        sort: nextOrder?.field,
+        dir: nextOrder?.direction,
+        cursors: undefined,
+      });
+      setPendingScanSort(null);
+      setSelected(new Set());
+    },
+    [patchSearch],
+  );
+
   const requestSort = useCallback(
     (field: string) => {
       // Re-clicking the active column only flips direction — the scan cost was
@@ -514,7 +536,7 @@ function TableDocumentsPage() {
           tabs with an address each, not inspectors beside the grid. Each tab
           gets the whole width: a schema editor and a document grid both need
           it, and a 420px inspector beside a grid starved one of them at every
-          width the shell's drawers produce. The Query tab lands in UIR21. */}
+          width the shell's drawers produce. */}
       <PageTabs
         label="Table views"
         tabs={TABS}
@@ -543,7 +565,23 @@ function TableDocumentsPage() {
           />
         )
       ) : activeTab === "indexes" ? (
-        <IndexesTab schema={tableMeta?.schema ?? null} />
+        <IndexesTab
+          tenant={tenant}
+          table={table}
+          schema={tableMeta?.schema ?? null}
+          onChanged={refresh}
+        />
+      ) : activeTab === "query" ? (
+        <QueryTab
+          key={table}
+          tenant={tenant}
+          table={table}
+          fields={filterFields}
+          indexBacked={indexBacked}
+          filters={filters}
+          order={order}
+          onRun={runQuery}
+        />
       ) : (
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"

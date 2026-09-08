@@ -4,15 +4,29 @@ export type TableSchemaField = {
   required?: boolean;
 };
 
+/** Every state `nimbus_core::IndexState` serializes. */
+export const INDEX_STATES = [
+  "pending",
+  "backfilling",
+  "enabled",
+  "deleting",
+] as const;
+export type IndexState = (typeof INDEX_STATES)[number];
+
+// Mirrors `nimbus_core::IndexDefinition`. The id and the state are
+// server-assigned: a schema the console sends omits both, and the server
+// keeps the id of an index whose name and fields did not change.
+export type TableSchemaIndex = {
+  id?: string;
+  name: string;
+  fields: string[];
+  state?: IndexState | string;
+};
+
 export type TableSchemaShape = {
   table?: string;
   fields?: TableSchemaField[];
-  indexes?: Array<{
-    name: string;
-    fields: string[];
-    unique?: boolean;
-    type?: string;
-  }>;
+  indexes?: TableSchemaIndex[];
 };
 
 // UI view of a `tables` row as returned by `api.tables.list` — the superset of

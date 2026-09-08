@@ -146,18 +146,42 @@ export const documents = {
   },
 };
 
-// Tenant-scoped schema enforcement. `put` sends the raw schema object; `drop`
-// removes enforcement while keeping the table's documents.
+/** One document the schema apply route refused, and why. */
+export type SchemaViolation = { id: string; message: string };
+
+/**
+ * The report `POST /api/tenants/{t}/schema/{table}/apply` returns. The route
+ * answers 200 whether or not it applied, so the body is the outcome:
+ * `applied` is false on a dry run and when any document violates the schema.
+ * `violations` lists at most the first fifty; `violation_count` is the total.
+ */
+export type SchemaApplyReport = {
+  applied: boolean;
+  dry_run: boolean;
+  scanned: number;
+  violation_count: number;
+  violations: SchemaViolation[];
+};
+
+// Tenant-scoped schema enforcement. `apply` scans the table before it stores
+// the schema and refuses on any violation, so enforcement never lands on a
+// table that already breaks it; `drop` removes enforcement while keeping the
+// table's documents.
 export const schema = {
-  put(
+  apply(
     tenant: string,
     table: string,
     value: unknown,
-  ): Promise<ApiResult<unknown>> {
-    return apiFetch(`/api/tenants/${enc(tenant)}/schema/${enc(table)}`, {
-      method: "PUT",
-      body: JSON.stringify(value),
-    });
+    options: { dryRun?: boolean } = {},
+  ): Promise<ApiResult<SchemaApplyReport>> {
+    const suffix = options.dryRun ? "?dry_run=true" : "";
+    return apiFetch(
+      `/api/tenants/${enc(tenant)}/schema/${enc(table)}/apply${suffix}`,
+      { method: "POST", body: JSON.stringify(value) },
+    );
+  },
+  get(tenant: string, table: string): Promise<ApiResult<unknown>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/schema/${enc(table)}`);
   },
   drop(tenant: string, table: string): Promise<ApiResult<unknown>> {
     return apiFetch(`/api/tenants/${enc(tenant)}/schema/${enc(table)}`, {
