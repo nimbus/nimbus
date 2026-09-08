@@ -1,4 +1,4 @@
-import { type ReactNode, useRef } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 // ConfirmDialog is the one shape for a write the operator cannot take back.
 // The title names the verb, the body restates the object and what the write
@@ -19,6 +20,12 @@ import {
 // open, every dismissal is refused, and both buttons stay in the tab order
 // with `aria-disabled` so focus does not fall off the page. A refused write
 // lands in the error strip next to the control that drew it.
+//
+// A write that reaches past this browser (a server shutdown, a token that
+// signs every session out) adds a typed confirmation: the dialog asks for a
+// phrase and keeps Confirm inert until the phrase matches, so a stray click
+// cannot land the write. `confirmDisabled` is the same gate for a dialog
+// whose proof is its own field, such as a bearer the server must check.
 export function ConfirmDialog({
   open,
   title,
@@ -27,6 +34,8 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   danger = false,
   busy = false,
+  confirmDisabled = false,
+  typedConfirmation,
   error,
   onConfirm,
   onCancel,
@@ -40,6 +49,9 @@ export function ConfirmDialog({
   cancelLabel?: string;
   danger?: boolean;
   busy?: boolean;
+  confirmDisabled?: boolean;
+  // The phrase the operator types before Confirm becomes live.
+  typedConfirmation?: { phrase: string };
   error?: string;
   onConfirm: () => void;
   onCancel: () => void;
@@ -47,6 +59,12 @@ export function ConfirmDialog({
   children?: ReactNode;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const [typed, setTyped] = useState("");
+  const typedId = useId();
+  const typedMatches =
+    typedConfirmation === undefined ||
+    typed.trim() === typedConfirmation.phrase;
+  const inert = busy || confirmDisabled || !typedMatches;
   return (
     <Dialog
       open={open}
@@ -67,9 +85,39 @@ export function ConfirmDialog({
             </DialogDescription>
           )}
         </DialogHeader>
-        {(children || danger) && (
-          <DialogBody className="flex flex-col gap-2 text-sm text-text-2">
+        {(children || danger || typedConfirmation) && (
+          <DialogBody className="flex flex-col gap-3 text-sm text-text-2">
             {children}
+            {typedConfirmation && (
+              <label
+                htmlFor={typedId}
+                className="flex flex-col gap-1 text-xs text-text-3"
+              >
+                <span>
+                  Type{" "}
+                  <code className="text-text-1">
+                    {typedConfirmation.phrase}
+                  </code>{" "}
+                  to confirm
+                </span>
+                <Input
+                  id={typedId}
+                  value={typed}
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={busy}
+                  onChange={(e) => setTyped(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !inert) {
+                      e.preventDefault();
+                      onConfirm();
+                    }
+                  }}
+                  data-testid={`${testid}-typed`}
+                  className="font-mono"
+                />
+              </label>
+            )}
             {danger && <p className="text-xs text-text-3">There is no undo.</p>}
           </DialogBody>
         )}
@@ -93,9 +141,9 @@ export function ConfirmDialog({
             variant={danger ? "destructive" : "default"}
             size="sm"
             data-testid={`${testid}-confirm`}
-            aria-disabled={busy}
+            aria-disabled={inert}
             onClick={() => {
-              if (!busy) onConfirm();
+              if (!inert) onConfirm();
             }}
           >
             {busy ? "Working…" : confirmLabel}

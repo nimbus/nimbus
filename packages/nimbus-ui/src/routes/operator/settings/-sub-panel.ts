@@ -1,5 +1,8 @@
 import type { StaticSubPanelSpec } from "../../../shell/sub-panel";
 
+// A static menu lists only pages that exist (DESIGN.md: sub-panel rules).
+// Endpoints, Token, and Environment are planned sub-pages with no pane in
+// this build, so they are not items, disabled or otherwise.
 export const ADMIN_SETTINGS_SUB_PANEL = {
   kind: "static",
   title: "Settings",
@@ -11,28 +14,16 @@ export const ADMIN_SETTINGS_SUB_PANEL = {
       search: { section: "general" },
     },
     {
-      id: "endpoints",
-      label: "Endpoints",
+      id: "system",
+      label: "System",
       to: "/operator/settings",
-      search: { section: "endpoints" },
+      search: { section: "system" },
     },
     {
       id: "deploys",
       label: "Deploys",
       to: "/operator/settings",
       search: { section: "deploys" },
-    },
-    {
-      id: "token",
-      label: "Token",
-      to: "/operator/settings",
-      search: { section: "token" },
-    },
-    {
-      id: "environment",
-      label: "Environment",
-      to: "/operator/settings",
-      search: { section: "environment" },
     },
     {
       id: "integrations",
@@ -48,11 +39,5 @@ export const ADMIN_SETTINGS_SUB_PANEL = {
     },
   ],
 } as const satisfies StaticSubPanelSpec<
-  | "general"
-  | "endpoints"
-  | "deploys"
-  | "token"
-  | "environment"
-  | "integrations"
-  | "shutdown"
+  "general" | "system" | "deploys" | "integrations" | "shutdown"
 >;

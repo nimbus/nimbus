@@ -112,7 +112,7 @@ view.
 | Storage | Schema-aware data | Tables, document browser, schema tab, indexes tab, query builder |
 | Files | Opaque bytes / blob storage | Buckets, object browser, presigned URLs (placeholder in this baseline) |
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
-| Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding |
+| Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding (all planned; the page is one empty state until the first tenant-scoped setting has an API) |
 
 8 sections. Every section is tenant-scoped — the active tenant comes from
 the sidebar tenant selector, not the URL. Services is **dual-persona** (it also
@@ -132,7 +132,7 @@ IA decision rationale.
 | Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
 | Services | Long-running placement (cross-tenant) | Compose-declared services across every tenant, service catalog, lifecycle state, endpoints, restart policy. **Dual-persona** with the Developer IA above; both sides share `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle |
 | Observability | Cross-tenant debugging and audit | Logs, runs, and later events, traces, error groups — default cross-tenant; the tenant facet narrows through `?tenant=<id>` |
-| Settings (server) | Server administration | General, endpoints, deploys, token/session, environment, integrations (adapter capability matrices), shutdown |
+| Settings (server) | Server administration | General, system, deploys, integrations (adapter capability matrices), shutdown; endpoints, token/session, and environment are planned |
 
 7 sections. Server-wide by default. Tenant selector appears only on
 `/operator/observability`.
@@ -365,6 +365,11 @@ permissions.
 
 The Settings (tenant) sub-panel is a **static menu** of sub-pages
 (`Environment`, `Secrets`, `Schema`, `Integrations`, `Adapter binding`).
+None of the five is built: no tenant-scoped setting has a write API in
+this build. A static menu lists only pages that exist, so the page
+contributes no sub-panel and shows one empty state that names the five
+planned sub-pages and links to the operator settings. The menu and the
+`?section=` search arrive with the first built sub-page.
 
 ## Core Screens — Operator console
 
@@ -493,18 +498,29 @@ component; only the default tenant scope differs.
 Server administration. Distinct from the Developer-side **Settings
 (tenant)**.
 
-- General: server name, build info.
-- Endpoints: bind addresses, TLS posture, advertised URLs.
-- Deploys: release channel, current release, rollout history.
-- Token / session: admin token rotation, session policy.
-- Environment: process-level env vars.
+- General: appearance (mode only: light, dark, system), license and
+  usage, effective configuration.
+- System: server identity. Version and update posture, health, uptime,
+  listen address, local origin, data directory, storage backend,
+  encryption at rest. General is what the operator sets; System is what
+  the server reports.
+- Endpoints (planned): bind addresses, TLS posture, advertised URLs.
+- Deploys: release channel, current release, rollout history. Moves to
+  its own Deploys page in UIR23.
+- Token / session (planned): admin token rotation, session policy.
+  Rotation itself lives under Shutdown until this sub-page exists.
+- Environment (planned): process-level env vars.
 - Integrations: adapter capability matrices (Convex / MongoDB / Firebase
   / Cloud Functions / Native HTTP/WS).
-- Shutdown: graceful shutdown with running-machine warning.
+- Shutdown: admin-token rotation and graceful shutdown. Both writes go
+  through `ConfirmDialog`: rotation asks for the current bearer and
+  keeps Confirm inert until one is typed; shutdown asks the operator to
+  type `shutdown`, because the write reaches past this browser.
 
-The Settings (server) sub-panel is a **static menu** of sub-pages
-(`General`, `Endpoints`, `Deploys`, `Token`, `Environment`,
-`Integrations`, `Shutdown`).
+The Settings (server) sub-panel is a **static menu** of the built
+sub-pages (`General`, `System`, `Deploys`, `Integrations`, `Shutdown`).
+`Endpoints`, `Token`, and `Environment` join the menu when their panes
+land; the route rejects their ids until then.
 
 ### Operator → Settings (server) → Integrations (Adapters)
 
@@ -1374,8 +1390,8 @@ Native UI expectations:
 
 Settings owns server administration and deployment management:
 
-- Server info: version, uptime, listen address, storage backend, and active
-  local server origin.
+- Server info: version, uptime, listen address, data directory, storage
+  backend, and active local server origin. This is the System sub-page.
 - Configuration display: runtime limits, license status and usage, auth
   provider config, adapter enablement, and storage topology. Configuration is
   read-only in Phase 1 unless a dedicated write API exists.
@@ -1383,8 +1399,11 @@ Settings owns server administration and deployment management:
   inventory, deploy history, and deploy trigger when the local-admin deploy
   endpoint can accept the selected artifact.
 - Token and session: current session state, token rotation with confirmation,
-  and forced re-auth after rotation.
-- Shutdown: graceful shutdown with confirmation and clear disconnect state.
+  and forced re-auth after rotation. Rotation lives on the Shutdown sub-page
+  until the Token sub-page exists.
+- Shutdown: graceful shutdown with typed confirmation and clear disconnect
+  state. Both writes use the shared `ConfirmDialog`; nothing on the page
+  hand-rolls a modal.
 
 ## Copy And Terminology
 

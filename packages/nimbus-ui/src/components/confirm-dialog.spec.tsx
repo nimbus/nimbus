@@ -97,6 +97,39 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it("keeps Confirm inert until the typed phrase matches, then confirms on Enter too", async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = mount({ typedConfirmation: { phrase: "shutdown" } });
+    const confirm = screen.getByTestId("confirm-confirm");
+    const field = screen.getByTestId("confirm-typed");
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Type shutdown to confirm",
+    );
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).not.toBeDisabled();
+    await user.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    await user.type(field, "shut");
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    await user.type(field, "down");
+    expect(confirm).toHaveAttribute("aria-disabled", "false");
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    await user.type(field, "{Enter}");
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps Confirm inert while the caller's own gate is closed", async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = mount({ confirmDisabled: true });
+    const confirm = screen.getByTestId("confirm-confirm");
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).toHaveTextContent("Delete");
+    await user.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it("shows a refused write in the error strip", () => {
     mount({ error: "machine is still draining" });
     expect(screen.getByRole("alert")).toHaveTextContent(

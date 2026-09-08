@@ -45,10 +45,13 @@ export function TenantHeaderStrip({
       : usageLimit
         ? `${usageNow} / ${usageLimit} MAU`
         : `${usageNow} MAU`;
+  // The page column is a flex column, and a child that clips its overflow is
+  // a child flexbox may shrink below its content: the strip rendered with its
+  // values cut off until it declined to shrink.
   return (
     <div
       data-testid="settings-tenant-header"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border-2 bg-bg-raised md:grid-cols-4"
+      className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-border-2 bg-bg-raised md:grid-cols-4"
     >
       <Cell label="Active tenant">
         <CopyChip
@@ -66,7 +69,7 @@ export function TenantHeaderStrip({
           data-testid="settings-license-kind"
         >
           {licenseLabel}
-          {licenseStatus ? (
+          {licenseStatus && licenseStatus !== licenseLabel ? (
             <span className="ml-1 text-text-3">· {licenseStatus}</span>
           ) : null}
         </span>
@@ -109,6 +112,7 @@ export function ServerInfoSection({
       : typeof details.storage === "string"
         ? details.storage
         : "—";
+  const dataDir = typeof details.dataDir === "string" ? details.dataDir : null;
   const encryptionSnap = encryption.kind === "ok" ? encryption.value : null;
   const encryptionEnabled: "loading" | "error" | boolean =
     encryption.kind === "loading"
@@ -121,7 +125,7 @@ export function ServerInfoSection({
     <PageSection
       title="Server"
       testid="settings-server-info"
-      description="Version, uptime, listen address, storage backend, encryption, and health."
+      description="Version, uptime, listen address, data directory, storage backend, encryption, and health."
     >
       <DefinitionList>
         <Definition label="Health">
@@ -161,6 +165,32 @@ export function ServerInfoSection({
             value={activeOrigin}
             testid="settings-server-origin"
           />
+        </Definition>
+        {/*
+          The server records the directory the engine opened, so the row is
+          the path the process is using and not the one the operator
+          remembers passing. A status row without it says so instead of
+          showing a placeholder that reads as a path.
+        */}
+        <Definition label="Data directory">
+          {dataDir ? (
+            <CopyChip
+              label="data directory"
+              value={dataDir}
+              testid="settings-server-data-dir"
+            >
+              <span className="block max-w-full truncate" title={dataDir}>
+                {dataDir}
+              </span>
+            </CopyChip>
+          ) : (
+            <span
+              className="font-mono text-xs text-text-3"
+              data-testid="settings-server-data-dir-missing"
+            >
+              {status ? "not reported" : "loading…"}
+            </span>
+          )}
         </Definition>
         <Definition label="Storage backend">
           <span className="font-mono text-xs text-text-1">
