@@ -66,7 +66,7 @@ function NoTenantHelp({ hasTenants }: { hasTenants: boolean | undefined }) {
         <>
           <p>Select a tenant.</p>
           <p className="mt-2">
-            Pick a tenant from the top-nav selector to see its tables.
+            Pick a tenant from the sidebar selector to see its tables.
           </p>
         </>
       )}

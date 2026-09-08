@@ -223,7 +223,7 @@ function useSubDrawerDisplay(): {
   };
 }
 
-// Collapsed: a thin rail with an expand toggle (mirrors the primary drawer).
+// Collapsed: a thin rail with an expand toggle (mirrors the sidebar rail).
 // The panel is never fully removed, so it is always reachable again.
 function SubDrawerRail({
   spec,

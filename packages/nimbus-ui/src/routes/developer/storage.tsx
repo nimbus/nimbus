@@ -108,7 +108,7 @@ function StoragePage() {
           ) : (
             <EmptyState
               title="Select a tenant"
-              body="Pick a tenant from the top-nav selector to see its tables."
+              body="Pick a tenant from the sidebar selector to see its tables."
               testid="tenant-tables-empty"
             />
           )

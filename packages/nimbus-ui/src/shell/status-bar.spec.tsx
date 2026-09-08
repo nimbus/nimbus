@@ -106,7 +106,7 @@ describe("StatusBar", () => {
     );
   });
 
-  it("no longer renders a steady-state version (moved to the top nav)", () => {
+  it("no longer renders a steady-state version (moved to the sidebar footer)", () => {
     render(<StatusBar />);
     expect(screen.queryByTestId("status-version")).toBeNull();
   });

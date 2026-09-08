@@ -2,53 +2,72 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEVELOPER_NAV_ENTRIES,
+  DEVELOPER_NAV_GROUPS,
   type NavEntry,
+  type NavGroup,
   navEntriesForView,
+  navGroupsForView,
   OPERATOR_NAV_ENTRIES,
+  OPERATOR_NAV_GROUPS,
   viewFromPathname,
 } from "./nav-entries";
 
-const EXPECTED_DEVELOPER_IDS = [
-  "overview",
-  "compute",
-  "services",
-  "schedules",
-  "storage",
-  "files",
-  "observability",
-  "settings",
+const EXPECTED_DEVELOPER_GROUPS: Array<[string | null, string[]]> = [
+  [null, ["overview"]],
+  ["Build", ["compute", "storage", "files"]],
+  ["Run", ["services", "schedules"]],
+  ["Observe", ["observability"]],
+  [null, ["settings"]],
 ];
 
-const EXPECTED_OPERATOR_IDS = [
-  "nodes",
-  "tenants",
-  "machines",
-  "network",
-  "services",
-  "observability",
-  "settings",
+const EXPECTED_OPERATOR_GROUPS: Array<[string | null, string[]]> = [
+  [null, ["nodes"]],
+  ["Fleet", ["machines", "network", "services"]],
+  ["Access", ["tenants"]],
+  ["Observe", ["observability"]],
+  [null, ["settings"]],
 ];
+
+function shape(groups: ReadonlyArray<NavGroup>) {
+  return groups.map((group) => [
+    group.label,
+    group.entries.map((entry) => entry.id),
+  ]);
+}
 
 describe("nav-entries", () => {
-  it("exports eight developer entries in the expected order", () => {
+  it("groups the eight developer entries as Build, Run and Observe", () => {
+    expect(shape(DEVELOPER_NAV_GROUPS)).toEqual(EXPECTED_DEVELOPER_GROUPS);
+  });
+
+  it("groups the seven operator entries as Fleet, Access and Observe", () => {
+    expect(shape(OPERATOR_NAV_GROUPS)).toEqual(EXPECTED_OPERATOR_GROUPS);
+  });
+
+  it("flattens the groups into the entry lists in group order", () => {
     expect(DEVELOPER_NAV_ENTRIES.map((e) => e.id)).toEqual(
-      EXPECTED_DEVELOPER_IDS,
+      EXPECTED_DEVELOPER_GROUPS.flatMap(([, ids]) => ids),
     );
-  });
-
-  it("exports seven operator entries in the expected order", () => {
     expect(OPERATOR_NAV_ENTRIES.map((e) => e.id)).toEqual(
-      EXPECTED_OPERATOR_IDS,
+      EXPECTED_OPERATOR_GROUPS.flatMap(([, ids]) => ids),
     );
   });
 
-  it("tags every developer entry with view='developer'", () => {
-    for (const entry of DEVELOPER_NAV_ENTRIES) {
-      expect(entry.view).toBe("developer");
+  it("puts the view's home page first and Settings last, both outside a group", () => {
+    for (const groups of [DEVELOPER_NAV_GROUPS, OPERATOR_NAV_GROUPS]) {
+      const first = groups[0];
+      const last = groups[groups.length - 1];
+      expect(first?.label).toBeNull();
+      expect(first?.entries[0]?.to).toMatch(/^\/(developer|operator)$/);
+      expect(last?.label).toBeNull();
+      expect(last?.entries.map((e) => e.id)).toEqual(["settings"]);
     }
   });
 
-  it("tags every operator entry with view='operator'", () => {
+  it("tags every entry with the view of its group list", () => {
+    for (const entry of DEVELOPER_NAV_ENTRIES) {
+      expect(entry.view).toBe("developer");
+    }
     for (const entry of OPERATOR_NAV_ENTRIES) {
       expect(entry.view).toBe("operator");
     }
@@ -68,62 +87,24 @@ describe("nav-entries", () => {
     }
   });
 
-  it("packs count entries with both ref and args (or null for non-count entries)", () => {
+  it("carries no count on any entry", () => {
+    // The sidebar shows no badges: a zero-count badge on every empty
+    // section was the noise the redesign removed, so the entry shape has no
+    // place to put one.
     for (const entry of [...DEVELOPER_NAV_ENTRIES, ...OPERATOR_NAV_ENTRIES]) {
-      if (entry.count === null) {
-        continue;
-      }
-      expect(entry.count.ref).toBeDefined();
-      expect(entry.count.args).toBeDefined();
-      expect(typeof entry.count.ref.name).toBe("string");
+      expect(entry).not.toHaveProperty("count");
+      expect(entry).not.toHaveProperty("countKind");
     }
   });
 
-  it("gives every tenant-scoped entry a count query that accepts tenantId", () => {
-    const scoped = [...DEVELOPER_NAV_ENTRIES, ...OPERATOR_NAV_ENTRIES].filter(
-      (e) => e.tenantScoped,
-    );
-    expect(scoped.map((e) => e.id)).toEqual([
-      "services",
-      "schedules",
-      "storage",
-    ]);
-    for (const entry of scoped) {
-      // The drawer substitutes the active tenant into these args. A scoped
-      // entry whose query has no tenantId arg would be rejected at read time.
-      expect(entry.count).not.toBeNull();
-      expect(entry.count?.args).toHaveProperty("tenantId");
-    }
-  });
-
-  it("scopes every developer count whose query accepts tenantId", () => {
-    // The Developer console promises tenant scope, so a badge there may only be
-    // server-wide when the underlying query has no tenantId to pass. Operator
-    // counts are deliberately server-wide and are not covered by this rule.
-    for (const entry of DEVELOPER_NAV_ENTRIES) {
-      if (entry.count === null) continue;
-      const scopable = Object.hasOwn(entry.count.args as object, "tenantId");
-      expect({ id: entry.id, scoped: entry.tenantScoped === true }).toEqual({
-        id: entry.id,
-        scoped: scopable,
-      });
-    }
-  });
-
-  it("uses non-query count sources for nodes and tenants", () => {
-    const byId = (id: string) => OPERATOR_NAV_ENTRIES.find((e) => e.id === id);
-    expect(byId("nodes")?.count).toBeNull();
-    expect(byId("nodes")?.countKind).toBe("nodes");
-    expect(byId("tenants")?.count).toBeNull();
-    expect(byId("tenants")?.countKind).toBe("tenants");
-  });
-
-  it("navEntriesForView returns the matching list", () => {
+  it("navGroupsForView and navEntriesForView return the matching lists", () => {
+    expect(navGroupsForView("developer")).toBe(DEVELOPER_NAV_GROUPS);
+    expect(navGroupsForView("operator")).toBe(OPERATOR_NAV_GROUPS);
     expect(navEntriesForView("developer")).toBe(DEVELOPER_NAV_ENTRIES);
     expect(navEntriesForView("operator")).toBe(OPERATOR_NAV_ENTRIES);
   });
 
-  it("viewFromPathname maps /admin* to operator and everything else to developer", () => {
+  it("viewFromPathname maps /operator* to operator and everything else to developer", () => {
     expect(viewFromPathname("/operator")).toBe("operator");
     expect(viewFromPathname("/operator/")).toBe("operator");
     expect(viewFromPathname("/operator/machines")).toBe("operator");

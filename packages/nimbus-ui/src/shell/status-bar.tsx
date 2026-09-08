@@ -141,7 +141,7 @@ function VersionSlot({
     staleness;
   const { state, info, targetLatest } = snapshot;
 
-  // The steady-state version lives in the top nav (`nimbus v…`); this footer
+  // The steady-state version lives in the sidebar footer; this status-bar
   // slot only appears when there is an actionable upgrade.
   if (state === "hidden" || !info) {
     return null;

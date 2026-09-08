@@ -1,4 +1,9 @@
-// Smoke walk for the desktop UI.
+// Smoke walk for the console, run in the desktop and the mobile project.
+//
+// Every step after the first reaches its page through the sidebar: the
+// view switcher for a change of view, a nav row for a page. On the mobile
+// project the sidebar is a sheet behind the top-bar menu button, and the
+// same helpers open it first.
 //
 // What this covers, in order:
 //   1. /ui/developer/        — Developer Overview tile envelopes
@@ -101,6 +106,57 @@ async function seedSmokeFixture(
   expect(serviceRes.status(), await serviceRes.text()).toBe(200);
 }
 
+// The sidebar is a sheet below 640px. `openNav` puts the sidebar body on
+// screen in either layout so a step can click a row or the view switcher
+// without knowing which project it runs in. A navigation closes the sheet
+// on its own; `closeNav` is for the steps that change scope without moving.
+async function openNav(page: Page): Promise<void> {
+  // Below the desktop tier the sub-drawer overlay stays open across a
+  // navigation from one of its own items, and its scrim covers the top bar.
+  const overlay = page.getByTestId("sub-drawer-overlay");
+  if (await overlay.isVisible()) {
+    await page.keyboard.press("Escape");
+    await expect(overlay).toHaveCount(0);
+  }
+  const menu = page.getByTestId("mobile-menu-button");
+  if (await menu.isVisible()) {
+    await menu.click();
+    await expect(page.getByTestId("sidebar-sheet")).toBeVisible();
+  }
+}
+
+async function closeNav(page: Page): Promise<void> {
+  const sheet = page.getByTestId("sidebar-sheet");
+  if (await sheet.isVisible()) {
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+  }
+}
+
+async function switchView(
+  page: Page,
+  view: "developer" | "operator",
+): Promise<void> {
+  await openNav(page);
+  await page.getByTestId(`view-switcher-${view}`).click();
+}
+
+async function navigateTo(page: Page, id: string): Promise<void> {
+  await openNav(page);
+  await page.getByTestId(`nav-${id}`).click();
+}
+
+// Below the desktop tier the sub-drawer starts as a rail; its items live in
+// the overlay behind the expand button.
+async function openSubDrawer(page: Page): Promise<void> {
+  const drawer = page.getByTestId("sub-drawer");
+  await expect(drawer).toBeVisible();
+  if ((await drawer.getAttribute("data-collapsed")) === "true") {
+    await page.getByTestId("sub-drawer-toggle").click();
+    await expect(page.getByTestId("sub-drawer-overlay")).toBeVisible();
+  }
+}
+
 interface ConsoleAccumulator {
   errors: ConsoleMessage[];
   warnings: ConsoleMessage[];
@@ -115,8 +171,8 @@ function attachConsoleAccumulator(page: Page): ConsoleAccumulator {
   return acc;
 }
 
-test.describe("desktop UI smoke walk", () => {
-  test("10-step deterministic walk asserts envelopes and console hygiene", async ({
+test.describe("console smoke walk", () => {
+  test("8-step deterministic walk through the sidebar asserts envelopes and console hygiene", async ({
     page,
     nimbusServer,
   }) => {
@@ -133,19 +189,25 @@ test.describe("desktop UI smoke walk", () => {
     await expect(page.getByTestId("overview-events")).toBeVisible();
     await expect(page.getByTestId("overview-runs")).toBeVisible();
 
-    // 2. Operator Nodes
-    await page.goto(`${baseURL}/ui/operator/`);
+    // 2. Operator Nodes, through the view switcher
+    await switchView(page, "operator");
+    await expect(page).toHaveURL(/\/ui\/operator\/?$/);
     await expect(page.getByTestId("page-operator-nodes")).toBeVisible();
     await expect(page.getByTestId("nodes-hosted")).toBeVisible();
 
-    // 3. Developer Services — select the seeded tenant through the real
-    // tenant switcher, then assert the scoped service list.
-    await page.goto(`${baseURL}/ui/developer/services`);
+    // 3. Developer Services — back through the view switcher, then the
+    // Services row, then select the seeded tenant through the real tenant
+    // selector in the sidebar scope row and assert the scoped service list.
+    await switchView(page, "developer");
+    await expect(page.getByTestId("page-overview")).toBeVisible();
+    await navigateTo(page, "services");
     await expect(page.getByTestId("page-services")).toBeVisible();
+    await openNav(page);
     await page.getByTestId("tenant-selector-trigger").click();
     await page
       .getByTestId(`tenant-selector-option-${SMOKE_TENANT_ID}`)
       .click();
+    await closeNav(page);
     await expect(page.getByTestId("services-scope")).toContainText(
       new RegExp(SMOKE_TENANT_ID, "i"),
     );
@@ -154,13 +216,15 @@ test.describe("desktop UI smoke walk", () => {
       page.getByTestId(`services-row-${SMOKE_SERVICE_NAME}`),
     ).toBeVisible();
 
-    // 4. Operator Services — tenant-grouped sub-drawer
-    await page.goto(`${baseURL}/ui/operator/services`);
+    // 4. Operator Services — tenant-grouped sub-drawer. The view switch
+    // restores the operator route last open, which is the nodes page.
+    await switchView(page, "operator");
+    await navigateTo(page, "services");
     await expect(page.getByTestId("page-admin-services")).toBeVisible();
     await expect(page.getByTestId("admin-services-summary")).toBeVisible();
     // sub-drawer presence (the items only render if services exist;
     // the host envelope must be there regardless)
-    await expect(page.getByTestId("sub-drawer")).toBeVisible();
+    await openSubDrawer(page);
 
     // 5. Operator Service detail — single Placement tab. The seeded
     // service surfaces in the sub-drawer regardless of which tenant is
@@ -179,7 +243,7 @@ test.describe("desktop UI smoke walk", () => {
     ).toBeVisible();
 
     // 6. Operator Tenants — diagnostic envelope is reachable
-    await page.goto(`${baseURL}/ui/operator/tenants`);
+    await navigateTo(page, "tenants");
     await expect(page.getByTestId("page-storage")).toBeVisible();
     // Either the table or the empty/server-error envelope renders; the
     // route is wired if any of these are visible.
@@ -192,7 +256,8 @@ test.describe("desktop UI smoke walk", () => {
     ).toBeVisible();
 
     // 7. Developer Observability — disabled events/errors tab chips
-    await page.goto(`${baseURL}/ui/developer/observability`);
+    await switchView(page, "developer");
+    await navigateTo(page, "observability");
     await expect(page.getByTestId("page-observability")).toBeVisible();
     await expect(page.getByTestId("observability-tabs")).toBeVisible();
     await expect(

@@ -93,7 +93,7 @@ describe("StoragePage empty states", () => {
       );
     });
     expect(screen.getByTestId("tenant-tables-empty")).toHaveTextContent(
-      /Pick a tenant from the top-nav selector/i,
+      /Pick a tenant from the sidebar selector/i,
     );
     expect(screen.getByTestId("tenant-tables-empty")).not.toHaveTextContent(
       /CREATE TENANT/i,

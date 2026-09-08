@@ -3,8 +3,10 @@ import { expect, test } from "./fixtures/nimbus-server";
 test.describe("auth -> overview", () => {
   test("auth page renders the local admin token form", async ({ page }) => {
     await page.goto("/ui/auth");
-    await expect(page.getByRole("heading", { name: "Nimbus" })).toBeVisible();
-    await expect(page.getByLabel(/admin token/i)).toBeVisible();
+    // The sign-in page has no heading: the brand mark is an SVG image named
+    // "Nimbus" and the token field is the labelled input.
+    await expect(page.getByRole("img", { name: "Nimbus" })).toBeVisible();
+    await expect(page.getByLabel(/enter auth token/i)).toBeVisible();
   });
 
   test("POST /ui/auth/session with a valid token returns 200 ok:true", async ({
@@ -40,7 +42,8 @@ test.describe("auth -> overview", () => {
     const res = await request.get(`${nimbusServer.baseURL}/ui/`);
     expect(res.status()).toBe(200);
     const body = await res.text();
-    expect(body).toContain("Nimbus Sign In");
-    expect(body).not.toContain("<script");
+    expect(body).toContain("Sign in to Nimbus");
+    // The SPA index mounts on #root; the sign-in page never carries it.
+    expect(body).not.toContain('id="root"');
   });
 });

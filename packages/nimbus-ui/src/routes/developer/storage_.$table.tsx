@@ -604,7 +604,7 @@ function TableDocumentsPage() {
           {!tenant ? (
             <EmptyState
               title="Select a tenant"
-              body="Documents scope to a tenant. Pick one from the top-nav selector to browse this table."
+              body="Documents scope to a tenant. Pick one from the sidebar selector to browse this table."
               testid="documents-empty"
             />
           ) : pageError ? (

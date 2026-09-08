@@ -16,16 +16,17 @@ import { DisconnectedOverlay } from "../shell/disconnected-overlay";
 import { AppErrorBoundary } from "../shell/error-boundary";
 import { KeyboardContract } from "../shell/keyboard-contract";
 import { viewFromPathname } from "../shell/nav-entries";
-import { PrimaryDrawer } from "../shell/primary-drawer";
+import { MobileTopBar } from "../shell/sidebar/mobile-sheet";
+import { Sidebar } from "../shell/sidebar/sidebar";
 import { StatusBar } from "../shell/status-bar";
 import { SubDrawer, SubDrawerProvider } from "../shell/sub-drawer";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
-import { TopNav } from "../shell/top-nav";
 import {
   useTenantBootstrap,
   useTenantSwitchInvalidation,
 } from "../shell/use-tenant-bootstrap";
+import { useSmallScreen } from "../shell/use-viewport-tier";
 import { persistLastRouteForView, useUiStore } from "../store/ui-store";
 
 type RootSearch = {
@@ -41,6 +42,10 @@ export const Route = createRootRoute({
 
 function ShellLayout() {
   const [toastRegion, setToastRegion] = useState<HTMLElement | null>(null);
+  // Below 640px the sidebar is a sheet behind a top-bar button; above it,
+  // the column. The tree differs on either side of the line, so the choice
+  // is made here and not in a stylesheet.
+  const small = useSmallScreen();
   useLastRouteTracker();
   useTenantBootstrap();
   useTenantSwitchInvalidation();
@@ -54,10 +59,10 @@ function ShellLayout() {
             <div className="flex h-screen flex-col bg-bg-canvas text-text-1">
               {/* The first tab stop in the console, and the only way past the
                 chrome. Everything the shell renders ahead of <main> is a tab
-                stop: the build-hash chip, the view switcher, the tenant
-                selector, the appearance menu, every primary-drawer link, the
-                two collapse buttons, the sub-drawer search, and then the whole
-                function tree, one stop per folder, module and leaf. That last
+                stop: the brand link, the view switcher, the tenant selector,
+                every sidebar row, the theme toggle, the two collapse buttons,
+                the sub-drawer search, and then the whole function tree, one
+                stop per folder, module and leaf. That last
                 one has no bound on a real deployment, so without this link
                 reaching page content by keyboard is not a fixed cost.
 
@@ -70,9 +75,9 @@ function ShellLayout() {
               >
                 Skip to content
               </a>
-              <TopNav />
+              {small ? <MobileTopBar /> : null}
               <div className="flex min-h-0 flex-1">
-                <PrimaryDrawer />
+                {small ? null : <Sidebar />}
                 <SubDrawer />
                 {/* `tabIndex={-1}` is what moves the caret. An anchor to a
                   container that cannot hold focus scrolls the page in every
