@@ -26,8 +26,16 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
 
+// The page hands its sub-panel content to the shell; the spec renders that
+// content itself so the buttons in it can drive the page's selection.
+const { subPanelSpecRef } = vi.hoisted(() => ({
+  subPanelSpecRef: { current: null as { children?: React.ReactNode } | null },
+}));
+
 vi.mock("../../shell/sub-panel", () => ({
-  useContributeSubPanel: () => undefined,
+  useContributeSubPanel: (spec: { children?: React.ReactNode }) => {
+    subPanelSpecRef.current = spec;
+  },
 }));
 
 const { toastMock } = vi.hoisted(() => ({
@@ -66,6 +74,7 @@ let writeText: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   machineActionsRef.current = {};
+  subPanelSpecRef.current = null;
   handleActionMock.mockReset();
   useQueryMock.mockReset().mockReturnValue([]);
   writeText = vi.fn().mockResolvedValue(undefined);
@@ -263,5 +272,94 @@ describe("MachinesPage action affordance", () => {
 
     fireEvent.click(other);
     expect(handleActionMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MachinesPage health and capacity", () => {
+  const machines = [
+    {
+      _id: "m1",
+      name: "default",
+      state: "running",
+      resources: { cpus: 4, memoryMiB: 8192, diskGiB: 80 },
+    },
+    {
+      _id: "m2",
+      name: "spare-01",
+      state: "stopped",
+      resources: { cpus: 2, memoryMiB: 4096, diskGiB: 40 },
+    },
+    { _id: "m3", name: "spare-02", state: "error" },
+  ];
+
+  it("shows each state as a dot with the state word beside it", () => {
+    useQueryMock.mockReturnValue(machines);
+    render(<MachinesPage />);
+
+    const running = screen.getByTestId("machines-state-default");
+    expect(running.querySelector('[data-state="running"]')).not.toBeNull();
+    expect(running).toHaveTextContent("running");
+    const errored = screen.getByTestId("machines-state-spare-02");
+    expect(errored.querySelector('[data-state="error"]')).not.toBeNull();
+    expect(errored).toHaveTextContent("error");
+  });
+
+  it("labels the header count and adds the fleet capacity", () => {
+    useQueryMock.mockReturnValue(machines);
+    render(<MachinesPage />);
+
+    expect(screen.getByTestId("machines-total")).toHaveTextContent(
+      "3 machines · 1 error · 1 running · 1 stopped",
+    );
+    expect(screen.getByTestId("machines-capacity")).toHaveTextContent(
+      "6 vCPU · 12 GiB memory · 120 GiB disk",
+    );
+  });
+
+  it("says one machine in the singular and leaves out an empty capacity", () => {
+    useQueryMock.mockReturnValue([
+      { _id: "m1", name: "solo", state: "running" },
+    ]);
+    render(<MachinesPage />);
+
+    expect(screen.getByTestId("machines-total")).toHaveTextContent(
+      "1 machine · 1 running",
+    );
+    expect(screen.queryByTestId("machines-capacity")).toBeNull();
+  });
+
+  it("keeps the header honest while the list is in flight", () => {
+    useQueryMock.mockReturnValue(undefined);
+    render(<MachinesPage />);
+
+    expect(screen.getByTestId("machines-total")).toHaveTextContent("loading…");
+    expect(screen.queryByTestId("machines-capacity")).toBeNull();
+  });
+
+  it("selects a machine from the sub-panel and marks it current", () => {
+    useQueryMock.mockReturnValue(machines);
+    render(<MachinesPage />);
+    expect(screen.queryByTestId("machines-detail")).toBeNull();
+
+    const panel = render(<>{subPanelSpecRef.current?.children}</>);
+    const item = panel.getByTestId("sub-panel-item-op-m2");
+    expect(item.tagName).toBe("BUTTON");
+    expect(item.querySelector('[data-state="stopped"]')).not.toBeNull();
+    expect(item).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(item);
+
+    expect(screen.getByTestId("machines-detail")).toHaveTextContent("spare-01");
+    expect(screen.getByTestId("machines-row-spare-01")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+    // The page republished the panel with the item marked current.
+    panel.unmount();
+    const refreshed = render(<>{subPanelSpecRef.current?.children}</>);
+    expect(refreshed.getByTestId("sub-panel-item-op-m2")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
   });
 });

@@ -382,34 +382,64 @@ local host, sourced from system status. The screen is shaped as a node
 list so it scales to a real cluster without a redesign. A node is
 distinct from a **machine** (the outer dev VM under Machines).
 
-- Node identity and health: listen address, health, role (standalone
-  today), Nimbus version, build info, uptime, embed integrity hash.
-- Hosted on this node: live counts of tenants, machines, services, and
-  per-adapter listeners (Convex HTTP/WS, MongoDB wire, Firebase
-  REST/Listen, native WebSocket, machine API).
-- Upgrades: pending release / upgrade state, last upgrade, current
-  channel.
-- Recent admin actions: token rotation, tenant create, machine restart.
+The page reads top to bottom the way the Developer overview does:
 
-No sub-panel. When clustering lands this becomes a multi-row node list
-with a per-node detail page (Raft role, peer reachability, placement).
+- Headline: the mascot beside one sentence that says what the node is
+  doing. Priority order: connection dropped, status read failed,
+  inventory read failed, reading, unhealthy, failing services, no
+  services placed, every service running, or "R of N services running".
+  The face state follows the sentence (error, working, empty, idle).
+- Facts line under the headline: listen address, version, uptime, and
+  data directory as copy chips separated by `·`. Identity lives here
+  once; the node card does not repeat it.
+- Node card: name (`local node`), role subline ("standalone ·
+  clustering is not active"), a health pill, and three cells for
+  started, last update, and the build hash. Loading, offline, and error
+  render inside the cells through `LoadingCell`.
+- Hosted on this node: four tiles that link to Tenants, Machines,
+  Services, and Network. Each tile shows a large count and a subline
+  that says what the count is made of: machines and services carry a
+  state summary ("2 running · 1 stopped"), listeners carry the adapter
+  list ("http, ws"). A count never stands alone.
+- Recent events: the five newest events as a `DataTable` (level dot and
+  word, source, message, relative time) with a "View all logs" link.
+  Activating a row opens Observability on the Logs tab narrowed to the
+  event's correlation id when it has one.
+
+No sub-panel. When clustering lands the node card becomes one row per
+node with a per-node detail page (Raft role, peer reachability,
+placement). Upgrade state and recent admin actions are not shown yet;
+Settings owns upgrades.
 
 ### Tenants (Operator)
 
 Tenants owns the tenant lifecycle (the Developer console can't create
 tenants — that's an admin concern).
 
-- Tenant list: name, backend, table count, quota, last write, current
-  adapter binding.
-- Create tenant: backend selector, adapter binding, optional schema
-  bootstrap.
-- Archive tenant: confirmation with resource-count warning.
-- Per-tenant adapter binding override.
-- Empty state on fresh install: prominent "Create your first tenant"
-  CTA; matches the inline Developer-side fallback.
+- Tenant list: a `DataTable` with id (as a copy chip), table count, and
+  a row menu. Clicking a row opens the tenant in the Developer storage
+  view (`/developer/storage?as=<id>`). Right-click or the `⋯` button
+  opens the row menu: open, copy id, delete.
+- Create tenant: `Create` is the one primary action in the header. It
+  opens a dialog with a single id input; the server owns the id rule
+  and a refusal (for example "tenant already exists") stays in the
+  dialog beside the input. While the request is in flight the submit
+  reads "Creating…". Success closes the dialog, toasts "Created tenant
+  <id>", and the row appears through a loader invalidation. The
+  Developer console hands off with `?create=1`, which opens the dialog
+  on arrival and clears itself on close.
+- Delete tenant: lives in the row menu only, never inline, and runs
+  through `ConfirmDialog`. The description says how many tables go with
+  the tenant; when the count is above zero the operator types the
+  tenant id before `Delete` enables. A server refusal stays in the
+  dialog.
+- Empty state on fresh install: "Create your first tenant" CTA that
+  opens the same dialog; matches the inline Developer-side fallback.
+- Backend selector, adapter binding, quotas, and last write are not
+  wired; the server exposes ids and table counts only.
 
 The Tenants sub-panel is a **dynamic list** of tenants. Selecting a
-tenant opens its admin detail page.
+tenant opens it in the Developer storage view.
 
 ### Machines (Operator)
 
@@ -419,17 +449,32 @@ supplies the kernel sandboxes need; it is **not** a cluster node (see
 Nodes), and pure-Linux nodes have none. Do not frame this screen as
 "host" lifecycle — the host is the node.
 
-- Machine list: name, provider, architecture, OS image reference, digest,
-  state, resource allocation, last boot, last upgrade.
-- Machine detail: boot image, desired image, actual image, guest Nimbus
-  version/hash, forwarded API, services placed on it, ports, logs,
-  upgrade/rollback state.
-- Actions: start, stop, restart, SSH, OS apply, OS upgrade, remove.
+- Header summary: the trailing slot says what the fleet is, not a bare
+  total: "3 machines · 2 running · 1 stopped" on the first line and the
+  summed allocation ("6 vCPU · 12 GiB memory · 120 GiB disk") on the
+  second. Zero capacity leaves the second line out; an in-flight read
+  says "loading…".
+- Machine list: name, state as a `StateDot` with the state word beside
+  it (an in-flight action shows its optimistic state and the row error
+  under it), provider, kind, CPU, memory, disk, updated, and a pinned
+  actions column. The table keeps its nine columns through the skeleton
+  so the swap from loading to loaded moves nothing.
+- Machine detail: the inspector beside the table opens from a row or
+  from the sub-panel; it shows the identity, resources, and metadata
+  the server records. Boot image, desired versus actual image, guest
+  Nimbus hash, forwarded API, and placed services arrive with the
+  provider work that records them.
+- Actions: start, stop, restart, delete (behind `ConfirmDialog`). SSH,
+  OS apply, and OS upgrade are not wired.
 - macOS copy must be clear that services run as containers inside the
   Linux guest and that machine actions converge the guest VM's state. Do
   not imply per-service nested microVMs on macOS.
 
-The Machines sub-panel is a **dynamic list** of machines.
+The Machines sub-panel is a **dynamic list** of machines. Each item is a
+button with a `StateDot`, the name, and the state word; it selects the
+machine in place (the inspector opens beside the table) and carries
+`aria-current` while selected, so the panel and the table agree on
+which machine is open.
 
 ### Network (Operator)
 
@@ -446,6 +491,10 @@ Network makes the active local topology inspectable.
   on macOS, guest API version.
 - Security: origin allowlist, session state, token rotation, denied
   requests.
+
+Every count on Network is labelled with what it counts (listeners by
+adapter, active subscriptions, published ports); a number never stands
+alone next to a heading.
 
 The Network sub-panel is a **static menu** (`Routes` / `WS` / `Ports`
 / `Listeners` / `Security`).

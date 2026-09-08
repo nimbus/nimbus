@@ -251,13 +251,13 @@ test.describe("console smoke walk", () => {
 
     // 6. Operator Tenants — diagnostic envelope is reachable
     await navigateTo(page, "tenants");
-    await expect(page.getByTestId("page-storage")).toBeVisible();
+    await expect(page.getByTestId("page-tenants")).toBeVisible();
     // Either the table or the empty/server-error envelope renders; the
     // route is wired if any of these are visible.
     await expect(
-      page.getByTestId("storage-tenants-table").or(
-        page.getByTestId("storage-empty").or(
-          page.getByTestId("storage-server-error-envelope"),
+      page.getByTestId("tenants-table").or(
+        page.getByTestId("tenants-empty").or(
+          page.getByTestId("tenants-error-envelope"),
         ),
       ),
     ).toBeVisible();
