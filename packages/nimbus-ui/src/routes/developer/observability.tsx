@@ -3,9 +3,9 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "../../components/page-header";
 import { CategoryPill } from "../../components/pill";
 import {
-  type StaticSubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type StaticSubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import { LogsTab } from "./observability/-logs";
 import { RunsTab } from "./observability/-runs";
 import {
@@ -41,7 +41,7 @@ const TAB_LABELS: Record<ObservabilityTab, string> = {
   errors: "Errors",
 };
 
-export const OBSERVABILITY_SUB_DRAWER = {
+export const OBSERVABILITY_SUB_PANEL = {
   kind: "static",
   title: "Observability",
   items: [
@@ -60,12 +60,12 @@ export const OBSERVABILITY_SUB_DRAWER = {
       disabled: true as const,
     })),
   ],
-} as const satisfies StaticSubDrawerSpec<ObservabilityTab>;
+} as const satisfies StaticSubPanelSpec<ObservabilityTab>;
 
 export type { ObservabilityTab } from "./observability/-types";
 
 function ObservabilityPage() {
-  useContributeSubDrawer(OBSERVABILITY_SUB_DRAWER);
+  useContributeSubPanel(OBSERVABILITY_SUB_PANEL);
   const search = Route.useSearch();
   const tab: ActiveObservabilityTab = search.tab ?? "logs";
   return (
@@ -109,7 +109,7 @@ function Header({ tab }: { tab: ActiveObservabilityTab }) {
         className="flex shrink-0 gap-px self-start overflow-hidden rounded-md border border-border-2 bg-bg-raised"
         data-testid="observability-tabs"
       >
-        {OBSERVABILITY_SUB_DRAWER.items.map((item) =>
+        {OBSERVABILITY_SUB_PANEL.items.map((item) =>
           item.disabled ? (
             <DisabledTab key={item.id} id={item.id} label={item.label} />
           ) : (

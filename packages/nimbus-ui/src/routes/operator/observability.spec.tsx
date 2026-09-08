@@ -16,12 +16,12 @@ vi.mock("@nimbus/nimbus/react", () => ({
 
 const { contributeMock } = vi.hoisted(() => ({ contributeMock: vi.fn() }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: (spec: unknown) => contributeMock(spec),
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: (spec: unknown) => contributeMock(spec),
 }));
 
 import { routeComponent } from "../../test/route-internals";
-import { ADMIN_OBSERVABILITY_SUB_DRAWER, Route } from "./observability";
+import { ADMIN_OBSERVABILITY_SUB_PANEL, Route } from "./observability";
 
 type RailItem = { id: string; active: boolean };
 type ContributedSpec = { railItems?: RailItem[] };
@@ -41,8 +41,8 @@ function renderPage(search: Record<string, unknown> = { tab: "logs" }) {
 }
 
 describe("operator observability sub-view switching", () => {
-  it("defaults the tab in the search so the sub-drawer can mark it active", () => {
-    // The sub-drawer decides "active" by matching an item's `search` against
+  it("defaults the tab in the search so the sub-panel can mark it active", () => {
+    // The sub-panel decides "active" by matching an item's `search` against
     // the location's. An undefined tab renders Logs while showing nothing as
     // selected, so the default is resolved here rather than at render.
     const resolved = (
@@ -53,11 +53,11 @@ describe("operator observability sub-view switching", () => {
     expect(resolved.tab).toBe("logs");
   });
 
-  it("does not duplicate the sub-drawer as a tab strip", () => {
+  it("does not duplicate the sub-panel as a tab strip", () => {
     useQueryMock.mockReturnValue([]);
     renderPage();
 
-    // DESIGN.md: do not duplicate primary navigation in the sub-drawer. The
+    // DESIGN.md: do not duplicate primary navigation in the sub-panel. The
     // drawer owns Logs/Runs/Events/Errors; a second in-page strip is the
     // duplicate that has to stay gone.
     expect(screen.queryByTestId("admin-observability-tabs")).toBeNull();
@@ -78,7 +78,7 @@ describe("operator observability sub-view switching", () => {
   });
 
   it("names unavailable sub-views plainly and marks them with `disabled`", () => {
-    const disabled = ADMIN_OBSERVABILITY_SUB_DRAWER.items.filter(
+    const disabled = ADMIN_OBSERVABILITY_SUB_PANEL.items.filter(
       (item) => item.disabled,
     );
     // The label is the name of the view, nothing else. The marker used to be
@@ -87,7 +87,7 @@ describe("operator observability sub-view switching", () => {
     // every other caller free to invent its own suffix. The drawer renders the
     // shared coming-soon chip from `disabled` instead.
     expect(disabled.map((item) => item.label)).toEqual(["Events", "Errors"]);
-    for (const item of ADMIN_OBSERVABILITY_SUB_DRAWER.items) {
+    for (const item of ADMIN_OBSERVABILITY_SUB_PANEL.items) {
       expect(item.label).not.toMatch(/soon/i);
     }
   });

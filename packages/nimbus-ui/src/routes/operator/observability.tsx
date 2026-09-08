@@ -12,10 +12,10 @@ import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { shortId } from "../../lib/format";
 import {
-  type StaticSubDrawerSpec,
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type StaticSubPanelSpec,
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import {
   parseTenantScope,
   serializeTenantScope,
@@ -32,7 +32,7 @@ export const Route = createFileRoute("/operator/observability")({
   validateSearch: (
     search: Record<string, unknown>,
   ): AdminObservabilitySearch => ({
-    // Resolve the default here, not at render: the sub-drawer is now the only
+    // Resolve the default here, not at render: the sub-panel is now the only
     // sub-view switch, and it marks an item active by matching its `search`
     // against the location's. A bare /operator/observability would otherwise
     // show Logs without showing Logs as selected.
@@ -45,7 +45,7 @@ function parseTab(value: unknown): AdminObservabilityTab | undefined {
   return value === "logs" || value === "runs" ? value : undefined;
 }
 
-// The sub-drawer is the only Logs/Runs/Events/Errors switch on this surface.
+// The sub-panel is the only Logs/Runs/Events/Errors switch on this surface.
 // It renders the "coming soon" chip for any item marked `disabled`, so the
 // state explains itself without a second, duplicate tab strip -- and without
 // each caller spelling the marker into its own label.
@@ -84,11 +84,11 @@ const ADMIN_OBSERVABILITY_ITEMS = [
   },
 ] as const;
 
-export const ADMIN_OBSERVABILITY_SUB_DRAWER = {
+export const ADMIN_OBSERVABILITY_SUB_PANEL = {
   kind: "static",
   title: "Observability",
   items: ADMIN_OBSERVABILITY_ITEMS,
-} as const satisfies StaticSubDrawerSpec<"logs" | "runs" | "events" | "errors">;
+} as const satisfies StaticSubPanelSpec<"logs" | "runs" | "events" | "errors">;
 
 export type AdminObservabilityTab =
   (typeof ADMIN_OBSERVABILITY_ITEMS)[number]["id"];
@@ -118,11 +118,11 @@ function AdminObservabilityPage() {
   const tab: AdminObservabilityTab = search.tab ?? "logs";
   const scope = parseTenantScope(search.tenant);
   const navigate = useNavigate({ from: "/operator/observability" });
-  // Collapsing the sub-drawer must not strand the operator without a switch,
+  // Collapsing the sub-panel must not strand the operator without a switch,
   // so the enabled sub-views are also reachable from the icon rail.
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
-      ...ADMIN_OBSERVABILITY_SUB_DRAWER,
+      ...ADMIN_OBSERVABILITY_SUB_PANEL,
       railItems: ADMIN_OBSERVABILITY_ITEMS.filter((item) => !item.disabled).map(
         (item) => ({
           id: item.id,
@@ -140,7 +140,7 @@ function AdminObservabilityPage() {
     }),
     [tab, navigate],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"

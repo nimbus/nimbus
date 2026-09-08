@@ -49,9 +49,9 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (_ref: unknown, args: unknown) => useQueryMock(args),
 }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: () => undefined,
-  useSubDrawerSearch: () => "",
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: () => undefined,
+  useSubPanelSearch: () => "",
 }));
 
 import { Route } from "../../routes/developer/storage_.$table";

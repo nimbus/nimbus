@@ -19,7 +19,7 @@ import { viewFromPathname } from "../shell/nav-entries";
 import { MobileTopBar } from "../shell/sidebar/mobile-sheet";
 import { Sidebar } from "../shell/sidebar/sidebar";
 import { StatusBar } from "../shell/status-bar";
-import { SubDrawer, SubDrawerProvider } from "../shell/sub-drawer";
+import { SubPanelLayout, SubPanelProvider } from "../shell/sub-panel";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
 import {
@@ -55,13 +55,13 @@ function ShellLayout() {
       <KeyboardContract />
       <StalenessProvider>
         <TooltipProvider>
-          <SubDrawerProvider>
+          <SubPanelProvider>
             <div className="flex h-screen flex-col bg-bg-canvas text-text-1">
               {/* The first tab stop in the console, and the only way past the
                 chrome. Everything the shell renders ahead of <main> is a tab
                 stop: the brand link, the view switcher, the tenant selector,
                 every sidebar row, the theme toggle, the two collapse buttons,
-                the sub-drawer search, and then the whole function tree, one
+                the sub-panel search, and then the whole function tree, one
                 stop per folder, module and leaf. That last
                 one has no bound on a real deployment, so without this link
                 reaching page content by keyboard is not a fixed cost.
@@ -78,27 +78,28 @@ function ShellLayout() {
               {small ? <MobileTopBar /> : null}
               <div className="flex min-h-0 flex-1">
                 {small ? null : <Sidebar />}
-                <SubDrawer />
-                {/* `tabIndex={-1}` is what moves the caret. An anchor to a
-                  container that cannot hold focus scrolls the page in every
-                  browser but leaves the next Tab back in the chrome, which is
-                  the walk the link exists to avoid. */}
-                <main
-                  id="main-content"
-                  tabIndex={-1}
-                  className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
-                >
-                  <DisconnectedOverlay />
-                  <div className="flex-1 overflow-auto">
-                    <Outlet />
-                  </div>
-                </main>
+                <SubPanelLayout>
+                  {/* `tabIndex={-1}` is what moves the caret. An anchor to a
+                    container that cannot hold focus scrolls the page in every
+                    browser but leaves the next Tab back in the chrome, which is
+                    the walk the link exists to avoid. */}
+                  <main
+                    id="main-content"
+                    tabIndex={-1}
+                    className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+                  >
+                    <DisconnectedOverlay />
+                    <div className="flex-1 overflow-auto">
+                      <Outlet />
+                    </div>
+                  </main>
+                </SubPanelLayout>
               </div>
               <StatusBar />
             </div>
             <CommandPalette />
             <SystemTenantLens />
-          </SubDrawerProvider>
+          </SubPanelProvider>
           <ToastLifetimes />
           <ToastOverflow region={toastRegion} />
           <Toaster

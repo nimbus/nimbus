@@ -25,15 +25,15 @@ vi.mock("@tanstack/react-router", () => ({
     select({ location: { pathname: pathname.value } }),
 }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: (spec: Record<string, unknown>) => {
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: (spec: Record<string, unknown>) => {
     contributed.spec = spec;
   },
-  useSubDrawerSearch: () => searchText.value,
+  useSubPanelSearch: () => searchText.value,
 }));
 
 import type { TableDoc } from "../../lib/types/table";
-import { useTablesSubDrawer } from "./tables-sub-drawer";
+import { useTablesSubPanel } from "./tables-sub-panel";
 
 const TABLES: TableDoc[] = [
   { _id: "t2", name: "users", rowCount: 3 },
@@ -46,7 +46,7 @@ function Harness(props: {
   tables: TableDoc[] | undefined;
   hasTenants?: boolean;
 }) {
-  useTablesSubDrawer({
+  useTablesSubPanel({
     tenant: props.tenant,
     tables: props.tables,
     hasTenants: props.hasTenants,
@@ -72,7 +72,7 @@ function renderDrawer(props: {
   // TypeScript cannot see that rendering the harness writes it back.
   const spec = readContributedSpec();
   if (spec === null) {
-    throw new Error("Expected the sub-drawer hook to contribute a spec.");
+    throw new Error("Expected the sub-panel hook to contribute a spec.");
   }
   // The hook contributes a single element; the cast is what `render` needs to
   // see, and a wrapping fragment would only hide it.
@@ -84,8 +84,8 @@ beforeEach(() => {
   searchText.value = "";
 });
 
-describe("useTablesSubDrawer", () => {
-  it("contributes a searchable Tables drawer", () => {
+describe("useTablesSubPanel", () => {
+  it("contributes a searchable Tables panel", () => {
     render(<Harness tenant="demo" tables={TABLES} />);
     expect(contributed.spec).toMatchObject({
       kind: "dynamic",
@@ -100,22 +100,22 @@ describe("useTablesSubDrawer", () => {
       .getAllByRole("link")
       .map((el) => el.getAttribute("data-testid"));
     expect(names).toEqual([
-      "sub-drawer-item-dev-messages",
-      "sub-drawer-item-dev-sessions",
-      "sub-drawer-item-dev-users",
+      "sub-panel-item-dev-messages",
+      "sub-panel-item-dev-sessions",
+      "sub-panel-item-dev-users",
     ]);
   });
 
-  // The drawer is the section's navigator, so it has to say which table the
+  // The panel is the section's navigator, so it has to say which table the
   // detail pane is showing.
   it("marks the open table as the current page", () => {
     pathname.value = "/developer/storage/messages";
     renderDrawer({ tenant: "demo", tables: TABLES });
 
-    const open = screen.getByTestId("sub-drawer-item-dev-messages");
+    const open = screen.getByTestId("sub-panel-item-dev-messages");
     expect(open).toHaveAttribute("aria-current", "page");
     expect(open).toHaveAttribute("data-active", "true");
-    expect(screen.getByTestId("sub-drawer-item-dev-users")).toHaveAttribute(
+    expect(screen.getByTestId("sub-panel-item-dev-users")).toHaveAttribute(
       "data-active",
       "false",
     );
@@ -127,27 +127,27 @@ describe("useTablesSubDrawer", () => {
       tenant: "demo",
       tables: [{ _id: "t9", name: "my table" }],
     });
-    expect(screen.getByTestId("sub-drawer-item-dev-my table")).toHaveAttribute(
+    expect(screen.getByTestId("sub-panel-item-dev-my table")).toHaveAttribute(
       "aria-current",
       "page",
     );
   });
 
-  // The drawer's search box used to be decorative: it accepted text and
+  // The panel's search box used to be decorative: it accepted text and
   // filtered nothing.
-  it("filters the list by the drawer's search text", () => {
+  it("filters the list by the panel's search text", () => {
     searchText.value = "ses";
     renderDrawer({ tenant: "demo", tables: TABLES });
     expect(screen.getAllByRole("link")).toHaveLength(1);
     expect(
-      screen.getByTestId("sub-drawer-item-dev-sessions"),
+      screen.getByTestId("sub-panel-item-dev-sessions"),
     ).toBeInTheDocument();
   });
 
   it("says so when the search matches nothing", () => {
     searchText.value = "zzz";
     renderDrawer({ tenant: "demo", tables: TABLES });
-    expect(screen.getByTestId("sub-drawer-tables-no-match")).toHaveTextContent(
+    expect(screen.getByTestId("sub-panel-tables-no-match")).toHaveTextContent(
       "zzz",
     );
     expect(screen.queryAllByRole("link")).toHaveLength(0);
@@ -170,7 +170,7 @@ describe("useTablesSubDrawer", () => {
     expect(noTenants.container).toHaveTextContent("No tenants yet.");
   });
 
-  // `useContributeSubDrawer` resets the search box whenever the spec identity
+  // `useContributeSubPanel` resets the search box whenever the spec identity
   // changes, so a spec rebuilt on every render would erase the operator's
   // filter text as they typed it.
   it("keeps one spec identity across renders with the same tables", () => {

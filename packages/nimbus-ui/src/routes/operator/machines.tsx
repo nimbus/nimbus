@@ -13,9 +13,9 @@ import { PIN_R, Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { formatMemory } from "../../lib/format";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import { MachineDetail } from "./-machine-detail";
 import type { MachineDoc } from "./-machine-types";
 import {
@@ -55,12 +55,12 @@ function MachinesPage() {
     limit: 200,
   }) as MachineDoc[] | undefined;
 
-  const subDrawerSpec = useMemo<SubDrawerSpec>(() => {
+  const subPanelSpec = useMemo<SubPanelSpec>(() => {
     const list = machines ?? [];
     return {
       kind: "dynamic",
       title: "Machines",
-      search: { placeholder: "Filter machines" },
+      search: { placeholder: "Filter machines", rows: list.length },
       children:
         machines === undefined ? (
           <div className="px-3 py-3 text-xs text-text-3">
@@ -77,7 +77,7 @@ function MachinesPage() {
               <li key={machine._id}>
                 <a
                   href={`/operator/machines?selected=${machine._id}`}
-                  data-testid={`sub-drawer-item-op-${machine._id}`}
+                  data-testid={`sub-panel-item-op-${machine._id}`}
                   className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
                 >
                   <span className="flex-1 truncate">{machine.name}</span>
@@ -91,7 +91,7 @@ function MachinesPage() {
         ),
     };
   }, [machines]);
-  useContributeSubDrawer(subDrawerSpec);
+  useContributeSubPanel(subPanelSpec);
 
   const [selected, setSelected] = useState<string | null>(null);
   const {

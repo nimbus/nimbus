@@ -1,7 +1,7 @@
 import { describe, it } from "vitest";
 
 import {
-  OBSERVABILITY_SUB_DRAWER,
+  OBSERVABILITY_SUB_PANEL,
   type ObservabilityTab,
 } from "./observability";
 
@@ -20,7 +20,7 @@ describe("ObservabilityTab type derivation", () => {
   });
 
   it("derivation tracks spec changes at compile time", () => {
-    type FromConst = (typeof OBSERVABILITY_SUB_DRAWER.items)[number]["id"];
+    type FromConst = (typeof OBSERVABILITY_SUB_PANEL.items)[number]["id"];
     assertEqual<Equal<FromConst, ObservabilityTab>>(true);
   });
 });

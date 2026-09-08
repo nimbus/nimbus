@@ -8,10 +8,10 @@ import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-  useSubDrawerSearch,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+  useSubPanelSearch,
+} from "../../shell/sub-panel";
 import { ServicesTable } from "../developer/services";
 
 export const Route = createFileRoute("/operator/services")({
@@ -31,16 +31,16 @@ export const Route = createFileRoute("/operator/services")({
 function AdminServicesPage() {
   const { services } = Route.useLoaderData();
 
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Services",
-      search: { placeholder: "Filter services" },
-      children: <AdminServicesSubDrawer services={services} />,
+      search: { placeholder: "Filter services", rows: services.length },
+      children: <AdminServicesSubPanel services={services} />,
     }),
     [services],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
 
   return (
     <section
@@ -80,8 +80,8 @@ function SummaryChip({ services }: { services: ServiceDoc[] }) {
   );
 }
 
-function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
-  const filter = useSubDrawerSearch().trim().toLowerCase();
+function AdminServicesSubPanel({ services }: { services: ServiceDoc[] }) {
+  const filter = useSubPanelSearch().trim().toLowerCase();
   if (services.length === 0) {
     return (
       <div className="px-3 py-6 text-xs text-text-3">
@@ -121,7 +121,7 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
               key={svc._id}
               to="/operator/services/$service"
               params={{ service: svc._id }}
-              data-testid={`sub-drawer-item-op-service-${svc.name ?? svc._id}`}
+              data-testid={`sub-panel-item-op-service-${svc.name ?? svc._id}`}
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1",
               )}

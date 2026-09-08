@@ -3,9 +3,9 @@ import { useMemo } from "react";
 
 import { EmptyState } from "../../components/empty-state";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 
 export const Route = createFileRoute("/developer/files")({
   component: FilesPage,
@@ -20,7 +20,7 @@ const NOT_IN_BUILD =
   "Object storage browsing is not available in this build. This server registers no bucket or object API.";
 
 function FilesPage() {
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Files",
@@ -35,7 +35,7 @@ function FilesPage() {
     }),
     [],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
   return (
     <section className="flex h-full flex-col" data-testid="page-files">
       <EmptyState

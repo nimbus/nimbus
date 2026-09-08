@@ -49,13 +49,11 @@ vi.mock("../shell/use-viewport-tier", () => ({
   useSmallScreen: () => false,
   useViewportTier: () => "desktop",
 }));
-vi.mock("../shell/sub-drawer", () => ({
-  SubDrawer: () => (
-    <button type="button" data-testid="chrome-sub-drawer">
-      search
-    </button>
+vi.mock("../shell/sub-panel", () => ({
+  SubPanelLayout: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
   ),
-  SubDrawerProvider: ({ children }: { children: React.ReactNode }) => (
+  SubPanelProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
 }));

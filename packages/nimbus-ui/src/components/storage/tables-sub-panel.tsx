@@ -4,19 +4,19 @@ import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type { TableDoc } from "../../lib/types/table";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-  useSubDrawerSearch,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+  useSubPanelSearch,
+} from "../../shell/sub-panel";
 
 const TABLE_ROUTE_PREFIX = "/developer/storage/";
 
-// Both storage routes contribute the *same* Tables drawer. The detail route
+// Both storage routes contribute the *same* Tables panel. The detail route
 // used to contribute nothing, so drilling into a table deleted the only table
-// navigator in the section and shifted the layout by the drawer's width on
+// navigator in the section and shifted the layout by the panel's width on
 // every drill-in. Sharing one spec makes the shell what the layout system
 // promises: a persistent list beside distinct detail content.
-export function useTablesSubDrawer({
+export function useTablesSubPanel({
   tenant,
   tables,
   hasTenants,
@@ -27,13 +27,13 @@ export function useTablesSubDrawer({
 }) {
   // Keyed on `tables` itself, never on a derived array: a fresh `sort()` result
   // on every render would give the spec a new identity every render, and
-  // `useContributeSubDrawer`'s effect re-runs `setSearch("")` on every spec
+  // `useContributeSubPanel`'s effect re-runs `setSearch("")` on every spec
   // change — which would erase the operator's filter text as they typed it.
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Tables",
-      search: { placeholder: "Filter tables" },
+      search: { placeholder: "Filter tables", rows: tables?.length ?? 0 },
       children: !tenant ? (
         <NoTenantHelp hasTenants={hasTenants} />
       ) : tables === undefined ? (
@@ -42,12 +42,12 @@ export function useTablesSubDrawer({
           <span className="sr-only">loading</span>
         </div>
       ) : (
-        <TablesSubDrawerList tables={tables} />
+        <TablesSubPanelList tables={tables} />
       ),
     }),
     [tenant, tables, hasTenants],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
 }
 
 function NoTenantHelp({ hasTenants }: { hasTenants: boolean | undefined }) {
@@ -57,8 +57,8 @@ function NoTenantHelp({ hasTenants }: { hasTenants: boolean | undefined }) {
         <>
           <p>No tenants yet.</p>
           <p className="mt-2">
-            Click <code className="font-mono text-text-1">+ CREATE TENANT</code>{" "}
-            in the top nav to create one. Tables and documents scope to a
+            Use <code className="font-mono text-text-1">Create tenant</code> in
+            the sidebar scope row to create one. Tables and documents scope to a
             tenant.
           </p>
         </>
@@ -74,11 +74,11 @@ function NoTenantHelp({ hasTenants }: { hasTenants: boolean | undefined }) {
   );
 }
 
-// Split out so the two hooks it needs (`useSubDrawerSearch`, `useRouterState`)
+// Split out so the two hooks it needs (`useSubPanelSearch`, `useRouterState`)
 // are called during *render*, not while the parent route builds the spec. That
 // keeps the spec a plain element whose identity depends only on `tables`.
-function TablesSubDrawerList({ tables }: { tables: TableDoc[] }) {
-  const search = useSubDrawerSearch();
+function TablesSubPanelList({ tables }: { tables: TableDoc[] }) {
+  const search = useSubPanelSearch();
   // Derived from the router rather than from a passed-in `$table` param so the
   // highlight stays correct if the route shape changes — the same source
   // `isItemActive` uses for the static drawer mode.
@@ -113,7 +113,7 @@ function TablesSubDrawerList({ tables }: { tables: TableDoc[] }) {
     return (
       <div
         className="px-3 py-6 text-xs text-text-3"
-        data-testid="sub-drawer-tables-no-match"
+        data-testid="sub-panel-tables-no-match"
       >
         No table matches <span className="font-mono text-text-1">{search}</span>
         .
@@ -132,7 +132,7 @@ function TablesSubDrawerList({ tables }: { tables: TableDoc[] }) {
               to="/developer/storage/$table"
               params={{ table: name }}
               aria-current={active ? "page" : undefined}
-              data-testid={`sub-drawer-item-dev-${name}`}
+              data-testid={`sub-panel-item-dev-${name}`}
               data-active={active ? "true" : "false"}
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",

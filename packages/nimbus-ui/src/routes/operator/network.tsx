@@ -10,9 +10,9 @@ import { ScrollRegion } from "../../components/scroll-region";
 import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import { NetworkInventorySection } from "./-network-inventory";
 
 const SECTIONS = ["routes", "ws", "ports", "listeners", "security"] as const;
@@ -69,7 +69,7 @@ const METHOD_TONE: Record<string, string> = {
   HEAD: "text-text-3",
 };
 
-const NETWORK_SUB_DRAWER: SubDrawerSpec = {
+const NETWORK_SUB_PANEL: SubPanelSpec = {
   kind: "static",
   title: "Network",
   items: [
@@ -107,7 +107,7 @@ const NETWORK_SUB_DRAWER: SubDrawerSpec = {
 };
 
 function NetworkPage() {
-  useContributeSubDrawer(NETWORK_SUB_DRAWER);
+  useContributeSubPanel(NETWORK_SUB_PANEL);
   const section = Route.useSearch().section;
   if (section !== "routes") {
     return <NetworkInventorySection section={section} />;

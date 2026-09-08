@@ -34,7 +34,7 @@ type Mode = "navigate" | "run" | "filter";
 const RECENT_KEY = "nimbus-ui:commands:recent";
 const RECENT_LIMIT = 5;
 
-// Resource kinds the palette can jump to, plus "section" for the 15 drawer
+// Resource kinds the palette can jump to, plus "section" for the 15 panel
 // entries. The kind is persisted with each recent so a stored resource can be
 // re-rendered (icon + label + target) without re-querying the server.
 type TargetKind =
@@ -120,7 +120,7 @@ export function CommandPalette() {
     // the per-page reload controls use. A `window.location.reload()` here read
     // as "refresh" but tore the SPA down: the socket dropped and reconnected,
     // and every piece of view state the label never mentioned went with it —
-    // drawer collapse, the storage query bar's filters, each route's local
+    // panel collapse, the storage query bar's filters, each route's local
     // state. No `⌘ R` hint any more either: that chord belongs to the browser
     // and still hard-reloads, so advertising it here would name a shortcut for
     // a different action.

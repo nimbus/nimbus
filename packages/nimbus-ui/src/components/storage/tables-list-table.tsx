@@ -21,7 +21,7 @@ type MenuState = {
 /**
  * The Storage index table.
  *
- * The Tables sub-drawer beside it is the section's navigator; this pane earns
+ * The Tables sub-panel beside it is the section's navigator; this pane earns
  * its space by carrying what the drawer cannot — schema state, row counts, last
  * write time, copy affordances, and the row's own action set. Rows behave like
  * every other resource row in the console: click opens, right-click opens the

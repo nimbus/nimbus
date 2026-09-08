@@ -13,12 +13,12 @@ type State = { error: Error | null; pathname: string };
  * Last-resort boundary for a crash in the shell chrome itself. The router's
  * `defaultErrorComponent` (components/route-error.tsx) already catches inside
  * the `<Outlet/>`, so a failing view never reaches here; what does reach here
- * is a crash in the nav, drawers, status bar, or the providers around them —
+ * is a crash in the nav, panels, status bar, or the providers around them —
  * which is why this stays outside `<main>` and wraps the whole shell.
  *
  * Clearing on navigation is derived from the pathname rather than a `key`.
  * A `key` would remount the entire shell on every navigation, discarding
- * drawer state, scroll position and live connections on the ~100% of
+ * panel state, scroll position and live connections on the ~100% of
  * navigations where nothing crashed, to buy recovery on the rare one that
  * did. `getDerivedStateFromProps` pays nothing on the happy path: it drops
  * only the error flag, and React remounts the previously-thrown subtree by

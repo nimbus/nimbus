@@ -12,8 +12,8 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
 }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: vi.fn(),
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: vi.fn(),
 }));
 
 import { routeComponent } from "../../test/route-internals";

@@ -13,10 +13,10 @@ const TABLET_QUERY = "(max-width: 1023px)";
 export const SMALL_SCREEN_QUERY = "(max-width: 639px)";
 
 // Viewport tier is derived state, never persisted. A stored value would
-// overwrite the operator's desktop drawer preference on any tablet-width
+// overwrite the operator's desktop panel preference on any tablet-width
 // visit, so nothing here writes to localStorage or to the ui store.
 //
-// `mobile` drops the keyboard hints and turns the sub-drawer into an overlay;
+// `mobile` drops the keyboard hints and turns the sub-panel into an overlay sheet;
 // the sidebar itself reads `useSmallScreen` below, which is narrower.
 function readTier(): ViewportTier {
   if (typeof window === "undefined" || !window.matchMedia) return "desktop";

@@ -5,7 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import { AppearanceSection } from "../../components/appearance-section";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
-import { useContributeSubDrawer } from "../../shell/sub-drawer";
+import { useContributeSubPanel } from "../../shell/sub-panel";
 import { ConfigurationSection } from "./settings/-configuration";
 import { DangerZoneSection } from "./settings/-danger-zone";
 import { DeploysSection } from "./settings/-deploys";
@@ -16,7 +16,7 @@ import {
 } from "./settings/-hooks";
 import { IntegrationsSection } from "./settings/-integrations";
 import { ServerInfoSection, TenantHeaderStrip } from "./settings/-server-info";
-import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/-sub-drawer";
+import { ADMIN_SETTINGS_SUB_PANEL } from "./settings/-sub-panel";
 import type {
   AdapterCapabilityDoc,
   BundleDoc,
@@ -24,7 +24,7 @@ import type {
   SystemStatusDoc,
 } from "./settings/-types";
 
-// The sub-drawer's seven sub-pages are the section space: the route validates
+// The sub-panel's seven sub-pages are the section space: the route validates
 // exactly the ids the menu can produce. `settings.spec.tsx` asserts the two
 // stay in step at compile time.
 const SECTIONS = [
@@ -54,7 +54,7 @@ export const Route = createFileRoute("/operator/settings")({
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
     section: parseSettingsSection(search.section) ?? "general",
   }),
-  // `isItemActive` in the sub-drawer compares search values exactly, so a bare
+  // `isItemActive` in the sub-panel compares search values exactly, so a bare
   // `/operator/settings` would leave every item inactive. Normalizing the URL
   // to the default section is what makes the menu locate the operator, and it
   // keeps each section deep-linkable (DESIGN.md: "URL is state").
@@ -107,7 +107,7 @@ const UNBUILT: Partial<
 };
 
 function SettingsPage() {
-  useContributeSubDrawer(ADMIN_SETTINGS_SUB_DRAWER);
+  useContributeSubPanel(ADMIN_SETTINGS_SUB_PANEL);
   const section = Route.useSearch().section;
   const status = useQuery(api.system.status, {}) as SystemStatusDoc | undefined;
   const capabilities = useQuery(api.adapter_capabilities.list, {

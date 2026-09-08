@@ -139,7 +139,7 @@ IA decision rationale.
 
 ### Secondary navigation rules
 
-- Within each view, every primary section can opt into a **sub-drawer**
+- Within each view, every primary section can opt into a **sub-panel**
   to its right with two modes: **static menu** (fixed list of sub-pages,
   e.g. Settings, Network) or **dynamic list** (resource list fed by a
   query, e.g. Storage tables, Compute functions, Tenants, Machines).
@@ -185,7 +185,7 @@ Service lifecycle lives in `Services` — a dual-persona surface present
 in both consoles. Compute and Services are siblings, not parent/child.
 
 - Compute has two **compute types**, Functions and Sandboxes, selected in the
-  secondary nav (the sub-drawer); Services and Sessions stay top-level. Search
+  secondary nav (the sub-panel); Services and Sessions stay top-level. Search
   and filters live in the main section's toolbar (shadcn data-table convention).
 - Functions: a bundle → module → function **tree** with folder/file/kind icons,
   built from the deployed functions. Open one for its detail (Statistics,
@@ -230,7 +230,7 @@ the cross-tenant column.
 - Actions: start, stop, restart, drain, remove — gated by tenant
   permissions, not visible if the active tenant lacks placement rights.
 
-The Services sub-drawer (Developer) is a **dynamic list** of services
+The Services sub-panel (Developer) is a **dynamic list** of services
 declared in the active tenant's `compose.yaml`. The Developer side
 never lists system services from `_nimbus`; the System Tenant Lens
 (⌘\\) is the only Developer-side path to system service state.
@@ -245,7 +245,7 @@ Schedules owns periodic and future-dated work for the active tenant.
   link to a run-level detail page.
 - Schedule detail: queued runs, recent runs, error history, retry policy.
 
-The Schedules sub-drawer is a **static menu** with two items
+The Schedules sub-panel is a **static menu** with two items
 (`Scheduled` / `Cron`).
 
 ### Storage (Developer)
@@ -269,7 +269,7 @@ view assumes a tenant is selected.
 - Query builder that makes index use visible and refuses unbounded scans where
   the backend would be unsafe.
 
-The Storage sub-drawer is a **dynamic list** of tables for the active
+The Storage sub-panel is a **dynamic list** of tables for the active
 tenant. URL is store-driven (`/developer/storage/<table>`), not
 `/developer/storage/<tenant>/<table>` — the tenant lives in the sidebar.
 
@@ -281,14 +281,14 @@ Nimbus document browser with adapter-specific labels and type renderers.
 
 Files owns opaque-byte / S3-compatible blob storage for the active
 tenant. Ships as a placeholder surface in this baseline; the routes and
-sub-drawer are real, the underlying feature is not implemented yet.
+sub-panel are real, the underlying feature is not implemented yet.
 
 - Buckets / namespaces list with object count and total bytes.
 - Object browser with prefix navigation, last-modified / size columns,
   upload, download, copy presigned URL.
 - Object detail drawer: metadata, content type, lifecycle policy if any.
 
-The Files sub-drawer is a **dynamic list** of buckets.
+The Files sub-panel is a **dynamic list** of buckets.
 
 The placeholder state honors the token system and renders an honest
 "Not yet implemented" line — no fake bucket data, no synthesized objects.
@@ -306,7 +306,7 @@ owns the cross-tenant feed under `/operator/observability`.)
 - Traces: per-request waterfall with span timing and inline log lines.
 - Errors: grouped failures with last seen, count, sample traces.
 
-The Observability sub-drawer is a **static menu**
+The Observability sub-panel is a **static menu**
 (`Logs` / `Events` / `Traces` / `Errors`).
 
 ### Settings (tenant)
@@ -322,7 +322,7 @@ permissions.
   this tenant routes through.
 - Integrations enabled on this tenant.
 
-The Settings (tenant) sub-drawer is a **static menu** of sub-pages
+The Settings (tenant) sub-panel is a **static menu** of sub-pages
 (`Environment`, `Secrets`, `Schema`, `Integrations`, `Adapter binding`).
 
 ## Core Screens — Operator console
@@ -345,7 +345,7 @@ distinct from a **machine** (the outer dev VM under Machines).
   channel.
 - Recent admin actions: token rotation, tenant create, machine restart.
 
-No sub-drawer. When clustering lands this becomes a multi-row node list
+No sub-panel. When clustering lands this becomes a multi-row node list
 with a per-node detail page (Raft role, peer reachability, placement).
 
 ### Tenants (Operator)
@@ -362,7 +362,7 @@ tenants — that's an admin concern).
 - Empty state on fresh install: prominent "Create your first tenant"
   CTA; matches the inline Developer-side fallback.
 
-The Tenants sub-drawer is a **dynamic list** of tenants. Selecting a
+The Tenants sub-panel is a **dynamic list** of tenants. Selecting a
 tenant opens its admin detail page.
 
 ### Machines (Operator)
@@ -383,7 +383,7 @@ Nodes), and pure-Linux nodes have none. Do not frame this screen as
   Linux guest and that machine actions converge the guest VM's state. Do
   not imply per-service nested microVMs on macOS.
 
-The Machines sub-drawer is a **dynamic list** of machines.
+The Machines sub-panel is a **dynamic list** of machines.
 
 ### Network (Operator)
 
@@ -401,7 +401,7 @@ Network makes the active local topology inspectable.
 - Security: origin allowlist, session state, token rotation, denied
   requests.
 
-The Network sub-drawer is a **static menu** (`Routes` / `WS` / `Ports`
+The Network sub-panel is a **static menu** (`Routes` / `WS` / `Ports`
 / `Listeners` / `Security`).
 
 ### Services (Operator)
@@ -424,9 +424,9 @@ A service has both a service identity (here) and a machine placement
 (under **Operator → Machines**). Cross-link both ways; do not duplicate
 the full detail page on the machine side.
 
-The Services sub-drawer (Operator) is a **dynamic list** of services,
+The Services sub-panel (Operator) is a **dynamic list** of services,
 grouped by tenant. State chips render per service. The Developer and
-Operator sub-drawers share the same item template — only the grouping
+Operator sub-panels share the same item template — only the grouping
 and the tenant scope of the query differ.
 
 ### Observability (Operator)
@@ -441,7 +441,7 @@ without leaving the Operator console.
 - Traces: cross-tenant per-request waterfall.
 - Errors: cross-tenant grouped failures.
 
-The Observability sub-drawer is a **static menu** (`Logs` / `Events` /
+The Observability sub-panel is a **static menu** (`Logs` / `Events` /
 `Traces` / `Errors`). The same `<ObservabilityShell>` component backs
 both Developer and Operator routes; only the query input differs.
 
@@ -459,7 +459,7 @@ Server administration. Distinct from the Developer-side **Settings
   / Cloud Functions / Native HTTP/WS).
 - Shutdown: graceful shutdown with running-machine warning.
 
-The Settings (server) sub-drawer is a **static menu** of sub-pages
+The Settings (server) sub-panel is a **static menu** of sub-pages
 (`General`, `Endpoints`, `Deploys`, `Token`, `Environment`,
 `Integrations`, `Shutdown`).
 
@@ -489,17 +489,17 @@ where the user is about to depend on the feature.
 ## Layout System
 
 The console is a **three-column shell**: the sidebar, an optional
-sub-drawer, and the page.
+sub-panel, and the page.
 
 ```
 ┌──────────────┬──────────────┬──────────────────────────────────────────┐
 │ mascot nimbus│              │                                          │
-│ Dev ⇄ Op     │  Sub-drawer  │  Main content                            │
-│ tenant/server│  (optional)  │  (route Outlet)                          │
-│              │  static menu │                                          │
-│  grouped     │  or dynamic  │                                          │
-│  nav rows    │  list,       │                                          │
-│              │  per route)  │                                          │
+│ Dev ⇄ Op     │  Sub-panel   │  Main content                            │
+│ tenant/server│  (optional,  │  (route Outlet)                          │
+│              │  resizable;  │                                          │
+│  grouped     │  static menu │                                          │
+│  nav rows    │  or dynamic  │                                          │
+│              │  list)       │                                          │
 │ status · ver │              │                                          │
 │ theme · fold │              │                                          │
 ├──────────────┴──────────────┴──────────────────────────────────────────┤
@@ -556,24 +556,43 @@ rail is the default and an expand is held in memory for that tier.
 The selector is one component with two modes: the developer mode sets the
 active tenant, the `operator-filter` mode writes `?tenant=`.
 
-### Sub-drawer
+### Sub-panel
 
 A second column between the sidebar and the main content. Rendered
-when the active route opts into a sub-drawer; absent otherwise (the
-content area reflows naturally). Fixed width `w-64` in this baseline.
+when the active route contributes a sub-panel spec; absent otherwise
+(the content area reflows naturally). The page never remounts when a
+spec arrives or leaves: one resizable group wraps the main column on
+every route, and the sub-panel column and its separator are the only
+conditional children.
+
+Geometry, on desktop:
+
+- Resizable between 180px and 400px; 240px by default. A 1px separator
+  carries the drag handle; it takes the accent colour on hover, focus,
+  and drag.
+- The separator is a keyboard target: `ArrowLeft` / `ArrowRight` step
+  the width, `Home` / `End` jump to the limits, `Enter` collapses and
+  expands. A step past the minimum collapses the panel.
+- Collapsed, the panel is a 32px rail with the expand button and one
+  icon per sub-view. Expanding restores the last chosen width.
+- The width and the collapsed state persist per section under
+  `nimbus-ui:panel:<section>` (`storage`, `compute`, `tenants`,
+  `settings`, ...), so Storage can stay wide while Settings stays
+  narrow. Stored widths clamp to the limits on read.
 
 Two contributor modes:
 
 - **Static menu** — a fixed list of sub-pages with an active state.
   Used by Settings (both views), Network, Schedules, Observability.
   Pattern reference: Convex `SettingsSidebar`.
-- **Dynamic list** — a resource list fed by a query, with optional
-  search input. Used by Storage tables, Compute functions, Tenants,
-  Machines, Services, Files. Pattern reference: Convex `DataSidebar`.
+- **Dynamic list** — a resource list fed by a query. Used by Storage
+  tables, Compute functions, Tenants, Machines, Services, Files. Pattern
+  reference: Convex `DataSidebar`. The search field appears once the
+  list exceeds twenty rows; below that, a list scans faster than it
+  filters.
 
-Routes declare their sub-drawer via a route-level `subDrawer` option
-that resolves at the layout level. Routes without a sub-drawer reserve
-no space.
+Routes contribute their spec with `useContributeSubPanel`; the layout
+resolves it at the root. Routes without a sub-panel reserve no space.
 
 ### Main content patterns
 
@@ -594,23 +613,26 @@ embed integrity, build version, current time. Shared component.
 ### Responsive behavior
 
 - **Desktop** (≥1024px): all three columns visible; the sidebar
-  toggles between expanded and rail, the sub-drawer toggles closed.
+  toggles between expanded and rail, the sub-panel resizes and
+  collapses to its rail.
 - **Tablet** (768–1023px): the sidebar is the rail by default; the
-  sub-drawer becomes an overlay sheet anchored to the right of the rail.
-- **Mobile** (<768px): the sub-drawer overlay as on tablet.
+  sub-panel is always its 32px rail, and the expand button opens the
+  list as an overlay sheet anchored to the right of the rail. The
+  desktop width and collapsed state are not written at this tier.
+- **Mobile** (<768px): the sub-panel overlay as on tablet.
 - **Small screen** (<640px): the sidebar leaves the flow. A 48px top bar
   holds the menu button and the mascot lockup, and the whole sidebar body
   (scope row, nav groups, theme toggle) opens in a left sheet that closes
   on every navigation. The sidebar has one breakpoint; the tiers above
-  belong to the sub-drawer and the status bar.
+  belong to the sub-panel and the status bar.
 
 ### Do-not list
 
 - Do not put page sections inside decorative cards. Cards are for
   repeated items, small metrics, modals, and genuinely framed tools.
-- Do not duplicate primary navigation in the sub-drawer. The sub-drawer
-  is per-section; cross-section navigation always uses the primary
-  drawer or the command palette.
+- Do not duplicate primary navigation in the sub-panel. The sub-panel
+  is per-section; cross-section navigation always uses the sidebar or
+  the command palette.
 - Do not mirror Settings between the two views. The split (tenant vs
   server) is deliberate and exclusive.
 

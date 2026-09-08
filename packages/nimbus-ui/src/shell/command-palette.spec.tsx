@@ -82,7 +82,7 @@ describe("CommandPalette", () => {
     expect(useQueryMock).not.toHaveBeenCalled();
   });
 
-  it("reaches a table by name, not only the drawer sections", async () => {
+  it("reaches a table by name, not only the panel sections", async () => {
     render(<CommandPalette />);
     type("documents");
     await waitFor(() => {
@@ -181,7 +181,7 @@ describe("CommandPalette", () => {
   });
 
   // "Refresh current view" used to call window.location.reload(), which is a
-  // different action than the one it names: the socket drops, and the drawer
+  // different action than the one it names: the socket drops, and the panel
   // state and the query bar's filters go with it.
   it("refreshes the view in place rather than reloading the app", () => {
     const reload = vi.fn();

@@ -11,9 +11,9 @@ import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { formatDuration, shortId } from "../../lib/format";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import { useUiStore } from "../../store/ui-store";
 
 type Section = "scheduled" | "cron";
@@ -55,7 +55,7 @@ function isSection(value: unknown): value is Section {
   return value === "scheduled" || value === "cron";
 }
 
-export const SCHEDULES_SUB_DRAWER: SubDrawerSpec = {
+export const SCHEDULES_SUB_PANEL: SubPanelSpec = {
   kind: "static",
   title: "Schedules",
   items: [
@@ -75,7 +75,7 @@ export const SCHEDULES_SUB_DRAWER: SubDrawerSpec = {
 };
 
 function SchedulesPage() {
-  useContributeSubDrawer(SCHEDULES_SUB_DRAWER);
+  useContributeSubPanel(SCHEDULES_SUB_PANEL);
   const search = useSearch({ from: "/developer/schedules" });
   const section: Section = search.section ?? "scheduled";
   const activeTenant = useUiStore((s) => s.activeTenant);

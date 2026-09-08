@@ -10,7 +10,7 @@
 //   2. /ui/operator/      — Operator Nodes tile envelopes
 //   3. /ui/developer/services       — ScopeChip reads `TENANT <tenant>` and
 //                               the services table renders
-//   4. /ui/operator/services     — tenant-grouped sub-drawer renders
+//   4. /ui/operator/services     — tenant-grouped sub-panel renders
 //   5. /ui/operator/services/<id> — single Placement tab is selected
 //   6. /ui/operator/tenants      — diagnostic envelope is reachable (the
 //                               page renders; the empty/error states
@@ -111,9 +111,9 @@ async function seedSmokeFixture(
 // without knowing which project it runs in. A navigation closes the sheet
 // on its own; `closeNav` is for the steps that change scope without moving.
 async function openNav(page: Page): Promise<void> {
-  // Below the desktop tier the sub-drawer overlay stays open across a
+  // Below the desktop tier the sub-panel overlay stays open across a
   // navigation from one of its own items, and its scrim covers the top bar.
-  const overlay = page.getByTestId("sub-drawer-overlay");
+  const overlay = page.getByTestId("sub-panel-overlay");
   if (await overlay.isVisible()) {
     await page.keyboard.press("Escape");
     await expect(overlay).toHaveCount(0);
@@ -146,14 +146,14 @@ async function navigateTo(page: Page, id: string): Promise<void> {
   await page.getByTestId(`nav-${id}`).click();
 }
 
-// Below the desktop tier the sub-drawer starts as a rail; its items live in
+// Below the desktop tier the sub-panel starts as a rail; its items live in
 // the overlay behind the expand button.
-async function openSubDrawer(page: Page): Promise<void> {
-  const drawer = page.getByTestId("sub-drawer");
-  await expect(drawer).toBeVisible();
-  if ((await drawer.getAttribute("data-collapsed")) === "true") {
-    await page.getByTestId("sub-drawer-toggle").click();
-    await expect(page.getByTestId("sub-drawer-overlay")).toBeVisible();
+async function openSubPanel(page: Page): Promise<void> {
+  const panel = page.getByTestId("sub-panel");
+  await expect(panel).toBeVisible();
+  if ((await panel.getAttribute("data-collapsed")) === "true") {
+    await page.getByTestId("sub-panel-toggle").click();
+    await expect(page.getByTestId("sub-panel-overlay")).toBeVisible();
   }
 }
 
@@ -216,21 +216,21 @@ test.describe("console smoke walk", () => {
       page.getByTestId(`services-row-${SMOKE_SERVICE_NAME}`),
     ).toBeVisible();
 
-    // 4. Operator Services — tenant-grouped sub-drawer. The view switch
+    // 4. Operator Services — tenant-grouped sub-panel. The view switch
     // restores the operator route last open, which is the nodes page.
     await switchView(page, "operator");
     await navigateTo(page, "services");
     await expect(page.getByTestId("page-admin-services")).toBeVisible();
     await expect(page.getByTestId("admin-services-summary")).toBeVisible();
-    // sub-drawer presence (the items only render if services exist;
+    // sub-panel presence (the items only render if services exist;
     // the host envelope must be there regardless)
-    await openSubDrawer(page);
+    await openSubPanel(page);
 
     // 5. Operator Service detail — single Placement tab. The seeded
-    // service surfaces in the sub-drawer regardless of which tenant is
+    // service surfaces in the sub-panel regardless of which tenant is
     // active in the operator view.
     const firstServiceLink = page
-      .locator('[data-testid^="sub-drawer-item-op-service-"]')
+      .locator('[data-testid^="sub-panel-item-op-service-"]')
       .first();
     await expect(firstServiceLink).toBeVisible();
     await firstServiceLink.click();

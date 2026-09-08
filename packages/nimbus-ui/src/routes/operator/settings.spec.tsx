@@ -20,8 +20,8 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: () => undefined,
 }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: () => undefined,
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: () => undefined,
 }));
 
 // The section bodies are stubbed on purpose: this spec asserts which pane the
@@ -53,7 +53,7 @@ vi.mock("./settings/-hooks", () => ({
 
 import { routeComponent } from "../../test/route-internals";
 import { parseSettingsSection, Route, type SettingsSection } from "./settings";
-import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/-sub-drawer";
+import { ADMIN_SETTINGS_SUB_PANEL } from "./settings/-sub-panel";
 
 const SettingsPage = routeComponent(Route);
 
@@ -100,8 +100,8 @@ beforeEach(() => {
 });
 
 describe("parseSettingsSection", () => {
-  it("accepts every section the sub-drawer can produce", () => {
-    for (const item of ADMIN_SETTINGS_SUB_DRAWER.items) {
+  it("accepts every section the sub-panel can produce", () => {
+    for (const item of ADMIN_SETTINGS_SUB_PANEL.items) {
       expect(parseSettingsSection(item.search.section)).toBe(
         item.search.section,
       );
@@ -127,7 +127,7 @@ describe("settings route search", () => {
     });
   });
 
-  // The sub-drawer marks an item active by comparing search values exactly, so
+  // The sub-panel marks an item active by comparing search values exactly, so
   // a bare `/operator/settings` would leave every item inactive. The redirect
   // is what makes the menu locate the operator.
   it("normalizes a bare URL to the default section", () => {
@@ -144,15 +144,15 @@ describe("settings route search", () => {
   });
 
   it("leaves a valid section alone", () => {
-    for (const item of ADMIN_SETTINGS_SUB_DRAWER.items) {
+    for (const item of ADMIN_SETTINGS_SUB_PANEL.items) {
       expect(beforeLoadRedirect({ section: item.search.section })).toBeNull();
     }
   });
 });
 
-describe("sub-drawer parity", () => {
+describe("sub-panel parity", () => {
   type MenuSection =
-    (typeof ADMIN_SETTINGS_SUB_DRAWER.items)[number]["search"]["section"];
+    (typeof ADMIN_SETTINGS_SUB_PANEL.items)[number]["search"]["section"];
 
   // Both conversions must compile. Together they assert set equality between
   // the menu ids and the route's section space: a menu entry the route cannot
@@ -161,7 +161,7 @@ describe("sub-drawer parity", () => {
   const asMenuSection = (value: SettingsSection): MenuSection => value;
 
   it("offers each section exactly once", () => {
-    const sections = ADMIN_SETTINGS_SUB_DRAWER.items.map((item) =>
+    const sections = ADMIN_SETTINGS_SUB_PANEL.items.map((item) =>
       asRouteSection(item.search.section),
     );
     expect(new Set(sections).size).toBe(sections.length);
@@ -171,7 +171,7 @@ describe("sub-drawer parity", () => {
   });
 
   it("routes every menu entry at the settings page", () => {
-    for (const item of ADMIN_SETTINGS_SUB_DRAWER.items) {
+    for (const item of ADMIN_SETTINGS_SUB_PANEL.items) {
       expect(item.to).toBe("/operator/settings");
     }
   });
@@ -216,7 +216,7 @@ describe("section rendering", () => {
   });
 
   it("gives every section its own subtitle", () => {
-    const subtitles = ADMIN_SETTINGS_SUB_DRAWER.items.map((item) => {
+    const subtitles = ADMIN_SETTINGS_SUB_PANEL.items.map((item) => {
       const { unmount } = renderSection(item.search.section);
       const text =
         screen.getByTestId("page-settings").querySelector("p")?.textContent ??

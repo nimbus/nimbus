@@ -24,7 +24,7 @@ import {
   parseFilters,
   parseOrder,
 } from "../../components/storage/table-query";
-import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
+import { useTablesSubPanel } from "../../components/storage/tables-sub-panel";
 import {
   resolveColumns,
   useColumnPrefs,
@@ -157,7 +157,7 @@ function TableDocumentsPage() {
     api.tables.list,
     tenant ? { tenantId: tenant, limit: 200 } : "skip",
   ) as TableDoc[] | undefined;
-  useTablesSubDrawer({
+  useTablesSubPanel({
     tenant: tenant || null,
     tables,
     hasTenants: undefined,

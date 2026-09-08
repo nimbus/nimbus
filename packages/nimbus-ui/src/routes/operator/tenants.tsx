@@ -23,9 +23,9 @@ import { tenants as tenantApi } from "../../lib/api-mutations";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { TableDoc } from "../../lib/types/table";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 
 // Matches components/storage/documents-table.tsx: a row click must not hijack
 // the tenant link, the copy chip, or the delete button that sit inside it.
@@ -155,11 +155,11 @@ function TenantsPage() {
     [reload],
   );
 
-  const subDrawerSpec = useMemo<SubDrawerSpec>(
+  const subPanelSpec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Tenants",
-      search: { placeholder: "Filter tenants" },
+      search: { placeholder: "Filter tenants", rows: tenants.length },
       children:
         tenants.length === 0 ? (
           <div className="px-3 py-6 text-xs text-text-3">
@@ -173,7 +173,7 @@ function TenantsPage() {
                 <Link
                   to="/developer/storage"
                   search={{ as: tenantId }}
-                  data-testid={`sub-drawer-item-op-${tenantId}`}
+                  data-testid={`sub-panel-item-op-${tenantId}`}
                   className="flex h-8 items-center rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
                 >
                   <span className="flex-1 truncate font-mono text-xs">
@@ -187,7 +187,7 @@ function TenantsPage() {
     }),
     [tenants],
   );
-  useContributeSubDrawer(subDrawerSpec);
+  useContributeSubPanel(subPanelSpec);
 
   return (
     <section
