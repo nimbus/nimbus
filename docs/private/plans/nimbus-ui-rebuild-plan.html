@@ -81,7 +81,7 @@
     Created: 2026-09-08 ·
     Baseline: main @ 67a7f3ffa ·
     Proof root: <code>proof/nimbus-ui-rebuild/</code> ·
-    Next action: UIR1 stack (shadcn base-nova init, dependencies, aliases)
+    Next action: UIR2 tokens (role tokens, neutral + amber palette, Geist, remove data-palette)
   </p>
 
   <section id="outcome">
@@ -234,7 +234,7 @@
       <thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Evidence</th></tr></thead>
       <tbody>
         <tr id="UIR0" data-status="done"><td>UIR0</td><td>Baseline: pin main @ 67a7f3ffa, create the proof root, author the verifier red, capture fail-before screenshots. No production behavior changes.</td><td><code>done</code></td><td>verify.sh: 20 failing; 851/851 tests; tsc clean; <code>proof/nimbus-ui-rebuild/UIR0.md</code></td></tr>
-        <tr id="UIR1" data-status="todo"><td>UIR1</td><td>Phase 1 foundation: shadcn base-nova init, components.json, dependency upgrade and additions, path aliases.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR1" data-status="done"><td>UIR1</td><td>Phase 1 foundation: shadcn base-nova init, components.json, dependency upgrade and additions, path aliases.</td><td><code>done</code></td><td>verify.sh: 15 failing (UIR1 rows ok); 852/852 tests; tsc clean; build ok; smoke 1/1; <code>proof/nimbus-ui-rebuild/UIR1.md</code></td></tr>
         <tr id="UIR2" data-status="todo"><td>UIR2</td><td>Phase 1 foundation: role tokens, amber accent, light and dark, Geist fonts, palette removal (F5, F8).</td><td><code>todo</code></td><td></td></tr>
         <tr id="UIR3" data-status="todo"><td>UIR3</td><td>Phase 1 foundation: primitives via shadcn CLI plus Nimbus-owned StateDot, Pill, DataTable, EmptyState, CopyButton, Chart seam (F9, F13).</td><td><code>todo</code></td><td></td></tr>
         <tr id="UIR4" data-status="todo"><td>UIR4</td><td>Phase 1 foundation: mascot mark with states, favicon and app icon, Storybook trimmed to Nimbus-owned components (F12).</td><td><code>todo</code></td><td></td></tr>
@@ -562,6 +562,7 @@ zero failing, make ci passes, and UIR24 waits only on the final merge.</code></p
         <tr><td>2026-09-08</td><td>meta</td><td>activated</td><td>Owner approved the plan, the shell decision, and mascot A (mark) with C (icon). Status flipped to active; worktree created.</td></tr>
         <tr><td>2026-09-08</td><td>meta</td><td>authored</td><td>Plan authored from the 2026-09-08 design review (F1–F13), the mascot concepts page, and the owner decisions on approach, shell, palette, mascot, gaps, Storybook, and sequence. No implementation started by this step.</td></tr>
       <tr><td>2026-09-08</td><td>UIR0</td><td>done</td><td>Verifier red at 20 failing on main @ 67a7f3ffa; baseline 851 tests, tsc clean, one pre-existing Biome format error; 14 baseline screenshots in the proof root.</td></tr>
+      <tr><td>2026-09-08</td><td>UIR1</td><td>done</td><td>Stack in place: Base UI 1.8.0, router 1.170.33, table, virtual, charts, panels, cva, shadcn 4.21.0, components.json, @/ alias. The registry now imports the <code>cn</code> package, so utils.ts re-exports it and clsx/tailwind-merge are gone. Registry button forced a shadcn colour bridge and an unlayered focus-ring rule (contrast.spec.ts gained a test). Router 1.170: error boundary error is unknown; globalNotFound is _notFound. Verifier 15 failing; 852 tests; build; smoke 1/1.</td></tr>
       </tbody>
     </table>
   </section>
