@@ -2,7 +2,13 @@
 
 Date: 2026-09-06
 
-## Current Candidate
+This report preserves the prepublication candidate verdict. The owner later
+authorized the supported release and signed apt publication. Current release
+state and remaining exclusions are in
+[RRC7 v0.1.47 Public Release](rrc7-v0.1.47-publication.md).
+The historical broad matrix below remains unchanged.
+
+## Historical Candidate
 
 Result: **NO-GO**.
 
