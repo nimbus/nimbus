@@ -3,7 +3,7 @@
 Date: 2026-09-08
 Worktree: `~/src/github.com/nimbus/nimbus-worktrees/nimbus-ui-rebuild`, branch `codex/nimbus-ui-rebuild-phase3` (stacked on #332)
 
-Commit `COMMIT_SHA`. Compute had its own toolbar, filter chips and a
+Commit `3733ff0e9`. Compute had its own toolbar, filter chips and a
 drawer, a function page with a Logs tab that duplicated Observability,
 and a runner that asked for a tenant and took only JSON. The sub-panel
 now owns the function tree, the page and the function page use
