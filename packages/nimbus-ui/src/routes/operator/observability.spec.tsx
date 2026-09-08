@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (config: Record<string, unknown>) => config,
+  useNavigate: () => vi.fn(),
   Link: ({
     to,
     children,
@@ -30,11 +31,23 @@ vi.mock("@tanstack/react-router", () => ({
 const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
 
 vi.mock("@nimbus/nimbus/react", () => ({
-  useQuery: (..._args: unknown[]) => useQueryMock(),
+  useQuery: (...args: unknown[]) => useQueryMock(...args),
+}));
+
+vi.mock("../../hooks/use-tenant-list", () => ({
+  useTenantList: () => ({
+    kind: "loaded",
+    tenants: [{ id: "acme" }, { id: "beta" }],
+    reload: () => {},
+  }),
 }));
 
 import { routeComponent } from "../../test/route-internals";
 import { ADMIN_OBSERVABILITY_TABS, Route } from "./observability";
+
+beforeEach(() => {
+  useQueryMock.mockReset();
+});
 
 function renderPage(search: Record<string, unknown> = { tab: "logs" }) {
   const validateSearch = (
@@ -115,15 +128,36 @@ describe("operator observability header", () => {
     );
     expect(subtitle?.getAttribute("data-slot")).toBe("page-subtitle");
   });
+});
 
-  it("keeps the scope chip in the header's trailing slot", () => {
+// The operator page reads every tenant by default and narrows through the
+// same tenant facet the developer page has, with "all tenants" as one more
+// option. The old scope chip only said the filter did not work.
+describe("operator observability tenant scope", () => {
+  it("defaults to every tenant and reads with a null tenant scope", () => {
     useQueryMock.mockReturnValue([]);
-    renderPage();
+    renderPage({ tab: "runs" });
 
-    const header = screen.getByTestId("admin-observability-header");
-    const chip = header.querySelector(
-      '[data-testid="admin-observability-scope"]',
+    expect(screen.getByTestId("observability-filter-tenant")).toHaveTextContent(
+      "all tenants",
     );
-    expect(chip?.textContent).toBe("tenant filter unavailable");
+    for (const [, args] of useQueryMock.mock.calls) {
+      expect((args as { tenantId?: unknown }).tenantId).toBeNull();
+    }
+    expect(
+      screen.queryByTestId("admin-observability-scope"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("honours a tenant named in the address", () => {
+    useQueryMock.mockReturnValue([]);
+    renderPage({ tab: "runs", tenant: "beta" });
+
+    expect(screen.getByTestId("observability-filter-tenant")).toHaveTextContent(
+      "beta",
+    );
+    for (const [, args] of useQueryMock.mock.calls) {
+      expect((args as { tenantId?: unknown }).tenantId).toBe("beta");
+    }
   });
 });

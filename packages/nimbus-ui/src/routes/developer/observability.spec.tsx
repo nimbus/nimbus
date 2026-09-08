@@ -33,6 +33,14 @@ vi.mock("../../shell/sub-panel", () => ({
   useContributeSubPanel: () => undefined,
 }));
 
+vi.mock("../../hooks/use-tenant-list", () => ({
+  useTenantList: () => ({
+    kind: "loaded",
+    tenants: [{ id: "acme" }],
+    reload: () => {},
+  }),
+}));
+
 import { routeComponent } from "../../test/route-internals";
 import { Route } from "./observability";
 
@@ -62,7 +70,7 @@ describe("developer observability header", () => {
     expect(header.querySelector("h1")?.textContent).toBe("Observability");
     const subtitle = header.querySelector("p");
     expect(subtitle?.textContent).toContain(
-      "Live event stream and recent runs",
+      "Runs and their log lines for the active tenant",
     );
     expect(subtitle?.getAttribute("data-slot")).toBe("page-subtitle");
   });

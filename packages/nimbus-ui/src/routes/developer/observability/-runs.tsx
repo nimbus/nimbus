@@ -1,17 +1,28 @@
 import { useQuery } from "@nimbus/nimbus/react";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { api } from "../../../../convex/_generated/api";
 import { CopyChip } from "../../../components/copy-chip";
+import { DataTable, dataColumns } from "../../../components/data-table";
 import { EmptyState } from "../../../components/empty-state";
-import { LoadingState } from "../../../components/loading-state";
+import {
+  FacetBar,
+  FacetButton,
+  FacetInput,
+} from "../../../components/facet-bar";
 import { CategoryPill, StatePill } from "../../../components/pill";
-import { Td, Th } from "../../../components/table-cells";
+import { Select } from "../../../components/select";
 import { RelativeTime } from "../../../components/time";
 import { formatDuration, shortId } from "../../../lib/format";
-import { FilterInput, FilterSelect } from "./-filters";
-import type { ObservabilitySearch, RunDoc } from "./-types";
+import {
+  ALL_OPTION,
+  type ObservabilityTabProps,
+  SystemLensButton,
+  TenantFacet,
+  TenantScopeNote,
+} from "./-facets";
+import { RunSheet } from "./-run-sheet";
+import type { RunDoc } from "./-types";
 
 /**
  * Every value the server can write into `runs.status`.
@@ -26,29 +37,89 @@ import type { ObservabilitySearch, RunDoc } from "./-types";
  */
 export const RUN_STATUSES = ["ok", "error"] as const;
 
-export function RunsTab({ search }: { search: ObservabilitySearch }) {
-  const navigate = useNavigate({ from: "/developer/observability" });
+const runCol = dataColumns<RunDoc>();
+
+const RUN_COLUMNS = [
+  runCol.accessor("startedAt", {
+    header: "Started",
+    size: 120,
+    cell: (ctx) => {
+      const at = ctx.getValue() ?? ctx.row.original._creationTime;
+      return typeof at === "number" ? (
+        <RelativeTime epochMs={at} />
+      ) : (
+        <span className="tabular text-text-3">—</span>
+      );
+    },
+  }),
+  runCol.accessor("functionPath", {
+    header: "Function",
+    size: 280,
+    cell: (ctx) => {
+      const path = ctx.getValue();
+      return (
+        <span
+          className="block truncate font-mono text-xs text-text-1"
+          title={path ?? ctx.row.original._id}
+        >
+          {path ?? shortId(ctx.row.original._id, 12)}
+        </span>
+      );
+    },
+  }),
+  runCol.accessor("status", {
+    header: "Status",
+    size: 104,
+    cell: (ctx) => <StatePill state={ctx.getValue()} />,
+  }),
+  runCol.accessor("kind", {
+    header: "Kind",
+    size: 112,
+    cell: (ctx) => <CategoryPill value={ctx.getValue()} />,
+  }),
+  runCol.accessor("durationMs", {
+    header: () => <span className="block text-right">Duration</span>,
+    size: 96,
+    cell: (ctx) => (
+      <span className="block text-right font-mono text-xs tabular text-text-3">
+        {formatDuration(ctx.getValue())}
+      </span>
+    ),
+  }),
+  runCol.accessor("_id", {
+    header: "Run id",
+    size: 160,
+    enableSorting: false,
+    cell: (ctx) => (
+      <CopyChip
+        label="run id"
+        value={ctx.getValue()}
+        testid={`observability-run-copy-${ctx.getValue()}`}
+      >
+        {shortId(ctx.getValue(), 10)}
+      </CopyChip>
+    ),
+  }),
+];
+
+export function RunsTab({
+  search,
+  tenantId,
+  allowAllTenants,
+  setSearch,
+  setSearchAction,
+}: ObservabilityTabProps) {
   const runs = useQuery(api.runs.recent, {
+    tenantId,
     bundleId: null,
     functionPath: search.functionPath ?? null,
     status: search.status ?? null,
     limit: 200,
   }) as RunDoc[] | undefined;
 
-  const setSearch = useCallback(
-    (patch: Partial<ObservabilitySearch>) => {
-      void navigate({
-        to: "/developer/observability",
-        search: (prev) => ({ ...prev, ...patch }),
-        replace: true,
-      });
-    },
-    [navigate],
-  );
-
   const clearFilters = useCallback(
-    () => setSearch({ status: undefined, functionPath: undefined }),
-    [setSearch],
+    () => setSearchAction({ status: undefined, functionPath: undefined }),
+    [setSearchAction],
   );
 
   // An empty result means two different things and the table cannot tell them
@@ -58,197 +129,135 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
   const filtered =
     search.status !== undefined || search.functionPath !== undefined;
 
+  const rows = useMemo(() => runs ?? [], [runs]);
+  const settledEmpty = runs !== undefined && runs.length === 0;
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
       data-testid="observability-runs"
     >
-      <AdapterHonesty />
-      <div
-        className="flex flex-wrap items-center gap-2"
-        data-testid="observability-run-filters"
+      <FacetBar
+        label="Run facets"
+        testid="observability-run-filters"
+        trailing={
+          <>
+            <FacetButton
+              onClick={clearFilters}
+              testid="observability-run-filter-clear"
+            >
+              clear
+            </FacetButton>
+            <SystemLensButton />
+          </>
+        }
       >
-        <FilterSelect
-          id="run-status"
+        <TenantFacet
+          tenantId={tenantId}
+          allowAllTenants={allowAllTenants}
+          setSearch={setSearch}
+        />
+        <Select
           label="Status"
-          value={search.status ?? ""}
+          value={search.status ?? ALL_OPTION}
           options={[
-            { value: "", label: "all" },
+            { value: ALL_OPTION, label: "all" },
             ...RUN_STATUSES.map((s) => ({ value: s, label: s })),
           ]}
-          onChange={(v) => setSearch({ status: v || undefined })}
+          onChange={(v) =>
+            setSearch({ status: v === ALL_OPTION ? undefined : v })
+          }
           testid="observability-filter-run-status"
         />
-        <FilterInput
+        <FacetInput
           id="run-function"
           label="Function"
           value={search.functionPath ?? ""}
-          placeholder="path/to/fn"
+          placeholder="module:function"
           onChange={(v) => setSearch({ functionPath: v || undefined })}
           testid="observability-filter-run-function"
         />
-        <div className="ml-auto flex justify-end">
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="rounded-xs border border-border-2 px-2 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
-            data-testid="observability-run-filter-clear"
-          >
-            clear
-          </button>
+      </FacetBar>
+      <TenantScopeNote />
+      <AdapterHonesty onShowLogs={() => setSearchAction({ tab: "logs" })} />
+      {settledEmpty ? (
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel">
+          <RunsEmptyState filtered={filtered} onClear={clearFilters} />
         </div>
-      </div>
-      <RunsTable runs={runs} filtered={filtered} onClear={clearFilters} />
+      ) : (
+        <DataTable
+          columns={RUN_COLUMNS}
+          data={rows}
+          getRowId={(row) => row._id}
+          ariaLabel="Recent runs"
+          loading={runs === undefined}
+          onRowActivate={(row) => setSearchAction({ run: row._id })}
+          rowTestid={(row) => `observability-run-row-${row._id}`}
+          testid="observability-runs-table"
+          className="min-h-0 flex-1"
+        />
+      )}
+      <RunSheet
+        runId={search.run}
+        runs={runs}
+        tenantId={tenantId}
+        setSearch={setSearch}
+        setSearchAction={setSearchAction}
+      />
     </div>
   );
 }
 
-function AdapterHonesty() {
+// The table shows runtime invocations only. The other front doors write
+// log lines and no run row, so their traffic is on the Logs tab; the note
+// says so before an operator concludes the traffic is missing.
+function AdapterHonesty({ onShowLogs }: { onShowLogs: () => void }) {
   return (
     <div
-      className="rounded-md border border-border-2 bg-bg-raised px-3 py-2 font-mono text-xs text-text-3"
+      className="shrink-0 rounded-md border border-border-2 bg-bg-raised px-3 py-2 font-mono text-xs text-text-3"
       data-testid="observability-adapter-honesty"
     >
       <span className="text-text-1">
         Convex / Nimbus runtime invocation history.
       </span>{" "}
       Native HTTP, scheduler, MongoDB, Firebase, and Cloud Functions traffic is
-      surfaced under Logs — see the{" "}
-      <Link
-        to="/developer/observability"
-        search={(prev) => ({ ...prev, tab: "logs" })}
+      surfaced under{" "}
+      <button
+        type="button"
+        onClick={onShowLogs}
         className="underline hover:text-text-1 focus-visible:text-text-1"
         data-testid="observability-adapter-honesty-events-link"
       >
-        Events view
-      </Link>{" "}
+        Logs
+      </button>{" "}
       for cross-adapter coverage.
     </div>
   );
 }
 
-/**
- * Three states, three treatments, one frame. The panel keeps its border, its
- * fill and its box in every state, so the swap from placeholder to data moves
- * nothing around it; only the contents change.
- *
- * Loading uses `LoadingState` and empty uses `EmptyState` — the console's two
- * panel-scope primitives — rather than the one-line muted box this used to
- * hand-roll. The same empty condition one nav entry away (Operator →
- * Observability → Runs) already renders `EmptyState`, and DESIGN.md's
- * whole-tab empty state is a mono title plus a two-line body plus a next
- * action. A fresh install lands here first and got none of it.
- */
-function RunsTable({
-  runs,
+function RunsEmptyState({
   filtered,
   onClear,
 }: {
-  runs: RunDoc[] | undefined;
   filtered: boolean;
   onClear: () => void;
 }) {
-  if (runs === undefined) {
+  if (filtered) {
     return (
-      <RunsFrame>
-        <LoadingState
-          label="Loading runs…"
-          testid="observability-runs-loading"
-        />
-      </RunsFrame>
-    );
-  }
-  if (runs.length === 0) {
-    return (
-      <RunsFrame>
-        {filtered ? (
-          <EmptyState
-            title="No runs match the current filters"
-            body="Status and function path narrow the same list, so a run has to satisfy both. Clear them to see every run this deployment has recorded."
-            cta={{ label: "Clear filters", onClick: onClear }}
-            testid="observability-runs-empty"
-          />
-        ) : (
-          <EmptyState
-            title="No runs yet"
-            body="A run is recorded each time a query, mutation, or action executes. Invoke a function and it appears here."
-            cta={{ label: "Open Compute", to: "/developer/compute" }}
-            testid="observability-runs-empty"
-          />
-        )}
-      </RunsFrame>
+      <EmptyState
+        title="No runs match the current filters"
+        body="Status and function narrow the same list, so a run has to satisfy both. Clear them to see every run the server has recorded."
+        cta={{ label: "Clear filters", onClick: onClear }}
+        testid="observability-runs-empty"
+      />
     );
   }
   return (
-    <RunsFrame>
-      <table
-        className="w-full border-collapse text-sm"
-        data-testid="observability-runs-table"
-      >
-        <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
-          <tr>
-            <Th>Function</Th>
-            <Th>Status</Th>
-            <Th>Kind</Th>
-            <Th align="right">Duration</Th>
-            <Th>Started</Th>
-            <Th>Run id</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => (
-            <tr
-              key={run._id}
-              className="border-t border-border-2 hover:bg-bg-raised"
-              data-testid={`observability-run-row-${run._id}`}
-            >
-              <Td>
-                <Link
-                  to="/developer/compute/runs/$runId"
-                  params={{ runId: run._id }}
-                  className="font-mono text-text-1 hover:underline"
-                  data-testid={`observability-run-link-${run._id}`}
-                >
-                  {run.functionPath ?? shortId(run._id, 12)}
-                </Link>
-              </Td>
-              <Td>
-                <StatePill state={run.status} />
-              </Td>
-              <Td>
-                <CategoryPill value={run.kind} />
-              </Td>
-              <Td align="right" mono>
-                {formatDuration(run.durationMs)}
-              </Td>
-              <Td>
-                {typeof run.startedAt === "number" ? (
-                  <RelativeTime epochMs={run.startedAt} />
-                ) : (
-                  <span className="tabular text-text-3">—</span>
-                )}
-              </Td>
-              <Td>
-                <CopyChip
-                  label="run id"
-                  value={run._id}
-                  testid={`observability-run-copy-${run._id}`}
-                >
-                  {shortId(run._id, 10)}
-                </CopyChip>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </RunsFrame>
-  );
-}
-
-function RunsFrame({ children }: { children: ReactNode }) {
-  return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel">
-      {children}
-    </div>
+    <EmptyState
+      title="No runs yet"
+      body="A run is one query, mutation, or action invocation. Call a function and its row lands here with its status, duration, and correlated log lines."
+      cta={{ label: "Open Compute", to: "/developer/compute" }}
+      testid="observability-runs-empty"
+    />
   );
 }

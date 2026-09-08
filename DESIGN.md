@@ -131,7 +131,7 @@ IA decision rationale.
 | Machines | Outer dev-VM lifecycle (macOS/Windows) | Machine list, detail (boot image, upgrade state, services placed on it), start/stop/restart/SSH/OS apply/remove. A machine is a guest VM that hosts sandboxes — **not** a cluster node. Absent on pure-Linux nodes. |
 | Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
 | Services | Long-running placement (cross-tenant) | Compose-declared services across every tenant, service catalog, lifecycle state, endpoints, restart policy. **Dual-persona** with the Developer IA above; both sides share `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle |
-| Observability | Cross-tenant debugging and audit | Logs, events, traces, error groups — default cross-tenant; optional `?tenant=<id>` filter |
+| Observability | Cross-tenant debugging and audit | Logs, runs, and later events, traces, error groups — default cross-tenant; the tenant facet narrows through `?tenant=<id>` |
 | Settings (server) | Server administration | General, endpoints, deploys, token/session, environment, integrations (adapter capability matrices), shutdown |
 
 7 sections. Server-wide by default. Tenant selector appears only on
@@ -326,10 +326,16 @@ Observability is the Developer-side debugging surface. Defaults to the
 active tenant; never cross-tenant in this view. (The Operator console
 owns the cross-tenant feed under `/operator/observability`.)
 
-- Logs: structured records with level, timestamp, request ID, function
-  path, tenant, search and filters.
-- Runs: recent function runs with status, duration, and the correlated
-  log lines.
+- Logs: one stream of runs and the log lines that belong to them. Each
+  run is a group with its status, function path, kind, duration, and line
+  count; a line that names no run sits in the `server` group. The facet
+  bar holds tenant, level, category, source, and correlation. `Follow`
+  keeps the newest line in view; `Pause on error` freezes the stream at
+  the first line at `error` level or above.
+- Runs: recent function runs on `DataTable` with status pills. A row
+  opens a right-side sheet that shows the run summary, the error, and
+  the correlated lines; `Show in logs` narrows the Logs tab to that run
+  and `Open run` goes to the full run page.
 - Events (UIR20): ordered domain events (mutation applied, scheduler
   fired, service restarted) for the active tenant.
 - Errors (UIR20): grouped failures with last seen, count, sample traces.
@@ -337,6 +343,12 @@ owns the cross-tenant feed under `/operator/observability`.)
 Observability has no sub-panel. Its views are page-header tabs
 (`Logs` / `Runs`, driven by `?tab=`), and a tab appears only once its
 page exists: the strip never names a view the operator cannot open.
+
+Every filter lives in the address (`?tenant=`, `?level=`, `?category=`,
+`?source=`, `?correlationId=`, `?status=`, `?functionPath=`, `?run=`), so
+a view is a link. Run and event rows carry no tenant column yet; the
+tenant facet is honest about that with a note under the bar and the
+query applies the scope to rows that name a tenant.
 
 ### Settings (tenant)
 
@@ -461,18 +473,20 @@ and the tenant scope of the query differ.
 ### Observability (Operator)
 
 The Operator-side cross-tenant feed of the same data store. Defaults to
-all tenants. An optional `?tenant=<id>` filter (set from the page's own
-filter bar once the Observability tabs land) narrows to one tenant
-without leaving the Operator console.
+all tenants. The tenant facet in the bar adds an `all tenants` option
+ahead of the tenant list; picking one narrows the view through
+`?tenant=<id>` without leaving the Operator console.
 
-- Logs: cross-tenant log stream with the same filter set as Developer.
-- Runs: cross-tenant recent function runs.
+- Logs: the same run-grouped stream and facet bar as Developer, across
+  every tenant.
+- Runs: the same `DataTable` and run sheet as Developer, across every
+  tenant.
 - Events (UIR20): cross-tenant ordered domain events.
 - Errors (UIR20): cross-tenant grouped failures.
 
 The Operator page uses the same page-header tab strip as the Developer
 page (`Logs` / `Runs`, driven by `?tab=`) through the shared `PageTabs`
-component; only the query input differs.
+component; only the default tenant scope differs.
 
 ### Settings (server)
 
@@ -579,7 +593,7 @@ rail is the default and an expand is held in memory for that tier.
 | View | Selector visible? | Default | Notes |
 | --- | --- | --- | --- |
 | Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist, the trigger is replaced by a compact "Create tenant" CTA that deep-links to `/operator/tenants?new=1` |
-| Operator | hidden | n/a | the sidebar shows the server identity line instead; `/operator/observability` gets an optional cross-tenant filter (default "All tenants", encoded as `?tenant=<id>`) in its own filter bar when the Observability tabs land |
+| Operator | hidden | n/a | the sidebar shows the server identity line instead; `/operator/observability` narrows through the tenant facet in its own bar (default `all tenants`, encoded as `?tenant=<id>`) |
 
 The selector is one component with two modes: the developer mode sets the
 active tenant, the `operator-filter` mode writes `?tenant=`.
@@ -632,8 +646,8 @@ resolves it at the root. Routes without a sub-panel reserve no space.
   above.
 - **Resource detail**: header summary, tabs, split panes for logs/JSON.
 - **Data browser** (Storage): table plus right-side document drawer.
-- **Logs / runs** (Observability): timeline table plus correlated
-  detail drawer.
+- **Logs / runs** (Observability): run-grouped log stream; runs table
+  plus right-side run sheet.
 
 ### Page tabs
 
@@ -1065,12 +1079,20 @@ Do not place more than two categorical badges on the same row.
 
 ### Logs And Events
 
-- Logs are a virtualized table by default.
-- Required columns: time, level, source, request/run ID, message.
-- Detail drawer shows structured fields and correlated entries.
-- Search by request ID, execution ID, run ID, function path, source, and text.
-- Preserve scroll position while new logs arrive.
-- Provide pause/resume follow mode.
+- Logs are one table whose rows group under the run that wrote them. A
+  group head carries the run status pill, function path, kind, duration,
+  relative time, and line count; lines that belong to no run sit under
+  the `server` head.
+- Required columns: time, level, source, message, run.
+- The run sheet shows the run summary, the error, and the correlated
+  lines. A log line jumps to its run page; a run row opens the sheet.
+- Filters are a facet bar: tenant, level, category, source, and
+  correlation on Logs; tenant, status, and function on Runs. Every facet
+  lives in the address.
+- `Follow` keeps the newest line in view. `Pause on error` freezes the
+  stream at the first line at `error` level or above and `Resume` picks
+  the stream back up.
+- Preserve scroll position while new lines arrive when follow is off.
 
 ### Data Browser
 

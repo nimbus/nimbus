@@ -1,29 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
+
 import { PageHeader } from "../../components/page-header";
 import { PageTabs } from "../../components/page-tabs";
+import { useUiStore } from "../../store/ui-store";
 import { LogsTab } from "./observability/-logs";
+import { useObservabilityNavigation } from "./observability/-navigation";
 import { RunsTab } from "./observability/-runs";
 import {
   OBSERVABILITY_TABS,
-  type ObservabilitySearch,
   type ObservabilityTab,
-  parseBool,
-  parseString,
-  parseTab,
+  parseObservabilitySearch,
 } from "./observability/-types";
 
 export const Route = createFileRoute("/developer/observability")({
-  validateSearch: (search: Record<string, unknown>): ObservabilitySearch => ({
-    tab: parseTab(search.tab),
-    level: parseString(search.level),
-    category: parseString(search.category),
-    source: parseString(search.source),
-    correlationId: parseString(search.correlationId),
-    status: parseString(search.status),
-    functionPath: parseString(search.functionPath),
-    follow: parseBool(search.follow),
-    pauseOnError: parseBool(search.pauseOnError),
-  }),
+  validateSearch: parseObservabilitySearch,
   component: ObservabilityPage,
 });
 
@@ -32,17 +22,28 @@ export type { ObservabilityTab } from "./observability/-types";
 function ObservabilityPage() {
   const search = Route.useSearch();
   const tab: ObservabilityTab = search.tab ?? "logs";
+  const activeTenant = useUiStore((s) => s.activeTenant);
+  // The developer surface reads one tenant: the one in the address, else
+  // the active one. It never reads across tenants; that is the operator
+  // page and the `_nimbus` lens.
+  const tenantId = search.tenant ?? activeTenant ?? null;
+  const { setSearch, setSearchAction } = useObservabilityNavigation(
+    "/developer/observability",
+  );
+  const tabProps = {
+    search,
+    tenantId,
+    allowAllTenants: false,
+    setSearch,
+    setSearchAction,
+  };
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-observability"
     >
       <Header tab={tab} />
-      {tab === "logs" ? (
-        <LogsTab search={search} />
-      ) : (
-        <RunsTab search={search} />
-      )}
+      {tab === "logs" ? <LogsTab {...tabProps} /> : <RunsTab {...tabProps} />}
     </section>
   );
 }
@@ -61,7 +62,7 @@ function Header({ tab }: { tab: ObservabilityTab }) {
         title="Observability"
         subtitle={
           <>
-            Live event stream and recent runs. Reads stream from the{" "}
+            Runs and their log lines for the active tenant, read from the{" "}
             <code className="font-mono text-text-1">_nimbus</code> system
             tenant.
           </>

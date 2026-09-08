@@ -28,6 +28,7 @@ export function MachineDetail({
     level: null,
     category: null,
     correlationId: null,
+    tenantId: null,
     limit: 100,
   });
   const events = useMemo<EventDoc[] | undefined>(() => {

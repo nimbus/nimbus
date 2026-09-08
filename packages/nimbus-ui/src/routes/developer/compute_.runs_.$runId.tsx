@@ -4,13 +4,14 @@ import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { CopyChip } from "../../components/copy-chip";
-import { CategoryPill, StatePill } from "../../components/pill";
+import {
+  RunCorrelatedEvents,
+  RunErrorPanel,
+  RunSummary,
+} from "../../components/run-panels";
 import { resolveStateKind, statePalette } from "../../components/state-dot";
-import { RelativeTime } from "../../components/time";
-import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
+import { formatDuration, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
-import { locationLine, parseRunError } from "../../lib/run-error";
 
 export const Route = createFileRoute("/developer/compute_/runs_/$runId")({
   loader: async ({ params }) => {
@@ -22,6 +23,7 @@ export const Route = createFileRoute("/developer/compute_/runs_/$runId")({
         level: null,
         category: null,
         correlationId: params.runId,
+        tenantId: null,
         limit: 200,
       }),
     ]);
@@ -91,100 +93,17 @@ function RunDetailBody({
   const duration = run.durationMs ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
-      <Summary run={run} runId={runId} />
+      <RunSummary run={run} runId={runId} />
       <TraceWaterfall
         startedAt={startedAt}
         duration={duration}
         status={run.status}
         events={events}
       />
-      <CorrelatedEvents events={events} runId={runId} />
+      <RunCorrelatedEvents events={events} runId={runId} />
       {run.error ? (
-        <ErrorPanel error={run.error} functionPath={run.functionPath} />
+        <RunErrorPanel error={run.error} functionPath={run.functionPath} />
       ) : null}
-    </div>
-  );
-}
-
-function Summary({ run, runId }: { run: RunDoc; runId: string }) {
-  const startedAt = run.startedAt ?? run._creationTime;
-  return (
-    <div
-      className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-md border border-border-2 bg-bg-panel p-4 md:grid-cols-4"
-      data-testid="run-detail-summary"
-    >
-      <Field label="Function" testid="run-detail-function">
-        <span className="font-mono text-sm text-text-1">
-          {run.functionPath ?? "—"}
-        </span>
-      </Field>
-      <Field label="Status" testid="run-detail-status">
-        <StatePill state={run.status} />
-      </Field>
-      <Field label="Kind" testid="run-detail-kind">
-        <CategoryPill value={run.kind} className="self-start" />
-      </Field>
-      <Field label="Duration" testid="run-detail-duration">
-        <span className="font-mono tabular text-sm text-text-1">
-          {formatDuration(run.durationMs)}
-        </span>
-      </Field>
-      <Field label="Run id" testid="run-detail-id">
-        <CopyChip label="run id" value={runId} testid="run-detail-id-copy">
-          {shortId(runId, 14)}
-        </CopyChip>
-      </Field>
-      <Field label="Bundle" testid="run-detail-bundle">
-        {run.bundleId ? (
-          <CopyChip
-            label="bundle id"
-            value={run.bundleId}
-            testid="run-detail-bundle-copy"
-          >
-            {shortId(run.bundleId, 12)}
-          </CopyChip>
-        ) : (
-          <span className="tabular text-text-3">—</span>
-        )}
-      </Field>
-      <Field label="Started" testid="run-detail-started">
-        {typeof startedAt === "number" ? (
-          <span
-            className="font-mono tabular text-xs text-text-1"
-            title={formatAbsoluteTime(startedAt)}
-          >
-            <RelativeTime epochMs={startedAt} />
-          </span>
-        ) : (
-          <span className="tabular text-text-3">—</span>
-        )}
-      </Field>
-      <Field label="Correlation" testid="run-detail-correlation">
-        <CopyChip
-          label="correlation id"
-          value={runId}
-          testid="run-detail-correlation-copy"
-        >
-          {shortId(runId, 14)}
-        </CopyChip>
-      </Field>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  testid,
-  children,
-}: {
-  label: string;
-  testid: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1" data-testid={testid}>
-      <span className="text-xs font-medium text-text-3">{label}</span>
-      {children}
     </div>
   );
 }
@@ -371,105 +290,6 @@ function WaterfallBar({
       <span className="tabular text-text-3 text-right">
         {offsetMs === 0 ? "0ms" : `+${formatDuration(offsetMs)}`}
       </span>
-    </div>
-  );
-}
-
-function CorrelatedEvents({
-  events,
-  runId,
-}: {
-  events: EventDoc[];
-  runId: string;
-}) {
-  return (
-    <div
-      className="rounded-md border border-border-2 bg-bg-panel"
-      data-testid="run-detail-events"
-    >
-      <div className="flex items-baseline justify-between border-b border-border-2 px-4 py-3">
-        <h2 className="text-xs font-medium text-text-3">Correlated events</h2>
-        <Link
-          to="/developer/observability"
-          search={{ tab: "logs", correlationId: runId }}
-          className="text-xs font-medium text-text-3 hover:text-text-1 focus-visible:text-text-1"
-          data-testid="run-detail-open-logs"
-        >
-          open in logs →
-        </Link>
-      </div>
-      {events.length === 0 ? (
-        <div
-          className="px-4 py-6 font-mono text-xs text-text-3"
-          data-testid="run-detail-events-empty"
-        >
-          No events recorded for this run.
-        </div>
-      ) : (
-        <ul className="divide-y divide-border-2">
-          {events.map((event) => (
-            <li
-              key={event._id}
-              className="grid grid-cols-[auto_auto_auto_1fr] items-baseline gap-2 px-4 py-1.5 text-xs"
-              data-testid={`run-detail-event-${event._id}`}
-            >
-              <RelativeTime
-                epochMs={event.createdAt ?? event._creationTime ?? 0}
-              />
-              <StatePill state={event.level ?? "info"} />
-              <span className="text-xs font-medium text-text-3">
-                {event.source ?? "—"}
-                {event.category ? ` · ${event.category}` : ""}
-              </span>
-              <span className="font-mono text-text-1 truncate">
-                {event.message ?? "(no message)"}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function ErrorPanel({
-  error,
-  functionPath,
-}: {
-  error: unknown;
-  functionPath?: string;
-}) {
-  const { message, location } = parseRunError(error);
-  const line = location ? locationLine(location) : undefined;
-  return (
-    <div
-      className="rounded-md border border-error bg-bg-panel p-4"
-      data-testid="run-detail-error"
-    >
-      <h2 className="mb-2 text-xs font-medium text-error">Error</h2>
-      {location ? (
-        functionPath && line ? (
-          <Link
-            to="/developer/compute/$function"
-            params={{ function: functionPath }}
-            search={{ tab: "source", line }}
-            className="mb-2 inline-block rounded-xs border border-error px-2 py-0.5 font-mono text-xs text-error hover:bg-bg-raised"
-            data-testid="run-detail-error-location"
-          >
-            at {location} ↗
-          </Link>
-        ) : (
-          <span
-            className="mb-2 inline-block font-mono text-xs text-error"
-            data-testid="run-detail-error-location"
-          >
-            at {location}
-          </span>
-        )
-      ) : null}
-      <pre className="overflow-auto font-mono text-xs text-text-1 whitespace-pre-wrap">
-        {message}
-      </pre>
     </div>
   );
 }

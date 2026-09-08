@@ -128,6 +128,7 @@ function useLensDocuments(view: LensView) {
     bundleId: null,
     functionPath: null,
     status: null,
+    tenantId: null,
     limit: 50,
   });
   const functions = useQuery(api.functions.list, {
