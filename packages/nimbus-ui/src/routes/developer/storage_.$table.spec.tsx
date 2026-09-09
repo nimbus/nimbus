@@ -57,8 +57,8 @@ const { toastMock, refreshMock, pageRef } = vi.hoisted(() => {
 
 vi.mock("sonner", () => ({ toast: toastMock }));
 
-vi.mock("../../components/storage/tables-sub-drawer", () => ({
-  useTablesSubDrawer: () => undefined,
+vi.mock("../../components/storage/tables-sub-panel", () => ({
+  useTablesSubPanel: () => undefined,
 }));
 
 vi.mock("../../components/storage/use-document-page", () => ({

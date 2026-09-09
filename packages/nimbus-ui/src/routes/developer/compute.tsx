@@ -11,9 +11,9 @@ import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import {
   COMPUTE_VIEWS,
   type ComputeView,
@@ -62,9 +62,9 @@ function ComputePage() {
     [navigate],
   );
 
-  // The sub-drawer is purely the compute-type selector (Functions / Sandboxes).
+  // The sub-panel is purely the compute-type selector (Functions / Sandboxes).
   // Search and filters live in the main section's toolbar, not here.
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Compute",
@@ -79,7 +79,7 @@ function ComputePage() {
     }),
     [view, setView],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
 
   return (
     <section

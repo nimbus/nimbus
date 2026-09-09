@@ -12,10 +12,10 @@ import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-  useSubDrawerSearch,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+  useSubPanelSearch,
+} from "../../shell/sub-panel";
 import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/developer/services")({
@@ -39,18 +39,18 @@ function ServicesPage() {
   const { services } = Route.useLoaderData();
   const activeTenant = useUiStore((s) => s.activeTenant);
 
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Services",
-      search: { placeholder: "Filter services" },
+      search: { placeholder: "Filter services", rows: services.length },
       children: (
-        <ServicesSubDrawer services={services} activeTenant={activeTenant} />
+        <ServicesSubPanel services={services} activeTenant={activeTenant} />
       ),
     }),
     [services, activeTenant],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
 
   return (
     <section
@@ -92,14 +92,14 @@ function ScopeChip({ activeTenant }: { activeTenant: string | null }) {
   );
 }
 
-function ServicesSubDrawer({
+function ServicesSubPanel({
   services,
   activeTenant,
 }: {
   services: ServiceDoc[];
   activeTenant: string | null;
 }) {
-  const filter = useSubDrawerSearch().trim().toLowerCase();
+  const filter = useSubPanelSearch().trim().toLowerCase();
   const filtered = filter
     ? services.filter(
         (s) =>
@@ -135,7 +135,7 @@ function ServicesSubDrawer({
           <Link
             to="/developer/services/$service"
             params={{ service: svc._id }}
-            data-testid={`sub-drawer-item-dev-service-${svc.name ?? svc._id}`}
+            data-testid={`sub-panel-item-dev-service-${svc.name ?? svc._id}`}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
           >
             <span className="flex-1 truncate font-mono text-xs">

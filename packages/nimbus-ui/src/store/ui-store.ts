@@ -11,8 +11,7 @@ type UiState = {
   themeMode: ThemeMode;
   theme: Theme;
   lastView: NavView;
-  primaryDrawerCollapsed: boolean;
-  subDrawerOpen: boolean;
+  sidebarCollapsed: boolean;
   activeTenant: string | null;
   paletteOpener: HTMLElement | null;
   lensOpener: HTMLElement | null;
@@ -21,10 +20,8 @@ type UiState = {
   setActionMenuOpen: (open: boolean) => void;
   setThemeMode: (mode: ThemeMode) => void;
   setLastView: (view: NavView) => void;
-  setPrimaryDrawerCollapsed: (collapsed: boolean) => void;
-  togglePrimaryDrawer: () => void;
-  setSubDrawerOpen: (open: boolean) => void;
-  toggleSubDrawer: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  toggleSidebar: () => void;
   setActiveTenant: (tenant: string | null) => void;
   cycleThemeMode: () => void;
 };
@@ -32,8 +29,7 @@ type UiState = {
 const THEME_STORAGE_KEY = "nimbus-ui:theme";
 const LAST_VIEW_STORAGE_KEY = "nimbus-ui:last-view";
 const LAST_ROUTE_STORAGE_PREFIX = "nimbus-ui:last-route:";
-const PRIMARY_DRAWER_COLLAPSED_KEY = "nimbus-ui:primary-drawer-collapsed";
-const SUB_DRAWER_OPEN_KEY = "nimbus-ui:sub-drawer-open";
+const SIDEBAR_COLLAPSED_KEY = "nimbus-ui:sidebar-collapsed";
 const ACTIVE_TENANT_KEY = "nimbus-ui:active-tenant";
 const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
 
@@ -75,15 +71,9 @@ function resolveTheme(mode: ThemeMode): Theme {
   return mode === "system" ? readSystemTheme() : mode;
 }
 
-export function readPrimaryDrawerCollapsed(): boolean {
+export function readSidebarCollapsed(): boolean {
   if (typeof window === "undefined") return false;
-  return window.localStorage.getItem(PRIMARY_DRAWER_COLLAPSED_KEY) === "true";
-}
-
-export function readSubDrawerOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  const stored = window.localStorage.getItem(SUB_DRAWER_OPEN_KEY);
-  return stored === null ? true : stored === "true";
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
 }
 
 export function readActiveTenant(): string | null {
@@ -103,8 +93,7 @@ export function persistActiveTenant(tenant: string | null) {
 
 const initialMode = readStoredMode();
 const initialLastView = readLastView();
-const initialPrimaryDrawerCollapsed = readPrimaryDrawerCollapsed();
-const initialSubDrawerOpen = readSubDrawerOpen();
+const initialSidebarCollapsed = readSidebarCollapsed();
 const initialActiveTenant = readActiveTenant();
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -114,8 +103,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   themeMode: initialMode,
   theme: resolveTheme(initialMode),
   lastView: initialLastView,
-  primaryDrawerCollapsed: initialPrimaryDrawerCollapsed,
-  subDrawerOpen: initialSubDrawerOpen,
+  sidebarCollapsed: initialSidebarCollapsed,
   activeTenant: initialActiveTenant,
   paletteOpener: null,
   lensOpener: null,
@@ -154,23 +142,14 @@ export const useUiStore = create<UiState>((set, get) => ({
     persistLastView(view);
     set({ lastView: view });
   },
-  setPrimaryDrawerCollapsed: (collapsed) => {
-    persistPrimaryDrawerCollapsed(collapsed);
-    set({ primaryDrawerCollapsed: collapsed });
+  setSidebarCollapsed: (collapsed) => {
+    persistSidebarCollapsed(collapsed);
+    set({ sidebarCollapsed: collapsed });
   },
-  togglePrimaryDrawer: () => {
-    const next = !get().primaryDrawerCollapsed;
-    persistPrimaryDrawerCollapsed(next);
-    set({ primaryDrawerCollapsed: next });
-  },
-  setSubDrawerOpen: (open) => {
-    persistSubDrawerOpen(open);
-    set({ subDrawerOpen: open });
-  },
-  toggleSubDrawer: () => {
-    const next = !get().subDrawerOpen;
-    persistSubDrawerOpen(next);
-    set({ subDrawerOpen: next });
+  toggleSidebar: () => {
+    const next = !get().sidebarCollapsed;
+    persistSidebarCollapsed(next);
+    set({ sidebarCollapsed: next });
   },
   setActiveTenant: (tenant) => {
     persistActiveTenant(tenant);
@@ -195,17 +174,12 @@ function persistLastView(view: NavView) {
   window.localStorage.setItem(LAST_VIEW_STORAGE_KEY, view);
 }
 
-function persistPrimaryDrawerCollapsed(collapsed: boolean) {
+function persistSidebarCollapsed(collapsed: boolean) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(
-    PRIMARY_DRAWER_COLLAPSED_KEY,
+    SIDEBAR_COLLAPSED_KEY,
     collapsed ? "true" : "false",
   );
-}
-
-export function persistSubDrawerOpen(open: boolean) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(SUB_DRAWER_OPEN_KEY, open ? "true" : "false");
 }
 
 if (typeof window !== "undefined" && window.matchMedia) {

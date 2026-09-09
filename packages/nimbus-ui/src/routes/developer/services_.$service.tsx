@@ -19,10 +19,10 @@ import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-  useSubDrawerSearch,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+  useSubPanelSearch,
+} from "../../shell/sub-panel";
 import { useUiStore } from "../../store/ui-store";
 
 type DetailTab = "overview" | "endpoints" | "health" | "bundle";
@@ -88,18 +88,18 @@ function ServiceDetailPage() {
     return bundles.find((b) => b._id === service.bundleId) ?? null;
   }, [service, bundles]);
 
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Services",
-      search: { placeholder: "Filter services" },
+      search: { placeholder: "Filter services", rows: services.length },
       children: (
-        <DetailSubDrawer services={services} activeServiceId={serviceId} />
+        <DetailSubPanel services={services} activeServiceId={serviceId} />
       ),
     }),
     [services, serviceId],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
 
   const setTab = (next: DetailTab) =>
     navigate({
@@ -347,14 +347,14 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function DetailSubDrawer({
+function DetailSubPanel({
   services,
   activeServiceId,
 }: {
   services: ServiceDoc[];
   activeServiceId: string;
 }) {
-  const filter = useSubDrawerSearch().trim().toLowerCase();
+  const filter = useSubPanelSearch().trim().toLowerCase();
   const filtered = filter
     ? services.filter(
         (s) =>
@@ -384,7 +384,7 @@ function DetailSubDrawer({
             <Link
               to="/developer/services/$service"
               params={{ service: svc._id }}
-              data-testid={`sub-drawer-item-dev-service-${svc.name ?? svc._id}`}
+              data-testid={`sub-panel-item-dev-service-${svc.name ?? svc._id}`}
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 text-sm",
                 isActive

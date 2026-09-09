@@ -1,4 +1,3 @@
-import { type QueryEntry, queryEntry } from "@nimbus/nimbus/browser";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
@@ -15,19 +14,6 @@ import {
   Settings,
 } from "lucide-react";
 
-import { api } from "../../convex/_generated/api";
-
-// Storage type for heterogeneous nav-count entries. Each construction site
-// (via `queryEntry(api.X, args)`) is type-checked against api.X's TArgs;
-// TArgs is widened to `any` only at the array level so a single NavEntry
-// shape can host counts with different arg shapes.
-// biome-ignore lint/suspicious/noExplicitAny: This erased storage type preserves each queryEntry construction site's generic type check.
-export type NavCountEntry = QueryEntry<any, readonly unknown[]>;
-
-// Non-query nav-count sources: tenants come from the HTTP tenant list and
-// "nodes" is the single local host — neither is a convex array query.
-export type NavCountKind = "tenants" | "nodes";
-
 export type NavView = "developer" | "operator";
 
 export type NavEntry = {
@@ -36,183 +22,144 @@ export type NavEntry = {
   to: string;
   icon: LucideIcon;
   view: NavView;
-  count: NavCountEntry | null;
-  countKind?: NavCountKind;
-  // The Developer console is tenant-scoped, so its badges must count the active
-  // tenant's rows and not the whole server's. Set this only where the target
-  // query actually accepts `tenantId`; the drawer then substitutes the active
-  // tenant into `count.args` and skips the read entirely while none is
-  // selected. The `tenantId: null` in those args is a type placeholder the
-  // scoped read always replaces — it is never the value sent.
-  tenantScoped?: true;
 };
 
-// Compute and Observability are deliberately not `tenantScoped`: `functions`
-// and `runs` carry no tenantId column and their queries reject the arg, so
-// scoping them is a backend change (column + by_tenantId index + query arg),
-// not a UI one.
-export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
+// A group is one labelled run of sidebar rows. A `null` label is a run with
+// no heading: the view's home page at the top and Settings at the bottom sit
+// outside the groups, separated from them by a rule.
+export type NavGroup = {
+  label: string | null;
+  entries: NavEntry[];
+};
+
+// The sidebar carries no counts. A badge that reads "0" next to every empty
+// section was noise, and a live count next to each row cost one subscription
+// per row for a number the page itself shows on arrival.
+function entry(
+  view: NavView,
+  id: string,
+  label: string,
+  to: string,
+  icon: LucideIcon,
+): NavEntry {
+  return { id, label, to, icon, view };
+}
+
+// Developer rows are grouped by what the tenant does with them: Build is
+// what the app is made of, Run is what keeps going after a deploy, Observe
+// is how it is debugged. Nothing hides behind a group; the label only says
+// which hat a page belongs to.
+export const DEVELOPER_NAV_GROUPS: ReadonlyArray<NavGroup> = [
   {
-    id: "overview",
-    label: "Overview",
-    to: "/developer",
-    icon: Gauge,
-    view: "developer",
-    count: null,
+    label: null,
+    entries: [entry("developer", "overview", "Overview", "/developer", Gauge)],
   },
   {
-    id: "compute",
-    label: "Compute",
-    to: "/developer/compute",
-    icon: Cpu,
-    view: "developer",
-    count: queryEntry(api.functions.list, {
-      bundleId: null,
-      kind: null,
-      limit: 200,
-    }),
+    label: "Build",
+    entries: [
+      entry("developer", "compute", "Compute", "/developer/compute", Cpu),
+      entry("developer", "storage", "Storage", "/developer/storage", Database),
+      entry("developer", "files", "Files", "/developer/files", HardDrive),
+    ],
   },
   {
-    id: "services",
-    label: "Services",
-    to: "/developer/services",
-    icon: Boxes,
-    view: "developer",
-    count: queryEntry(api.services.list, {
-      tenantId: null,
-      machineId: null,
-      state: null,
-      limit: 200,
-    }),
-    tenantScoped: true,
+    label: "Run",
+    entries: [
+      entry("developer", "services", "Services", "/developer/services", Boxes),
+      entry(
+        "developer",
+        "schedules",
+        "Schedules",
+        "/developer/schedules",
+        Clock,
+      ),
+    ],
   },
   {
-    id: "schedules",
-    label: "Schedules",
-    to: "/developer/schedules",
-    icon: Clock,
-    view: "developer",
-    count: queryEntry(api.scheduled_jobs.list, {
-      tenantId: null,
-      status: null,
-      limit: 200,
-    }),
-    tenantScoped: true,
+    label: "Observe",
+    entries: [
+      entry(
+        "developer",
+        "observability",
+        "Observability",
+        "/developer/observability",
+        Activity,
+      ),
+    ],
   },
   {
-    id: "storage",
-    label: "Storage",
-    to: "/developer/storage",
-    icon: Database,
-    view: "developer",
-    count: queryEntry(api.tables.list, { tenantId: null, limit: 200 }),
-    tenantScoped: true,
-  },
-  {
-    id: "files",
-    label: "Files",
-    to: "/developer/files",
-    icon: HardDrive,
-    view: "developer",
-    count: null,
-  },
-  {
-    id: "observability",
-    label: "Observability",
-    to: "/developer/observability",
-    icon: Activity,
-    view: "developer",
-    count: queryEntry(api.runs.recent, {
-      bundleId: null,
-      functionPath: null,
-      status: null,
-      limit: 200,
-    }),
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    to: "/developer/settings",
-    icon: Settings,
-    view: "developer",
-    count: null,
+    label: null,
+    entries: [
+      entry(
+        "developer",
+        "settings",
+        "Settings",
+        "/developer/settings",
+        Settings,
+      ),
+    ],
   },
 ];
 
-export const OPERATOR_NAV_ENTRIES: NavEntry[] = [
+// Operator rows are grouped by what the operator runs: Fleet is the hardware
+// and the placements on it, Access is who may use the server, Observe is the
+// cross-tenant debugging surface.
+export const OPERATOR_NAV_GROUPS: ReadonlyArray<NavGroup> = [
   {
-    id: "nodes",
-    label: "Nodes",
-    to: "/operator",
-    icon: Server,
-    view: "operator",
-    count: null,
-    countKind: "nodes",
+    label: null,
+    entries: [entry("operator", "nodes", "Nodes", "/operator", Server)],
   },
   {
-    id: "tenants",
-    label: "Tenants",
-    to: "/operator/tenants",
-    icon: Building2,
-    view: "operator",
-    count: null,
-    countKind: "tenants",
+    label: "Fleet",
+    entries: [
+      entry(
+        "operator",
+        "machines",
+        "Machines",
+        "/operator/machines",
+        MonitorCog,
+      ),
+      entry("operator", "network", "Network", "/operator/network", Network),
+      entry("operator", "services", "Services", "/operator/services", Boxes),
+    ],
   },
   {
-    id: "machines",
-    label: "Machines",
-    to: "/operator/machines",
-    icon: MonitorCog,
-    view: "operator",
-    count: queryEntry(api.machines.list, {
-      state: null,
-      provider: null,
-      limit: 200,
-    }),
+    label: "Access",
+    entries: [
+      entry("operator", "tenants", "Tenants", "/operator/tenants", Building2),
+    ],
   },
   {
-    id: "network",
-    label: "Network",
-    to: "/operator/network",
-    icon: Network,
-    view: "operator",
-    count: queryEntry(api.routes.list, { adapter: null, limit: 200 }),
+    label: "Observe",
+    entries: [
+      entry(
+        "operator",
+        "observability",
+        "Observability",
+        "/operator/observability",
+        Activity,
+      ),
+    ],
   },
   {
-    id: "services",
-    label: "Services",
-    to: "/operator/services",
-    icon: Boxes,
-    view: "operator",
-    count: queryEntry(api.services.list, {
-      tenantId: null,
-      machineId: null,
-      state: null,
-      limit: 200,
-    }),
-  },
-  {
-    id: "observability",
-    label: "Observability",
-    to: "/operator/observability",
-    icon: Activity,
-    view: "operator",
-    count: queryEntry(api.runs.recent, {
-      bundleId: null,
-      functionPath: null,
-      status: null,
-      limit: 200,
-    }),
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    to: "/operator/settings",
-    icon: Settings,
-    view: "operator",
-    count: null,
+    label: null,
+    entries: [
+      entry("operator", "settings", "Settings", "/operator/settings", Settings),
+    ],
   },
 ];
+
+export const DEVELOPER_NAV_ENTRIES: NavEntry[] = DEVELOPER_NAV_GROUPS.flatMap(
+  (group) => group.entries,
+);
+
+export const OPERATOR_NAV_ENTRIES: NavEntry[] = OPERATOR_NAV_GROUPS.flatMap(
+  (group) => group.entries,
+);
+
+export function navGroupsForView(view: NavView): ReadonlyArray<NavGroup> {
+  return view === "developer" ? DEVELOPER_NAV_GROUPS : OPERATOR_NAV_GROUPS;
+}
 
 export function navEntriesForView(view: NavView): NavEntry[] {
   return view === "developer" ? DEVELOPER_NAV_ENTRIES : OPERATOR_NAV_ENTRIES;

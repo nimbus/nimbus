@@ -35,8 +35,8 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: () => undefined,
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: () => undefined,
 }));
 
 import { useUiStore } from "../../store/ui-store";
@@ -93,7 +93,7 @@ describe("StoragePage empty states", () => {
       );
     });
     expect(screen.getByTestId("tenant-tables-empty")).toHaveTextContent(
-      /Pick a tenant from the top-nav selector/i,
+      /Pick a tenant from the sidebar selector/i,
     );
     expect(screen.getByTestId("tenant-tables-empty")).not.toHaveTextContent(
       /CREATE TENANT/i,

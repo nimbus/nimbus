@@ -111,7 +111,7 @@ describe("StateDot", () => {
     expect(screen.getByRole("img").className).not.toMatch(/animate-/);
   });
 
-  it("never animates a connection state: the status bar is always on screen", () => {
+  it("never animates a connection state: the sidebar footer is always on screen", () => {
     const states: ConnState[] = ["connected", "reconnecting", "offline"];
     for (const state of states) {
       const { container, unmount } = render(<StateDot state={state} />);

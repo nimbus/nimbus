@@ -79,35 +79,35 @@ describe("KeyboardContract", () => {
       return input;
     }
 
-    it("focuses the drawer filter when the route has no filter of its own", () => {
-      const drawer = mountSearch("drawer");
+    it("focuses the panel filter when the route has no filter of its own", () => {
+      const panel = mountSearch("panel");
       render(<KeyboardContract />);
       fireEvent.keyDown(window, { key: "/" });
-      expect(document.activeElement).toBe(drawer);
-      drawer.remove();
+      expect(document.activeElement).toBe(panel);
+      panel.remove();
     });
 
-    it("prefers the page filter over the drawer filter", () => {
-      // The sub-drawer precedes page content in the DOM, so a plain
+    it("prefers the page filter over the panel filter", () => {
+      // The sub-panel precedes page content in the DOM, so a plain
       // document-order lookup would always pick the wrong input.
-      const drawer = mountSearch("drawer");
+      const panel = mountSearch("panel");
       const primary = mountSearch("primary");
       render(<KeyboardContract />);
       fireEvent.keyDown(window, { key: "/" });
       expect(document.activeElement).toBe(primary);
-      drawer.remove();
+      panel.remove();
       primary.remove();
     });
 
     it("leaves / alone while the user is typing", () => {
-      const drawer = mountSearch("drawer");
+      const panel = mountSearch("panel");
       const typing = document.createElement("input");
       document.body.append(typing);
       typing.focus();
       render(<KeyboardContract />);
       fireEvent.keyDown(typing, { key: "/" });
       expect(document.activeElement).toBe(typing);
-      drawer.remove();
+      panel.remove();
       typing.remove();
     });
   });

@@ -28,30 +28,32 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 // The shell's own chrome is stubbed down to one focusable each. The real
-// components pull in the router, the tenant API and the nav counts, and the
+// components pull in the router, the tenant API and the connection state, and the
 // only thing these tests need from them is that they are tab stops sitting
 // between the top of the document and <main>.
-vi.mock("../shell/top-nav", () => ({
-  TopNav: () => (
-    <button type="button" data-testid="chrome-top-nav">
-      tenant
+vi.mock("../shell/sidebar/sidebar", () => ({
+  Sidebar: () => (
+    <button type="button" data-testid="chrome-sidebar">
+      sidebar
     </button>
   ),
 }));
-vi.mock("../shell/primary-drawer", () => ({
-  PrimaryDrawer: () => (
-    <button type="button" data-testid="chrome-primary-drawer">
-      compute
+vi.mock("../shell/sidebar/mobile-sheet", () => ({
+  MobileTopBar: () => (
+    <button type="button" data-testid="chrome-mobile-top-bar">
+      mobile top bar
     </button>
   ),
 }));
-vi.mock("../shell/sub-drawer", () => ({
-  SubDrawer: () => (
-    <button type="button" data-testid="chrome-sub-drawer">
-      search
-    </button>
+vi.mock("../shell/use-viewport-tier", () => ({
+  useSmallScreen: () => false,
+  useViewportTier: () => "desktop",
+}));
+vi.mock("../shell/sub-panel", () => ({
+  SubPanelLayout: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
   ),
-  SubDrawerProvider: ({ children }: { children: React.ReactNode }) => (
+  SubPanelProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
 }));
@@ -68,7 +70,6 @@ vi.mock("../shell/keyboard-contract", () => ({ KeyboardContract: () => null }));
 vi.mock("../shell/nav-entries", () => ({
   viewFromPathname: () => "developer",
 }));
-vi.mock("../shell/status-bar", () => ({ StatusBar: () => null }));
 vi.mock("../shell/system-tenant-lens", () => ({
   SystemTenantLens: () => null,
 }));
@@ -110,7 +111,7 @@ describe("shell skip link", () => {
     // The stops it exists to skip are still there and still after it, so the
     // first assertion is about position and not about an empty shell.
     await user.tab();
-    expect(document.activeElement).toBe(screen.getByTestId("chrome-top-nav"));
+    expect(document.activeElement).toBe(screen.getByTestId("chrome-sidebar"));
   });
 
   it("stays in the tab order while it is out of sight", () => {

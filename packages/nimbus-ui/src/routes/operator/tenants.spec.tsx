@@ -64,13 +64,13 @@ vi.mock("../../lib/api-mutations", () => ({
   tenants: { remove: removeMock, create: createMock },
 }));
 
-const { subDrawerSpecRef } = vi.hoisted(() => ({
-  subDrawerSpecRef: { current: null as { children?: React.ReactNode } | null },
+const { subPanelSpecRef } = vi.hoisted(() => ({
+  subPanelSpecRef: { current: null as { children?: React.ReactNode } | null },
 }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: (spec: { children?: React.ReactNode }) => {
-    subDrawerSpecRef.current = spec;
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: (spec: { children?: React.ReactNode }) => {
+    subPanelSpecRef.current = spec;
   },
 }));
 
@@ -92,7 +92,7 @@ const loader = routeLoader<{ abortController: AbortController }, LoaderResult>(
 
 beforeEach(() => {
   loaderDataRef.current = null;
-  subDrawerSpecRef.current = null;
+  subPanelSpecRef.current = null;
   invalidateMock.mockReset();
   navigateMock.mockReset();
   nimbusQueryMock.mockReset();
@@ -221,10 +221,10 @@ describe("admin/tenants navigation", () => {
     };
   });
 
-  it("points the sub-drawer entry at the tenant's data, not a dead search param", () => {
+  it("points the sub-panel entry at the tenant's data, not a dead search param", () => {
     render(<TenantsPage />);
-    render(subDrawerSpecRef.current?.children as React.ReactElement);
-    expect(screen.getByTestId("sub-drawer-item-op-alpha")).toHaveAttribute(
+    render(subPanelSpecRef.current?.children as React.ReactElement);
+    expect(screen.getByTestId("sub-panel-item-op-alpha")).toHaveAttribute(
       "href",
       "/developer/storage?as=alpha",
     );

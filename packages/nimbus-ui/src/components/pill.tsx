@@ -44,7 +44,7 @@ const TONE_OF_TOKEN: Record<string, PillTone> = {
 };
 
 // toneOfKind derives a pill's tone from the shared state palette, so a
-// state paints the same hue as a dot or a status-bar glyph would.
+// state paints the same hue as a dot or the sidebar upgrade row would.
 export function toneOfKind(kind: StateKind): PillTone {
   return TONE_OF_TOKEN[statePalette[kind].token] ?? "neutral";
 }

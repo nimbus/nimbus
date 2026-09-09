@@ -2,15 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { EmptyState } from "../../components/empty-state";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 
 export const Route = createFileRoute("/developer/settings")({
   component: TenantSettingsPage,
 });
 
-const TENANT_SETTINGS_SUB_DRAWER: SubDrawerSpec = {
+const TENANT_SETTINGS_SUB_PANEL: SubPanelSpec = {
   kind: "static",
   title: "Settings",
   items: [
@@ -42,7 +42,7 @@ const TENANT_SETTINGS_SUB_DRAWER: SubDrawerSpec = {
 };
 
 function TenantSettingsPage() {
-  useContributeSubDrawer(TENANT_SETTINGS_SUB_DRAWER);
+  useContributeSubPanel(TENANT_SETTINGS_SUB_PANEL);
   return (
     <section className="flex h-full flex-col" data-testid="page-settings">
       <EmptyState

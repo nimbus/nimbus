@@ -1,21 +1,15 @@
 import { useQuery } from "@nimbus/nimbus/react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Play, Radio, ScrollText, TriangleAlert } from "lucide-react";
-import { useMemo } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
+import { PageTabs } from "../../components/page-tabs";
 import { StatePill } from "../../components/pill";
 import { ScrollRegion } from "../../components/scroll-region";
 import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { shortId } from "../../lib/format";
-import {
-  type StaticSubDrawerSpec,
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
 import {
   parseTenantScope,
   serializeTenantScope,
@@ -32,66 +26,28 @@ export const Route = createFileRoute("/operator/observability")({
   validateSearch: (
     search: Record<string, unknown>,
   ): AdminObservabilitySearch => ({
-    // Resolve the default here, not at render: the sub-drawer is now the only
-    // sub-view switch, and it marks an item active by matching its `search`
-    // against the location's. A bare /operator/observability would otherwise
-    // show Logs without showing Logs as selected.
+    // Resolve the default here, not at render, so a bare
+    // /operator/observability has the same address as ?tab=logs and the tab
+    // strip shows Logs as selected.
     tab: parseTab(search.tab) ?? "logs",
     tenant: typeof search.tenant === "string" ? search.tenant : undefined,
   }),
 });
 
 function parseTab(value: unknown): AdminObservabilityTab | undefined {
-  return value === "logs" || value === "runs" ? value : undefined;
+  return ADMIN_OBSERVABILITY_TABS.find((tab) => tab.id === value)?.id;
 }
 
-// The sub-drawer is the only Logs/Runs/Events/Errors switch on this surface.
-// It renders the "coming soon" chip for any item marked `disabled`, so the
-// state explains itself without a second, duplicate tab strip -- and without
-// each caller spelling the marker into its own label.
-const ADMIN_OBSERVABILITY_ITEMS = [
-  {
-    id: "logs",
-    label: "Logs",
-    to: "/operator/observability",
-    search: { tab: "logs" },
-    disabled: false,
-    icon: ScrollText,
-  },
-  {
-    id: "runs",
-    label: "Runs",
-    to: "/operator/observability",
-    search: { tab: "runs" },
-    disabled: false,
-    icon: Play,
-  },
-  {
-    id: "events",
-    label: "Events",
-    to: "/operator/observability",
-    search: { tab: "events" },
-    disabled: true,
-    icon: Radio,
-  },
-  {
-    id: "errors",
-    label: "Errors",
-    to: "/operator/observability",
-    search: { tab: "errors" },
-    disabled: true,
-    icon: TriangleAlert,
-  },
+// The tab strip is the only Logs/Runs switch on this surface. Events and
+// Errors join it when their pages exist; until then the console does not
+// name them.
+export const ADMIN_OBSERVABILITY_TABS = [
+  { id: "logs", label: "Logs" },
+  { id: "runs", label: "Runs" },
 ] as const;
 
-export const ADMIN_OBSERVABILITY_SUB_DRAWER = {
-  kind: "static",
-  title: "Observability",
-  items: ADMIN_OBSERVABILITY_ITEMS,
-} as const satisfies StaticSubDrawerSpec<"logs" | "runs" | "events" | "errors">;
-
 export type AdminObservabilityTab =
-  (typeof ADMIN_OBSERVABILITY_ITEMS)[number]["id"];
+  (typeof ADMIN_OBSERVABILITY_TABS)[number]["id"];
 
 type EventDoc = {
   _id: string;
@@ -117,41 +73,26 @@ function AdminObservabilityPage() {
   const search = Route.useSearch();
   const tab: AdminObservabilityTab = search.tab ?? "logs";
   const scope = parseTenantScope(search.tenant);
-  const navigate = useNavigate({ from: "/operator/observability" });
-  // Collapsing the sub-drawer must not strand the operator without a switch,
-  // so the enabled sub-views are also reachable from the icon rail.
-  const spec = useMemo<SubDrawerSpec>(
-    () => ({
-      ...ADMIN_OBSERVABILITY_SUB_DRAWER,
-      railItems: ADMIN_OBSERVABILITY_ITEMS.filter((item) => !item.disabled).map(
-        (item) => ({
-          id: item.id,
-          label: item.label,
-          icon: item.icon,
-          active: tab === item.id,
-          onSelect: () => {
-            void navigate({
-              to: "/operator/observability",
-              search: (prev) => ({ ...prev, tab: item.id }),
-            });
-          },
-        }),
-      ),
-    }),
-    [tab, navigate],
-  );
-  useContributeSubDrawer(spec);
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-admin-observability"
     >
-      <PageHeader
-        title="Operator observability"
-        subtitle="Logs and runs across every tenant. Tenant filtering waits on a tenant column in the events table."
-        trailing={<ScopeChip scope={scope} />}
-        testid="admin-observability-header"
-      />
+      <div className="flex shrink-0 flex-col gap-3">
+        <PageHeader
+          title="Operator observability"
+          subtitle="Logs and runs across every tenant. Tenant filtering waits on a tenant column in the events table."
+          trailing={<ScopeChip scope={scope} />}
+          testid="admin-observability-header"
+        />
+        <PageTabs
+          label="Operator observability tabs"
+          tabs={ADMIN_OBSERVABILITY_TABS}
+          active={tab}
+          testid="admin-observability-tabs"
+          itemTestid="admin-observability-tab"
+        />
+      </div>
       {tab === "logs" ? <LogsTab /> : <RunsTab />}
     </section>
   );

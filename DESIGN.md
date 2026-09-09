@@ -115,7 +115,7 @@ view.
 | Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding |
 
 8 sections. Every section is tenant-scoped — the active tenant comes from
-the top-nav selector, not the URL. Services is **dual-persona** (it also
+the sidebar tenant selector, not the URL. Services is **dual-persona** (it also
 appears in the Operator IA below); both consoles back onto the same
 `ServicesTable` and `ServiceDoc` shape, with the Developer side filtered
 to the active tenant. See
@@ -139,7 +139,7 @@ IA decision rationale.
 
 ### Secondary navigation rules
 
-- Within each view, every primary section can opt into a **sub-drawer**
+- Within each view, every primary section can opt into a **sub-panel**
   to its right with two modes: **static menu** (fixed list of sub-pages,
   e.g. Settings, Network) or **dynamic list** (resource list fed by a
   query, e.g. Storage tables, Compute functions, Tenants, Machines).
@@ -185,7 +185,7 @@ Service lifecycle lives in `Services` — a dual-persona surface present
 in both consoles. Compute and Services are siblings, not parent/child.
 
 - Compute has two **compute types**, Functions and Sandboxes, selected in the
-  secondary nav (the sub-drawer); Services and Sessions stay top-level. Search
+  secondary nav (the sub-panel); Services and Sessions stay top-level. Search
   and filters live in the main section's toolbar (shadcn data-table convention).
 - Functions: a bundle → module → function **tree** with folder/file/kind icons,
   built from the deployed functions. Open one for its detail (Statistics,
@@ -208,7 +208,7 @@ in both consoles. Compute and Services are siblings, not parent/child.
 
 Deploys are gated by a client-side TypeScript typecheck (`--typecheck
 enable|try|disable`, mirroring `convex deploy`): codegen → bundle → typecheck,
-aborting on type errors. Tenant is implicit from the top-nav selector — the
+aborting on type errors. Tenant is implicit from the sidebar tenant selector — the
 runner does not show a tenant chooser.
 
 Convex-like function runner behavior is useful, but it must be Nimbus-aware:
@@ -230,7 +230,7 @@ the cross-tenant column.
 - Actions: start, stop, restart, drain, remove — gated by tenant
   permissions, not visible if the active tenant lacks placement rights.
 
-The Services sub-drawer (Developer) is a **dynamic list** of services
+The Services sub-panel (Developer) is a **dynamic list** of services
 declared in the active tenant's `compose.yaml`. The Developer side
 never lists system services from `_nimbus`; the System Tenant Lens
 (⌘\\) is the only Developer-side path to system service state.
@@ -245,7 +245,7 @@ Schedules owns periodic and future-dated work for the active tenant.
   link to a run-level detail page.
 - Schedule detail: queued runs, recent runs, error history, retry policy.
 
-The Schedules sub-drawer is a **static menu** with two items
+The Schedules sub-panel is a **static menu** with two items
 (`Scheduled` / `Cron`).
 
 ### Storage (Developer)
@@ -269,9 +269,9 @@ view assumes a tenant is selected.
 - Query builder that makes index use visible and refuses unbounded scans where
   the backend would be unsafe.
 
-The Storage sub-drawer is a **dynamic list** of tables for the active
+The Storage sub-panel is a **dynamic list** of tables for the active
 tenant. URL is store-driven (`/developer/storage/<table>`), not
-`/developer/storage/<tenant>/<table>` — the tenant lives in the top-nav.
+`/developer/storage/<tenant>/<table>` — the tenant lives in the sidebar.
 
 The Storage UI should feel familiar to Convex Data, MongoDB Atlas Data
 Explorer, and Firebase Firestore Data, but the implementation should be one
@@ -281,14 +281,14 @@ Nimbus document browser with adapter-specific labels and type renderers.
 
 Files owns opaque-byte / S3-compatible blob storage for the active
 tenant. Ships as a placeholder surface in this baseline; the routes and
-sub-drawer are real, the underlying feature is not implemented yet.
+sub-panel are real, the underlying feature is not implemented yet.
 
 - Buckets / namespaces list with object count and total bytes.
 - Object browser with prefix navigation, last-modified / size columns,
   upload, download, copy presigned URL.
 - Object detail drawer: metadata, content type, lifecycle policy if any.
 
-The Files sub-drawer is a **dynamic list** of buckets.
+The Files sub-panel is a **dynamic list** of buckets.
 
 The placeholder state honors the token system and renders an honest
 "Not yet implemented" line — no fake bucket data, no synthesized objects.
@@ -301,13 +301,15 @@ owns the cross-tenant feed under `/operator/observability`.)
 
 - Logs: structured records with level, timestamp, request ID, function
   path, tenant, search and filters.
-- Events: ordered domain events (mutation applied, scheduler fired,
-  service restarted) for the active tenant.
-- Traces: per-request waterfall with span timing and inline log lines.
-- Errors: grouped failures with last seen, count, sample traces.
+- Runs: recent function runs with status, duration, and the correlated
+  log lines.
+- Events (UIR20): ordered domain events (mutation applied, scheduler
+  fired, service restarted) for the active tenant.
+- Errors (UIR20): grouped failures with last seen, count, sample traces.
 
-The Observability sub-drawer is a **static menu**
-(`Logs` / `Events` / `Traces` / `Errors`).
+Observability has no sub-panel. Its views are page-header tabs
+(`Logs` / `Runs`, driven by `?tab=`), and a tab appears only once its
+page exists: the strip never names a view the operator cannot open.
 
 ### Settings (tenant)
 
@@ -322,7 +324,7 @@ permissions.
   this tenant routes through.
 - Integrations enabled on this tenant.
 
-The Settings (tenant) sub-drawer is a **static menu** of sub-pages
+The Settings (tenant) sub-panel is a **static menu** of sub-pages
 (`Environment`, `Secrets`, `Schema`, `Integrations`, `Adapter binding`).
 
 ## Core Screens — Operator console
@@ -345,7 +347,7 @@ distinct from a **machine** (the outer dev VM under Machines).
   channel.
 - Recent admin actions: token rotation, tenant create, machine restart.
 
-No sub-drawer. When clustering lands this becomes a multi-row node list
+No sub-panel. When clustering lands this becomes a multi-row node list
 with a per-node detail page (Raft role, peer reachability, placement).
 
 ### Tenants (Operator)
@@ -362,7 +364,7 @@ tenants — that's an admin concern).
 - Empty state on fresh install: prominent "Create your first tenant"
   CTA; matches the inline Developer-side fallback.
 
-The Tenants sub-drawer is a **dynamic list** of tenants. Selecting a
+The Tenants sub-panel is a **dynamic list** of tenants. Selecting a
 tenant opens its admin detail page.
 
 ### Machines (Operator)
@@ -383,7 +385,7 @@ Nodes), and pure-Linux nodes have none. Do not frame this screen as
   Linux guest and that machine actions converge the guest VM's state. Do
   not imply per-service nested microVMs on macOS.
 
-The Machines sub-drawer is a **dynamic list** of machines.
+The Machines sub-panel is a **dynamic list** of machines.
 
 ### Network (Operator)
 
@@ -401,7 +403,7 @@ Network makes the active local topology inspectable.
 - Security: origin allowlist, session state, token rotation, denied
   requests.
 
-The Network sub-drawer is a **static menu** (`Routes` / `WS` / `Ports`
+The Network sub-panel is a **static menu** (`Routes` / `WS` / `Ports`
 / `Listeners` / `Security`).
 
 ### Services (Operator)
@@ -424,26 +426,26 @@ A service has both a service identity (here) and a machine placement
 (under **Operator → Machines**). Cross-link both ways; do not duplicate
 the full detail page on the machine side.
 
-The Services sub-drawer (Operator) is a **dynamic list** of services,
+The Services sub-panel (Operator) is a **dynamic list** of services,
 grouped by tenant. State chips render per service. The Developer and
-Operator sub-drawers share the same item template — only the grouping
+Operator sub-panels share the same item template — only the grouping
 and the tenant scope of the query differ.
 
 ### Observability (Operator)
 
 The Operator-side cross-tenant feed of the same data store. Defaults to
-all tenants. An optional `?tenant=<id>` filter (set via the top-nav
-selector when this route is active) narrows to one tenant without
-leaving the Operator console.
+all tenants. An optional `?tenant=<id>` filter (set from the page's own
+filter bar once the Observability tabs land) narrows to one tenant
+without leaving the Operator console.
 
 - Logs: cross-tenant log stream with the same filter set as Developer.
-- Events: cross-tenant ordered domain events.
-- Traces: cross-tenant per-request waterfall.
-- Errors: cross-tenant grouped failures.
+- Runs: cross-tenant recent function runs.
+- Events (UIR20): cross-tenant ordered domain events.
+- Errors (UIR20): cross-tenant grouped failures.
 
-The Observability sub-drawer is a **static menu** (`Logs` / `Events` /
-`Traces` / `Errors`). The same `<ObservabilityShell>` component backs
-both Developer and Operator routes; only the query input differs.
+The Operator page uses the same page-header tab strip as the Developer
+page (`Logs` / `Runs`, driven by `?tab=`) through the shared `PageTabs`
+component; only the query input differs.
 
 ### Settings (server)
 
@@ -459,7 +461,7 @@ Server administration. Distinct from the Developer-side **Settings
   / Cloud Functions / Native HTTP/WS).
 - Shutdown: graceful shutdown with running-machine warning.
 
-The Settings (server) sub-drawer is a **static menu** of sub-pages
+The Settings (server) sub-panel is a **static menu** of sub-pages
 (`General`, `Endpoints`, `Deploys`, `Token`, `Environment`,
 `Integrations`, `Shutdown`).
 
@@ -488,83 +490,112 @@ where the user is about to depend on the feature.
 
 ## Layout System
 
-The console uses a **three-pane shell** beneath a **top horizontal nav**:
+The console is a **three-column shell**: the sidebar, an optional
+sub-panel, and the page.
 
 ```
-┌───────────────────────────────────────────────────────────────────────┐
-│ TopNav: logo · view switcher (Developer ⇄ Operator) · tenant select  │
-├──────────────┬──────────────┬──────────────────────────────────────────┤
-│              │              │                                          │
-│  Primary     │  Sub-drawer  │  Main content                            │
-│  drawer      │  (optional)  │  (route Outlet)                          │
-│  (active     │  static menu │                                          │
-│   view's     │  or dynamic  │                                          │
-│   sidebar    │  list,       │                                          │
-│   IA)        │  per route)  │                                          │
-│              │              │                                          │
-├──────────────┴──────────────┴──────────────────────────────────────────┤
-│ Status bar: connection · embed integrity · build · time                │
-└───────────────────────────────────────────────────────────────────────┘
+┌──────────────┬──────────────┬──────────────────────────────────────────┐
+│ mascot nimbus│              │                                          │
+│ Dev ⇄ Op     │  Sub-panel   │  Main content                            │
+│ tenant/server│  (optional,  │  (route Outlet)                          │
+│              │  resizable;  │                                          │
+│  grouped     │  static menu │                                          │
+│  nav rows    │  or dynamic  │                                          │
+│              │  list)       │                                          │
+│ status · ver │              │                                          │
+│ update row   │              │                                          │
+│ theme · fold │              │                                          │
+└──────────────┴──────────────┴──────────────────────────────────────────┘
 ```
 
-### Top nav
+### Sidebar
 
-A single horizontal row at the top of the window:
+The left column is the console's one navigation surface
+(`packages/nimbus-ui/src/shell/sidebar/`). Top to bottom:
 
-- **Left:** logo + dynamic wordmark (`Nimbus / developer console` or
-  `Nimbus / operator console` depending on active view).
-- **Middle:** **view switcher** — a segmented pill control with two
-  options (Developer, Operator), keyboard accessible (←/→ to focus, Enter
-  to activate), `aria-pressed` reflects active view.
-- **Right:** **tenant selector** (visibility table below) and global
-  controls (command palette button, theme toggle, session menu).
+- **Brand row** (56px): the outline mascot next to the lowercase
+  wordmark; a link to the active view's home page.
+- **Scope row:** the **view switcher**, a two-segment `SegmentedControl`
+  (Developer, Operator) at full width, then the **tenant selector**
+  (Developer) or the **server identity line** (Operator: the hostname,
+  copyable, in mono).
+- **Nav groups:** the active view's rows under uppercase group labels
+  (Build / Run / Observe for Developer; Fleet / Access / Observe for
+  Operator). The home row and Settings sit outside the groups. Rows carry
+  no count badges.
+- **Footer:** the connection dot with its label and the server version,
+  the theme toggle labelled with the current theme name (`Light theme` /
+  `Dark theme`; it flips between the two, and Settings keeps the
+  system option), and the Collapse control.
 
 The view switcher is the source of truth for view, alongside the URL
 prefix (`/developer/*` → Developer, `/operator/*` → Operator). Clicking the
 inactive segment navigates to the last-visited route in that view (or
 the view's default landing) and persists `nimbus-ui:last-view`.
 
+Two widths:
+
+- **Expanded** (`w-60`, 240px): everything above.
+- **Rail** (`w-16`, 64px): icons only. Every row keeps its name in an
+  `aria-label` and shows it in a tooltip to the right; the view switcher
+  becomes two stacked icon radios; the tenant or server becomes one button
+  that expands the sidebar.
+
+The Collapse control is the last footer row, carries
+`aria-expanded` and `aria-controls="sidebar"`, is keyboard activatable,
+and never moves focus on toggle. The choice persists to
+`nimbus-ui:sidebar-collapsed` on desktop only; below the desktop tier the
+rail is the default and an expand is held in memory for that tier.
+
 ### Tenant selector behavior
 
 | View | Selector visible? | Default | Notes |
 | --- | --- | --- | --- |
 | Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist, the trigger is replaced by a compact "Create tenant" CTA that deep-links to `/operator/tenants?new=1` |
-| Operator | hidden by default | n/a | rendered only on `/operator/observability` where it acts as an optional cross-tenant filter (default "All tenants"); selection encoded as `?tenant=<id>` |
+| Operator | hidden | n/a | the sidebar shows the server identity line instead; `/operator/observability` gets an optional cross-tenant filter (default "All tenants", encoded as `?tenant=<id>`) in its own filter bar when the Observability tabs land |
 
-The selector is rendered by the same component in both views; visibility
-and the active-vs-filter mode are driven by view + active route.
+The selector is one component with two modes: the developer mode sets the
+active tenant, the `operator-filter` mode writes `?tenant=`.
 
-### Primary drawer
+### Sub-panel
 
-The left-most column. Renders the active view's sidebar IA (7 items per
-view; see Information Architecture above). Toggles between two widths:
+A second column between the sidebar and the main content. Rendered
+when the active route contributes a sub-panel spec; absent otherwise
+(the content area reflows naturally). The page never remounts when a
+spec arrives or leaves: one resizable group wraps the main column on
+every route, and the sub-panel column and its separator are the only
+conditional children.
 
-- **Expanded** (`w-56` default): icon + label + count.
-- **Collapsed** (`w-12`): icon only; label appears in a native `title`
-  tooltip.
+Geometry, on desktop:
 
-State persists to `nimbus-ui:primary-drawer-collapsed`. The toggle lives
-at the bottom of the drawer (Convex pattern), is keyboard activatable
-(Enter / Space), and never moves focus on toggle.
-
-### Sub-drawer
-
-A second column between the primary drawer and the main content. Rendered
-when the active route opts into a sub-drawer; absent otherwise (the
-content area reflows naturally). Fixed width `w-64` in this baseline.
+- Resizable between 180px and 400px; 240px by default. A 1px separator
+  carries the drag handle; it takes the accent colour on hover, focus,
+  and drag.
+- The separator is a keyboard target: `ArrowLeft` / `ArrowRight` step
+  the width, `Home` / `End` jump to the limits, `Enter` collapses and
+  expands. A step past the minimum collapses the panel.
+- Collapsed, the panel is a 32px rail with the expand button and one
+  icon per sub-view. Expanding restores the last chosen width.
+- The width and the collapsed state persist per section under
+  `nimbus-ui:panel:<section>` (`storage`, `compute`, `tenants`,
+  `settings`, ...), so Storage can stay wide while Settings stays
+  narrow. Stored widths clamp to the limits on read.
 
 Two contributor modes:
 
 - **Static menu** — a fixed list of sub-pages with an active state.
-  Used by Settings (both views), Network, Schedules, Observability.
-  Pattern reference: Convex `SettingsSidebar`.
-- **Dynamic list** — a resource list fed by a query, with optional
-  search input. Used by Storage tables, Compute functions, Tenants,
-  Machines, Services, Files. Pattern reference: Convex `DataSidebar`.
+  Used by Settings (both views), Network, Schedules. Pattern reference:
+  Convex `SettingsSidebar`. A static menu lists only pages that exist;
+  a page that is not built yet is not a menu item, disabled or
+  otherwise.
+- **Dynamic list** — a resource list fed by a query. Used by Storage
+  tables, Compute functions, Tenants, Machines, Services, Files. Pattern
+  reference: Convex `DataSidebar`. The search field appears once the
+  list exceeds twenty rows; below that, a list scans faster than it
+  filters.
 
-Routes declare their sub-drawer via a route-level `subDrawer` option
-that resolves at the layout level. Routes without a sub-drawer reserve
-no space.
+Routes contribute their spec with `useContributeSubPanel`; the layout
+resolves it at the root. Routes without a sub-panel reserve no space.
 
 ### Main content patterns
 
@@ -577,29 +608,36 @@ no space.
 - **Logs / runs** (Observability): timeline table plus correlated
   detail drawer.
 
-### Status bar
+### Page tabs
 
-Persistent at the bottom across both views. Shows connection state,
-embed integrity, build version, current time. Shared component.
+A page with a short, fixed set of views (Observability: Logs / Runs)
+switches between them with a tab strip under its header, driven by the
+`?tab=` search param so every view has an address. `PageTabs` is the
+shared component. A list the operator can grow is a sub-panel instead.
 
 ### Responsive behavior
 
-- **Desktop:** all three columns visible; primary drawer toggles
-  collapse, sub-drawer toggles closed.
-- **Tablet:** primary drawer collapses to icon rail by default;
-  sub-drawer becomes an overlay sheet anchored to the right of the
-  collapsed primary drawer.
-- **Mobile:** primary drawer + sub-drawer collapse into a single
-  hamburger sheet; bottom navigation surfaces the active view's
-  sections; the view switcher moves into the session menu.
+- **Desktop** (≥1024px): all three columns visible; the sidebar
+  toggles between expanded and rail, the sub-panel resizes and
+  collapses to its rail.
+- **Tablet** (768–1023px): the sidebar is the rail by default; the
+  sub-panel is always its 32px rail, and the expand button opens the
+  list as an overlay sheet anchored to the right of the rail. The
+  desktop width and collapsed state are not written at this tier.
+- **Mobile** (<768px): the sub-panel overlay as on tablet.
+- **Small screen** (<640px): the sidebar leaves the flow. A 48px top bar
+  holds the menu button and the mascot lockup, and the whole sidebar body
+  (scope row, nav groups, theme toggle) opens in a left sheet that closes
+  on every navigation. The sidebar has one breakpoint; the tiers above
+  belong to the sub-panel.
 
 ### Do-not list
 
 - Do not put page sections inside decorative cards. Cards are for
   repeated items, small metrics, modals, and genuinely framed tools.
-- Do not duplicate primary navigation in the sub-drawer. The sub-drawer
-  is per-section; cross-section navigation always uses the primary
-  drawer or the command palette.
+- Do not duplicate primary navigation in the sub-panel. The sub-panel
+  is per-section; cross-section navigation always uses the sidebar or
+  the command palette.
 - Do not mirror Settings between the two views. The split (tenant vs
   server) is deliberate and exclusive.
 
@@ -782,7 +820,7 @@ drawing; the static assets are exports of it.
 
 | Variant   | Where                                                   | Colour                                                  |
 |-----------|---------------------------------------------------------|---------------------------------------------------------|
-| `outline` | The mark: top nav lockup, sidebar, inline next to text  | `currentColor` stroke, `--bg-panel` fill                |
+| `outline` | The mark: sidebar brand row, mobile top bar, inline text | `currentColor` stroke, `--bg-panel` fill                |
 | `solid`   | The sticker: favicon, app icon, sign-in card, empty states at 32px and above | `--accent` body, `--accent-ink` face (fixed `#f0b23e` / `#1a1204` in static assets) |
 
 - **States.** `idle` (dot eyes, smile), `working` (eyes to the side, flat
@@ -936,8 +974,8 @@ Tables are the default shape for resources:
 
 - Use **`SegmentedControl`** as the canonical exclusive-choice control for
   ≤4 options (`packages/nimbus-ui/src/components/segmented-control.tsx`).
-  Both the top-nav DEVELOPER/OPERATOR view switcher and the appearance
-  mode toggle render through it so they cannot drift. `role="radiogroup"`
+  Both the sidebar Developer/Operator view switcher and the Settings
+  appearance mode toggle render through it so they cannot drift. `role="radiogroup"`
   with each segment `role="radio"`; ArrowLeft/Right (and ArrowUp/Down)
   move focus, Home/End jump to the edges, Enter/Space commit.
 - Use **`Select`** for >4 options or when a label-prefixed dropdown reads
@@ -1022,36 +1060,42 @@ A global command palette is table stakes for a developer console. Triggered
 by `⌘K` (macOS) / `Ctrl-K` (Windows/Linux), the palette must:
 
 - Open from anywhere — sidebar, table, drawer, modal, runner — without
-  losing the underlying view's scroll or focus state.
-- Provide three search modes in the same surface:
-  - **Navigate**: jump to a resource by name, ID, or path (machines,
-    tenants, tables, functions, runs, services, ports).
-  - **Run**: invoke an action (Start machine X, Rotate token, Shutdown,
-    Create tenant, Open function runner).
-  - **Filter**: when triggered from a list, filter the current view.
-- Show keyboard hints next to every action (`⏎ Run`, `⌘⏎ Open in new
-  tab`, `⌘C Copy ID`).
-- Surface recent commands at the top and persist across reloads.
+  losing the underlying view's scroll or focus state. Closing it returns
+  focus to the control that opened it.
+- Open on one list, 640px wide, with three fixed groups and no mode toggle:
+  - **Routes**: every page of the current console first, then the other
+    console's pages, each tagged `Developer` or `Operator`.
+  - **Tenants**: every tenant, the active one checked. A pick in the
+    developer console switches the active tenant in place; a pick from the
+    operator console switches and opens the developer console.
+  - **Actions**: switch console, open the system tenant lens (developer
+    only), refresh the current view, switch theme.
+- Add resource groups as the operator types: tables, functions, services,
+  machines, HTTP routes, each found by name, ID, or path.
+- Show recent picks at the top of the empty list, persisted under
+  `nimbus-ui:commands:recent`.
+- Write the keyboard contract in its footer: `↑ ↓` move, `⏎` open, `⎋`
+  close, `⌘K` palette, `⌘\` tenant lens, `/` filter page. Show the
+  shortcut beside every action that has one.
 
-Implementation: `cmdk` library, mounted at the app root.
+Implementation: the shadcn `command` primitive (`cmdk` inside a Base UI
+dialog), mounted at the app root.
 
-### Bottom Status Bar
+### Sidebar Footer
 
-A persistent thin bar (24-28px) anchored to the bottom of the viewport.
-Frees the sidebar from meta-state and gives the operator one always-visible
-read of system identity. Reference: VS Code, Podman Desktop.
+The console has no bottom status bar. What was in it lives in the sidebar
+footer, which is on every screen and reads top to bottom: the connection
+line (state dot, `Connected`, server version), the update row, the theme
+toggle, and the collapse control. The server URL is on the Settings page.
 
-Required slots, left to right:
-
-- Connection state dot + label (`Connected`, `Reconnecting`, `Offline`).
-- Active server URL (monospace, truncated, click-to-copy).
-- Server version + build hash (monospace, click opens release notes).
-- Active tenant (monospace, click opens tenant switcher).
-- Inflight request count (when > 0).
-- Right side: keyboard hints (`⌘K palette` `⌘\\ system tenant lens`).
-
-The bar never wraps. Truncate aggressively; rely on title attributes for
-full values.
+The update row is the one footer row that is not always there. It appears
+under the connection line when the server is behind the latest release
+(`Update to 0.2.0`, pending dot, opens the upgrade popover), follows the
+upgrade while it runs (`Updating to 0.2.0…`), holds `Updated to 0.2.0`
+for a moment after, and is absent when the console is current. In the rail
+the row is its dot with a tooltip; the button keeps its label for a screen
+reader. The three tones read from the shared state palette (`pending`,
+`starting`, `ready`), never a private table.
 
 ### Resource Breadcrumb
 
@@ -1080,11 +1124,8 @@ the resource header), the chip is permanent rather than hover-only.
 
 ### Toast / Notification Queue
 
-Use `sonner` for transient feedback. Anchor: bottom-right, offset by
-`calc(var(--statusbar-height) + 12px)` so the toast stack clears the
-fixed status bar at every viewport. The same `--statusbar-height` token
-drives the status bar height, so the gap stays correct if either changes.
-Rules:
+Use `sonner` for transient feedback. Anchor: bottom-right, with the
+default offset; nothing fixed sits under the toast stack. Rules:
 
 - Mutations confirm via toast (`Started machine-01`), not via modal.
 - Errors show until dismissed; never auto-disappear.

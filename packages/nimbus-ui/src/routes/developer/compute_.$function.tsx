@@ -23,10 +23,10 @@ import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-  useSubDrawerSearch,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+  useSubPanelSearch,
+} from "../../shell/sub-panel";
 
 type DetailTab = "statistics" | "source" | "logs" | "runs";
 
@@ -119,16 +119,19 @@ function FunctionDetailPage() {
     return bundles.find((b) => b._id === fn.bundleId) ?? null;
   }, [fn, bundles]);
 
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Functions",
-      search: { placeholder: "Filter functions" },
-      children: <DetailSubDrawer functions={functions} />,
+      search: {
+        placeholder: "Filter functions",
+        rows: functions?.length ?? 0,
+      },
+      children: <DetailSubPanel functions={functions} />,
     }),
     [functions],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
 
   const setTab = (next: DetailTab) =>
     navigate({
@@ -697,12 +700,12 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
   );
 }
 
-function DetailSubDrawer({
+function DetailSubPanel({
   functions,
 }: {
   functions: FunctionDoc[] | undefined;
 }) {
-  const filter = useSubDrawerSearch();
+  const filter = useSubPanelSearch();
   const tree = useMemo(() => buildFunctionTree(functions ?? []), [functions]);
   if (functions === undefined) {
     return (
@@ -713,7 +716,7 @@ function DetailSubDrawer({
     );
   }
   return (
-    <FunctionTreeView tree={tree} filter={filter} testidPrefix="sub-drawer" />
+    <FunctionTreeView tree={tree} filter={filter} testidPrefix="sub-panel" />
   );
 }
 

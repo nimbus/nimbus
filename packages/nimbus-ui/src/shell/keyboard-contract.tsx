@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useUiStore } from "../store/ui-store";
 
 // `/` focuses the page's own filter input. Page-level filters claim
-// `primary`; the sub-drawer's filter is the fallback, because it precedes page
+// `primary`; the sub-panel's filter is the fallback, because it precedes page
 // content in the DOM and would otherwise win every document-order lookup on a
 // route that has both.
 function findInlineSearch(): HTMLInputElement | null {
@@ -11,9 +11,9 @@ function findInlineSearch(): HTMLInputElement | null {
       '[data-inline-search="primary"]',
     ) ??
     document.querySelector<HTMLInputElement>(
-      '[data-inline-search]:not([data-inline-search="drawer"])',
+      '[data-inline-search]:not([data-inline-search="panel"])',
     ) ??
-    document.querySelector<HTMLInputElement>('[data-inline-search="drawer"]')
+    document.querySelector<HTMLInputElement>('[data-inline-search="panel"]')
   );
 }
 

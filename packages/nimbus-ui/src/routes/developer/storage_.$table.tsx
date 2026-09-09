@@ -24,7 +24,7 @@ import {
   parseFilters,
   parseOrder,
 } from "../../components/storage/table-query";
-import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
+import { useTablesSubPanel } from "../../components/storage/tables-sub-panel";
 import {
   resolveColumns,
   useColumnPrefs,
@@ -157,7 +157,7 @@ function TableDocumentsPage() {
     api.tables.list,
     tenant ? { tenantId: tenant, limit: 200 } : "skip",
   ) as TableDoc[] | undefined;
-  useTablesSubDrawer({
+  useTablesSubPanel({
     tenant: tenant || null,
     tables,
     hasTenants: undefined,
@@ -604,7 +604,7 @@ function TableDocumentsPage() {
           {!tenant ? (
             <EmptyState
               title="Select a tenant"
-              body="Documents scope to a tenant. Pick one from the top-nav selector to browse this table."
+              body="Documents scope to a tenant. Pick one from the sidebar selector to browse this table."
               testid="documents-empty"
             />
           ) : pageError ? (

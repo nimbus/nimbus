@@ -7,7 +7,7 @@ import { EmptyState } from "../../components/empty-state";
 import { LoadingState, SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { TablesListTable } from "../../components/storage/tables-list-table";
-import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
+import { useTablesSubPanel } from "../../components/storage/tables-sub-panel";
 import { Th } from "../../components/table-cells";
 import { useTenantList } from "../../hooks/use-tenant-list";
 import type { TableDoc } from "../../lib/types/table";
@@ -30,7 +30,7 @@ function StoragePage() {
 
   // Shared with the table detail route, so the Tables list stays beside the
   // documents instead of vanishing on drill-in.
-  useTablesSubDrawer({ tenant, tables, hasTenants });
+  useTablesSubPanel({ tenant, tables, hasTenants });
 
   return (
     <section
@@ -108,7 +108,7 @@ function StoragePage() {
           ) : (
             <EmptyState
               title="Select a tenant"
-              body="Pick a tenant from the top-nav selector to see its tables."
+              body="Pick a tenant from the sidebar selector to see its tables."
               testid="tenant-tables-empty"
             />
           )

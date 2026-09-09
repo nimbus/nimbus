@@ -1,9 +1,6 @@
 import { describe, it } from "vitest";
-
-import {
-  OBSERVABILITY_SUB_DRAWER,
-  type ObservabilityTab,
-} from "./observability";
+import type { ObservabilityTab } from "./observability";
+import { OBSERVABILITY_TABS } from "./observability/-types";
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
@@ -13,14 +10,12 @@ type Equal<A, B> =
 function assertEqual<T extends true>(_: T): void {}
 
 describe("ObservabilityTab type derivation", () => {
-  it("ObservabilityTab is derived from the spec items, not duplicated", () => {
-    assertEqual<Equal<ObservabilityTab, "logs" | "runs" | "events" | "errors">>(
-      true,
-    );
+  it("ObservabilityTab names only the tabs that exist", () => {
+    assertEqual<Equal<ObservabilityTab, "logs" | "runs">>(true);
   });
 
-  it("derivation tracks spec changes at compile time", () => {
-    type FromConst = (typeof OBSERVABILITY_SUB_DRAWER.items)[number]["id"];
+  it("derivation tracks the tab list at compile time", () => {
+    type FromConst = (typeof OBSERVABILITY_TABS)[number]["id"];
     assertEqual<Equal<FromConst, ObservabilityTab>>(true);
   });
 });

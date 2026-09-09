@@ -23,8 +23,8 @@ const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: () => undefined,
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: () => undefined,
 }));
 
 import { RunsTab } from "./compute_.$function";
