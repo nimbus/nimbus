@@ -5,7 +5,7 @@ use std::net::TcpListener;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;

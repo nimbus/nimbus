@@ -49,10 +49,12 @@ fn machine_stop_withdraws_all_publications_before_provider_and_releases_only_aft
     let observed = std::sync::Arc::clone(&publications_withdrawn_before_provider);
     let observed_authority = port_authority.clone();
     let observed_plans = [first.plan_id.clone(), second.plan_id.clone()];
-    let endpoint_path = paths.vmm_endpoint_path.clone();
-    let request_path = endpoint_path.clone();
+    // Bind before the server thread starts: `UnixListener::bind` creates the
+    // socket path before it calls `listen`, so a stop that connects in that
+    // gap is refused.
+    let listener =
+        UnixListener::bind(&paths.vmm_endpoint_path).expect("endpoint listener should bind");
     let server = thread::spawn(move || {
-        let listener = UnixListener::bind(&endpoint_path).expect("endpoint listener should bind");
         let (mut stream, _) = listener.accept().expect("endpoint should accept request");
         let mut buffer = [0_u8; 1024];
         let read = stream.read(&mut buffer).expect("request should read");
@@ -79,12 +81,6 @@ fn machine_stop_withdraws_all_publications_before_provider_and_releases_only_aft
             .expect("response should write");
         stream.flush().expect("response should flush");
     });
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !request_path.exists() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(request_path.exists(), "endpoint should appear before stop");
-
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
         port_authority.clone(),
         &config.name,
@@ -291,10 +287,12 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
 
     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let requests_for_server = std::sync::Arc::clone(&requests);
-    let endpoint_path = paths.vmm_endpoint_path.clone();
-    let request_path = endpoint_path.clone();
+    // Bind before the server thread starts: `UnixListener::bind` creates the
+    // socket path before it calls `listen`, so a stop that connects in that
+    // gap is refused.
+    let listener =
+        UnixListener::bind(&paths.vmm_endpoint_path).expect("endpoint listener should bind");
     let server = thread::spawn(move || {
-        let listener = UnixListener::bind(&endpoint_path).expect("endpoint listener should bind");
         let (mut stream, _) = listener.accept().expect("endpoint should accept request");
         let mut buffer = [0_u8; 1024];
         let read = stream.read(&mut buffer).expect("request should read");
@@ -314,12 +312,6 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
             .expect("response should write");
         stream.flush().expect("response should flush");
     });
-
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !request_path.exists() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(request_path.exists(), "endpoint should appear before stop");
 
     let network = test_machine_network_lifecycle(temp_dir.path());
     let port_authority = network.port_leases();
@@ -744,11 +736,14 @@ fn request_vmm_state_change_sends_hard_stop_payload() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let endpoint_path = temp_dir.path().join("krunkit.sock");
+    // Bind before the server thread starts. `UnixListener::bind` creates the
+    // socket path before it calls `listen`, so a client that polls for the
+    // path and connects in that gap is refused. Binding here means the
+    // listener is accepting before the request below can connect.
+    let listener = UnixListener::bind(&endpoint_path).expect("endpoint listener should bind");
     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let requests_for_server = std::sync::Arc::clone(&requests);
-    let request_path = endpoint_path.clone();
     let server = thread::spawn(move || {
-        let listener = UnixListener::bind(&endpoint_path).expect("endpoint listener should bind");
         let (mut stream, _) = listener.accept().expect("endpoint should accept request");
         let mut buffer = [0_u8; 1024];
         let read = stream.read(&mut buffer).expect("request should read");
@@ -768,16 +763,7 @@ fn request_vmm_state_change_sends_hard_stop_payload() {
         stream.flush().expect("response should flush");
     });
 
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !request_path.exists() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(
-        request_path.exists(),
-        "endpoint should appear before request"
-    );
-
-    request_vmm_state_change(&request_path, "HardStop").expect("hard-stop request should succeed");
+    request_vmm_state_change(&endpoint_path, "HardStop").expect("hard-stop request should succeed");
     server.join().expect("endpoint server should finish");
 
     assert_eq!(
