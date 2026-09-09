@@ -1,0 +1,240 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling autocfg v1.5.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling smallvec v1.15.1
+   Compiling pkg-config v0.3.32
+   Compiling vcpkg v0.2.15
+   Compiling cc v1.2.60
+   Compiling equivalent v1.0.2
+   Compiling subtle v2.6.1
+   Compiling memchr v2.8.2
+   Compiling foldhash v0.2.0
+   Compiling zerocopy v0.8.47
+   Compiling generic-array v0.14.7
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling num-traits v0.2.19
+   Compiling parking_lot_core v0.9.12
+   Compiling getrandom v0.3.4
+   Compiling serde_core v1.0.228
+   Compiling glob v0.3.3
+   Compiling pin-project-lite v0.2.17
+   Compiling once_cell v1.21.4
+   Compiling crossbeam-utils v0.8.21
+   Compiling writeable v0.6.2
+   Compiling serde v1.0.228
+   Compiling litemap v0.8.1
+   Compiling clang-sys v1.8.1
+   Compiling thiserror v2.0.18
+   Compiling getrandom v0.2.17
+   Compiling cpufeatures v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling errno v0.3.14
+   Compiling syn v2.0.117
+   Compiling utf8_iter v1.0.4
+   Compiling futures-sink v0.3.32
+   Compiling icu_normalizer_data v2.2.0
+   Compiling regex-syntax v0.8.10
+   Compiling icu_properties_data v2.2.0
+   Compiling bitflags v2.11.0
+   Compiling futures-core v0.3.32
+   Compiling minimal-lexical v0.2.1
+   Compiling rustc-hash v2.1.2
+   Compiling zmij v1.0.21
+   Compiling rand_core v0.9.5
+   Compiling openssl-src v300.5.5+3.5.5
+   Compiling libloading v0.8.9
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling allocator-api2 v0.2.21
+   Compiling fnv v1.0.7
+   Compiling nom v7.1.3
+   Compiling digest v0.10.7
+   Compiling crc32fast v1.5.0
+   Compiling strsim v0.11.1
+   Compiling serde_json v1.0.150
+   Compiling either v1.15.0
+   Compiling ident_case v1.0.1
+   Compiling hashbrown v0.17.1
+   Compiling bindgen v0.72.1
+   Compiling winnow v1.0.1
+   Compiling itertools v0.13.0
+   Compiling hashbrown v0.16.1
+   Compiling openssl-sys v0.9.112
+   Compiling indexmap v2.14.0
+   Compiling regex-automata v0.4.14
+   Compiling inout v0.1.4
+   Compiling libz-sys v1.1.28
+   Compiling futures-channel v0.3.32
+   Compiling parking_lot v0.12.5
+   Compiling bytes v1.11.1
+   Compiling slab v0.4.12
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling itoa v1.0.18
+   Compiling base64 v0.22.1
+   Compiling toml_parser v1.1.2+spec-1.1.0
+   Compiling rustix v1.1.4
+   Compiling futures-io v0.3.32
+   Compiling futures-task v0.3.32
+   Compiling getrandom v0.4.2
+   Compiling num-integer v0.1.46
+   Compiling cexpr v0.6.0
+   Compiling toml_edit v0.25.11+spec-1.1.0
+   Compiling cipher v0.4.4
+   Compiling sha2 v0.10.9
+   Compiling ring v0.17.14
+   Compiling proc-macro-error-attr2 v2.0.0
+   Compiling signal-hook-registry v1.4.8
+   Compiling socket2 v0.6.3
+   Compiling regex v1.12.3
+   Compiling mio v1.2.0
+   Compiling aho-corasick v1.1.4
+   Compiling log v0.4.29
+   Compiling twox-hash v2.1.0
+   Compiling proc-macro-crate v3.5.0
+   Compiling num-bigint v0.4.6
+   Compiling universal-hash v0.5.1
+   Compiling blake3 v1.8.5
+   Compiling synstructure v0.13.2
+   Compiling ppv-lite86 v0.2.21
+   Compiling darling_core v0.20.11
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.9.3
+   Compiling proc-macro-error2 v2.0.1
+   Compiling crossbeam-epoch v0.9.18
+   Compiling rmp v0.8.15
+   Compiling xxhash-rust v0.8.15
+   Compiling compare v0.0.6
+   Compiling percent-encoding v2.3.2
+   Compiling opaque-debug v0.3.1
+   Compiling mysql_common v0.35.5
+   Compiling termcolor v1.4.1
+   Compiling byteorder-lite v0.1.0
+   Compiling heck v0.5.0
+   Compiling zerofrom-derive v0.1.6
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling displaydoc v0.2.5
+   Compiling serde_derive v1.0.228
+   Compiling thiserror-impl v2.0.18
+   Compiling futures-macro v0.3.32
+   Compiling tokio-macros v2.7.0
+   Compiling zeroize_derive v1.4.3
+   Compiling tokio v1.52.3
+   Compiling futures-util v0.3.32
+   Compiling untrusted v0.9.0
+   Compiling fastrand v2.4.1
+   Compiling zerofrom v0.1.6
+   Compiling darling_macro v0.20.11
+   Compiling tempfile v3.27.0
+   Compiling yoke v0.8.2
+   Compiling darling v0.20.11
+   Compiling zeroize v1.8.2
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling sfa v1.0.0
+   Compiling mysql-common-derive v0.32.1
+   Compiling tracing-attributes v0.1.31
+   Compiling enum_dispatch v0.3.13
+   Compiling tinystr v0.8.3
+   Compiling icu_locale_core v2.2.0
+   Compiling potential_utf v0.1.4
+   Compiling icu_collections v2.2.0
+   Compiling form_urlencoded v1.2.2
+   Compiling polyval v0.6.2
+   Compiling interval-heap v0.0.5
+   Compiling crossbeam-skiplist v0.1.3
+   Compiling rmp-serde v1.3.1
+   Compiling ulid v1.2.1
+   Compiling rand_chacha v0.3.1
+   Compiling icu_provider v2.2.0
+   Compiling flate2 v1.1.9
+   Compiling lz4_flex v0.13.1
+   Compiling icu_normalizer v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling futures-executor v0.3.32
+   Compiling aes v0.8.3
+   Compiling ctr v0.9.2
+   Compiling quick_cache v0.6.24
+   Compiling hmac v0.12.1
+   Compiling sha1 v0.10.6
+   Compiling aead v0.5.2
+   Compiling btoi v0.4.3
+   Compiling tracing-core v0.1.36
+   Compiling spin v0.12.3
+   Compiling varint-rs v2.2.1
+   Compiling libsqlite3-sys v0.38.1
+   Compiling arrayref v0.3.9
+   Compiling byteview v0.10.1
+   Compiling byteorder v1.5.0
+   Compiling powerfmt v0.2.0
+   Compiling saturating v0.1.0
+   Compiling hex v0.4.3
+   Compiling hashbrown v0.14.5
+   Compiling arrayvec v0.7.6
+   Compiling constant_time_eq v0.4.2
+   Compiling uuid v1.23.0
+   Compiling self_cell v1.2.2
+   Compiling redb v2.6.3
+   Compiling lsm-tree v3.1.9
+   Compiling nimbus-core v0.1.47 (/Users/jack/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace/crates/nimbus-core)
+   Compiling keyed_priority_queue v0.4.2
+   Compiling idna_adapter v1.2.1
+   Compiling tracing v0.1.44
+   Compiling idna v1.1.0
+   Compiling deranged v0.5.8
+   Compiling dashmap v6.2.1
+   Compiling flume v0.12.0 (/Users/jack/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace/third_party/flume-0.12.0)
+   Compiling url v2.5.8
+   Compiling hkdf v0.12.4
+   Compiling tokio-util v0.7.18
+   Compiling aes-gcm-siv v0.11.1
+   Compiling rand v0.8.5
+   Compiling hashlink v0.12.0
+   Compiling pem v3.0.6
+   Compiling lru v0.16.4 (/Users/jack/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace/third_party/lru-0.16.4)
+   Compiling crossbeam-queue v0.3.12
+   Compiling fs2 v0.4.3
+   Compiling socket2 v0.5.10
+   Compiling num-conv v0.2.1
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling fallible-iterator v0.3.0
+   Compiling time-core v0.1.8
+   Compiling time v0.3.47
+   Compiling futures v0.3.32
+   Compiling serial_test_derive v3.5.0
+   Compiling serial_test v3.5.0
+   Compiling fjall v3.1.9
+   Compiling mysql_async v0.36.2
+   Compiling nimbus-crypto v0.1.47 (/Users/jack/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace/crates/nimbus-crypto)
+   Compiling rusqlite v0.40.1
+   Compiling nimbus-storage v0.1.47 (/Users/jack/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace/crates/nimbus-storage)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 41s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_storage-e8c79b8d527b45cf)
+
+running 1 test
+test tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads ... FAILED
+
+failures:
+
+---- tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads stdout ----
+
+thread 'tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads' (289924513) panicked at crates/nimbus-storage/src/tests/mysql_provider/schema.rs:294:14:
+a schema with more than 64 indexes should apply on MySQL: Storage { kind: Other, message: "Server error: `ERROR 42000 (1069): Too many keys specified; max 64 keys allowed'" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 462 filtered out; finished in 2.79s
+
+error: test failed, to rerun pass `-p nimbus-storage --lib`

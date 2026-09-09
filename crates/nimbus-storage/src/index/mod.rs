@@ -7,6 +7,8 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "mysql")]
+pub(crate) use self::bounds::range_scan_bounds_for_match_prefix;
 pub(crate) use self::bounds::{IndexRangeScanBounds, composite_range_scan_bounds};
 pub use self::encoding::{encode_index_tuple, encode_index_value};
 pub(crate) use self::keyspace::{

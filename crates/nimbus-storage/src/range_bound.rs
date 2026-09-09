@@ -1,6 +1,6 @@
 use std::ops::Bound;
 
-#[cfg(any(feature = "mysql", feature = "postgres"))]
+#[cfg(feature = "postgres")]
 use nimbus_core::Result;
 use serde_json::Value;
 
@@ -53,7 +53,7 @@ pub(crate) fn index_range_bound_presence(bound: IndexRangeBound<'_>) -> Bound<()
     }
 }
 
-#[cfg(any(feature = "mysql", feature = "postgres"))]
+#[cfg(feature = "postgres")]
 pub(crate) fn map_owned_index_range_bound<T>(
     bound: Bound<Value>,
     convert: impl FnOnce(&Value) -> Result<T>,

@@ -53,15 +53,23 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   defects, embedded process fence, retention contract, erasure and scrub
   hardening). Review-driven refactor and cleanup work should route through
   this plan's band ledgers while it is active.
+- `mysql-index-keyspace-plan.html` - `active`. Owns the MySQL storage index
+  keyspace: one bootstrap-created `index_entries` table replaces the
+  per-index InnoDB keys and generated columns on the shared `documents`
+  table, so a schema applies with any number of indexes, schema apply commits
+  in the same transaction as its journal record, and no DDL runs after tenant
+  bootstrap. Trigger: PR #334 (nimbus-ui Phase 4) failed hosted MySQL CI on
+  the InnoDB 64-key cap. PostgreSQL and libsql are out of scope.
 - `storage-review-repairs-plan.md` - `active`. Owns the five confirmed findings
   from the 2026-08-26 Opus 5 aggregate review: complete materialized identity,
   atomic nonzero-base PITR import with MVCC anchors, and proof-gate repairs.
   It preserves the closed Band SA ledger and does not act on rejected claims.
-- `release-readiness-2026-08-plan.md` - `active`. Owns the product-wide release
-  candidate audit, local application and protocol smoke matrix, macOS and Linux
-  host proof, desktop validation, repair triage, and the final GO or NO-GO
-  verdict. It consumes the storage-repair branch and routes public package
-  publication back to `distribution-plan.md`.
+- `archive/release-readiness-2026-08-plan.md` - `complete, archived`
+  (2026-09-08, final repair PR #330). Delivered the supported v0.1.47 release
+  with product and desktop QA. It includes immutable fork updates, signed apt
+  installation and upgrade, Homebrew upgrade, and public OCI smoke. Final evidence stays in
+  `proof/release-readiness-2026-08/`. The distribution plan owns COPR and future
+  channel maintenance. The historical broad NO-GO matrix remains separate.
 - `archive/storage-metadata-retention-plan.md` - `complete, archived`
   (2026-08-26; PRs #313–#321). Delivered checkpoint-backed commit-log pruning,
   production MVCC compaction, bounded CDC and PITR history, fail-closed trimmed
@@ -98,8 +106,8 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   replay-scaffolding A/B. It owns the permanent runtime-strategy lifecycle,
   product-versus-lab separation, experiment archive, benchmark truth, and
   future fork cleanup. It consumes the completed Node trust baseline in
-  `docs/private/plans/archive/node-lts-runtime-trust-plan.md`. RRC8 keeps
-  exclusive ownership until owner activation.
+  `docs/private/plans/archive/node-lts-runtime-trust-plan.md`. The archived
+  release-readiness proof records U6. Owner activation remains required.
 - `wasi-agent-capabilities-plan.md` - `deferred`. Starts only after the Wasmtime
   component linker, NimbusFS binder, and HTTP-client binder exist. Owns the
   process primitive and WIT projection layer; it must not re-own filesystem or
