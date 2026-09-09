@@ -53,6 +53,13 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   defects, embedded process fence, retention contract, erasure and scrub
   hardening). Review-driven refactor and cleanup work should route through
   this plan's band ledgers while it is active.
+- `mysql-index-keyspace-plan.html` - `active`. Owns the MySQL storage index
+  keyspace: one bootstrap-created `index_entries` table replaces the
+  per-index InnoDB keys and generated columns on the shared `documents`
+  table, so a schema applies with any number of indexes, schema apply commits
+  in the same transaction as its journal record, and no DDL runs after tenant
+  bootstrap. Trigger: PR #334 (nimbus-ui Phase 4) failed hosted MySQL CI on
+  the InnoDB 64-key cap. PostgreSQL and libsql are out of scope.
 - `storage-review-repairs-plan.md` - `active`. Owns the five confirmed findings
   from the 2026-08-26 Opus 5 aggregate review: complete materialized identity,
   atomic nonzero-base PITR import with MVCC anchors, and proof-gate repairs.

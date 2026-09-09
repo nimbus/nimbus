@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MySQL index keyspace plan</title>
+<style>
+  :root {
+    --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
+    --page: #ffffff; --accent: #2563eb;
+    --todo: #6b7280; --in-progress: #2563eb; --blocked: #dc2626;
+    --deferred: #7c3aed; --done: #16a34a; --no-action: #64748b;
+    --rejected: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e5e9ee; --muted: #9aa4af; --line: #333a43; --soft: #1b2027;
+      --page: #11151a; --accent: #60a5fa;
+      --todo: #9aa4af; --in-progress: #60a5fa; --blocked: #f87171;
+      --deferred: #a78bfa; --done: #4ade80; --no-action: #94a3b8;
+      --rejected: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 1080px;
+    background: var(--page); color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      sans-serif;
+  }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; border-bottom: 1px solid
+    var(--line); padding-bottom: 0.25rem; }
+  h3 { font-size: 1rem; margin: 1.25rem 0 0.4rem; }
+  code { background: var(--soft); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0.05rem 0.35rem; font-size: 0.85em; }
+  pre { background: var(--soft); border: 1px solid var(--line);
+    border-radius: 6px; padding: 0.9rem 1rem; overflow-x: auto;
+    line-height: 1.45; }
+  pre code { background: none; border: none; padding: 0; }
+  blockquote { margin: 0.75rem 0; padding: 0.6rem 1rem; border-left: 3px
+    solid var(--accent); background: var(--soft); }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0;
+    font-size: 0.92rem; }
+  th, td { border: 1px solid var(--line); padding: 0.35rem 0.55rem;
+    text-align: left; vertical-align: top; }
+  th { background: var(--soft); }
+  #status-line { color: var(--muted); font-size: 0.92rem; margin: 0 0 1rem; }
+  .bar { height: 0.75rem; border: 1px solid var(--line); border-radius:
+    999px; overflow: hidden; background: var(--soft); }
+  .bar .fill { height: 100%; width: 0; background: var(--done);
+    transition: width 0.3s; }
+  .counts { color: var(--muted); font-size: 0.92rem; margin: 0.4rem 0 0; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit,
+    minmax(280px, 1fr)); gap: 1rem; }
+  figure { margin: 0; border: 1px solid var(--line); border-radius: 8px;
+    padding: 0.75rem; background: var(--soft); }
+  figcaption { font-weight: 600; margin-bottom: 0.5rem; }
+  figure svg { max-width: 100%; height: auto; }
+  tr[data-status] td:nth-child(3) code { font-weight: 600; }
+  tr[data-status="todo"] td:nth-child(3) code,
+  tr[data-status^="todo("] td:nth-child(3) code { color: var(--todo); }
+  tr[data-status="in_progress"] td:nth-child(3) code,
+  tr[data-status^="in_progress("] td:nth-child(3) code {
+    color: var(--in-progress); }
+  tr[data-status="blocked"] td:nth-child(3) code,
+  tr[data-status^="blocked("] td:nth-child(3) code {
+    color: var(--blocked); }
+  tr[data-status="deferred"] td:nth-child(3) code,
+  tr[data-status^="deferred("] td:nth-child(3) code {
+    color: var(--deferred); }
+  tr[data-status="done"] td:nth-child(3) code,
+  tr[data-status^="done("] td:nth-child(3) code { color: var(--done); }
+  tr[data-status="no-action"] td:nth-child(3) code,
+  tr[data-status^="no-action("] td:nth-child(3) code {
+    color: var(--no-action); }
+  tr[data-status="rejected"] td:nth-child(3) code,
+  tr[data-status^="rejected("] td:nth-child(3) code {
+    color: var(--rejected); }
+  @page { margin: 0.7in 0.6in; size: letter; }
+  @media print {
+    :root {
+      --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
+      --page: #ffffff; --accent: #2563eb;
+      --todo: #6b7280; --in-progress: #2563eb; --blocked: #dc2626;
+      --deferred: #7c3aed; --done: #16a34a; --no-action: #64748b;
+      --rejected: #b45309;
+    }
+    body { max-width: none; padding: 0; }
+  }
+</style>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var rows = document.querySelectorAll("#ledger tbody tr");
+    var terminal = { "done": 1, "no-action": 1, "rejected": 1 };
+    var total = rows.length, closed = 0, current = "";
+    rows.forEach(function (row) {
+      var raw = row.getAttribute("data-status") || "";
+      var status = raw.split("(")[0].trim();
+      if (terminal[status]) { closed += 1; }
+      if (status === "in_progress" && !current) {
+        current = row.id + " " + row.cells[1].textContent.trim();
+      }
+    });
+    var pct = total ? Math.round((closed / total) * 100) : 0;
+    document.querySelector("#progress .fill").style.width = pct + "%";
+    var text = closed + " of " + total + " tasks terminal (" + pct + "%).";
+    if (current) { text += " In progress: " + current; }
+    document.querySelector("#progress .counts").textContent = text;
+  });
+</script>
+</head>
+<body>
+
+<header id="overview">
+  <h1>MySQL index keyspace</h1>
+  <p id="status-line">
+    Status: <code data-plan-status="active">active</code> ·
+    Owner: this plan ·
+    Created: 2026-09-09 ·
+    Baseline: main @ 63fde8a81 ·
+    Proof root: <code>proof/mysql-index-keyspace/</code> ·
+    Next action: see <a href="#current-resume-state">Current resume state</a>
+  </p>
+
+  <section id="current-resume-state">
+    <h2>Current resume state</h2>
+    <p>Updated: 2026-09-09 UTC.</p>
+    <table>
+      <thead><tr><th>Field</th><th>Current state</th></tr></thead>
+      <tbody>
+        <tr><td>Active task</td><td><a href="#MIK0">MIK0</a> baseline.</td></tr>
+        <tr><td>Next action</td><td>Write the failing many-index test, run it against the MySQL fixture, and record the error 1069 output in <code>proof/mysql-index-keyspace/mik0.md</code>.</td></tr>
+        <tr><td>Worktree</td><td><code>~/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace</code>, branch <code>codex/mysql-index-keyspace</code>, HEAD 63fde8a81, dirty: this plan and the plans index only.</td></tr>
+        <tr><td>Verification</td><td>None on this branch. The fail-before evidence from PR #334 is in the proof root after MIK0.</td></tr>
+        <tr><td>Running processes</td><td>None.</td></tr>
+        <tr><td>Required reads</td><td><a href="#task-MIK0">MIK0</a>, the <a href="#decisions">Decisions</a> section, <code>crates/nimbus-storage/src/mysql/backend.rs</code> (<code>tenant_init_statements</code>, <code>apply_schema_change_in_session</code>, <code>create_mysql_indexes_for_table_schema</code>, <code>load_index_candidate_documents_from_session</code>), <code>crates/nimbus-storage/src/mysql/index_versions.rs</code>, <code>crates/nimbus-storage/src/index/{keyspace,bounds,encoding}.rs</code>.</td></tr>
+        <tr><td>Unresolved</td><td>None.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="outcome">
+    <h2>Outcome</h2>
+    <blockquote>
+      The MySQL storage backend maintains every logical index in one
+      bootstrap-created, order-preserving keyspace table, so a tenant schema
+      applies with any number of indexes, the schema apply commits in the same
+      transaction as its journal record, and no DDL statement runs after tenant
+      bootstrap. Index reads return the same documents in the same order as
+      the redb backend for equality, prefix, range, and composite-range scans.
+    </blockquote>
+  </section>
+
+  <section id="progress">
+    <h2>Progress</h2>
+    <div class="bar"><div class="fill"></div></div>
+    <p class="counts">Progress appears here when the page loads. The status
+      ledger below is the source of truth.</p>
+  </section>
+
+  <section id="architecture">
+    <h2>Architecture</h2>
+    <div class="pair">
+      <figure>
+        <figcaption>Before</figcaption>
+        <svg viewBox="0 0 340 210" role="img" aria-label="Before: per-index DDL on the shared documents table">
+          <rect x="10" y="10" width="320" height="190" rx="8" fill="none" stroke="currentColor"/>
+          <text x="170" y="32" text-anchor="middle" fill="currentColor" font-size="13">MySQL tenant database</text>
+          <rect x="24" y="44" width="292" height="60" rx="6" fill="none" stroke="currentColor"/>
+          <text x="170" y="64" text-anchor="middle" fill="currentColor" font-size="12">documents (table_id, id, data_json, ...)</text>
+          <text x="170" y="82" text-anchor="middle" fill="currentColor" font-size="11">+ gcol_* generated column per indexed field</text>
+          <text x="170" y="97" text-anchor="middle" fill="currentColor" font-size="11">+ one InnoDB KEY per logical index (cap 64)</text>
+          <rect x="24" y="116" width="140" height="40" rx="6" fill="none" stroke="currentColor"/>
+          <text x="94" y="133" text-anchor="middle" fill="currentColor" font-size="11">schema apply</text>
+          <text x="94" y="148" text-anchor="middle" fill="currentColor" font-size="10">ALTER / CREATE INDEX</text>
+          <rect x="176" y="116" width="140" height="40" rx="6" fill="none" stroke="currentColor"/>
+          <text x="246" y="133" text-anchor="middle" fill="currentColor" font-size="11">index read</text>
+          <text x="246" y="148" text-anchor="middle" fill="currentColor" font-size="10">WHERE gcol = ? (typed expr)</text>
+          <text x="170" y="182" text-anchor="middle" fill="currentColor" font-size="10">DDL commits implicitly; journal can run ahead of storage</text>
+        </svg>
+      </figure>
+      <figure>
+        <figcaption>After</figcaption>
+        <svg viewBox="0 0 340 210" role="img" aria-label="After: bootstrap index_entries keyspace maintained by the write transaction">
+          <defs>
+            <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <rect x="10" y="10" width="320" height="190" rx="8" fill="none" stroke="currentColor"/>
+          <text x="170" y="32" text-anchor="middle" fill="currentColor" font-size="13">MySQL tenant database (bootstrap DDL only)</text>
+          <rect x="24" y="44" width="140" height="46" rx="6" fill="none" stroke="currentColor"/>
+          <text x="94" y="63" text-anchor="middle" fill="currentColor" font-size="12">documents</text>
+          <text x="94" y="80" text-anchor="middle" fill="currentColor" font-size="10">PK (table_id, id)</text>
+          <rect x="176" y="44" width="140" height="46" rx="6" fill="none" stroke="currentColor"/>
+          <text x="246" y="63" text-anchor="middle" fill="currentColor" font-size="12">index_entries</text>
+          <text x="246" y="80" text-anchor="middle" fill="currentColor" font-size="10">KEY (table_id, index_id, tuple)</text>
+          <rect x="24" y="116" width="140" height="40" rx="6" fill="none" stroke="currentColor"/>
+          <text x="94" y="133" text-anchor="middle" fill="currentColor" font-size="11">schema apply / write txn</text>
+          <text x="94" y="148" text-anchor="middle" fill="currentColor" font-size="10">DELETE / INSERT rows</text>
+          <line x1="164" y1="128" x2="240" y2="92" stroke="currentColor" marker-end="url(#arrow)"/>
+          <rect x="176" y="116" width="140" height="40" rx="6" fill="none" stroke="currentColor"/>
+          <text x="246" y="133" text-anchor="middle" fill="currentColor" font-size="11">index read</text>
+          <text x="246" y="148" text-anchor="middle" fill="currentColor" font-size="10">tuple range, JOIN documents</text>
+          <text x="170" y="182" text-anchor="middle" fill="currentColor" font-size="10">one transaction: documents + index_entries + commit_log</text>
+        </svg>
+      </figure>
+    </div>
+    <p>The shared order-preserving tuple encoding in
+      <code>crates/nimbus-storage/src/index/</code> (already used by redb and by
+      the MySQL <code>index_versions</code> history table) becomes the only
+      index key representation on MySQL. The typed generated columns and the
+      per-index InnoDB keys are removed.</p>
+  </section>
+</header>
+
+<main>
+  <section id="scope">
+    <h2>Scope</h2>
+    <p><strong>Owns:</strong> the MySQL backend of <code>crates/nimbus-storage</code>:
+      the <code>index_entries</code> keyspace table, its maintenance on the
+      document write path, its rebuild on schema apply, its purge on table
+      lifecycle, and index candidate reads through it; removal of the
+      generated-column and per-index DDL path; the MySQL provider tests and
+      the two architecture notes that describe the MySQL index layout
+      (<code>docs/private/architecture/storage/typed-key-columns.md</code>,
+      <code>persistence-engine-baseline.md</code>).</p>
+    <p><strong>Does not own:</strong> the PostgreSQL backend, which keeps one
+      Postgres index per logical index on <code>documents</code> with
+      transactional DDL and no key cap (owner:
+      <code>architecture-review-2026-07-plan.md</code> if parity is wanted
+      later); the libsql backend, which creates no per-index DDL; the
+      <code>index_versions</code> history table and its missing seed for indexes
+      added after documents exist (finding F3, routed to
+      <code>architecture-review-2026-07-plan.md</code>); the nimbus-ui Phase 4
+      system schema and the re-run of PR #334 CI after this plan merges (owner:
+      <code>nimbus-ui-rebuild-plan.html</code>, UIR23).</p>
+    <p><strong>Non-goals:</strong> trimming or merging indexes in
+      <code>crates/nimbus-system/src/schema.rs</code>; a physical table per
+      logical table; asynchronous index backfill; a migration for existing
+      MySQL tenant databases (pre-launch, no data to migrate).</p>
+  </section>
+
+  <section id="invariants">
+    <h2>Invariants</h2>
+    <ol>
+      <li>A document write, its <code>index_entries</code> maintenance, its
+        <code>index_versions</code> history, and its <code>commit_log</code>
+        append commit in one MySQL transaction.</li>
+      <li>After <code>tenant_init_statements</code> runs at bootstrap, the
+        schema-apply, table-lifecycle, and write paths issue no DDL statement.
+        A schema with any number of indexes applies.</li>
+      <li>Index reads keep <code>filter_index_documents_with_cancel</code> as
+        the authority for exact predicate evaluation and ordering. SQL only
+        narrows candidates. Results match redb for equality, prefix, range, and
+        composite-range scans.</li>
+      <li>PostgreSQL and libsql behavior does not change.</li>
+    </ol>
+  </section>
+
+  <section id="decisions">
+    <h2>Decisions</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Decision</th><th>Evidence and consequence</th><th>Re-open when</th></tr></thead>
+      <tbody>
+        <tr><td>D1</td><td>One <code>index_entries</code> table per tenant database: <code>table_id VARCHAR(191)</code>, <code>index_id VARCHAR(191)</code>, <code>document_id VARCHAR(191)</code>, <code>encoded_tuple LONGBLOB</code>, <code>PRIMARY KEY (table_id, index_id, document_id)</code>, <code>KEY idx_index_entries_tuple (table_id, index_id, encoded_tuple(768))</code>.</td><td>Ids are 26-character ULIDs; the declared key bytes (764 + 764 + 768) stay under the InnoDB 3072-byte limit. The prefix key orders the first 768 bytes of the encoded tuple; MySQL re-checks the full column for range predicates. LONGBLOB avoids the row-size limit that a VARBINARY tuple would hit, and matches <code>index_versions</code>.</td><td>A measured read regression on tuples longer than 768 bytes.</td></tr>
+        <tr><td>D2</td><td>Write-path maintenance computes one tuple mutation set per write (close tuple from the previous document, open tuple from the current one) and feeds both <code>index_versions</code> and <code>index_entries</code>.</td><td><code>index_version_mutations_for_writes</code> already computes exactly this. Sharing it keeps one schema load per write and one encoding.</td><td>Never; this is the seam.</td></tr>
+        <tr><td>D3</td><td>Schema apply diffs indexes by <code>IndexId</code>: purge entries for removed ids, backfill added ids from the table's documents, rebuild an id whose fields changed. Delete-table and hard-delete purge by <code>table_id</code>.</td><td>Index identity is stable across schema versions (CST5 proof). The redb backend rebuilds every index of the table on every apply; the diff avoids that cost on MySQL where the backfill is row inserts.</td><td>An index id can change fields without a new identity.</td></tr>
+        <tr><td>D4</td><td>Candidate reads select through <code>index_entries</code> by encoded-tuple range built from the shared bounds primitive, then join <code>documents</code> and <code>table_catalog</code>.</td><td><code>range_scan_bounds_for_match_prefix</code> in <code>index/bounds.rs</code> already produces <code>(match_prefix, start_key, end_key)</code> for a match prefix; the SQL keyspace uses the bare encoded exact prefix as that match prefix. The historical planner does the same for <code>index_versions</code>.</td><td>Never; the encoding contract is shared.</td></tr>
+        <tr><td>D5</td><td>Dialect-neutral planning lives in <code>crates/nimbus-storage/src/sql/index_keyspace.rs</code>; MySQL SQL lives in <code>crates/nimbus-storage/src/mysql/index_entries.rs</code>. The bootstrap DDL stays in <code>mysql/backend.rs</code> for this plan.</td><td>Mirrors <code>sql/index_history.rs</code>. The quality ledger asks to split bootstrap DDL from runtime operations in <code>backend.rs</code> when next extended; this plan removes about 150 lines from it instead of extending it, so the split stays with the ledger row.</td><td><code>backend.rs</code> grows past 1,500 lines again.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="rejected-designs">
+    <h2>Rejected designs</h2>
+    <ul>
+      <li><strong>Trim the Phase 4 system schema under 64 keys.</strong> Moves
+        the cap to the next table and leaves runtime DDL and the implicit-commit
+        divergence in place. Re-open: never for this defect.</li>
+      <li><strong>Serve current-state reads from <code>index_versions</code>.</strong>
+        It is a history concept keyed by tuple hash, it is not seeded for indexes
+        added after documents exist, and retention prunes it. Re-open: never.</li>
+      <li><strong>One physical MySQL table per logical table.</strong> Keeps DDL
+        in the schema-apply path, rewrites the table catalog and every reader,
+        and still caps keys per table at 64. Re-open: only if per-table physical
+        isolation becomes a product requirement.</li>
+      <li><strong>Keep generated columns and add the keyspace only past 64
+        keys.</strong> Two read paths and two failure modes for one concept.
+        Re-open: never.</li>
+    </ul>
+  </section>
+
+  <section id="findings">
+    <h2>Findings ledger</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Classification</th><th>Evidence</th><th>Owning task</th></tr></thead>
+      <tbody>
+        <tr><td>F1</td><td>defect, high, confirmed</td><td>PR #334 hosted CI and local repro: <code>projection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete</code> fails because the Phase 4 system schema needs 69 InnoDB keys on <code>documents</code>; MySQL error 1069 "Too many keys specified; max 64 keys allowed". Proof: <code>proof/mysql-index-keyspace/mik0.md</code>.</td><td>MIK1, MIK2, MIK3</td></tr>
+        <tr><td>F2</td><td>defect, high, confirmed</td><td>The failed apply left "committer lease durable sequence 19 exceeds recovered storage head 18" (<code>StorageErrorKind::Corruption</code>) because MySQL DDL commits implicitly. Removing DDL from the apply path closes the divergence by construction; MIK2 records the transactional proof.</td><td>MIK2</td></tr>
+        <tr><td>F3</td><td>gap, medium, confirmed by reading</td><td><code>index_versions</code> is maintained only on writes; an index added after documents exist has no history rows for those documents. Out of scope here.</td><td>Routed to <code>architecture-review-2026-07-plan.md</code> findings ledger.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="ledger">
+    <h2>Status ledger</h2>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Task</th><th>Status</th><th>Evidence</th></tr>
+      </thead>
+      <tbody>
+        <tr id="MIK0" data-status="in_progress"><td>MIK0</td><td>Baseline: pin the baseline commit, create the proof root, add the many-index regression test red, capture fail-before evidence. No production behavior change.</td><td><code>in_progress</code></td><td></td></tr>
+        <tr id="MIK1" data-status="todo"><td>MIK1</td><td>Index keyspace table and write-path maintenance.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="MIK2" data-status="todo"><td>MIK2</td><td>Schema apply and table lifecycle through the keyspace; remove the generated-column and per-index DDL path.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="MIK3" data-status="todo"><td>MIK3</td><td>Index candidate reads through the keyspace; architecture notes.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="MIK4" data-status="todo"><td>MIK4</td><td>Cross-cutting verification, autoreview, pull request against main.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="MIK9" data-status="todo"><td>MIK9</td><td>Cleanup after the pull request merges: archive this plan, keep the proof root, replace the index entry with a retrospective.</td><td><code>todo</code></td><td></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tasks">
+    <h2>Tasks</h2>
+
+    <h3 id="task-MIK0">MIK0 Baseline</h3>
+    <ul>
+      <li><strong>Problem:</strong> the plan needs a pinned baseline and a red
+        regression test that reproduces F1 without the nimbus-ui stack.</li>
+      <li><strong>Owning seam and paths:</strong>
+        <code>crates/nimbus-storage/src/tests/mysql_provider/schema.rs</code>,
+        <code>proof/mysql-index-keyspace/mik0.md</code>.</li>
+      <li><strong>Steps:</strong> (1) pin <code>main @ 63fde8a81</code>;
+        (2) add <code>mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads</code>:
+        one table, 70 single-field indexes, insert two documents, apply, then
+        <code>index_scan_eq</code> on the first and the last index; (3) run it
+        against the fixture and record the error 1069 output; (4) copy the PR
+        #334 job log excerpt and the local repro log into the proof file.</li>
+      <li><strong>Acceptance:</strong> the new test fails with MySQL error 1069
+        on the baseline; the proof file names the test, the command, and the
+        error text.</li>
+      <li><strong>Fail-before:</strong> this task is the fail-before.</li>
+      <li><strong>Verification:</strong>
+        <code>bash scripts/external-provider-fixture.sh up mysql</code>, then
+        <code>NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES=1 NIMBUS_MYSQL_URL="mysql://root:fixture-mysql-root@127.0.0.1:3306/test" cargo test -p nimbus-storage --features mysql mysql_schema_with_more_than_sixty_four_indexes</code>.</li>
+    </ul>
+
+    <h3 id="task-MIK1">MIK1 Index keyspace table and write-path maintenance</h3>
+    <ul>
+      <li><strong>Problem:</strong> MySQL has no current-state index keyspace;
+        index effects of a write are InnoDB keys on <code>documents</code>.</li>
+      <li><strong>Owning seam and paths:</strong>
+        <code>crates/nimbus-storage/src/mysql/backend.rs</code>
+        (<code>tenant_init_statements</code>), new
+        <code>crates/nimbus-storage/src/mysql/index_entries.rs</code>,
+        <code>crates/nimbus-storage/src/mysql/index_versions.rs</code>
+        (share the tuple mutation computation),
+        <code>crates/nimbus-storage/src/mysql/write.rs</code> (commit site
+        beside <code>record_index_versions_for_events_in_session</code>).</li>
+      <li><strong>Steps:</strong> (1) add the <code>index_entries</code> DDL per
+        D1 to <code>tenant_init_statements</code>; (2) lift
+        <code>IndexVersionMutation</code> and
+        <code>index_version_mutations_for_writes</code> into a shared
+        <code>IndexTupleMutation</code> set computed once per write batch;
+        (3) add <code>maintain_index_entries_for_writes_in_session</code>:
+        <code>DELETE</code> by primary key for a close tuple,
+        <code>INSERT ... ON DUPLICATE KEY UPDATE encoded_tuple = VALUES(encoded_tuple)</code>
+        for an open tuple; (4) call it in the commit path in the same
+        transaction; (5) add the test support helper
+        <code>index_entry_rows(connection_string, database_name) -&gt; Vec&lt;(table_id, index_id, document_id, tuple_len)&gt;</code>.</li>
+      <li><strong>Acceptance:</strong>
+        <code>mysql_writes_maintain_index_entries</code>: after two inserts on
+        a table with two indexes the keyspace holds 4 rows; after an update
+        that changes one indexed field the row for that index carries the new
+        tuple and the count stays 4; after a delete the count is 2. A document
+        without the indexed field has no row for that index. Existing
+        <code>mysql_provider</code> tests still pass.</li>
+      <li><strong>Fail-before:</strong> the new test fails on the baseline
+        because the table does not exist.</li>
+      <li><strong>Verification:</strong> the MIK0 environment, then
+        <code>cargo test -p nimbus-storage --features mysql mysql_provider</code>.</li>
+    </ul>
+
+    <h3 id="task-MIK2">MIK2 Schema apply and lifecycle through the keyspace</h3>
+    <ul>
+      <li><strong>Problem:</strong> schema apply runs <code>ALTER TABLE</code>
+        and <code>CREATE INDEX</code> per index (F1) and commits them
+        implicitly (F2).</li>
+      <li><strong>Owning seam and paths:</strong>
+        <code>crates/nimbus-storage/src/mysql/backend.rs</code>
+        (<code>apply_schema_change_in_session</code>,
+        <code>apply_table_lifecycle_in_session</code>,
+        <code>create_mysql_indexes_for_table_schema</code>,
+        <code>drop_mysql_indexes_for_table_schema</code>,
+        <code>mysql_document_column_exists</code>,
+        <code>mysql_document_index_exists</code>),
+        <code>crates/nimbus-storage/src/mysql/index_entries.rs</code>,
+        <code>crates/nimbus-storage/src/mysql/query_helpers.rs</code>
+        (<code>mysql_index_name</code>, <code>mysql_generated_column_name</code>,
+        <code>mysql_generated_column_expr</code>, <code>unique_index_fields</code>),
+        <code>crates/nimbus-storage/src/mysql/table_lifecycle.rs</code>.</li>
+      <li><strong>Steps:</strong> (1) <code>SetTable</code>: diff
+        <code>previous.maintained_indexes()</code> against
+        <code>current.maintained_indexes()</code> by id per D3; purge removed
+        ids; backfill added or changed ids by streaming the table's documents
+        in pages of 500 and inserting tuples in batches; (2)
+        <code>DeleteTable</code> and <code>HardDelete</code>: purge by
+        <code>table_id</code>; (3) delete the DDL functions, the generated-column
+        helpers, the key-prefix helpers, and their imports; (4) rename
+        <code>mysql_schema_write_creates_and_drops_generated_index_columns</code>
+        to <code>mysql_schema_write_populates_and_clears_index_entries_without_ddl</code>:
+        it asserts zero generated columns and zero secondary keys on
+        <code>documents</code> after apply, row counts equal documents times
+        maintained indexes, and zero rows after schema delete; (5) add
+        <code>mysql_schema_apply_backfills_indexes_added_after_documents_exist</code>;
+        (6) prove F2: with the provider fault injector, fail the transaction
+        after the schema row is written and assert the schema is absent, the
+        keyspace is empty, and the committer lease equals the storage head on
+        reopen. If no fault point exists at that position, add one at the
+        existing fault seam rather than a test-only hook, and record the
+        point name in the proof.</li>
+      <li><strong>Acceptance:</strong> the MIK0 many-index test passes;
+        <code>mysql_table_lifecycle_activates_hidden_identity_and_diagnostics_track_layout</code>
+        passes unchanged; the three tests in step 4 through 6 pass; a grep for
+        <code>CREATE INDEX</code>, <code>ALTER TABLE</code>, and
+        <code>GENERATED ALWAYS</code> under <code>crates/nimbus-storage/src/mysql/</code>
+        matches only <code>tenant_init_statements</code>.</li>
+      <li><strong>Fail-before:</strong> the MIK0 test is red; the backfill test
+        is red on MIK1's head because apply still creates InnoDB keys.</li>
+      <li><strong>Verification:</strong>
+        <code>cargo test -p nimbus-storage --features mysql mysql_provider</code>;
+        <code>grep -rn "CREATE INDEX\|ALTER TABLE\|GENERATED ALWAYS" crates/nimbus-storage/src/mysql/</code>.</li>
+    </ul>
+
+    <h3 id="task-MIK3">MIK3 Index candidate reads through the keyspace</h3>
+    <ul>
+      <li><strong>Problem:</strong>
+        <code>load_index_candidate_documents_from_session</code> filters on the
+        generated columns that MIK2 removes.</li>
+      <li><strong>Owning seam and paths:</strong> new
+        <code>crates/nimbus-storage/src/sql/index_keyspace.rs</code>
+        (tuple scan bounds for the SQL keyspace, built on
+        <code>range_scan_bounds_for_match_prefix</code> in
+        <code>crates/nimbus-storage/src/index/bounds.rs</code>),
+        <code>crates/nimbus-storage/src/mysql/backend.rs</code>
+        (<code>load_index_candidate_documents_from_session</code>),
+        <code>crates/nimbus-storage/src/mysql/read.rs</code>,
+        <code>crates/nimbus-storage/src/mysql/query_helpers.rs</code>
+        (<code>mysql_index_text_value</code>, <code>mysql_numeric_column_expr</code>,
+        <code>append_mysql_range_clause</code> if unused after),
+        <code>docs/private/architecture/storage/typed-key-columns.md</code>,
+        <code>docs/private/architecture/storage/persistence-engine-baseline.md</code>.</li>
+      <li><strong>Steps:</strong> (1) expose the bounds primitive as
+        <code>pub(crate)</code> and add <code>IndexTupleScanBounds::for_scan(index, exact_prefix, start, end)</code>
+        returning <code>Empty</code> or <code>{ match_prefix, start_key, end_key }</code>
+        on bare encoded tuples; (2) rewrite the candidate query:
+        <code>SELECT c.table_name, d.id, ... FROM index_entries e JOIN documents d ON d.table_id = e.table_id AND d.id = e.document_id JOIN table_catalog c ON c.table_id = d.table_id WHERE e.table_id = ? AND e.index_id = ? AND e.encoded_tuple &gt;= ? [AND e.encoded_tuple &lt; ?] ORDER BY e.encoded_tuple, e.document_id</code>;
+        return no rows for <code>Empty</code>; (3) keep
+        <code>filter_index_documents_with_cancel</code> as the authority;
+        (4) delete the typed-column read helpers that have no caller left;
+        (5) update the MySQL rows of the two architecture notes.</li>
+      <li><strong>Acceptance:</strong>
+        <code>mysql_index_reads_round_trip_after_schema_write</code> and every
+        <code>exercise_*</code> pair scenario pass; a new
+        <code>mysql_index_range_scans_order_numbers_numerically</code> proves
+        that a number range over 2, 10, and 9 returns numeric order and that
+        a string range over "10" and "2" returns lexicographic order, equal to
+        the redb result on the same documents; a new
+        <code>mysql_index_reads_use_the_keyspace_not_a_table_scan</code>
+        asserts <code>EXPLAIN</code> on the candidate query names
+        <code>idx_index_entries_tuple</code>.</li>
+      <li><strong>Fail-before:</strong> after MIK2 the existing read tests fail
+        because the generated columns are gone.</li>
+      <li><strong>Verification:</strong>
+        <code>cargo test -p nimbus-storage --features mysql mysql_provider</code>;
+        <code>cargo test -p nimbus-storage --features mysql</code>.</li>
+    </ul>
+
+    <h3 id="task-MIK4">MIK4 Cross-cutting verification and pull request</h3>
+    <ul>
+      <li><strong>Problem:</strong> the change touches every MySQL index
+        consumer; the merge evidence must cover engine and system consumers
+        and the original F1 trigger.</li>
+      <li><strong>Owning seam and paths:</strong> this plan,
+        <code>proof/mysql-index-keyspace/mik4.md</code>.</li>
+      <li><strong>Steps:</strong> (1) run the commands below; (2) merge this
+        branch into a throwaway branch from
+        <code>codex/nimbus-ui-rebuild-phase4</code> and run the failing
+        projection test there; (3) <code>cargo fmt --all --check</code>,
+        <code>make clippy</code>; (4) autoreview
+        <code>--gate pre-pr --mode branch --base origin/main</code>; (5) open the
+        pull request against <code>main</code> with the proof summary, no
+        attribution.</li>
+      <li><strong>Acceptance:</strong> every command below exits 0 with its
+        counts recorded; the projection test passes on the merged Phase 4
+        branch; the autoreview verdict is recorded; the pull request number is
+        in the ledger.</li>
+      <li><strong>Fail-before:</strong> MIK0 evidence.</li>
+      <li><strong>Verification:</strong> with the MIK0 environment:
+        <code>cargo test -p nimbus-storage --features mysql</code>;
+        <code>cargo test -p nimbus-storage --features "mysql postgres libsql" provider_contract_matrix</code>;
+        <code>cargo test -p nimbus-engine --features mysql mysql</code>;
+        <code>cargo test -p nimbus-system projection_mysql</code>;
+        <code>cargo test -p nimbus-storage</code> (default features, redb and
+        sqlite unchanged); <code>cargo fmt --all --check</code>; <code>make clippy</code>.</li>
+    </ul>
+
+    <h3 id="task-MIK9">MIK9 Cleanup</h3>
+    <ul>
+      <li><strong>Problem:</strong> a merged plan must not linger as a stale
+        control plane.</li>
+      <li><strong>Owning seam and paths:</strong> this plan file, its proof
+        root, <code>docs/private/plans/README.md</code>.</li>
+      <li><strong>Steps:</strong> confirm the merge of the MIK4 pull request;
+        move this plan to <code>docs/private/plans/archive/</code> with status
+        <code>complete</code>, the date, and the pull request number; keep the
+        proof root; replace the index entry with a one-paragraph
+        retrospective; hand the PR #334 re-run to the nimbus-ui plan.</li>
+      <li><strong>Acceptance:</strong> the archive holds the completed plan and
+        the index has no active entry for it.</li>
+      <li><strong>Fail-before:</strong> not applicable.</li>
+      <li><strong>Verification:</strong>
+        <code>grep -rn "mysql-index-keyspace" docs/private/plans/README.md docs/private/plans/*.html</code>
+        returns only the retrospective.</li>
+    </ul>
+  </section>
+
+  <section id="goal">
+    <h2>Goal</h2>
+    <pre><code>Execute docs/private/plans/mysql-index-keyspace-plan.html to completion.
+This is a whole-plan goal, not a single-task goal. Read the compact plan
+fully, then the active task contract and relevant current proof. Required
+reference owners: CLAUDE.md (storage atomicity, mutation path),
+docs/private/architecture/storage/typed-key-columns.md,
+docs/private/plans/proof/convex-storage-trust-hardening/cst5-index-identity-lifecycle.md,
+docs/private/operating/verification.md.
+Work in ~/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace on
+branch codex/mysql-index-keyspace. Chat history is not progress state.
+Resume from Current resume state, the ledger, and verified git state. Read
+history only for a named evidence question.
+If compaction happens, continue from the plan and git state rather than
+restarting. Loop: keep one task in_progress, implement at the owning seam,
+capture fail-before evidence, run the verification commands, commit the
+work per the commit policy, write the proof file, append the execution log
+with the work commit, mark the task terminal with evidence, commit the plan
+update the same way, then advance to the next task. Decide rather than ask.
+Mark a wrong or already-satisfied task no-action with a one-line reason.
+Record a blocker and continue with the next eligible task. Binding
+constraints: the four invariants; the non-goals; no change to the
+PostgreSQL or libsql backends; no compatibility or migration code. Commit
+policy: commit on the branch; force-add plan and proof files under
+docs/private with git add -f; no AI attribution; do not commit
+packages/nimbus-ui/dist, embedded package copies, or .nimbus. Stop only at a
+valid stop state from the plans skill. Before you stop, update the ledger
+and the log, and replace Current resume state. The status line links to its
+exact next action. The goal is met when MIK0 through MIK4 are terminal, the
+pull request against main is open with autoreview recorded, and MIK9 waits
+on the merge.</code></pre>
+  </section>
+
+  <section id="execution-log">
+    <h2>Execution log</h2>
+    <p>History: none. Move older rows unchanged to the proof root when the
+      context budget requires it. Keep a link here.</p>
+    <!-- Append short rows at the end of this table.
+         This section stays last in the file. -->
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Item</th><th>Action</th><th>Evidence</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>2026-09-09</td><td>meta</td><td>authored</td><td>Plan promoted directly to <code>active</code> from the PR #334 diagnosis. Baseline main @ 63fde8a81. No implementation started by this step.</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+
+</body>
+</html>
