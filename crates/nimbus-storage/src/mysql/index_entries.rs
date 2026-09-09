@@ -342,6 +342,48 @@ where
     }
 }
 
+/// Builds the candidate select for one index read: the keyspace rows of the
+/// index whose encoded tuple lies in `start_key..end_key`, joined to their
+/// documents and the table catalog, in tuple order. The equality on
+/// `(table_id, index_id)` and the byte range on `encoded_tuple` are the
+/// leading columns of `idx_index_entries_tuple`, so the optimizer answers the
+/// read with one range over that key and never scans `documents`.
+pub(crate) fn index_candidate_select(
+    database_name: &str,
+    table_id: &TableId,
+    index_id: &IndexId,
+    start_key: Vec<u8>,
+    end_key: Option<Vec<u8>>,
+) -> (String, Params) {
+    let mut clauses = vec![
+        "e.table_id = ?".to_string(),
+        "e.index_id = ?".to_string(),
+        "e.encoded_tuple >= ?".to_string(),
+    ];
+    let mut params = vec![
+        MySqlValue::Bytes(table_id.as_str().as_bytes().to_vec()),
+        MySqlValue::Bytes(index_id.as_str().as_bytes().to_vec()),
+        MySqlValue::Bytes(start_key),
+    ];
+    if let Some(end_key) = end_key {
+        clauses.push("e.encoded_tuple < ?".to_string());
+        params.push(MySqlValue::Bytes(end_key));
+    }
+    let sql = format!(
+        "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
+         FROM {} AS e \
+         JOIN {} AS d ON d.table_id = e.table_id AND d.id = e.document_id \
+         JOIN {} AS c ON c.table_id = d.table_id \
+         WHERE {} \
+         ORDER BY e.encoded_tuple, e.document_id",
+        qualified_table(database_name, "index_entries"),
+        qualified_table(database_name, "documents"),
+        qualified_table(database_name, "table_catalog"),
+        clauses.join(" AND ")
+    );
+    (sql, Params::Positional(params))
+}
+
 /// Selects the candidate documents for one index read from the keyspace:
 /// the rows of the index whose encoded tuple falls in the planned byte
 /// range, joined to their documents, in tuple order. The Rust predicate in
@@ -381,36 +423,9 @@ where
         IndexTupleScanBounds::Bounds { start_key, end_key } => (start_key, end_key),
     };
 
-    let mut clauses = vec![
-        "e.table_id = ?".to_string(),
-        "e.index_id = ?".to_string(),
-        "e.encoded_tuple >= ?".to_string(),
-    ];
-    let mut params = vec![
-        MySqlValue::Bytes(table_id.as_str().as_bytes().to_vec()),
-        MySqlValue::Bytes(index.id.as_str().as_bytes().to_vec()),
-        MySqlValue::Bytes(start_key),
-    ];
-    if let Some(end_key) = end_key {
-        clauses.push("e.encoded_tuple < ?".to_string());
-        params.push(MySqlValue::Bytes(end_key));
-    }
-    let sql = format!(
-        "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
-         FROM {} AS e \
-         JOIN {} AS d ON d.table_id = e.table_id AND d.id = e.document_id \
-         JOIN {} AS c ON c.table_id = d.table_id \
-         WHERE {} \
-         ORDER BY e.encoded_tuple, e.document_id",
-        qualified_table(database_name, "index_entries"),
-        qualified_table(database_name, "documents"),
-        qualified_table(database_name, "table_catalog"),
-        clauses.join(" AND ")
-    );
-    let rows: Vec<Row> = session
-        .exec(sql, Params::Positional(params))
-        .await
-        .map_err(map_mysql_error)?;
+    let (sql, params) =
+        index_candidate_select(database_name, &table_id, &index.id, start_key, end_key);
+    let rows: Vec<Row> = session.exec(sql, params).await.map_err(map_mysql_error)?;
     rows.into_iter()
         .map(|row| {
             let (table_name, id, creation_time, update_time, data_json, typed_fields_json): (

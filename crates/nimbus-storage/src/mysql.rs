@@ -35,7 +35,7 @@ use crate::store::{
 mod backend;
 mod committer_lease;
 mod document_versions;
-mod index_entries;
+pub(crate) mod index_entries;
 mod index_versions;
 mod provider;
 mod query_helpers;

@@ -164,8 +164,15 @@ provider-specific DDL:
   CDC/changefeed, PITR, and materializer catch-up
 
 The SQL-family implementations keep the same Nimbus-visible semantics while
-choosing backend-appropriate keys and indexes. MySQL uses hash-assisted encoded
-tuple keys where needed for ordered/indexed lookup constraints. libSQL keeps
+choosing backend-appropriate keys and indexes. MySQL keeps one current-state
+`index_entries` keyspace per tenant database (`table_id`, `index_id`,
+`document_id`, `encoded_tuple`) with one fixed InnoDB key over the tuple
+prefix, created at bootstrap. Every document write, schema apply, backfill,
+purge, and table delete maintains that keyspace inside the write transaction,
+and an index read is one byte range over the tuple column joined to
+`documents` by primary key. The `documents` table never gains a generated
+column or a per-index key, so a tenant schema is not bounded by the InnoDB
+limit of 64 keys per table and schema apply never runs DDL. libSQL keeps
 remote primary rows and refreshes the local SQLite replica cache before
 historical index reads.
 
@@ -197,6 +204,12 @@ SQLite, Postgres, and MySQL share one pure historical index scan planner in
 `crates/nimbus-storage/src/index/history_scan.rs` for query shape, encoded
 tuple bounds, cursor validation, and page finalization. Backend modules own only
 their physical `index_versions` lookup and `document_versions` hydration.
+Current-state index reads over a SQL keyspace share
+`crates/nimbus-storage/src/sql/index_keyspace.rs`, which plans the encoded
+tuple range from the same order-preserving encoding the redb index uses; the
+MySQL statements that write, purge, backfill, and select that keyspace live in
+`mysql/index_entries.rs`, and the Rust predicate filter stays the authority on
+membership.
 SQL-family production roots stay below the repo's 1,500-line review threshold by
 moving stable table-id catalog operations to `mysql/table_catalog.rs`,
 document/index filtering and range helpers to SQL-family `query_helpers.rs`
