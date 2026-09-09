@@ -110,11 +110,15 @@ runs:
     # GitHub's Ubuntu image can route apt through an Azure regional mirror.
     # A mirror outage previously held apt-get update until the whole job timed
     # out. Keep the canonical archive fallback only, then bound every update.
+    # The image also ships the Google Chrome apt source, which CI never
+    # installs from and which intermittently fails apt-get update with a
+    # Packages checksum mismatch. Drop it before the first update.
     - name: Configure resilient Ubuntu package mirror
       if: runner.os == 'Linux'
       shell: bash
       run: |
         sudo bash scripts/ci/configure-ubuntu-apt-mirrors.sh /etc/apt/apt-mirrors.txt
+        sudo bash scripts/ci/disable-unused-apt-sources.sh /etc/apt/sources.list.d
         if [[ -d /etc/apt/apt.conf.d ]]; then
           printf '%s\n' \
             'Acquire::Retries "3";' \
