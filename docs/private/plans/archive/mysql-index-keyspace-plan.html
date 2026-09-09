@@ -115,12 +115,14 @@
 <header id="overview">
   <h1>MySQL index keyspace</h1>
   <p id="status-line">
-    Status: <code data-plan-status="active">active</code> ·
-    Owner: this plan ·
+    Status: <code data-plan-status="complete">complete</code> ·
+    Owner: archived ·
     Created: 2026-09-09 ·
+    Completed: 2026-09-09 ·
+    Pull request: <a href="https://github.com/nimbus/nimbus/pull/336">#336</a> (merge <code>98bae405a</code>) ·
     Baseline: main @ 63fde8a81 ·
-    Proof root: <code>proof/mysql-index-keyspace/</code> ·
-    Next action: see <a href="#current-resume-state">Current resume state</a>
+    Proof root: <code>docs/private/plans/proof/mysql-index-keyspace/</code> ·
+    Next action: none. This plan is archived.
   </p>
 
   <section id="current-resume-state">
@@ -129,10 +131,10 @@
     <table>
       <thead><tr><th>Field</th><th>Current state</th></tr></thead>
       <tbody>
-        <tr><td>Active task</td><td><a href="#MIK9">MIK9</a> cleanup, blocked until PR #336 merges.</td></tr>
-        <tr><td>Next action</td><td>Wait for PR #336 (<code>codex/mysql-index-keyspace</code> against <code>main</code>) to merge. Then archive this plan to <code>docs/private/plans/archive/</code> with status <code>complete</code>, keep the proof root, replace the README index entry with a retrospective, and hand the PR #334 re-run and UI stack rebase to the nimbus-ui rebuild plan.</td></tr>
-        <tr><td>Worktree</td><td><code>~/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace</code>, branch <code>codex/mysql-index-keyspace</code>, HEAD dc88c7316 pushed, dirty: this plan only.</td></tr>
-        <tr><td>Verification</td><td>MIK4: all lanes green (see ledger); autoreview clean; PR #336 open, hosted CI pending. Provider fixture containers are up.</td></tr>
+        <tr><td>Active task</td><td>None. MIK9 done; the plan is archived.</td></tr>
+        <tr><td>Next action</td><td>None. PR #334 re-run and the UI stack merge belong to the nimbus-ui rebuild plan.</td></tr>
+        <tr><td>Worktree</td><td>Removed after the archive commit. Branch <code>codex/mysql-index-keyspace</code> merged.</td></tr>
+        <tr><td>Verification</td><td>PR #336 hosted CI green. One run failed only in the libsql external-provider lane (<code>libsql_provider_stale_lease_retention_rebuilds_cache_and_survives_restart</code>, confirmed floor 0 instead of 4); the branch does not touch libsql, and the rerun passed.</td></tr>
         <tr><td>Running processes</td><td>None.</td></tr>
         <tr><td>Required reads</td><td><a href="#task-MIK0">MIK0</a>, the <a href="#decisions">Decisions</a> section, <code>crates/nimbus-storage/src/mysql/backend.rs</code> (<code>tenant_init_statements</code>, <code>apply_schema_change_in_session</code>, <code>create_mysql_indexes_for_table_schema</code>, <code>load_index_candidate_documents_from_session</code>), <code>crates/nimbus-storage/src/mysql/index_versions.rs</code>, <code>crates/nimbus-storage/src/index/{keyspace,bounds,encoding}.rs</code>.</td></tr>
         <tr><td>Unresolved</td><td>None.</td></tr>
@@ -316,7 +318,7 @@
         <tr id="MIK2" data-status="done"><td>MIK2</td><td>Schema apply and table lifecycle through the keyspace; remove the generated-column and per-index DDL path.</td><td><code>done</code></td><td>2026-09-09, 575cbf45a. <code>mysql_provider</code> 46 passed, 0 failed (MIK0 test green); planner unit tests 4 passed; fmt, clippy (mysql, postgres, libsql), and feature checks clean; DDL grep empty. Candidate read moved here from MIK3. F2 proved by <code>mysql_schema_apply_fault_before_commit_leaves_no_partial_state</code>. <code>proof/mysql-index-keyspace/mik2.md</code>.</td></tr>
         <tr id="MIK3" data-status="done"><td>MIK3</td><td>Index candidate reads through the keyspace; architecture notes.</td><td><code>done</code></td><td>2026-09-09, d43e4b2f1. <code>mysql_index_range_scans_order_numbers_numerically</code> and <code>mysql_index_reads_use_the_keyspace_not_a_table_scan</code> pass (EXPLAIN: range on <code>idx_index_entries_tuple</code>, eq_ref PRIMARY on documents, no ALL); <code>mysql_provider</code> 48 passed; <code>--features mysql</code> 466 passed, 3 ignored; fmt, clippy, feature checks clean; baseline note updated. <code>proof/mysql-index-keyspace/mik3.md</code>.</td></tr>
         <tr id="MIK4" data-status="done"><td>MIK4</td><td>Cross-cutting verification, autoreview, pull request against main.</td><td><code>done</code></td><td>2026-09-09, dc88c7316. Storage <code>--features mysql</code> 466 passed, 3 ignored; storage default 401 passed, 3 ignored; <code>provider_contract_matrix</code> 2 passed; engine mysql 13 passed; system <code>projection_mysql</code> 1 passed; throwaway merge with Phase 4 (3c91066a2) clean, takeover test 1 passed; fmt and <code>make clippy</code> clean. Autoreview pre-pr clean, "patch is correct (0.95)", no findings. PR #336. <code>proof/mysql-index-keyspace/mik4.md</code>.</td></tr>
-        <tr id="MIK9" data-status="in_progress"><td>MIK9</td><td>Cleanup after the pull request merges: archive this plan, keep the proof root, replace the index entry with a retrospective.</td><td><code>in_progress</code></td><td>Waiting on PR #336 merge.</td></tr>
+        <tr id="MIK9" data-status="done"><td>MIK9</td><td>Cleanup after the pull request merges: archive this plan, keep the proof root, replace the index entry with a retrospective.</td><td><code>done</code></td><td>PR #336 merged as <code>98bae405a</code> on 2026-09-09. Plan moved to <code>archive/</code>, proof root kept, README entry replaced with a retrospective.</td></tr>
       </tbody>
     </table>
   </section>
@@ -576,6 +578,7 @@ on the merge.</code></pre>
         <tr><td>2026-09-09</td><td>MIK2</td><td>done</td><td>Schema apply, lifecycle, and candidate reads through the keyspace (575cbf45a); generated columns and per-index DDL removed; F2 proved with the fault injector; MIK0 test green. MIK3 in_progress.</td></tr>
         <tr><td>2026-09-09</td><td>MIK3</td><td>done</td><td>Ordering and EXPLAIN proofs for keyspace reads (d43e4b2f1); candidate select built in one place; baseline architecture note updated. MIK4 in_progress.</td></tr>
         <tr><td>2026-09-09</td><td>MIK4</td><td>done</td><td>Cross-cutting verification green, Phase 4 throwaway merge clean, autoreview clean (dc88c7316); PR #336 opened against <code>main</code>. MIK9 in_progress, waiting on merge.</td></tr>
+        <tr><td>2026-09-09</td><td>MIK9</td><td>done</td><td>PR #336 merged as <code>98bae405a</code> after one rerun of the libsql external-provider lane (assertion in <code>libsql_provider_stale_lease_retention_rebuilds_cache_and_survives_restart</code>; the branch has no libsql change; passed on rerun). Plan archived, proof root kept, README retrospective written.</td></tr>
       </tbody>
     </table>
   </section>
