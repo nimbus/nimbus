@@ -8,6 +8,7 @@ use nimbus_bridge::{
 use nimbus_compute::runtime_manager::{RuntimeInvocationAuthority, RuntimeManager};
 use nimbus_runtime::RuntimeLimits;
 use nimbus_services::RuntimeServiceRegistry;
+use nimbus_system::{OpenSpan, RunSpanRecorder, span_kind_for_operation};
 use nimbus_tenant::{TenantIsolationContext, TenantIsolationDecision, TenantStorageAccessDecision};
 use nimbus_workloads::LocalEnforcementBinding;
 
@@ -25,6 +26,7 @@ pub(crate) struct ConvexHostBridgeScope {
     runtime_limits: RuntimeLimits,
     egress_readiness: Option<EgressGatewayEnforcementReadiness>,
     service_provision: Option<ConvexServiceProvisionScope>,
+    span_recorder: Option<Arc<RunSpanRecorder>>,
 }
 
 impl ConvexHostBridgeScope {
@@ -47,7 +49,17 @@ impl ConvexHostBridgeScope {
             runtime_limits,
             egress_readiness: None,
             service_provision: None,
+            span_recorder: None,
         }
+    }
+
+    /// Record every host call the bridge serves as a span in `recorder`.
+    pub(in crate::adapters::convex) fn with_span_recorder(
+        mut self,
+        recorder: Arc<RunSpanRecorder>,
+    ) -> Self {
+        self.span_recorder = Some(recorder);
+        self
     }
 
     pub(in crate::adapters::convex) fn with_service_provisioning(
@@ -150,6 +162,10 @@ pub(crate) struct ConvexHostBridge {
     state: Arc<RuntimeHostState>,
     query_builders: Arc<Mutex<ConvexRuntimeQueryBuilders>>,
     function_name: String,
+    /// The run's span recorder. Nested bridges share the parent's recorder,
+    /// so a nested `ctx.run*` call and its host calls nest under the
+    /// caller's spans.
+    span_recorder: Option<Arc<RunSpanRecorder>>,
 }
 
 impl ConvexHostBridge {
@@ -200,7 +216,28 @@ impl ConvexHostBridge {
             state: bootstrap.state,
             query_builders: Arc::new(Mutex::new(ConvexRuntimeQueryBuilders::default())),
             function_name: invocation.function_name,
+            span_recorder: scope.span_recorder,
         })
+    }
+
+    /// Open a span for one host call. `None` when the run records no spans.
+    pub(super) fn start_host_call_span(&self, operation: &str) -> Option<OpenSpan> {
+        self.span_recorder
+            .as_ref()
+            .map(|recorder| recorder.start(span_kind_for_operation(operation), operation))
+    }
+
+    /// Open a span for one nested `ctx.run*` invocation of `function_name`.
+    pub(super) fn start_function_span(&self, function_name: &str) -> Option<OpenSpan> {
+        self.span_recorder
+            .as_ref()
+            .map(|recorder| recorder.start("function", function_name))
+    }
+
+    pub(super) fn finish_span(&self, span: Option<OpenSpan>, ok: bool) {
+        if let (Some(recorder), Some(span)) = (self.span_recorder.as_ref(), span) {
+            recorder.finish(span, ok);
+        }
     }
 
     pub(crate) fn server_request_id(&self) -> Option<&str> {

@@ -32,6 +32,7 @@ import {
   UploadQueue,
 } from "../../components/files/upload-queue";
 import { LoadFailed } from "../../components/load-failed";
+import { uploadObjectCommand } from "../../components/onboarding/next-action";
 import { PageHeader } from "../../components/page-header";
 import {
   RowContextMenu,
@@ -40,6 +41,7 @@ import {
 import { RelativeTime } from "../../components/time";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { useServerUrl } from "../../hooks/use-server-url";
 import {
   type ObjectBucket,
   type ObjectSummary,
@@ -81,6 +83,7 @@ function FilesPage() {
   const search = useSearch({ from: "/developer/files" });
   const navigate = useNavigate();
   const tenant = useUiStore((s) => s.activeTenant);
+  const serverUrl = useServerUrl();
   const bucket = search.bucket;
   const prefix = search.prefix ?? "";
 
@@ -351,11 +354,12 @@ function FilesPage() {
         <EmptyState
           mascot="empty"
           title="No files yet"
-          body="A bucket exists as soon as it holds an object. Name one with New bucket and drop a file on the listing, or write through the S3 listener with the tenant's credentials."
+          body="A bucket exists as soon as it holds an object. Name one with New bucket and drop a file on the listing, or put the first object through the API or the S3 listener."
           cta={{
             label: "New bucket",
             onClick: () => setNewBucket({ open: true, name: "" }),
           }}
+          snippet={uploadObjectCommand({ serverUrl, tenant })}
           testid="files-empty-buckets"
         />
       </Panel>

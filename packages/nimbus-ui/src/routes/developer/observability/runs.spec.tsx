@@ -25,6 +25,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../../hooks/use-tenant-list", () => ({
@@ -50,7 +51,10 @@ const RUNS: RunDoc[] = [
     status: "error",
     durationMs: 1200,
     startedAt: NOW + 3_000,
-    error: { message: "commit rejected" },
+    error: {
+      message: "commit rejected",
+      stack: "Error: commit rejected\n    at anonymous (<anonymous>:5:11)",
+    },
   },
   {
     _id: "run-2",
@@ -144,9 +148,14 @@ describe("RunsTab read states", () => {
     expect(
       screen.getByTestId("observability-runs-empty-body").textContent ?? "",
     ).not.toHaveLength(0);
+    // The next action is a function call on this tenant, not another page.
     expect(
-      screen.getByTestId("observability-runs-empty-cta"),
-    ).toBeInTheDocument();
+      screen.getByTestId("observability-runs-empty-snippet"),
+    ).toHaveTextContent("nimbus run http://nimbus.example:9000 functions");
+    expect(
+      screen.getByTestId("observability-runs-empty-snippet"),
+    ).toHaveTextContent("--tenant acme");
+    expect(screen.queryByTestId("observability-runs-empty-cta")).toBeNull();
     expect(screen.queryByTestId("observability-runs-table")).toBeNull();
   });
 
@@ -163,6 +172,7 @@ describe("RunsTab read states", () => {
     expect(props.setSearchAction).toHaveBeenCalledWith({
       status: undefined,
       functionPath: undefined,
+      fingerprint: undefined,
     });
   });
 
@@ -189,6 +199,7 @@ describe("RunsTab table", () => {
       bundleId: null,
       functionPath: "messages:send",
       status: "error",
+      fingerprint: null,
       limit: 200,
     });
   });
@@ -251,6 +262,9 @@ describe("RunsTab detail sheet", () => {
     expect(
       within(sheet).getByTestId("observability-run-sheet-error"),
     ).toHaveTextContent("commit rejected");
+    expect(
+      within(sheet).getByTestId("observability-run-sheet-error-stack"),
+    ).toHaveTextContent("at anonymous (<anonymous>:5:11)");
     expect(
       within(sheet).getByTestId("observability-run-sheet-open-run"),
     ).toHaveAttribute("href", "/developer/compute/runs/$runId");

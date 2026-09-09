@@ -20,6 +20,7 @@ use nimbus_bridge::mutation_retry::{MutationOccConflictDecision, MutationOccRetr
 use nimbus_compute::ComputeResourceProvisioner;
 use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
+use nimbus_system::RunSpanRecorder;
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
     admit_runtime_invocation_decision,
@@ -39,6 +40,7 @@ pub(in crate::adapters::convex) struct RuntimeInvocationContext<'a> {
     service_provisioner: Option<Arc<dyn ConvexServiceProvisionPort>>,
     isolation: TenantIsolationContext,
     tenant_isolation_mode: TenantIsolationMode,
+    span_recorder: Option<Arc<RunSpanRecorder>>,
 }
 
 impl<'a> RuntimeInvocationContext<'a> {
@@ -60,7 +62,19 @@ impl<'a> RuntimeInvocationContext<'a> {
                 .map(|provisioner| Arc::new(provisioner) as Arc<dyn ConvexServiceProvisionPort>),
             isolation,
             tenant_isolation_mode,
+            span_recorder: None,
         }
+    }
+
+    /// Record every host call of this invocation as a span in `recorder`.
+    /// The function route that owns the run row passes its trace's recorder
+    /// here; subscription re-evaluation records no spans.
+    pub(in crate::adapters::convex) fn with_span_recorder(
+        mut self,
+        recorder: Arc<RunSpanRecorder>,
+    ) -> Self {
+        self.span_recorder = Some(recorder);
+        self
     }
 
     pub(in crate::adapters::convex) fn runtime_services(&self) -> InvocationServices {
@@ -244,6 +258,10 @@ impl<'a> RuntimeInvocationContext<'a> {
             Some(provisioner) => {
                 scope.with_service_provisioning(self.isolation.clone(), Arc::clone(provisioner))?
             }
+            None => scope,
+        };
+        let scope = match &self.span_recorder {
+            Some(recorder) => scope.with_span_recorder(Arc::clone(recorder)),
             None => scope,
         };
         let bridge = Arc::new(ConvexHostBridge::build(

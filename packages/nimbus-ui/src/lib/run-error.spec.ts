@@ -19,6 +19,19 @@ describe("parseRunError", () => {
     ).toBeUndefined();
   });
 
+  it("keeps the thrown stack and drops an empty or non-string one", () => {
+    expect(
+      parseRunError({
+        message: "boom (at messages:24)",
+        location: "messages:24",
+        stack: "Error: boom\n    at <anonymous>:5:9",
+      }).stack,
+    ).toBe("Error: boom\n    at <anonymous>:5:9");
+    expect(parseRunError({ message: "boom", stack: "" }).stack).toBeUndefined();
+    expect(parseRunError({ message: "boom", stack: 7 }).stack).toBeUndefined();
+    expect(parseRunError("plain error").stack).toBeUndefined();
+  });
+
   it("falls back to the string for unstructured errors", () => {
     expect(parseRunError("plain error")).toEqual({ message: "plain error" });
   });

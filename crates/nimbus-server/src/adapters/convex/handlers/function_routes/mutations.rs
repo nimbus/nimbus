@@ -38,7 +38,8 @@ pub(crate) async fn mutation(
                 state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
-            );
+            )
+            .with_span_recorder(trace.recorder());
             invoke_named_convex_function_async_cancellable(
                 &context,
                 InvocationRequest {
@@ -81,10 +82,8 @@ pub(crate) async fn mutation(
             .await
         }
     };
-    let status = if result.is_ok() { "ok" } else { "error" };
-    let error = result.as_ref().err().map(ToString::to_string);
     trace
-        .record(&service, &tenant_id, status, error.as_deref())
+        .record(&service, &tenant_id, result.as_ref().err())
         .await;
     let value = result.map_err(convex_function_error)?;
     Ok(Json(value))

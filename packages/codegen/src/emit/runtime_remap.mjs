@@ -22,29 +22,50 @@
 // to handler source line N. So: original module line =
 // handler_origin_line + (reportedLine - 2) - 1.
 
+// Every error that reaches this function escaped the developer's own handler.
+// A host error (a rejected ctx.db / ctx.run* call, `nimbusHostError` set by the
+// host-call transport) keeps that identity, because the host already classed
+// it. Anything else is the function's own throw: the marker below lets the
+// generated `__nimbusInvoke` answer with a `function_thrown` envelope instead
+// of rethrowing into the runtime, where the message would be lost as a
+// service fault. `nimbusOriginalStack` keeps the developer's frames, because
+// the fresh error created for the location suffix has frames of its own.
 function nimbusRemapHandlerError(error, origin) {
-  if (!origin || typeof origin.line !== "number") {
-    return error;
-  }
+  const nimbusMarkFunctionThrown = (err, originalStack) => {
+    if (!err || typeof err !== "object" || "nimbusHostError" in err) {
+      return err;
+    }
+    err.nimbusFunctionThrown = true;
+    if (
+      typeof originalStack === "string" &&
+      err.nimbusOriginalStack === undefined
+    ) {
+      err.nimbusOriginalStack = originalStack;
+    }
+    return err;
+  };
   const err = error instanceof Error ? error : new Error(String(error));
   const stack = typeof err.stack === "string" ? err.stack : "";
+  if (!origin || typeof origin.line !== "number") {
+    return nimbusMarkFunctionThrown(err, stack);
+  }
   // The topmost `<anonymous>:LINE:COL` frame is the handler's throw site. The
   // outer `eval at <anonymous> (file:...)` marker has `<anonymous> (`, not
   // `<anonymous>:`, so this regex targets only the body frame.
   const match = stack.match(/<anonymous>:(\d+):(\d+)/);
   if (!match) {
-    return err;
+    return nimbusMarkFunctionThrown(err, stack);
   }
   const reportedLine = Number(match[1]);
   const originalLine = origin.line + (reportedLine - 2) - 1;
   if (!Number.isFinite(originalLine) || originalLine < 1) {
-    return err;
+    return nimbusMarkFunctionThrown(err, stack);
   }
   const location = (origin.module ? origin.module + ":" : "") + originalLine;
   const suffix = " (at " + location + ")";
   const baseMessage = String(err.message == null ? "" : err.message);
   if (baseMessage.endsWith(suffix)) {
-    return err;
+    return nimbusMarkFunctionThrown(err, stack);
   }
   // Append ` (at module:line)` and throw a FRESH error. Two deno_core behaviors,
   // both verified live against the dev runtime, dictate this exact approach:
@@ -59,7 +80,11 @@ function nimbusRemapHandlerError(error, origin) {
   const remapped = new Error(baseMessage + suffix);
   remapped.name = err.name;
   remapped.nimbusOriginalLocation = location;
-  return remapped;
+  if ("nimbusHostError" in err) {
+    remapped.nimbusHostError = err.nimbusHostError;
+    return remapped;
+  }
+  return nimbusMarkFunctionThrown(remapped, stack);
 }
 
 // Wraps a compiled runtime handler so both synchronous throws and asynchronous

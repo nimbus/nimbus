@@ -19,7 +19,9 @@ export type StateKind =
   | "active"
   | "connected"
   | "completed"
+  | "enabled"
   | "running"
+  | "backfilling"
   | "starting"
   | "provisioning"
   | "restarting"
@@ -71,7 +73,11 @@ export const statePalette: Record<StateKind, StateStyle> = {
   active: SUCCESS,
   connected: SUCCESS,
   completed: SUCCESS,
+  enabled: SUCCESS,
   running: { token: "--info", glyph: "pulsing" },
+  // An index the server is still building: work is under way, so it takes
+  // the transition treatment, not the pulsing one, which `running` owns.
+  backfilling: TRANSITION_UP,
   starting: TRANSITION_UP,
   provisioning: TRANSITION_UP,
   restarting: TRANSITION_UP,

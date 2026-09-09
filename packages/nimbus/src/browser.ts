@@ -42,6 +42,7 @@ export { NimbusHttpClient } from "./http-client.ts";
 export type { AuthTokenFetcher } from "./http-client.ts";
 export * from "./errors.ts";
 
+import { decodeNimbusErrorEnvelope } from "./errors.ts";
 import { NimbusHttpClient } from "./http-client.ts";
 import type {
   AuthChangeListener,
@@ -414,8 +415,8 @@ export class NimbusClient {
           request_id?: string;
           data: unknown;
         }
-      | { type: "error"; error?: { message?: string } }
-      | { type: "op.error"; id?: string; error?: { message?: string } };
+      | { type: "error"; error?: unknown }
+      | { type: "op.error"; id?: string; error?: unknown };
 
     if (message.type === "hello") {
       return;
@@ -491,10 +492,6 @@ export class NimbusClient {
       message.type === "op.error" && typeof message.id === "string"
         ? message.id
         : undefined;
-    const errorMessage =
-      "error" in message && typeof message.error?.message === "string"
-        ? message.error.message
-        : null;
 
     if (message.type === "op.error" && requestId) {
       const pending = this.pendingSubscriptions.get(requestId);
@@ -503,13 +500,23 @@ export class NimbusClient {
       }
       this.pendingSubscriptions.delete(requestId);
       pending.pendingRequestId = undefined;
-      const error = new Error(errorMessage ?? "websocket request failed");
-      pending.onError?.(error);
+      // The socket carries the same public envelope as HTTP, so a request
+      // error decodes to the same typed NimbusError (code, detail,
+      // remediation, request id) instead of a bare message.
+      pending.onError?.(
+        decodeNimbusErrorEnvelope(
+          { error: message.error },
+          "websocket request failed",
+        ),
+      );
       return;
     }
 
     if (message.type === "error" || message.type === "op.error") {
-      const error = new Error(errorMessage ?? "websocket request failed");
+      const error = decodeNimbusErrorEnvelope(
+        { error: message.error },
+        "websocket request failed",
+      );
       if (this.socketAuthentication) {
         this.clearScheduledAuthRefresh();
         this.httpClient.notifyAuthState(false);

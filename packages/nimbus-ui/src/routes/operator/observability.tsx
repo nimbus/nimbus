@@ -2,9 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { PageHeader } from "../../components/page-header";
 import { PageTabs } from "../../components/page-tabs";
-import { LogsTab } from "../developer/observability/-logs";
+import { ObservabilityTabBody } from "../developer/observability";
 import { useObservabilityNavigation } from "../developer/observability/-navigation";
-import { RunsTab } from "../developer/observability/-runs";
 import {
   OBSERVABILITY_TABS,
   type ObservabilitySearch,
@@ -22,9 +21,8 @@ export const Route = createFileRoute("/operator/observability")({
   },
 });
 
-// The tab strip is the only Logs/Runs switch on this surface. Events and
-// Errors join it when their pages exist; until then the console does not
-// name them.
+// The tab strip is the only view switch on this surface: Logs, Runs,
+// Traces, and Errors, the same four the developer page has.
 export const ADMIN_OBSERVABILITY_TABS = OBSERVABILITY_TABS;
 
 export type AdminObservabilityTab =
@@ -53,7 +51,7 @@ function AdminObservabilityPage() {
       <div className="flex shrink-0 flex-col gap-3">
         <PageHeader
           title="Operator observability"
-          subtitle="Logs and runs across every tenant. Pick a tenant in the facet bar to narrow the view."
+          subtitle="Logs, runs, traces, and error groups across every tenant. Pick a tenant to narrow the view."
           testid="admin-observability-header"
         />
         <PageTabs
@@ -64,7 +62,7 @@ function AdminObservabilityPage() {
           itemTestid="admin-observability-tab"
         />
       </div>
-      {tab === "logs" ? <LogsTab {...tabProps} /> : <RunsTab {...tabProps} />}
+      <ObservabilityTabBody tab={tab} {...tabProps} />
     </section>
   );
 }

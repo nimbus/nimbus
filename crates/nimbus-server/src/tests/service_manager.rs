@@ -45,6 +45,8 @@ mod redaction;
 mod restart;
 #[path = "service_manager/sandboxes.rs"]
 mod sandboxes;
+#[path = "service_manager/session_channels.rs"]
+mod session_channels;
 #[path = "service_manager/sessions.rs"]
 mod sessions;
 

@@ -845,19 +845,22 @@ async fn record_service_event(
     let correlation_id = format!("service:{}:{}:{action}", tenant_id, handle.name);
     nimbus_system::record_system_event_async(
         &compute.engine,
-        "service",
-        "info",
-        "service.lifecycle",
-        &message,
-        serde_json::json!({
-            "action": action,
-            "tenantId": tenant_id.as_str(),
-            "serviceName": handle.name.as_str(),
-            "sandboxId": handle.id.as_str(),
-            "state": service_state,
-            "backend": nimbus_system::sandbox_backend(handle.backend),
-        }),
-        Some(&correlation_id),
+        nimbus_system::SystemEvent {
+            tenant_id: Some(tenant_id),
+            source: "service",
+            level: "info",
+            category: "service.lifecycle",
+            message: &message,
+            data: serde_json::json!({
+                "action": action,
+                "tenantId": tenant_id.as_str(),
+                "serviceName": handle.name.as_str(),
+                "sandboxId": handle.id.as_str(),
+                "state": service_state,
+                "backend": nimbus_system::sandbox_backend(handle.backend),
+            }),
+            correlation_id: Some(&correlation_id),
+        },
     )
     .await
     .map_err(ComputeError::from)

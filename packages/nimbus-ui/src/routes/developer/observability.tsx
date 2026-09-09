@@ -3,9 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "../../components/page-header";
 import { PageTabs } from "../../components/page-tabs";
 import { useUiStore } from "../../store/ui-store";
+import { ErrorsTab } from "./observability/-errors";
+import type { ObservabilityTabProps } from "./observability/-facets";
 import { LogsTab } from "./observability/-logs";
 import { useObservabilityNavigation } from "./observability/-navigation";
 import { RunsTab } from "./observability/-runs";
+import { TracesTab } from "./observability/-traces";
 import {
   OBSERVABILITY_TABS,
   type ObservabilityTab,
@@ -43,9 +46,27 @@ function ObservabilityPage() {
       data-testid="page-observability"
     >
       <Header tab={tab} />
-      {tab === "logs" ? <LogsTab {...tabProps} /> : <RunsTab {...tabProps} />}
+      <ObservabilityTabBody tab={tab} {...tabProps} />
     </section>
   );
+}
+
+// One switch for both surfaces: the operator page renders the same tabs
+// with a different tenant scope.
+export function ObservabilityTabBody({
+  tab,
+  ...tabProps
+}: { tab: ObservabilityTab } & ObservabilityTabProps) {
+  switch (tab) {
+    case "runs":
+      return <RunsTab {...tabProps} />;
+    case "traces":
+      return <TracesTab {...tabProps} />;
+    case "errors":
+      return <ErrorsTab {...tabProps} />;
+    default:
+      return <LogsTab {...tabProps} />;
+  }
 }
 
 function Header({ tab }: { tab: ObservabilityTab }) {
@@ -62,8 +83,8 @@ function Header({ tab }: { tab: ObservabilityTab }) {
         title="Observability"
         subtitle={
           <>
-            Runs and their log lines for the active tenant, read from the{" "}
-            <code className="font-mono text-text-1">_nimbus</code> system
+            Logs, runs, traces, and error groups for the active tenant, read
+            from the <code className="font-mono text-text-1">_nimbus</code>{" "}
             tenant.
           </>
         }

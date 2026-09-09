@@ -319,12 +319,15 @@ fn schedule_machine_event(
     let work = async move {
         if let Err(error) = nimbus_system::record_system_event_async(
             &engine,
-            "machine",
-            "info",
-            "machine.lifecycle",
-            &message,
-            data,
-            Some(&correlation_id),
+            nimbus_system::SystemEvent {
+                tenant_id: None,
+                source: "machine",
+                level: "info",
+                category: "machine.lifecycle",
+                message: &message,
+                data,
+                correlation_id: Some(&correlation_id),
+            },
         )
         .await
         {

@@ -26,6 +26,12 @@ existing clients connect without an SDK swap. Built for teams replacing a BaaS
 bill, regulated and air-gapped environments, and AI agent infrastructure —
 whether the developer is human or LLM.
 
+[![The Nimbus console: the developer overview, function runs, storage documents and schema, observability runs, traces, and errors, schedules, and the operator node, tenant, and settings views.](docs/assets/2026-09-09_nimbus-console.gif)](docs/assets/2026-09-09_nimbus-console.gif)
+
+The embedded console ships in the binary at `/ui`: the developer side
+covers functions, runs, storage, observability, schedules, and deploys, and
+the operator side covers nodes, tenants, and settings.
+
 - **Five protocol front doors, one engine** — Convex functions, Firestore
   SDKs, Cloud Functions triggers, stock MongoDB drivers, and the AWS DynamoDB
   SDK all hit the same storage, mutations, and subscriptions.

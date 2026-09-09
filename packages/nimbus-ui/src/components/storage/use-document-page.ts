@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { documents } from "../../lib/api-mutations";
 import type { PageResponse } from "../../lib/types/table";
-import type { DocumentFilter, DocumentOrder } from "./table-query";
-
-const PAGE_SIZE = 200;
+import {
+  compileDocumentQuery,
+  DOCUMENT_PAGE_SIZE,
+  type DocumentFilter,
+  type DocumentOrder,
+} from "./table-query";
 
 export type DocumentQuery = {
   filters: DocumentFilter[];
@@ -133,13 +136,12 @@ export function useDocumentPage(
       setPageError(null);
       const result = await documents.queryPaginated(
         tenant,
-        {
-          table: stableQuery.table,
-          filters: stableQuery.filters,
-          order: stableQuery.order,
-          limit: null,
-        },
-        PAGE_SIZE,
+        compileDocumentQuery(
+          stableQuery.table,
+          stableQuery.filters,
+          stableQuery.order,
+        ),
+        DOCUMENT_PAGE_SIZE,
         cursor,
       );
       if (result.ok) {

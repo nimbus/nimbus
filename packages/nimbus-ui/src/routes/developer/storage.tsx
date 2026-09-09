@@ -5,9 +5,14 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState } from "../../components/loading-state";
+import {
+  createTenantCommand,
+  insertDocumentCommand,
+} from "../../components/onboarding/next-action";
 import { PageHeader } from "../../components/page-header";
 import { TablesListTable } from "../../components/storage/tables-list-table";
 import { useTablesSubPanel } from "../../components/storage/tables-sub-panel";
+import { useServerUrl } from "../../hooks/use-server-url";
 import { useTenantList } from "../../hooks/use-tenant-list";
 import type { TableDoc } from "../../lib/types/table";
 import { useUiStore } from "../../store/ui-store";
@@ -18,6 +23,7 @@ export const Route = createFileRoute("/developer/storage")({
 
 function StoragePage() {
   const tenant = useUiStore((s) => s.activeTenant);
+  const serverUrl = useServerUrl();
   const tenantList = useTenantList();
   const tables = useQuery(
     api.tables.list,
@@ -101,7 +107,13 @@ function StoragePage() {
           ) : hasTenants === false ? (
             <EmptyState
               title="No tenants yet"
-              body="Click + CREATE TENANT in the top nav to create one. Tables and documents scope to a tenant — once a tenant exists, you can pick it from the selector to see its tables."
+              body="Tables live in a tenant. Create one with the API or from the Tenants page, then pick it from the selector to see its tables."
+              cta={{
+                label: "Create tenant",
+                to: "/operator/tenants",
+                search: { create: 1 },
+              }}
+              snippet={createTenantCommand({ serverUrl })}
               testid="tenant-tables-empty"
             />
           ) : (
@@ -114,7 +126,8 @@ function StoragePage() {
         ) : tables !== undefined && tables.length === 0 ? (
           <EmptyState
             title="No tables"
-            body={`Insert a document via POST /api/tenants/${tenant}/documents or call ctx.db.insert("<table>", ...) from a registered function. Tables appear here as soon as they receive their first write.`}
+            body="A table appears with its first document. Insert one with the API, or from a function with ctx.db.insert."
+            snippet={insertDocumentCommand({ serverUrl, tenant, table: null })}
             testid="tenant-tables-empty"
           />
         ) : (

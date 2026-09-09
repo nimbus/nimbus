@@ -35,9 +35,6 @@ vi.mock("./settings/-configuration", () => ({
 vi.mock("./settings/-danger-zone", () => ({
   DangerZoneSection: () => <div data-testid="stub-danger-zone" />,
 }));
-vi.mock("./settings/-deploys", () => ({
-  DeploysSection: () => <div data-testid="stub-deploys" />,
-}));
 vi.mock("./settings/-integrations", () => ({
   IntegrationsSection: () => <div data-testid="stub-integrations" />,
 }));
@@ -114,7 +111,7 @@ describe("parseSettingsSection", () => {
     // outruns the menu is how a URL reaches an empty frame.
     for (const value of [
       "",
-      "Deploys",
+      "deploys",
       "danger",
       "endpoints",
       "token",
@@ -136,8 +133,8 @@ describe("settings route search", () => {
   });
 
   it("keeps a valid section", () => {
-    expect(validateSearch({ section: "deploys" })).toEqual({
-      section: "deploys",
+    expect(validateSearch({ section: "system" })).toEqual({
+      section: "system",
     });
   });
 
@@ -200,12 +197,10 @@ describe("section rendering", () => {
     expect(screen.getByTestId("stub-configuration")).toBeTruthy();
     // Server identity has its own section, so General does not repeat it.
     expect(screen.queryByTestId("stub-server-info")).toBeNull();
-    expect(screen.queryByTestId("stub-deploys")).toBeNull();
   });
 
   it.each([
     ["system", "stub-server-info"],
-    ["deploys", "stub-deploys"],
     ["integrations", "stub-integrations"],
     ["shutdown", "stub-danger-zone"],
   ] as const)("renders the %s section on its own", (section, testid) => {

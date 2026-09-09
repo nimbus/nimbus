@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compileDocumentQuery,
+  DOCUMENT_PAGE_SIZE,
   describeFilter,
   indexBackedFields,
+  paginatedRequestBody,
   parseFilters,
   parseFilterValue,
   parseOrder,
@@ -109,5 +112,45 @@ describe("indexBackedFields", () => {
     expect(fields.has("room")).toBe(true);
     expect(fields.has("createdAt")).toBe(false);
     expect(fields.size).toBe(3);
+  });
+});
+
+// One compiler serves the pager and the Query tab's "Show as code"; both
+// shapes mirror `nimbus_core::query::{Query, PaginatedQuery}` field for
+// field, including the `null`s the server expects to see spelled out.
+describe("compileDocumentQuery", () => {
+  it("compiles a table, filters, and sort into the wire query", () => {
+    expect(
+      compileDocumentQuery(
+        "messages",
+        [{ field: "seq", op: "gte", value: 3 }],
+        { field: "author", direction: "desc" },
+      ),
+    ).toEqual({
+      table: "messages",
+      filters: [{ field: "seq", op: "gte", value: 3 }],
+      order: { field: "author", direction: "desc" },
+      limit: null,
+    });
+    expect(compileDocumentQuery("messages", [], null)).toEqual({
+      table: "messages",
+      filters: [],
+      order: null,
+      limit: null,
+    });
+  });
+
+  it("wraps the query in the paginated body with the browser page size", () => {
+    const query = compileDocumentQuery("messages", [], null);
+    expect(paginatedRequestBody(query)).toEqual({
+      query,
+      page_size: DOCUMENT_PAGE_SIZE,
+      after: null,
+    });
+    expect(paginatedRequestBody(query, 50, "c1")).toEqual({
+      query,
+      page_size: 50,
+      after: "c1",
+    });
   });
 });

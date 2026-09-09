@@ -22,10 +22,11 @@ pub use catalog::{
     SessionLifecycleState, SessionResource, SessionTarget, SessionTargetSnapshot,
 };
 pub use manager::{
-    LocalBuildAdmission, SandboxServiceProvisionSource, ServiceManager,
-    StandaloneSandboxProvisionSource, TenantSourceRetirementClaim, TenantSourceRetirementSnapshot,
-    WorkloadSourceRetirementClaim, WorkloadSourceRetirementIdentity,
-    WorkloadSourceRetirementOperation,
+    LocalBuildAdmission, SESSION_CHANNEL_FRAME_BUFFER, SandboxServiceProvisionSource,
+    ServiceManager, SessionChannelAttachment, SessionChannelFrame, SessionChannelSource,
+    SessionChannelStream, StandaloneSandboxProvisionSource, TenantSourceRetirementClaim,
+    TenantSourceRetirementSnapshot, UnsupportedSessionChannelSource, WorkloadSourceRetirementClaim,
+    WorkloadSourceRetirementIdentity, WorkloadSourceRetirementOperation,
 };
 pub use registry::{
     RuntimeServiceRegistry, ServiceInstanceBindingRegistry, service_binding_from_instance,

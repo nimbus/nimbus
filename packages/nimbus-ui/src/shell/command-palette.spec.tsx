@@ -161,7 +161,7 @@ describe("CommandPalette", () => {
     key("ArrowDown");
     expect(selectedTestId()).toBe("palette-item-developer:compute");
     key("ArrowDown");
-    expect(selectedTestId()).toBe("palette-item-developer:storage");
+    expect(selectedTestId()).toBe("palette-item-developer:deploys");
     key("ArrowUp");
     expect(selectedTestId()).toBe("palette-item-developer:compute");
     key("Enter");

@@ -61,6 +61,7 @@ Remediation `action` values: `retry`, `wait_and_retry`, `fix_request`, `fix_func
 | `session.*` | Session- or tenant-level conditions |
 | `rate.*` | Capacity and rate limiting |
 | `runtime.*` | Function runtime deadlines, stalls, and execution limits |
+| `function.*` | The function's own code failed; the message and the stack are the developer's |
 | `service.*` | Server-side infrastructure conditions |
 
 ## HTTP error codes
@@ -94,6 +95,7 @@ Remediation `action` values: `retry`, `wait_and_retry`, `fix_request`, `fix_func
 | `rate.committer_full` | 429 | yes | `{"capacity", "retryability": "retryable_after_backoff"}` | Committer inbox is full |
 | `rate.rejected_before_execution` | 429 | yes | `{"retryability": "retryable"}` | Guaranteed not to have started |
 | `rate.limited` | 429 | yes | `{"retryAfterMs", "retryability": "retryable_after_backoff"}` | Tenant write-rate limit |
+| `function.thrown` | 422 | no | `{"functionPath", "stack"}` | The handler threw; `message` is the thrown message with its `(at module:line)` location, and the run row keeps the same error. Remediation `fix_function` |
 | `service.storage_busy` | 503 | yes | `{"storageKind"}` | — |
 | `service.storage_transient` | 503 | yes | `{"storageKind"}` | — |
 | `service.unavailable` | 503 | yes | `{"storageKind"}` | Storage backend unavailable |

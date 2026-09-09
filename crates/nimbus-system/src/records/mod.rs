@@ -25,11 +25,14 @@ use crate::schema::{SystemTable, projection_fence_table_schema, system_table_sch
 
 mod connectivity;
 mod deployment;
+mod errors;
+mod logs;
 mod machine;
 mod run;
 mod scheduler;
 mod source;
 mod subscription;
+mod trace;
 
 pub(crate) use connectivity::replace_server_port_listener_observations_async;
 pub use connectivity::{
@@ -40,11 +43,18 @@ pub use connectivity::{
     record_unix_listener_observation_async,
 };
 pub use deployment::{
+    SystemDeploymentActivation, SystemDeploymentActivationFunction,
     SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,
-    SystemDeploymentRecordInput, record_deployment_state_async,
+    SystemDeploymentRecordInput, deployment_bundle_sha256, deployment_history_async,
+    record_deployment_state_async,
 };
+pub use errors::{
+    ERROR_GROUP_LIMIT, ERROR_SCAN_WINDOW, ErrorGroup, ErrorGroupPage, ErrorGroupQuery, error_class,
+    error_fingerprint, normalize_error_message, query_error_groups_async,
+};
+pub use logs::{LOG_PAGE_LIMIT, LOG_SCAN_WINDOW, LogPage, LogQuery, query_log_lines_async};
 pub use machine::{delete_machine_state_async, record_machine_state_async};
-pub use run::{RunRecord, record_run_async};
+pub use run::{RunError, RunRecord, record_run_async};
 #[cfg(test)]
 pub(crate) use scheduler::record_scheduled_job_state_async;
 pub use scheduler::{
@@ -60,6 +70,7 @@ pub use subscription::{
     delete_subscription_state_async, record_subscription_delivery_async,
     record_subscription_error_async, record_subscription_state_async,
 };
+pub use trace::{OpenSpan, RUN_SPAN_LIMIT, RunSpan, RunSpanRecorder, span_kind_for_operation};
 
 pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
     let tenant_id = system_tenant_id()?;
@@ -117,25 +128,25 @@ pub(crate) async fn record_system_status_async(
     .await
 }
 
-pub async fn record_system_event_async(
-    engine: &Arc<Engine>,
-    source: &str,
-    level: &str,
-    category: &str,
-    message: &str,
-    data: Value,
-    correlation_id: Option<&str>,
-) -> Result<()> {
+/// One line the server records into the system `events` table.
+///
+/// `tenant_id` is `None` for a server-level line (lifecycle, machine), so the
+/// console shows it under the operator `all tenants` scope alone. A line that
+/// belongs to one tenant's run or service names that tenant so the tenant
+/// index reads find it.
+pub struct SystemEvent<'a> {
+    pub tenant_id: Option<&'a TenantId>,
+    pub source: &'a str,
+    pub level: &'a str,
+    pub category: &'a str,
+    pub message: &'a str,
+    pub data: Value,
+    pub correlation_id: Option<&'a str>,
+}
+
+pub async fn record_system_event_async(engine: &Arc<Engine>, event: SystemEvent<'_>) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
-    let fields = system_event_fields(
-        source,
-        level,
-        category,
-        message,
-        data,
-        correlation_id,
-        unix_time_millis()?,
-    );
+    let fields = system_event_fields(event, unix_time_millis()?);
     engine
         .insert_document_async(
             system_tenant_id()?,
@@ -146,25 +157,20 @@ pub async fn record_system_event_async(
     Ok(())
 }
 
-fn system_event_fields(
-    source: &str,
-    level: &str,
-    category: &str,
-    message: &str,
-    data: Value,
-    correlation_id: Option<&str>,
-    created_at: u64,
-) -> Map<String, Value> {
+fn system_event_fields(event: SystemEvent<'_>, created_at: u64) -> Map<String, Value> {
     let mut fields = object_fields(json!({
-        "source": source,
-        "level": level,
-        "category": category,
-        "message": message,
-        "data": data,
+        "source": event.source,
+        "level": event.level,
+        "category": event.category,
+        "message": event.message,
+        "data": event.data,
         "createdAt": created_at,
     }));
-    if let Some(correlation_id) = correlation_id {
+    if let Some(correlation_id) = event.correlation_id {
         fields.insert("correlationId".to_owned(), json!(correlation_id));
+    }
+    if let Some(tenant_id) = event.tenant_id {
+        fields.insert("tenantId".to_owned(), json!(tenant_id.as_str()));
     }
     fields
 }
@@ -528,12 +534,15 @@ mod tests {
     #[test]
     fn system_event_omits_absent_optional_correlation_id() {
         let absent = system_event_fields(
-            "system",
-            "info",
-            "lifecycle",
-            "server shutdown requested",
-            json!({}),
-            None,
+            SystemEvent {
+                tenant_id: None,
+                source: "system",
+                level: "info",
+                category: "lifecycle",
+                message: "server shutdown requested",
+                data: json!({}),
+                correlation_id: None,
+            },
             42,
         );
         assert!(
@@ -541,15 +550,24 @@ mod tests {
             "an absent optional field must be omitted instead of written as schema-invalid null"
         );
 
+        let acme = TenantId::new("acme").expect("tenant id should parse");
         let present = system_event_fields(
-            "system",
-            "info",
-            "lifecycle",
-            "server shutdown requested",
-            json!({}),
-            Some("request-7"),
+            SystemEvent {
+                tenant_id: Some(&acme),
+                source: "system",
+                level: "info",
+                category: "lifecycle",
+                message: "server shutdown requested",
+                data: json!({}),
+                correlation_id: Some("request-7"),
+            },
             42,
         );
         assert_eq!(present.get("correlationId"), Some(&json!("request-7")));
+        assert_eq!(present.get("tenantId"), Some(&json!("acme")));
+        assert!(
+            !absent.contains_key("tenantId"),
+            "a server-level event names no tenant"
+        );
     }
 }

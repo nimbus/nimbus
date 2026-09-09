@@ -140,8 +140,9 @@ export function RunCorrelatedEvents({
   events: readonly EventLike[];
   runId: string;
   testid?: string;
-  // The header's trailing link. Defaults to "open in logs"; the run sheet
-  // passes null because it has its own "Show in logs" action.
+  // The header's trailing link. Defaults to the Logs tab narrowed to this
+  // run, where the search field reads the run's lines; the run sheet passes
+  // null because it has its own "Show in logs" action.
   logsLink?: ReactNode | null;
 }) {
   const trailing =
@@ -152,7 +153,7 @@ export function RunCorrelatedEvents({
         className="text-xs font-medium text-text-3 hover:text-text-1 focus-visible:text-text-1"
         data-testid={`${testid}-open-logs`}
       >
-        open in logs →
+        search run logs →
       </Link>
     ) : (
       logsLink
@@ -162,8 +163,16 @@ export function RunCorrelatedEvents({
       className="rounded-md border border-border-2 bg-bg-panel"
       data-testid={`${testid}-events`}
     >
-      <div className="flex items-baseline justify-between border-b border-border-2 px-4 py-3">
-        <h2 className="text-xs font-medium text-text-3">Correlated events</h2>
+      <div className="flex items-baseline justify-between gap-3 border-b border-border-2 px-4 py-3">
+        <h2 className="text-xs font-medium text-text-3">
+          Correlated events
+          <span
+            className="ml-2 font-normal tabular"
+            data-testid={`${testid}-events-count`}
+          >
+            {events.length === 1 ? "1 line" : `${events.length} lines`}
+          </span>
+        </h2>
         {trailing}
       </div>
       {events.length === 0 ? (
@@ -209,7 +218,7 @@ export function RunErrorPanel({
   functionPath?: string;
   testid?: string;
 }) {
-  const { message, location } = parseRunError(error);
+  const { message, location, stack } = parseRunError(error);
   const line = location ? locationLine(location) : undefined;
   return (
     <div
@@ -240,6 +249,16 @@ export function RunErrorPanel({
       <pre className="overflow-auto font-mono text-xs text-text-1 whitespace-pre-wrap">
         {message}
       </pre>
+      {stack ? (
+        <details className="mt-2 text-xs" data-testid={`${testid}-error-stack`}>
+          <summary className="cursor-pointer text-text-3 hover:text-text-1">
+            Stack
+          </summary>
+          <pre className="mt-1 max-h-64 overflow-auto font-mono text-xs text-text-3 whitespace-pre">
+            {stack}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }

@@ -31,13 +31,9 @@ pub(super) async fn handle_named_subscription(
 pub(super) async fn send_request_error(
     outbound_tx: &mpsc::Sender<ServerMessage>,
     request_id: String,
-    message: String,
+    error: &nimbus_core::Error,
 ) {
     let _ = outbound_tx
-        .send(ServerMessage::request_error(
-            request_id,
-            "op.failed",
-            message,
-        ))
+        .send(ServerMessage::request_core_error(request_id, error))
         .await;
 }

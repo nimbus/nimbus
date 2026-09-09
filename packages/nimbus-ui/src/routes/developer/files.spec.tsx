@@ -58,6 +58,9 @@ const { objectsApiMock, toastMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/api-mutations", () => ({ objects: objectsApiMock }));
+vi.mock("@nimbus/nimbus/react", () => ({
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
+}));
 vi.mock("sonner", () => ({ toast: toastMock }));
 
 import { useUiStore } from "../../store/ui-store";
@@ -230,6 +233,10 @@ describe("FilesPage scope", () => {
     });
     render(<FilesPage />);
     expect(await screen.findByTestId("files-empty-buckets")).toBeVisible();
+    // The command is the first upload, through this tenant's object route.
+    expect(screen.getByTestId("files-empty-buckets-snippet")).toHaveTextContent(
+      "PUT http://nimbus.example:9000/api/tenants/acme/objects/assets/hello.txt",
+    );
     expect(navigateMock).not.toHaveBeenCalled();
     expect(objectsApiMock.list).not.toHaveBeenCalled();
   });

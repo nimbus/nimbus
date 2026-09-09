@@ -29,6 +29,10 @@ async function runRuntimeRemapFixtures() {
       `expected message to name messages:12, got: ${out.message}`,
     );
     assert.equal(out.nimbusOriginalLocation, "messages:12");
+    // The developer's throw is marked for the function_thrown envelope and
+    // keeps the frames V8 captured at the throw site.
+    assert.equal(out.nimbusFunctionThrown, true);
+    assert.equal(out.nimbusOriginalStack, "Error: boom\n    at <anonymous>:5:9");
   }
 
   // 2. Unit: no resolvable origin leaves the error untouched (graceful degrade).
@@ -37,6 +41,33 @@ async function runRuntimeRemapFixtures() {
     const out = nimbusRemapHandlerError(error, { module: "x", line: null });
     assert.equal(out.message, "plain");
     assert.equal(out.nimbusOriginalLocation, undefined);
+    assert.equal(out.nimbusFunctionThrown, true);
+  }
+
+  // 2b. Unit: a host error (a rejected ctx.* call the host already classed)
+  // keeps its host identity across the remap and is never marked as the
+  // function's own throw, with or without a resolvable location.
+  {
+    const hostError = new Error("document not found");
+    hostError.nimbusHostError = { code: "document.not_found" };
+    hostError.stack = "Error: document not found\n    at <anonymous>:5:9";
+    const remapped = nimbusRemapHandlerError(hostError, {
+      module: "messages",
+      line: 10,
+    });
+    assert.deepEqual(remapped.nimbusHostError, { code: "document.not_found" });
+    assert.equal(remapped.nimbusFunctionThrown, undefined);
+    const passthrough = nimbusRemapHandlerError(hostError, { line: null });
+    assert.equal(passthrough, hostError);
+    assert.equal(passthrough.nimbusFunctionThrown, undefined);
+  }
+
+  // 2c. Unit: a non-Error throw becomes an Error so the marker can ride on it.
+  {
+    const out = nimbusRemapHandlerError("raw string", { line: null });
+    assert.ok(out instanceof Error);
+    assert.equal(out.message, "raw string");
+    assert.equal(out.nimbusFunctionThrown, true);
   }
 
   // 3. Integration: a real handler whose throw is on source line 3. With the
@@ -108,8 +139,14 @@ async function runRuntimeRemapFixtures() {
     syncCaught.message.includes("users:6"),
     `expected remapped location users:6, got: ${syncCaught.message}`,
   );
+  assert.equal(syncCaught.nimbusFunctionThrown, true);
+  assert.match(
+    syncCaught.nimbusOriginalStack,
+    /sync boom/,
+    "the original stack must travel with the remapped error",
+  );
 
-  console.log("runtime remap fixtures: ok (5 cases)");
+  console.log("runtime remap fixtures: ok (7 cases)");
 }
 
 export { runRuntimeRemapFixtures };

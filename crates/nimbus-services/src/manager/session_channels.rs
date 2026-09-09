@@ -231,6 +231,9 @@ pub(super) fn close_session_channels(
     {
         channel.close(reason.to_owned());
     }
+    state
+        .session_channel_inputs
+        .retain(|key, _| key.session_id != session_id);
 }
 
 fn target_snapshot_generation(snapshot: &SessionTargetSnapshot) -> u64 {

@@ -98,6 +98,7 @@ export const api = {
   "bundleId": string | null;
   "functionPath": string | null;
   "status": string | null;
+  "fingerprint": string | null;
   "tenantId": string | null;
   "limit": number | null;
 }, Doc<"runs">[]>("runs:recent", "public"),

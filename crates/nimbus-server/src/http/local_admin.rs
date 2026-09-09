@@ -80,14 +80,17 @@ pub(crate) async fn shutdown_system(
         authorize_standard_server_access(&headers, Some(local_server_security.as_ref()))?;
     if let Err(error) = nimbus_system::record_system_event_async(
         &state.engine,
-        "system",
-        "info",
-        "lifecycle",
-        "server shutdown requested",
-        serde_json::json!({
-            "listenAddress": state.listen_addr().map(|address| address.to_string()),
-        }),
-        None,
+        nimbus_system::SystemEvent {
+            tenant_id: None,
+            source: "system",
+            level: "info",
+            category: "lifecycle",
+            message: "server shutdown requested",
+            data: serde_json::json!({
+                "listenAddress": state.listen_addr().map(|address| address.to_string()),
+            }),
+            correlation_id: None,
+        },
     )
     .await
     {

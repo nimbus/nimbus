@@ -7,7 +7,6 @@ import { PageHeader } from "../../components/page-header";
 import { useContributeSubPanel } from "../../shell/sub-panel";
 import { ConfigurationSection } from "./settings/-configuration";
 import { DangerZoneSection } from "./settings/-danger-zone";
-import { DeploysSection } from "./settings/-deploys";
 import {
   useEncryptionStatus,
   useLicenseSnapshot,
@@ -16,25 +15,14 @@ import {
 import { IntegrationsSection } from "./settings/-integrations";
 import { ServerInfoSection, TenantHeaderStrip } from "./settings/-server-info";
 import { ADMIN_SETTINGS_SUB_PANEL } from "./settings/-sub-panel";
-import type {
-  AdapterCapabilityDoc,
-  BundleDoc,
-  FunctionDoc,
-  SystemStatusDoc,
-} from "./settings/-types";
+import type { AdapterCapabilityDoc, SystemStatusDoc } from "./settings/-types";
 
-// The sub-panel's five sub-pages are the section space: the route validates
+// The sub-panel's four sub-pages are the section space: the route validates
 // exactly the ids the menu can produce. `settings.spec.tsx` asserts the two
 // stay in step at compile time. Every section has a built pane; a planned
 // sub-page joins the list when its pane lands (DESIGN.md: a static menu
 // lists only pages that exist).
-const SECTIONS = [
-  "general",
-  "system",
-  "deploys",
-  "integrations",
-  "shutdown",
-] as const;
+const SECTIONS = ["general", "system", "integrations", "shutdown"] as const;
 
 export type SettingsSection = (typeof SECTIONS)[number];
 type SettingsSearch = { section: SettingsSection };
@@ -75,8 +63,6 @@ const SECTION_SUBTITLES: Record<SettingsSection, string> = {
   general: "Appearance, license and usage, and effective configuration.",
   system:
     "Server identity: version, health, uptime, listen address, data directory, encryption.",
-  deploys:
-    "Bundle history, active release, and the functions each bundle ships.",
   integrations:
     "Adapter capability matrices — what each protocol surface implements today.",
   shutdown:
@@ -92,15 +78,6 @@ function SettingsPage() {
     status: null,
     limit: 500,
   }) as AdapterCapabilityDoc[] | undefined;
-  const bundles = useQuery(api.bundles.list, {
-    status: null,
-    limit: 50,
-  }) as BundleDoc[] | undefined;
-  const functions = useQuery(api.functions.list, {
-    bundleId: null,
-    kind: null,
-    limit: 500,
-  }) as FunctionDoc[] | undefined;
 
   const license = useLicenseSnapshot();
   const encryption = useEncryptionStatus();
@@ -114,9 +91,7 @@ function SettingsPage() {
     >
       <PageHeader title="Settings" subtitle={SECTION_SUBTITLES[section]} />
 
-      {section === "deploys" ? (
-        <DeploysSection bundles={bundles} functions={functions} />
-      ) : section === "integrations" ? (
+      {section === "integrations" ? (
         <IntegrationsSection capabilities={capabilities} />
       ) : section === "shutdown" ? (
         <DangerZoneSection />

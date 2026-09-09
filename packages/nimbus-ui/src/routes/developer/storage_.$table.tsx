@@ -8,6 +8,7 @@ import { Breadcrumb } from "../../components/breadcrumb";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState } from "../../components/loading-state";
+import { insertDocumentCommand } from "../../components/onboarding/next-action";
 import { PageHeader } from "../../components/page-header";
 import { PageTabs } from "../../components/page-tabs";
 import { BulkToolbar } from "../../components/storage/bulk-toolbar";
@@ -18,6 +19,7 @@ import { IndexesTab } from "../../components/storage/indexes-tab";
 import { InsertDrawer } from "../../components/storage/insert-drawer";
 import { PageError } from "../../components/storage/page-error";
 import { QueryBar } from "../../components/storage/query-bar";
+import { QueryTab } from "../../components/storage/query-tab";
 import { SchemaTab } from "../../components/storage/schema-tab";
 import {
   type DocumentFilter,
@@ -33,6 +35,7 @@ import {
   useDiscoveredFields,
 } from "../../components/storage/use-column-prefs";
 import { useDocumentPage } from "../../components/storage/use-document-page";
+import { useServerUrl } from "../../hooks/use-server-url";
 import { documents } from "../../lib/api-mutations";
 import { shortId } from "../../lib/format";
 import type {
@@ -49,7 +52,9 @@ export const Route = createFileRoute("/developer/storage_/$table")({
     const filters = parseFilters(search.filters);
     return {
       tab:
-        search.tab === "schema" || search.tab === "indexes"
+        search.tab === "query" ||
+        search.tab === "schema" ||
+        search.tab === "indexes"
           ? search.tab
           : undefined,
       sort:
@@ -90,11 +95,12 @@ function parseCursors(raw: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-type TableTab = "schema" | "indexes";
+type TableTab = "query" | "schema" | "indexes";
 type TableTabId = "documents" | TableTab;
 
 const TABS = [
   { id: "documents", label: "Documents" },
+  { id: "query", label: "Query" },
   { id: "schema", label: "Schema" },
   { id: "indexes", label: "Indexes" },
 ] as const satisfies ReadonlyArray<{ id: TableTabId; label: string }>;
@@ -157,6 +163,7 @@ function TableDocumentsPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const tenant = useUiStore((s) => s.activeTenant) ?? "";
+  const serverUrl = useServerUrl();
 
   const tableMeta = useQuery(
     api.tables.byName,
@@ -424,6 +431,24 @@ function TableDocumentsPage() {
     [patchSearch],
   );
 
+  // The Query tab hands its result to the grid through the URL: one write
+  // carries the filters, the sort, and the tab switch, so the Documents tab
+  // opens on the first page of exactly the query the builder showed.
+  const runQuery = useCallback(
+    (nextFilters: DocumentFilter[], nextOrder: DocumentOrder | null) => {
+      patchSearch({
+        tab: undefined,
+        filters: nextFilters.length > 0 ? nextFilters : undefined,
+        sort: nextOrder?.field,
+        dir: nextOrder?.direction,
+        cursors: undefined,
+      });
+      setPendingScanSort(null);
+      setSelected(new Set());
+    },
+    [patchSearch],
+  );
+
   const requestSort = useCallback(
     (field: string) => {
       // Re-clicking the active column only flips direction — the scan cost was
@@ -511,7 +536,7 @@ function TableDocumentsPage() {
           tabs with an address each, not inspectors beside the grid. Each tab
           gets the whole width: a schema editor and a document grid both need
           it, and a 420px inspector beside a grid starved one of them at every
-          width the shell's drawers produce. The Query tab lands in UIR21. */}
+          width the shell's drawers produce. */}
       <PageTabs
         label="Table views"
         tabs={TABS}
@@ -540,7 +565,23 @@ function TableDocumentsPage() {
           />
         )
       ) : activeTab === "indexes" ? (
-        <IndexesTab schema={tableMeta?.schema ?? null} />
+        <IndexesTab
+          tenant={tenant}
+          table={table}
+          schema={tableMeta?.schema ?? null}
+          onChanged={refresh}
+        />
+      ) : activeTab === "query" ? (
+        <QueryTab
+          key={table}
+          tenant={tenant}
+          table={table}
+          fields={filterFields}
+          indexBacked={indexBacked}
+          filters={filters}
+          order={order}
+          onRun={runQuery}
+        />
       ) : (
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
@@ -615,7 +656,12 @@ function TableDocumentsPage() {
           ) : (
             <EmptyState
               title="No documents"
-              body={`Insert a document using the toolbar or POST /api/tenants/${tenant}/documents with body { table: "${table}", fields: {...} }.`}
+              body="Insert the first document here, or write one through the API. The table takes any fields until a schema constrains it."
+              cta={{
+                label: "Insert document",
+                onClick: () => setShowInsert(true),
+              }}
+              snippet={insertDocumentCommand({ serverUrl, tenant, table })}
               testid="documents-empty"
             />
           )}

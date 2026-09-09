@@ -3,6 +3,7 @@ import {
   type DocumentOrder,
   FILTER_OPS,
   type FilterOp,
+  type PaginatedQuery,
 } from "../../lib/api-mutations";
 import type { TableSchemaShape } from "../../lib/types/table";
 
@@ -83,6 +84,33 @@ export function parseFilterValue(raw: string): unknown {
 export function formatFilterValue(value: unknown): string {
   if (typeof value === "string") return value === "" ? '""' : value;
   return JSON.stringify(value) ?? String(value);
+}
+
+/** Rows one page of the document browser carries. */
+export const DOCUMENT_PAGE_SIZE = 200;
+
+/**
+ * The one request body the document browser sends: the paginated query for
+ * a table under a filter set and a sort. The pager and the Query tab's
+ * "Show as code" both compile through here, so the code the tab shows is
+ * the request the grid makes, byte for byte.
+ */
+export function compileDocumentQuery(
+  table: string,
+  filters: DocumentFilter[],
+  order: DocumentOrder | null,
+  limit: number | null = null,
+): PaginatedQuery {
+  return { table, filters, order, limit };
+}
+
+/** The JSON body `POST /api/tenants/{t}/query/paginated` receives. */
+export function paginatedRequestBody(
+  query: PaginatedQuery,
+  pageSize: number = DOCUMENT_PAGE_SIZE,
+  after: string | null = null,
+): { query: PaginatedQuery; page_size: number; after: string | null } {
+  return { query, page_size: pageSize, after };
 }
 
 export function describeFilter(filter: DocumentFilter): string {

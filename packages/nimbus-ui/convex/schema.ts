@@ -38,6 +38,22 @@ export default defineSchema({
     .index("by_sha256", ["sha256"])
     .index("by_status", ["status"]),
 
+  // One row per bundle activation: a deploy, a rollback, or the bundle the
+  // server started with. Mirrors crates/nimbus-system/src/schema.rs.
+  deploys: defineTable({
+    sha256: v.string(),
+    generation: v.number(),
+    activatedAt: v.number(),
+    actor: v.string(),
+    sourceRef: v.string(),
+    kind: v.string(),
+    silo: v.optional(v.string()),
+    functions: v.array(v.any()),
+    functionCount: v.number(),
+  })
+    .index("by_sha256", ["sha256"])
+    .index("by_activatedAt", ["activatedAt"]),
+
   functions: defineTable({
     bundleId: v.string(),
     path: v.string(),
@@ -82,6 +98,7 @@ export default defineSchema({
     .index("by_tenantId_and_name", ["tenantId", "name"]),
 
   events: defineTable({
+    tenantId: v.optional(v.string()),
     source: v.string(),
     level: v.string(),
     category: v.string(),
@@ -94,21 +111,33 @@ export default defineSchema({
     .index("by_level", ["level"])
     .index("by_category", ["category"])
     .index("by_correlationId", ["correlationId"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_tenantId", ["tenantId"])
+    .index("by_tenantId_and_createdAt", ["tenantId", "createdAt"]),
 
   runs: defineTable({
+    tenantId: v.string(),
     bundleId: v.optional(v.string()),
     functionPath: v.string(),
     kind: v.string(),
     durationMs: v.optional(v.number()),
     status: v.string(),
     error: v.optional(v.any()),
+    // The error fingerprint: function path, error class, and normalized
+    // message. Failed runs only; the Errors tab folds runs by it.
+    fingerprint: v.optional(v.string()),
+    // The run's spans, the function's own span first. Each names its
+    // parent by index into this array.
+    spans: v.optional(v.any()),
     startedAt: v.number(),
   })
     .index("by_bundleId", ["bundleId"])
     .index("by_functionPath", ["functionPath"])
     .index("by_status", ["status"])
-    .index("by_startedAt", ["startedAt"]),
+    .index("by_fingerprint", ["fingerprint"])
+    .index("by_startedAt", ["startedAt"])
+    .index("by_tenantId", ["tenantId"])
+    .index("by_tenantId_and_startedAt", ["tenantId", "startedAt"]),
 
   scheduled_jobs: defineTable({
     tenantId: v.string(),

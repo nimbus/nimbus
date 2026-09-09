@@ -9,7 +9,7 @@
 //! and wraps the result in `Json`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nimbus_auth::ApplicationAuthVerifier;
@@ -26,14 +26,16 @@ use nimbus_convex::{
 use nimbus_core::{Error, TenantId};
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use nimbus_system::{
-    DiskSourcePackageStore, SourcePackageStore, SystemDeploymentFunctionRecordInput,
-    SystemDeploymentHttpRouteRecordInput, SystemDeploymentRecordInput, SystemModuleRecordInput,
-    SystemSourcePackageRecordInput, parse_source_package, record_deployment_state_async,
-    record_source_package_state_async,
+    DiskSourcePackageStore, SourcePackageStore, SystemDeploymentActivation,
+    SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,
+    SystemDeploymentRecordInput, SystemModuleRecordInput, SystemSourcePackageRecordInput,
+    deployment_bundle_sha256, deployment_history_async, parse_source_package,
+    record_deployment_state_async, record_source_package_state_async,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::deploy_artifacts::DeployArtifactStore;
 use crate::execution::errors::runtime_error_to_core;
 use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_egress_gateway,
@@ -110,70 +112,60 @@ pub async fn deploy_app(
         registry.ensure_http_tenant_binding(cloud_functions_http_tenant.as_ref())?;
     }
     let staged_artifact_lease = staged.artifact_lease();
+    let convex_activation = next_registry.map(|registry| ConvexActivation {
+        registry: Arc::new(registry),
+        silo: convex_silo
+            .clone()
+            .expect("Convex deploy silo was validated above"),
+        artifact_lease: staged_artifact_lease.clone(),
+    });
+    let cloud_functions_activation =
+        next_cloud_functions_registry.map(|registry| CloudFunctionsActivation {
+            registry: Arc::new(registry),
+            artifact_lease: staged_artifact_lease.clone(),
+        });
 
     let generation = if dry_run {
         previous_generation
     } else {
-        let next_generation = previous_generation.checked_add(1).ok_or_else(|| {
-            Error::ResourceExhausted("application deployment generation exhausted".to_owned())
-        })?;
-        let next_convex_registry = next_registry
-            .map(Arc::new)
-            .or_else(|| previous_deployment.convex_registry());
-        let mut convex_silo_auth = previous_deployment.convex_silo_auth().clone();
-        if staged.includes_convex() {
-            let silo = convex_silo
-                .as_ref()
-                .expect("Convex deploy silo was validated above");
-            let verifier = next_convex_registry
-                .as_ref()
-                .expect("Convex artifacts build a registry")
-                .clone() as Arc<dyn ApplicationAuthVerifier>;
-            convex_silo_auth = convex_silo_auth.bind(silo, verifier);
+        // Retain the Convex artifacts under the bundle hash before anything is
+        // activated, so a rollback target exists for every activation history
+        // records; a retention failure leaves the previous generation active.
+        if convex_activation.is_some() {
+            let sha256 = deployment_bundle_sha256(&convex_system_deployment_record_input(
+                &next_summary,
+                "",
+                DEPLOY_ACTOR,
+                ACTIVATION_KIND_DEPLOY,
+                0,
+                None,
+            ));
+            let store = compute.deploy_artifact_store();
+            let app_dir = staged.app_dir().to_path_buf();
+            tokio::task::spawn_blocking(move || store.retain(&sha256, &app_dir))
+                .await
+                .map_err(|error| {
+                    Error::Internal(format!("deploy artifact retention task failed: {error}"))
+                })??;
         }
-        let next_application_auth_verifier = previous_deployment.application_auth_verifier();
-        let next_cloud_functions_registry = next_cloud_functions_registry
-            .map(Arc::new)
-            .or_else(|| previous_deployment.cloud_functions_registry());
-        let convex_artifact_lease = if staged.includes_convex() {
-            Some(staged_artifact_lease.clone())
-        } else {
-            previous_deployment.convex_artifact_lease()
-        };
-        let cloud_functions_artifact_lease = if staged.includes_cloud_functions() {
-            Some(staged_artifact_lease)
-        } else {
-            previous_deployment.cloud_functions_artifact_lease()
-        };
-        let next_deployment = DeploymentState {
-            generation: next_generation,
-            convex_registry: next_convex_registry,
-            application_auth_verifier: next_application_auth_verifier,
-            convex_silo_auth,
-            cloud_functions_registry: next_cloud_functions_registry.clone(),
-            cloud_functions_http_tenant,
-            convex_artifact_lease,
-            cloud_functions_artifact_lease,
-            cloudflare_config: previous_deployment.cloudflare_config(),
-            firebase_config: previous_deployment.firebase_config(),
-            convex_tenancy: previous_deployment.convex_tenancy(),
-        };
-        compute
-            .runtime_manager()
-            .rotate_deployment_authority(previous_generation, next_deployment.generation)?;
-        compute.active_deployment.activate(next_deployment);
-        compute
-            .runtime_manager()
-            .retire_deployment_generation(previous_generation)
-            .await?;
-        if let Some(registry) = next_cloud_functions_registry {
-            compute.install_cloud_functions_runtime_hooks(registry)?;
-        }
-        let generation = compute.current_deployment().generation;
+        let generation = activate_next_generation(
+            compute,
+            previous_deployment,
+            convex_activation,
+            cloud_functions_activation,
+        )
+        .await?;
         if let Some(registry) = compute.current_deployment().convex_registry() {
             let summary = registry.deploy_summary();
             let source_ref = format!("deploy:generation:{generation}");
-            let input = convex_system_deployment_record_input(&summary, &source_ref);
+            let input = convex_system_deployment_record_input(
+                &summary,
+                &source_ref,
+                DEPLOY_ACTOR,
+                ACTIVATION_KIND_DEPLOY,
+                generation,
+                convex_silo.as_ref().map(TenantId::as_str),
+            );
             record_deployment_state_async(&compute.engine, &input).await?;
             if let Some((source_package_json, expected_digest)) = source_package {
                 persist_source_package(compute, &source_package_json, &expected_digest).await?;
@@ -189,6 +181,285 @@ pub async fn deploy_app(
         previous_generation,
         diff,
     })
+}
+
+/// Actor recorded on an activation the deploy route performed.
+pub const DEPLOY_ACTOR: &str = "deploy-admin";
+/// Actor recorded on the activation the server performs at startup.
+pub const STARTUP_ACTOR: &str = "server";
+pub const ACTIVATION_KIND_DEPLOY: &str = "deploy";
+pub const ACTIVATION_KIND_ROLLBACK: &str = "rollback";
+pub const ACTIVATION_KIND_STARTUP: &str = "startup";
+
+/// Re-activates a previously deployed Convex bundle from its retained
+/// artifacts. The artifacts pass the same integrity check the runtime applies
+/// before every invocation; a tampered or stale copy is refused before the
+/// generation changes. Cloud Functions keep their active registry.
+pub async fn rollback_deploy(
+    compute: &ComputeState,
+    sha256: &str,
+    actor: &str,
+) -> Result<RollbackResponse, ComputeError> {
+    let history = deployment_history_async(&compute.engine).await?;
+    let target = history
+        .iter()
+        .find(|activation| activation.sha256 == sha256)
+        .ok_or_else(|| {
+            ComputeError::NotFound(format!("no recorded activation of bundle {sha256}"))
+        })?;
+    if active_bundle_sha256(compute).as_deref() == Some(sha256) {
+        return Err(Error::InvalidInput(format!("bundle {sha256} is already active")).into());
+    }
+    // A Cloud Functions-only deploy records the still-active Convex bundle
+    // without a silo; any activation of the same bundle names it.
+    let silo = target
+        .silo
+        .clone()
+        .or_else(|| {
+            history
+                .iter()
+                .filter(|activation| activation.sha256 == sha256)
+                .find_map(|activation| activation.silo.clone())
+        })
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "bundle {sha256} was not activated through the deploy route, so it has no                  retained artifacts to roll back to"
+            ))
+        })?;
+    let silo = TenantId::new(silo)
+        .map_err(|error| Error::InvalidInput(format!("invalid recorded deploy silo: {error}")))?;
+
+    let store = compute.deploy_artifact_store();
+    let target_sha256 = sha256.to_owned();
+    let app_dir = tokio::task::spawn_blocking(move || store.stage(&target_sha256))
+        .await
+        .map_err(|error| {
+            Error::Internal(format!("rollback artifact staging task failed: {error}"))
+        })??;
+    let artifact_lease = Arc::new(DeploymentArtifactLease::new(app_dir));
+    let runtime_limits = compute.runtime_manager().base_runtime_limits().clone();
+    let registry =
+        ConvexRegistry::from_app_dir(artifact_lease.app_dir())?.with_runtime_limits(runtime_limits);
+    let summary = registry.deploy_summary();
+    let staged_sha256 = deployment_bundle_sha256(&convex_system_deployment_record_input(
+        &summary,
+        "",
+        actor,
+        ACTIVATION_KIND_ROLLBACK,
+        0,
+        None,
+    ));
+    if staged_sha256 != sha256 {
+        return Err(Error::InvalidInput(format!(
+            "deploy artifact integrity check failed for bundle {sha256}: retained artifacts \
+             build bundle {staged_sha256}"
+        ))
+        .into());
+    }
+
+    let previous_deployment = compute.current_deployment();
+    let previous_generation = previous_deployment.generation;
+    let generation = activate_next_generation(
+        compute,
+        previous_deployment,
+        Some(ConvexActivation {
+            registry: Arc::new(registry),
+            silo: silo.clone(),
+            artifact_lease,
+        }),
+        None,
+    )
+    .await?;
+    let source_ref = format!("rollback:generation:{generation}");
+    let input = convex_system_deployment_record_input(
+        &summary,
+        &source_ref,
+        actor,
+        ACTIVATION_KIND_ROLLBACK,
+        generation,
+        Some(silo.as_str()),
+    );
+    record_deployment_state_async(&compute.engine, &input).await?;
+    Ok(RollbackResponse {
+        activated: true,
+        generation,
+        previous_generation,
+        sha256: sha256.to_owned(),
+    })
+}
+
+/// Every recorded activation, newest first, with the active bundle and
+/// whether each bundle's artifacts are retained for a rollback.
+pub async fn deploy_history(compute: &ComputeState) -> Result<DeployHistory, ComputeError> {
+    let history = deployment_history_async(&compute.engine).await?;
+    let store = compute.deploy_artifact_store();
+    let activations = history
+        .into_iter()
+        .map(|activation| {
+            let retained = store.is_retained(&activation.sha256);
+            DeployActivation::from_record(activation, retained)
+        })
+        .collect();
+    Ok(DeployHistory {
+        active: active_bundle_sha256(compute),
+        activations,
+    })
+}
+
+/// The SHA-256 of the Convex bundle the active generation executes, as the
+/// history records it.
+fn active_bundle_sha256(compute: &ComputeState) -> Option<String> {
+    compute
+        .current_deployment()
+        .convex_registry()
+        .map(|registry| {
+            deployment_bundle_sha256(&convex_system_deployment_record_input(
+                &registry.deploy_summary(),
+                "",
+                "",
+                "",
+                0,
+                None,
+            ))
+        })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RollbackResponse {
+    activated: bool,
+    generation: u64,
+    previous_generation: u64,
+    sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeployHistory {
+    active: Option<String>,
+    activations: Vec<DeployActivation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeployActivation {
+    sha256: String,
+    generation: u64,
+    activated_at: u64,
+    actor: String,
+    source_ref: String,
+    kind: String,
+    silo: Option<String>,
+    retained: bool,
+    functions: Vec<DeployActivationFunction>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeployActivationFunction {
+    path: String,
+    kind: String,
+}
+
+impl DeployActivation {
+    fn from_record(record: SystemDeploymentActivation, retained: bool) -> Self {
+        Self {
+            sha256: record.sha256,
+            generation: record.generation,
+            activated_at: record.activated_at_ms,
+            actor: record.actor,
+            source_ref: record.source_ref,
+            kind: record.kind,
+            silo: record.silo,
+            retained,
+            functions: record
+                .functions
+                .into_iter()
+                .map(|function| DeployActivationFunction {
+                    path: function.path,
+                    kind: function.kind,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A Convex registry ready to become the active one, with the silo it
+/// authenticates for and the lease that keeps its artifacts on disk.
+struct ConvexActivation {
+    registry: Arc<ConvexRegistry>,
+    silo: TenantId,
+    artifact_lease: Arc<DeploymentArtifactLease>,
+}
+
+struct CloudFunctionsActivation {
+    registry: Arc<CloudFunctionsRegistry>,
+    artifact_lease: Arc<DeploymentArtifactLease>,
+}
+
+/// Swaps the next generation in: the runtime authority rotates, the previous
+/// generation retires, and the Cloud Functions runtime hooks re-install when
+/// that registry changed. A part that is `None` carries over from the
+/// previous deployment. Returns the activated generation.
+async fn activate_next_generation(
+    compute: &ComputeState,
+    previous_deployment: Arc<DeploymentState>,
+    convex: Option<ConvexActivation>,
+    cloud_functions: Option<CloudFunctionsActivation>,
+) -> Result<u64, ComputeError> {
+    let previous_generation = previous_deployment.generation;
+    let next_generation = previous_generation.checked_add(1).ok_or_else(|| {
+        Error::ResourceExhausted("application deployment generation exhausted".to_owned())
+    })?;
+    let mut convex_silo_auth = previous_deployment.convex_silo_auth().clone();
+    let (next_convex_registry, convex_artifact_lease) = match convex {
+        Some(convex) => {
+            let verifier = convex.registry.clone() as Arc<dyn ApplicationAuthVerifier>;
+            convex_silo_auth = convex_silo_auth.bind(&convex.silo, verifier);
+            (Some(convex.registry), Some(convex.artifact_lease))
+        }
+        None => (
+            previous_deployment.convex_registry(),
+            previous_deployment.convex_artifact_lease(),
+        ),
+    };
+    let (next_cloud_functions_registry, cloud_functions_artifact_lease, cloud_functions_changed) =
+        match cloud_functions {
+            Some(cloud_functions) => (
+                Some(cloud_functions.registry),
+                Some(cloud_functions.artifact_lease),
+                true,
+            ),
+            None => (
+                previous_deployment.cloud_functions_registry(),
+                previous_deployment.cloud_functions_artifact_lease(),
+                false,
+            ),
+        };
+    let next_deployment = DeploymentState {
+        generation: next_generation,
+        convex_registry: next_convex_registry,
+        application_auth_verifier: previous_deployment.application_auth_verifier(),
+        convex_silo_auth,
+        cloud_functions_registry: next_cloud_functions_registry.clone(),
+        cloud_functions_http_tenant: previous_deployment.cloud_functions_http_tenant(),
+        convex_artifact_lease,
+        cloud_functions_artifact_lease,
+        cloudflare_config: previous_deployment.cloudflare_config(),
+        firebase_config: previous_deployment.firebase_config(),
+        convex_tenancy: previous_deployment.convex_tenancy(),
+    };
+    compute
+        .runtime_manager()
+        .rotate_deployment_authority(previous_generation, next_deployment.generation)?;
+    compute.active_deployment.activate(next_deployment);
+    compute
+        .runtime_manager()
+        .retire_deployment_generation(previous_generation)
+        .await?;
+    if cloud_functions_changed && let Some(registry) = next_cloud_functions_registry {
+        compute.install_cloud_functions_runtime_hooks(registry)?;
+    }
+    Ok(compute.current_deployment().generation)
 }
 
 /// The `CloudFunctionsRuntimeInvoker` used to actually execute a bundle.
@@ -252,6 +523,17 @@ impl CloudFunctionsRuntimeInvoker for ComputeCloudFunctionsRuntimeInvoker {
 }
 
 impl ComputeState {
+    /// The retained-artifact store a rollback stages from, under the engine
+    /// data directory.
+    pub fn deploy_artifact_store(&self) -> DeployArtifactStore {
+        DeployArtifactStore::new(self.deploy_artifact_root())
+    }
+
+    /// Where retained deploy artifacts live: `<data_dir>/deploy-artifacts`.
+    pub fn deploy_artifact_root(&self) -> PathBuf {
+        self.engine.data_dir().join("deploy-artifacts")
+    }
+
     /// Installs the engine's trigger registrations/invocation executor for a
     /// newly activated Cloud Functions registry.
     pub fn install_cloud_functions_runtime_hooks(
@@ -278,15 +560,25 @@ impl ComputeState {
 }
 
 /// Projects a Convex registry's deploy summary into the `_nimbus` system
-/// deployment record input. Shared by [`deploy_app`] (a real deploy) and the
-/// server's startup path (`prepare_system_tenant`, which records the
-/// already-loaded registry as generation 0 under a `"startup"` source ref).
+/// deployment record input. Shared by [`deploy_app`] (a real deploy),
+/// [`rollback_deploy`], and the server's startup path (`prepare_system_tenant`,
+/// which records the already-loaded registry as generation 0 under a
+/// `"startup"` source ref). The bundle SHA-256 derives from the summary only,
+/// so the provenance fields never change which bundle a record names.
 pub fn convex_system_deployment_record_input<'a>(
     summary: &'a ConvexRegistryDeploySummary,
     source_ref: &'a str,
+    actor: &'a str,
+    kind: &'a str,
+    generation: u64,
+    silo: Option<&'a str>,
 ) -> SystemDeploymentRecordInput<'a> {
     SystemDeploymentRecordInput {
         source_ref,
+        actor,
+        kind,
+        generation,
+        silo,
         functions: summary
             .functions
             .iter()

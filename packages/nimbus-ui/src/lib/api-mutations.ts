@@ -1,3 +1,11 @@
+import type { DeployHistory, RollbackResponse } from "./types/deploy";
+import type {
+  SandboxCollection,
+  SandboxCreateRequest,
+  SandboxResource,
+  SessionOpenRequest,
+  SessionResource,
+} from "./types/sandbox";
 import type { PageResponse } from "./types/table";
 
 // The console's one typed HTTP client for every hand-driven write (and the
@@ -17,7 +25,7 @@ export type ApiResult<T> =
 // envelope shapes the server uses today — `{ error: { message } }` (storage,
 // schema, tenant routes) and `{ error: "…" }` (system, machine routes) — and
 // falls back to the status line for empty or unrecognized bodies.
-function errorMessage(body: unknown, status: number): string {
+export function apiErrorMessage(body: unknown, status: number): string {
   if (body && typeof body === "object" && "error" in body) {
     const error = (body as { error: unknown }).error;
     if (typeof error === "string" && error.length > 0) return error;
@@ -63,7 +71,7 @@ export async function apiFetch<T>(
     return {
       ok: false,
       status: response.status,
-      error: errorMessage(body, response.status),
+      error: apiErrorMessage(body, response.status),
     };
   }
   return { ok: true, data: body as T };
@@ -146,18 +154,42 @@ export const documents = {
   },
 };
 
-// Tenant-scoped schema enforcement. `put` sends the raw schema object; `drop`
-// removes enforcement while keeping the table's documents.
+/** One document the schema apply route refused, and why. */
+export type SchemaViolation = { id: string; message: string };
+
+/**
+ * The report `POST /api/tenants/{t}/schema/{table}/apply` returns. The route
+ * answers 200 whether or not it applied, so the body is the outcome:
+ * `applied` is false on a dry run and when any document violates the schema.
+ * `violations` lists at most the first fifty; `violation_count` is the total.
+ */
+export type SchemaApplyReport = {
+  applied: boolean;
+  dry_run: boolean;
+  scanned: number;
+  violation_count: number;
+  violations: SchemaViolation[];
+};
+
+// Tenant-scoped schema enforcement. `apply` scans the table before it stores
+// the schema and refuses on any violation, so enforcement never lands on a
+// table that already breaks it; `drop` removes enforcement while keeping the
+// table's documents.
 export const schema = {
-  put(
+  apply(
     tenant: string,
     table: string,
     value: unknown,
-  ): Promise<ApiResult<unknown>> {
-    return apiFetch(`/api/tenants/${enc(tenant)}/schema/${enc(table)}`, {
-      method: "PUT",
-      body: JSON.stringify(value),
-    });
+    options: { dryRun?: boolean } = {},
+  ): Promise<ApiResult<SchemaApplyReport>> {
+    const suffix = options.dryRun ? "?dry_run=true" : "";
+    return apiFetch(
+      `/api/tenants/${enc(tenant)}/schema/${enc(table)}/apply${suffix}`,
+      { method: "POST", body: JSON.stringify(value) },
+    );
+  },
+  get(tenant: string, table: string): Promise<ApiResult<unknown>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/schema/${enc(table)}`);
   },
   drop(tenant: string, table: string): Promise<ApiResult<unknown>> {
     return apiFetch(`/api/tenants/${enc(tenant)}/schema/${enc(table)}`, {
@@ -306,6 +338,21 @@ export const system = {
   },
 };
 
+// Deploy history and rollback on the local-admin routes. A rollback
+// re-activates a retained bundle; the server refuses the active bundle,
+// an unknown hash, and a bundle whose retained files fail the integrity
+// check, each as a readable error.
+export const deploys = {
+  list(): Promise<ApiResult<DeployHistory>> {
+    return apiFetch(`/api/admin/deploys`);
+  },
+  rollback(sha256: string): Promise<ApiResult<RollbackResponse>> {
+    return apiFetch(`/api/admin/deploys/${enc(sha256)}/rollback`, {
+      method: "POST",
+    });
+  },
+};
+
 // One bucket as the native object route reports it: the aggregate of the
 // tenant's manifests under that name. A bucket exists only while it holds
 // at least one object.
@@ -443,7 +490,7 @@ export const objects = {
           resolve({
             ok: false,
             status: xhr.status,
-            error: errorMessage(parsed, xhr.status),
+            error: apiErrorMessage(parsed, xhr.status),
           });
         }
       };
@@ -459,5 +506,66 @@ export const objects = {
     key: string,
   ): Promise<ApiResult<unknown>> {
     return apiFetch(objectPath(tenant, bucket, key), { method: "DELETE" });
+  },
+};
+
+// Sandboxes are live runtime resources on the service-control routes
+// (`/api/tenants/{tenant}/sandboxes`). A server that runs no service
+// manager answers 404 for every one of them; the pages read that status
+// as "not available here", not as an empty list.
+export const sandboxes = {
+  list(tenant: string): Promise<ApiResult<SandboxCollection>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/sandboxes?limit=200`);
+  },
+  get(tenant: string, id: string): Promise<ApiResult<SandboxResource>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/sandboxes/${enc(id)}`);
+  },
+  create(
+    tenant: string,
+    request: SandboxCreateRequest,
+  ): Promise<ApiResult<SandboxResource>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/sandboxes`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  },
+  stop(tenant: string, id: string): Promise<ApiResult<SandboxResource>> {
+    return apiFetch(`/api/tenants/${enc(tenant)}/sandboxes/${enc(id)}/stop`, {
+      method: "POST",
+    });
+  },
+};
+
+// Sessions attach channels to a sandbox or service. The console opens one
+// per console panel with the `stdio` channel, streams it through
+// `lib/session-channel.ts`, writes input to it here, and closes it when
+// the panel goes away. Operator principals name the tenant in the query.
+export const sessions = {
+  open(request: SessionOpenRequest): Promise<ApiResult<SessionResource>> {
+    return apiFetch("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  },
+  close(
+    id: string,
+    tenant: string,
+    reason?: string,
+  ): Promise<ApiResult<SessionResource>> {
+    return apiFetch(`/api/sessions/${enc(id)}/close?tenantId=${enc(tenant)}`, {
+      method: "POST",
+      body: JSON.stringify(reason ? { reason } : {}),
+    });
+  },
+  writeChannel(
+    id: string,
+    channel: string,
+    tenant: string,
+    data: string,
+  ): Promise<ApiResult<null>> {
+    return apiFetch(
+      `/api/sessions/${enc(id)}/channels/${enc(channel)}/input?tenantId=${enc(tenant)}`,
+      { method: "POST", body: JSON.stringify({ data }) },
+    );
   },
 };

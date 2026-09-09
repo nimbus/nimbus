@@ -1,6 +1,23 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { HttpResponse, http } from "msw";
+import { setupServer } from "msw/node";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const { navigateMock, useQueryMock } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
@@ -36,6 +53,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 vi.mock("../../../hooks/use-tenant-list", () => ({
@@ -49,7 +67,14 @@ vi.mock("../../../hooks/use-tenant-list", () => ({
 import { useUiStore } from "../../../store/ui-store";
 import { routeComponent } from "../../../test/route-internals";
 import { Route } from "../observability";
-import type { EventDoc, RunDoc } from "./-types";
+import type { EventDoc, LogSearchPage, RunDoc } from "./-types";
+
+// The search page is an HTTP read, not a subscription, so it goes through
+// msw. Other reads on the page are the mocked useQuery above.
+const server = setupServer();
+beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
 
 const NOW = 1_700_000_000_000;
 
@@ -352,6 +377,14 @@ describe("LogsTab read states", () => {
       /current filters/i,
     );
     expect(screen.queryByTestId("observability-log-loading")).toBeNull();
+    // The next action is a function call on this tenant, not another page.
+    expect(
+      screen.getByTestId("observability-log-empty-snippet"),
+    ).toHaveTextContent("nimbus run http://nimbus.example:9000 functions");
+    expect(
+      screen.getByTestId("observability-log-empty-snippet"),
+    ).toHaveTextContent("--tenant acme");
+    expect(screen.queryByTestId("observability-log-empty-cta")).toBeNull();
   });
 
   it("names the filters, and offers to clear them, only when some are set", () => {
@@ -378,5 +411,170 @@ describe("LogsTab read states", () => {
     expect(screen.getByTestId("observability-log-stream").className).toBe(
       loadingFrame.className,
     );
+  });
+});
+
+// The search page is the UIR19 acceptance: `?q=` reads GET /api/console/logs
+// with the same facets the stream reads, the matches group under their
+// runs, and the count line says how many matched and how far the server
+// looked. The field commits after a quiet gap, not per keystroke.
+describe("LogsTab search", () => {
+  function answerSearch(
+    page: Partial<LogSearchPage>,
+    onRequest?: (url: URL) => void,
+  ) {
+    server.use(
+      http.get("*/api/console/logs", ({ request }) => {
+        onRequest?.(new URL(request.url));
+        return HttpResponse.json({
+          lines: [],
+          matched: 0,
+          scanned: 0,
+          exhaustive: true,
+          limit: 200,
+          ...page,
+        });
+      }),
+    );
+  }
+
+  // The committed search lands in the address through the replace
+  // navigation; the mock keeps the reducer, so the test applies it.
+  function committedSearch(
+    prev: Record<string, unknown> = { tab: "logs" },
+  ): Record<string, unknown> | undefined {
+    const call = navigateMock.mock.calls.at(-1)?.[0] as
+      | { search: (prev: Record<string, unknown>) => Record<string, unknown> }
+      | undefined;
+    return call?.search(prev);
+  }
+
+  it("reads the search page on the tenant scope, groups the matches, and counts them", async () => {
+    answer(RUNS, EVENTS);
+    let requested: URL | undefined;
+    answerSearch(
+      { lines: [EVENTS[0]], matched: 2, scanned: 2000, exhaustive: false },
+      (url) => {
+        requested = url;
+      },
+    );
+    renderPage({ tab: "logs", q: "commit" });
+
+    const count = await screen.findByTestId("observability-log-search-count");
+    expect(count).toHaveTextContent("2 lines match");
+    expect(count).toHaveTextContent("“commit”");
+    expect(count).toHaveTextContent("in the newest 2,000 lines");
+    expect(count).toHaveTextContent("The newest 1 are shown.");
+    expect(requested?.searchParams.get("q")).toBe("commit");
+    expect(requested?.searchParams.get("tenant")).toBe("acme");
+    expect(requested?.searchParams.get("limit")).toBe("200");
+    expect(requested?.searchParams.get("run")).toBeNull();
+    // The one returned line sits under its run; the other runs are not
+    // groups, because a search that names no line under them says nothing.
+    expect(runGroups()).toHaveLength(1);
+    expect(
+      within(screen.getByTestId("observability-log-group-run-1")).getByTestId(
+        "observability-log-row-evt-1",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("observability-log-search")).toHaveValue(
+      "commit",
+    );
+  });
+
+  it("scopes the search to the run named by ?correlationId= and says so in the field", async () => {
+    answer(RUNS, EVENTS);
+    let requested: URL | undefined;
+    answerSearch(
+      { lines: [EVENTS[0]], matched: 1, scanned: 1, exhaustive: true },
+      (url) => {
+        requested = url;
+      },
+    );
+    renderPage({
+      tab: "logs",
+      q: "commit",
+      correlationId: "run-1",
+      level: "error",
+    });
+
+    const count = await screen.findByTestId("observability-log-search-count");
+    expect(count).toHaveTextContent("1 line matches");
+    expect(count).toHaveTextContent("in every recorded line");
+    expect(count).not.toHaveTextContent("are shown");
+    expect(requested?.searchParams.get("run")).toBe("run-1");
+    expect(requested?.searchParams.get("level")).toBe("error");
+    expect(screen.getByTestId("observability-log-search")).toHaveAttribute(
+      "placeholder",
+      "search this run",
+    );
+  });
+
+  it("commits the field once, after the last keystroke, not per letter", async () => {
+    answer(RUNS, EVENTS);
+    renderPage();
+    const field = screen.getByTestId("observability-log-search");
+
+    fireEvent.change(field, { target: { value: "pay" } });
+    fireEvent.change(field, { target: { value: "paym" } });
+    fireEvent.change(field, { target: { value: "payment" } });
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(field).toHaveValue("payment");
+
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledTimes(1));
+    expect(committedSearch()?.q).toBe("payment");
+    expect(navigateMock.mock.calls[0][0]).toMatchObject({ replace: true });
+  });
+
+  it("shows the filtered empty state under a zero count", async () => {
+    answer(RUNS, EVENTS);
+    answerSearch({ lines: [], matched: 0, scanned: 12, exhaustive: true });
+    renderPage({ tab: "logs", q: "nothing" });
+
+    const count = await screen.findByTestId("observability-log-search-count");
+    expect(count).toHaveTextContent("0 lines match");
+    expect(
+      screen.getByTestId("observability-log-empty-title"),
+    ).toHaveTextContent("Nothing matches the current filters");
+  });
+
+  it("reports a failed search read and retries on Try again", async () => {
+    answer(RUNS, EVENTS);
+    let calls = 0;
+    server.use(
+      http.get("*/api/console/logs", () => {
+        calls += 1;
+        if (calls === 1) {
+          return HttpResponse.json({ error: "engine busy" }, { status: 503 });
+        }
+        return HttpResponse.json({
+          lines: [],
+          matched: 0,
+          scanned: 0,
+          exhaustive: true,
+          limit: 200,
+        });
+      }),
+    );
+    renderPage({ tab: "logs", q: "commit" });
+
+    const failed = await screen.findByTestId("observability-log-search-failed");
+    expect(failed).toHaveTextContent("Could not load log search");
+    fireEvent.click(within(failed).getByRole("button", { name: /try again/i }));
+    await screen.findByTestId("observability-log-search-count");
+    expect(calls).toBe(2);
+  });
+
+  it("clears the search from the count line and returns to the stream", async () => {
+    answer(RUNS, EVENTS);
+    answerSearch({ lines: [], matched: 0, scanned: 0, exhaustive: true });
+    renderPage({ tab: "logs", q: "commit", level: "error" });
+
+    await screen.findByTestId("observability-log-search-count");
+    fireEvent.click(screen.getByTestId("observability-log-search-clear"));
+    const next = committedSearch({ tab: "logs", q: "commit", level: "error" });
+    expect(next?.q).toBeUndefined();
+    // Only the search clears; the other facets stay.
+    expect(next?.level).toBe("error");
   });
 });

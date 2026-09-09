@@ -34,6 +34,25 @@ Object.defineProperty(globalThis, "__nimbusInvoke", {
         error: error.nimbusHostError,
       };
     }
+    // The handler's own throw (marked by nimbusRemapHandlerError) is the
+    // developer's error, not a runtime fault: it answers as a
+    // \`function_thrown\` envelope so the message and the stack reach the
+    // caller intact. Everything else (a missing function, a visibility gate)
+    // still escapes into the runtime as a service fault.
+    if (error && typeof error === "object" && error.nimbusFunctionThrown === true) {
+      const stack = typeof error.nimbusOriginalStack === "string"
+        ? error.nimbusOriginalStack
+        : (typeof error.stack === "string" ? error.stack : null);
+      return {
+        status: "error",
+        error: {
+          kind: "function_thrown",
+          function_path: request.function_name,
+          message: String(error.message == null ? error : error.message),
+          stack,
+        },
+      };
+    }
     throw error;
   }
   },

@@ -42,7 +42,8 @@ pub(crate) async fn query(
                 state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
-            );
+            )
+            .with_span_recorder(trace.recorder());
             let result = invoke_named_convex_function_async_cancellable(
                 &context,
                 InvocationRequest {
@@ -91,10 +92,8 @@ pub(crate) async fn query(
             result
         }
     };
-    let status = if result.is_ok() { "ok" } else { "error" };
-    let error = result.as_ref().err().map(ToString::to_string);
     trace
-        .record(&service, &tenant_id, status, error.as_deref())
+        .record(&service, &tenant_id, result.as_ref().err())
         .await;
     let data = result?;
     Ok(Json(data))
@@ -138,7 +137,8 @@ pub(crate) async fn paginated_query(
                 state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
-            );
+            )
+            .with_span_recorder(trace.recorder());
             let value = invoke_named_convex_function_async_cancellable(
                 &context,
                 InvocationRequest {
@@ -153,31 +153,35 @@ pub(crate) async fn paginated_query(
                 request_cancellation.token(),
                 Some(next_runtime_server_request_id("convex-paginated-query")),
             )
-            .await?;
-            serde_json::from_value(value).map_err(|error| {
-                AppError::from(nimbus_core::Error::Serialization(error.to_string()))
+            .await;
+            value.and_then(|value| {
+                serde_json::from_value(value)
+                    .map_err(|error| nimbus_core::Error::Serialization(error.to_string()))
             })
         }
         ConvexPaginatedQueryRequest::Named(request) => {
-            let query = registry.resolve_paginated_query(
+            let request_cancellation = RequestCancellationGuard::new();
+            let cancellation = request_cancellation.token();
+            let cancellation_check = cancellation.clone();
+            match registry.resolve_paginated_query(
                 &request.name,
                 &request.args,
                 request.page_size,
                 request.cursor,
-            )?;
-            let request_cancellation = RequestCancellationGuard::new();
-            let cancellation = request_cancellation.token();
-            let cancellation_check = cancellation.clone();
-            service
-                .paginate_documents_async_cancellable_with_principal(
-                    tenant_id.clone(),
-                    query,
-                    normalize_principal_context(auth.as_ref()),
-                    cancellation.cancelled(),
-                    move || check_host_cancellation(&cancellation_check),
-                )
-                .await
-                .map_err(AppError::from)
+            ) {
+                Ok(query) => {
+                    service
+                        .paginate_documents_async_cancellable_with_principal(
+                            tenant_id.clone(),
+                            query,
+                            normalize_principal_context(auth.as_ref()),
+                            cancellation.cancelled(),
+                            move || check_host_cancellation(&cancellation_check),
+                        )
+                        .await
+                }
+                Err(error) => Err(error),
+            }
         }
         ConvexPaginatedQueryRequest::Raw { query } => {
             let request_cancellation = RequestCancellationGuard::new();
@@ -192,14 +196,11 @@ pub(crate) async fn paginated_query(
                     move || check_host_cancellation(&cancellation_check),
                 )
                 .await
-                .map_err(AppError::from)
         }
     };
-    let status = if result.is_ok() { "ok" } else { "error" };
-    let error = result.as_ref().err().map(ToString::to_string);
     trace
-        .record(&service, &tenant_id, status, error.as_deref())
+        .record(&service, &tenant_id, result.as_ref().err())
         .await;
-    let page = result?;
+    let page = result.map_err(AppError::from)?;
     Ok(Json(page))
 }

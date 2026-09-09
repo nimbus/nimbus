@@ -45,9 +45,18 @@ type RunResult =
       message: string;
       remediation: string | null;
       requestId: string | null;
+      // Set for `function.thrown`: the function's own throw, with the
+      // developer's stack and the path the server ran.
+      functionPath: string | null;
+      stack: string | null;
       durationMs: number;
       raw: unknown;
     };
+
+// The server's class for a handler that threw (crates/nimbus-server
+// error_envelope.rs). Every other code is a request, runtime, or service
+// fault, and the card keeps the server's remediation copy for those.
+const FUNCTION_THROWN = "function.thrown";
 
 type ArgsMode = "form" | "json";
 
@@ -64,7 +73,16 @@ const RUNNABLE_KINDS = new Set(["query", "mutation", "action"]);
 // When the function's validator is known the arguments start as a form,
 // one field per argument; JSON mode is always there for the shape the form
 // cannot hold.
-export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
+export function FunctionRunner({
+  fn,
+  onOpenRuns,
+}: {
+  fn: FunctionRunnerFn;
+  // The page owns navigation; the runner stays router-free so it renders in
+  // Storybook and in specs without a provider. When set, a thrown-error card
+  // offers the function's Runs tab, where the run row keeps the same error.
+  onOpenRuns?: () => void;
+}) {
   const tenant = useUiStore((s) => s.activeTenant);
   const fields = useMemo(() => parseArgsValidator(fn.argsSchema), [fn]);
   const [open, setOpen] = useState(false);
@@ -282,7 +300,7 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
               ) : null}
             </div>
           </div>
-          <ResultPanel result={result} />
+          <ResultPanel result={result} onOpenRuns={onOpenRuns} />
         </form>
       ) : null}
     </div>
@@ -398,7 +416,13 @@ function StatusPill({ result }: { result: RunResult }) {
   return null;
 }
 
-function ResultPanel({ result }: { result: RunResult }) {
+function ResultPanel({
+  result,
+  onOpenRuns,
+}: {
+  result: RunResult;
+  onOpenRuns?: () => void;
+}) {
   if (result.kind === "idle") {
     return (
       <div
@@ -420,13 +444,15 @@ function ResultPanel({ result }: { result: RunResult }) {
     );
   }
   if (result.kind === "error") {
+    const thrown = result.code === FUNCTION_THROWN;
     return (
       <div
         className="flex flex-col gap-2 rounded-lg border border-border-2 bg-bg-raised px-3 py-3"
         data-testid="function-runner-result-error"
+        data-error-class={thrown ? "function" : "service"}
       >
         <div className="flex items-center gap-2">
-          <Pill tone="error">error</Pill>
+          <Pill tone="error">{thrown ? "threw" : "error"}</Pill>
           {result.code ? (
             <span className="font-mono text-xs text-text-3">{result.code}</span>
           ) : null}
@@ -434,9 +460,50 @@ function ResultPanel({ result }: { result: RunResult }) {
             {result.durationMs}ms
           </span>
         </div>
-        <p className="font-mono text-xs text-text-1">{result.message}</p>
-        {result.remediation ? (
+        {thrown ? (
+          <p
+            className="text-xs text-text-3"
+            data-testid="function-runner-result-error-function"
+          >
+            <span className="font-mono text-text-1">
+              {result.functionPath ?? "The function"}
+            </span>{" "}
+            threw. The message and the stack below are the function's own.
+          </p>
+        ) : null}
+        <p
+          className="font-mono text-xs text-text-1 whitespace-pre-wrap"
+          data-testid="function-runner-result-error-message"
+        >
+          {result.message}
+        </p>
+        {thrown && result.stack ? (
+          <details
+            className="text-xs"
+            data-testid="function-runner-result-error-stack"
+          >
+            <summary className="cursor-pointer text-text-3 hover:text-text-1">
+              Stack
+            </summary>
+            <pre className="mt-1 max-h-48 overflow-auto font-mono text-xs text-text-3 whitespace-pre">
+              {result.stack}
+            </pre>
+          </details>
+        ) : null}
+        {!thrown && result.remediation ? (
           <p className="text-xs text-text-3">{result.remediation}</p>
+        ) : null}
+        {thrown && onOpenRuns ? (
+          <div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenRuns}
+              data-testid="function-runner-result-error-runs"
+            >
+              View runs
+            </Button>
+          </div>
         ) : null}
         {result.requestId ? (
           <CopyChip
@@ -548,6 +615,11 @@ async function invoke({
         message: env?.message ?? `Request failed with ${response.status}`,
         remediation: env?.remediation?.message ?? null,
         requestId: env?.requestId ?? correlationId ?? null,
+        functionPath:
+          typeof env?.detail?.functionPath === "string"
+            ? env.detail.functionPath
+            : null,
+        stack: typeof env?.detail?.stack === "string" ? env.detail.stack : null,
         durationMs,
         raw: body,
       });
@@ -565,6 +637,8 @@ async function invoke({
       message: err instanceof Error ? err.message : String(err),
       remediation: "Confirm the server is reachable and retry.",
       requestId: null,
+      functionPath: null,
+      stack: null,
       durationMs,
       raw: null,
     });
@@ -577,6 +651,7 @@ function isErrorEnvelope(value: unknown): value is {
     message?: string;
     requestId?: string;
     remediation?: { message?: string };
+    detail?: { functionPath?: unknown; stack?: unknown };
   };
 } {
   return (

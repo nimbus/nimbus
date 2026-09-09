@@ -1,4 +1,4 @@
-use nimbus_core::{Document, Query, Schema, TenantEventRecord};
+use nimbus_core::{Document, Error, Query, Schema, TenantEventRecord};
 use nimbus_engine::{MaterializedJournalSnapshot, TenantEngineDiagnosticsSnapshot};
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBackendLifecyclePolicy, RuntimeBackendLockdownProfile,
@@ -259,6 +259,16 @@ impl ServerMessage {
                 false,
                 Some(request_id),
             ),
+        }
+    }
+
+    /// A request error that keeps the core error's public code, detail, and
+    /// remediation instead of flattening it to `op.failed` text.
+    pub(crate) fn request_core_error(request_id: impl Into<String>, error: &Error) -> Self {
+        let request_id = request_id.into();
+        Self::Error {
+            request_id: Some(request_id.clone()),
+            error: PublicError::from_core_error(error).with_request_id(request_id),
         }
     }
 

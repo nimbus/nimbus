@@ -70,10 +70,11 @@ test.describe("settings", () => {
     // The menu lists only built sub-pages.
     const menu = page.getByTestId("sub-panel");
     await expect(menu).toBeVisible();
-    for (const label of ["General", "System", "Deploys", "Integrations", "Shutdown"]) {
+    for (const label of ["General", "System", "Integrations", "Shutdown"]) {
       await expect(menu.getByRole("link", { name: label })).toBeVisible();
     }
-    for (const label of ["Endpoints", "Token", "Environment"]) {
+    // Deploys moved to its own Developer page (UIR23).
+    for (const label of ["Deploys", "Endpoints", "Token", "Environment"]) {
       await expect(menu.getByText(label, { exact: true })).toHaveCount(0);
     }
 

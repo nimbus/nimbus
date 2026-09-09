@@ -2,6 +2,10 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { Boxes, Database } from "lucide-react";
 
 import { EmptyState } from "../components/empty-state";
+import {
+  deployFunctionsCommand,
+  insertDocumentCommand,
+} from "../components/onboarding/next-action";
 
 const meta: Meta<typeof EmptyState> = {
   title: "Components/EmptyState",
@@ -64,14 +68,28 @@ export const WithMascot: Story = {
   },
 };
 
-// The snippet is the first command an operator runs from the empty state,
-// with the copy button the CLI examples share.
+// The snippet is the next action: the one command that puts the first row
+// on the page, with the copy button the CLI examples share. A one-line
+// command is a chip.
 export const WithSnippet: Story = {
   args: {
+    title: "No functions",
+    body: "Deploy an app and its functions appear here.",
+    snippet: deployFunctionsCommand(),
+  },
+};
+
+// A multi-line command (a curl with headers and a body) is a left-aligned
+// block that scrolls sideways, so no line of it is cut short.
+export const WithMultiLineSnippet: Story = {
+  args: {
     icon: Database,
-    title: "No tables yet",
-    body: "Create a table from the CLI, or write a document and Nimbus creates the table for you.",
-    snippet: "nimbus storage tables create users",
-    cta: { label: "Read the storage guide", to: "/developer/docs" },
+    title: "No tables",
+    body: "A table appears with its first document. Insert one with the API, or from a function with ctx.db.insert.",
+    snippet: insertDocumentCommand({
+      serverUrl: "http://localhost:3210",
+      tenant: "demo",
+      table: null,
+    }),
   },
 };

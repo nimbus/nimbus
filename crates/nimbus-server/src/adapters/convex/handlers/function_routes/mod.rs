@@ -3,6 +3,8 @@ use super::*;
 use std::time::Instant;
 use tracing::warn;
 
+use nimbus_system::{OpenSpan, RunSpanRecorder};
+
 use crate::error_envelope::StructuredHttpError;
 
 mod actions;
@@ -22,33 +24,60 @@ struct RunTrace {
     kind: &'static str,
     started_at: u64,
     started: Instant,
+    /// The run's spans. The host bridge records one span per host call
+    /// under the root function span this trace opened.
+    spans: Arc<RunSpanRecorder>,
+    root: OpenSpan,
 }
 
 impl RunTrace {
     fn new(function_path: impl Into<String>, kind: &'static str) -> Self {
+        let function_path = function_path.into();
+        let spans = Arc::new(RunSpanRecorder::new());
+        let root = spans.start("function", function_path.clone());
         Self {
-            function_path: function_path.into(),
+            function_path,
             kind,
             started_at: unix_time_millis_lossy(),
             started: Instant::now(),
+            spans,
+            root,
         }
+    }
+
+    /// The recorder a runtime invocation context writes host-call spans into.
+    fn recorder(&self) -> Arc<RunSpanRecorder> {
+        Arc::clone(&self.spans)
     }
 
     async fn record(
         self,
         service: &Arc<nimbus_engine::Engine>,
         tenant_id: &TenantId,
-        status: &str,
-        error: Option<&str>,
+        error: Option<&nimbus_core::Error>,
     ) {
+        self.spans.finish(self.root, error.is_none());
+        let (spans, dropped) = self.spans.snapshot();
+        if dropped > 0 {
+            warn!(
+                function_path = %self.function_path,
+                dropped,
+                "run span limit reached; later spans were not recorded"
+            );
+        }
+        let display = error.map(ToString::to_string);
+        let error = error
+            .zip(display.as_deref())
+            .map(|(error, display)| nimbus_system::RunError::from_core_error(error, display));
         let record = nimbus_system::RunRecord {
             tenant_id,
             function_path: &self.function_path,
             kind: self.kind,
             started_at: self.started_at,
             duration_ms: self.started.elapsed().as_secs_f64() * 1000.0,
-            status,
+            status: if error.is_some() { "error" } else { "ok" },
             error,
+            spans,
         };
         if let Err(record_error) = nimbus_system::record_run_async(service, record).await {
             warn!(

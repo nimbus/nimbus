@@ -391,14 +391,16 @@ async fn deploy_activation_swaps_new_requests_to_new_generation() {
                 "bundleId": null,
                 "functionPath": "notes:list",
                 "status": null,
+                "fingerprint": null,
+                "tenantId": null,
                 "limit": null
             }),
         )
         .await;
-    assert_eq!(runs.status(), StatusCode::OK);
-    let runs = runs
-        .json::<serde_json::Value>()
-        .await
+    let runs_status = runs.status();
+    let runs_body = runs.text().await.expect("system runs body should read");
+    assert_eq!(runs_status, StatusCode::OK, "runs body: {runs_body}");
+    let runs = serde_json::from_str::<serde_json::Value>(&runs_body)
         .expect("system runs query should parse");
     let runs = runs.as_array().expect("runs should be an array");
     assert!(
@@ -880,5 +882,228 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
         bundles_b_after[0]["sourceRef"],
         json!("deploy:generation:1"),
         "post-redeploy bundle sourceRef should reflect the restarted-daemon generation"
+    );
+}
+
+async fn deploy_history(server: &ServerFixture) -> serde_json::Value {
+    let response = server
+        .client()
+        .get(server.http_url("/api/admin/deploys"))
+        .send()
+        .await
+        .expect("history request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+        .json::<serde_json::Value>()
+        .await
+        .expect("history response should be json")
+}
+
+async fn rollback(server: &ServerFixture, sha256: &str) -> reqwest::Response {
+    server
+        .client()
+        .post(server.http_url(&format!("/api/admin/deploys/{sha256}/rollback")))
+        .send()
+        .await
+        .expect("rollback request should send")
+}
+
+#[tokio::test]
+async fn deploy_history_orders_activations_newest_first_and_rollback_reactivates_a_bundle() {
+    let (team_bearer, team_auth_config) = convex_team_real_auth();
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(deploy_router_with_system_registry(
+        fixture.engine(),
+        Some(convex_registry(json!([query_function(
+            "messages:list",
+            "messages"
+        )]))),
+    ))
+    .await;
+    let api = HttpApiFixture::with_convex_bearer(&server, team_bearer);
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    for (name, table) in [("notes:list", "notes"), ("todos:list", "todos")] {
+        let mut request = deploy_request(json!([query_function(name, table)]));
+        request["artifacts"]["convex"]["auth_config_json"] = team_auth_config.clone();
+        let response = deploy(&server, request, Some(DEPLOY_TOKEN)).await;
+        assert_eq!(response.status(), StatusCode::OK, "deploy of {name}");
+    }
+
+    let history = deploy_history(&server).await;
+    let activations = history["activations"]
+        .as_array()
+        .expect("activations should be an array");
+    assert_eq!(activations.len(), 2, "one row per deploy: {history}");
+    let (todos, notes) = (&activations[0], &activations[1]);
+    assert_eq!(todos["generation"], json!(3));
+    assert_eq!(todos["kind"], json!("deploy"));
+    assert_eq!(todos["actor"], json!("deploy-admin"));
+    assert_eq!(todos["sourceRef"], json!("deploy:generation:3"));
+    assert_eq!(todos["silo"], json!("demo"));
+    assert_eq!(todos["retained"], json!(true));
+    assert_eq!(todos["functions"][0]["path"], json!("todos:list"));
+    assert_eq!(notes["generation"], json!(2));
+    assert_eq!(notes["functions"][0]["path"], json!("notes:list"));
+    assert_eq!(history["active"], todos["sha256"]);
+    assert!(
+        activations[0]["activatedAt"].as_u64() >= activations[1]["activatedAt"].as_u64(),
+        "newest first: {history}"
+    );
+    let notes_sha256 = notes["sha256"].as_str().expect("sha256 should be a string");
+    let todos_sha256 = todos["sha256"].as_str().expect("sha256 should be a string");
+    assert_ne!(notes_sha256, todos_sha256);
+
+    // The active bundle is not a rollback target.
+    let already_active = rollback(&server, todos_sha256).await;
+    assert_eq!(already_active.status(), StatusCode::BAD_REQUEST);
+    let unknown = rollback(&server, "0000").await;
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+    let response = rollback(&server, notes_sha256).await;
+    let status = response.status();
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("rollback response should be json");
+    assert_eq!(status, StatusCode::OK, "unexpected rollback body: {body}");
+    assert_eq!(body["activated"], json!(true));
+    assert_eq!(body["generation"], json!(4));
+    assert_eq!(body["previousGeneration"], json!(3));
+    assert_eq!(body["sha256"], json!(notes_sha256));
+
+    // The rolled-back generation serves the old function set again, verified
+    // by the auth config the retained artifacts carry.
+    assert_eq!(
+        api.convex_named_query("demo", "notes:list", json!({}))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_ne!(
+        api.convex_named_query("demo", "todos:list", json!({}))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let history = deploy_history(&server).await;
+    let activations = history["activations"]
+        .as_array()
+        .expect("activations should be an array");
+    assert_eq!(
+        activations.len(),
+        3,
+        "the rollback is one more row: {history}"
+    );
+    assert_eq!(activations[0]["sha256"], json!(notes_sha256));
+    assert_eq!(activations[0]["generation"], json!(4));
+    assert_eq!(activations[0]["kind"], json!("rollback"));
+    assert_eq!(activations[0]["actor"], json!("operator"));
+    assert_eq!(activations[0]["sourceRef"], json!("rollback:generation:4"));
+    assert_eq!(activations[1]["sha256"], json!(todos_sha256));
+    assert_eq!(activations[2]["sha256"], json!(notes_sha256));
+    assert_eq!(history["active"], json!(notes_sha256));
+    let bundles = api
+        .convex_named_query(
+            "_nimbus",
+            "bundles:list",
+            json!({"status": null, "limit": null}),
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .expect("bundles should be json");
+    let bundles = bundles.as_array().expect("bundles should be an array");
+    assert_eq!(bundles.len(), 1, "the rollback replaces the active bundle");
+    assert_eq!(bundles[0]["status"], json!("active"));
+    assert_eq!(bundles[0]["sourceRef"], json!("rollback:generation:4"));
+}
+
+#[tokio::test]
+async fn deploy_rollback_rejects_a_tampered_retained_bundle() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(deploy_router(
+        fixture.engine(),
+        Some(convex_registry(json!([query_function(
+            "messages:list",
+            "messages"
+        )]))),
+    ))
+    .await;
+    let api = HttpApiFixture::with_convex_bearer(&server, convex_team_bearer());
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+    let bundle_source = "export const value = 1;\n";
+    let temp = tempfile::tempdir().expect("bundle tempdir should build");
+    let bundle_path = temp.path().join("bundle.mjs");
+    std::fs::write(&bundle_path, bundle_source).expect("bundle should write");
+    let bundle_sha256 = nimbus_runtime::RuntimeBundle::compute_sha256_for_path(&bundle_path)
+        .expect("bundle hash should compute");
+
+    let response = deploy(
+        &server,
+        json!({
+            "convex_silo": "demo",
+            "artifacts": {
+                "convex": {
+                    "functions_json": { "functions": [query_function("notes:list", "notes")] },
+                    "bundle_mjs": bundle_source,
+                    "bundle_sha256": bundle_sha256
+                }
+            }
+        }),
+        Some(DEPLOY_TOKEN),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = deploy(
+        &server,
+        deploy_request(json!([query_function("todos:list", "todos")])),
+        Some(DEPLOY_TOKEN),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let history = deploy_history(&server).await;
+    assert_eq!(history["activations"][1]["sha256"], json!(bundle_sha256));
+    assert_eq!(history["activations"][1]["retained"], json!(true));
+    let active_before = history["active"].clone();
+
+    // Tamper with the retained copy on disk, as a compromised host would.
+    let retained_bundle = fixture
+        .data_dir()
+        .join("deploy-artifacts")
+        .join(&bundle_sha256)
+        .join("bundle.mjs");
+    assert!(retained_bundle.is_file(), "{}", retained_bundle.display());
+    std::fs::write(&retained_bundle, "export const value = 2;\n").expect("tamper should write");
+
+    let response = rollback(&server, &bundle_sha256).await;
+    let status = response.status();
+    let body = response.text().await.expect("rollback body should read");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected body: {body}");
+    assert!(
+        body.contains("integrity check failed"),
+        "the refusal names the integrity check: {body}"
+    );
+
+    let history = deploy_history(&server).await;
+    assert_eq!(history["active"], active_before);
+    assert_eq!(
+        history["activations"].as_array().map(Vec::len),
+        Some(2),
+        "a refused rollback records nothing: {history}"
+    );
+    assert_ne!(
+        api.convex_named_query("demo", "notes:list", json!({}))
+            .await
+            .status(),
+        StatusCode::OK
     );
 }

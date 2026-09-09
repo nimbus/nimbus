@@ -62,6 +62,10 @@ const { nimbusQueryMock } = vi.hoisted(() => ({
   nimbusQueryMock: vi.fn(),
 }));
 
+vi.mock("@nimbus/nimbus/react", () => ({
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
+}));
+
 vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
@@ -234,6 +238,9 @@ describe("operator/tenants render", () => {
     loaded([]);
     render(<TenantsPage />);
     expect(screen.queryByTestId("tenants-create-dialog")).toBeNull();
+    expect(screen.getByTestId("tenants-empty-snippet")).toHaveTextContent(
+      "POST http://nimbus.example:9000/api/tenants",
+    );
     fireEvent.click(screen.getByTestId("tenants-empty-cta"));
     expect(screen.getByTestId("tenants-create-dialog")).toBeInTheDocument();
   });

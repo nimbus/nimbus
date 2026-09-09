@@ -73,6 +73,14 @@ pub fn route_inventory() -> Vec<RouteInventoryEntry> {
             "shutdown_system",
             true,
         ),
+        route("GET", "/api/admin/deploys", "native", "list_deploys", true),
+        route(
+            "POST",
+            "/api/admin/deploys/{sha256}/rollback",
+            "native",
+            "rollback_deploy",
+            true,
+        ),
         route(
             "GET",
             "/debug/runtime/metrics",
@@ -220,6 +228,13 @@ pub fn route_inventory() -> Vec<RouteInventoryEntry> {
             "/api/tenants/{tenant_id}/schema/{table}",
             "native",
             "set_table_schema",
+            true,
+        ),
+        route(
+            "POST",
+            "/api/tenants/{tenant_id}/schema/{table}/apply",
+            "native",
+            "apply_table_schema",
             true,
         ),
         route(

@@ -15,14 +15,7 @@ import { useUiStore } from "../store/ui-store";
 
 export type TenantSelectorMode =
   | { kind: "developer" }
-  // `unavailable` keeps the affordance on screen while the backend cannot honor
-  // the filter (see EVENTS_TABLE_HAS_TENANT_COLUMN). Removing the control
-  // instead would strand a bookmarked `?tenant=` with nothing to clear it.
-  | {
-      kind: "operator-filter";
-      currentFilter: string | null;
-      unavailable: boolean;
-    };
+  | { kind: "operator-filter"; currentFilter: string | null };
 
 export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
   const activeTenant = useUiStore((s) => s.activeTenant);
@@ -172,37 +165,6 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
     mode.kind === "operator-filter"
       ? (mode.currentFilter ?? "All tenants")
       : (activeTenant ?? "Select tenant");
-
-  // The backend cannot honor the filter yet, so the control stays on screen but
-  // cannot open and cannot write `?tenant=` — the same "coming soon" treatment
-  // the observability page gives its own unbuilt tabs.
-  if (mode.kind === "operator-filter" && mode.unavailable) {
-    return (
-      <div className="relative" data-testid="tenant-selector">
-        <button
-          ref={buttonRef}
-          type="button"
-          disabled
-          aria-disabled="true"
-          data-testid="tenant-selector-trigger"
-          data-mode={mode.kind}
-          data-unavailable="true"
-          title="Tenant filtering is unavailable until the events table exposes a tenant column"
-          className="flex h-7 w-full min-w-0 cursor-not-allowed items-center gap-2 rounded-md border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 opacity-60"
-        >
-          <span className="text-xs font-medium text-text-3">Filter</span>
-          <span className="truncate">All tenants</span>
-          <span
-            aria-hidden
-            className="rounded-xs bg-bg-raised px-1 text-xs font-medium text-text-3"
-            data-testid="tenant-selector-coming-soon"
-          >
-            coming soon
-          </span>
-        </button>
-      </div>
-    );
-  }
 
   return (
     <div className="relative" data-testid="tenant-selector">

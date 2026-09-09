@@ -207,6 +207,47 @@ async function assertEnvelopeMetadataAndUnknownCodes(indexBundle) {
   assert.equal(sparse.retryability, "terminal");
   assert.equal(sparse.retryable, false);
 
+  // A function's own throw keeps the developer's message, stack, and
+  // function path: it is the class the console and the SDK show as the
+  // developer's error, not a service fault.
+  const thrown = sdk.decodeNimbusErrorEnvelope({
+    error: {
+      code: "function.thrown",
+      message: "Message text must not be empty (at messages:12)",
+      requestId: "req-12",
+      severity: "error",
+      retryable: false,
+      detail: {
+        functionPath: "messages:send",
+        stack: "Error: Message text must not be empty\n    at <anonymous>:5:9",
+      },
+      remediation: {
+        action: "fix_function",
+        message: "Read the message and the stack, then fix the function or the input it received.",
+      },
+    },
+  });
+  assert.ok(thrown instanceof sdk.NimbusError);
+  assert.equal(thrown.code, "function.thrown");
+  assert.equal(thrown.message, "Message text must not be empty (at messages:12)");
+  assert.equal(thrown.detail.functionPath, "messages:send");
+  assert.match(thrown.detail.stack, /Message text must not be empty/);
+  assert.equal(thrown.retryable, false);
+  assert.equal(thrown.remediation.action, "fix_function");
+
+  // A socket request error carries the same envelope under `op.error`, and
+  // the missing envelope still yields the socket fallback message.
+  const socketThrown = sdk.decodeNimbusErrorEnvelope(
+    { error: { code: "function.thrown", message: thrown.message } },
+    "websocket request failed",
+  );
+  assert.equal(socketThrown.message, "Message text must not be empty (at messages:12)");
+  const socketBare = sdk.decodeNimbusErrorEnvelope(
+    { error: undefined },
+    "websocket request failed",
+  );
+  assert.equal(socketBare.message, "websocket request failed");
+
   // A non-envelope shape still decodes to a plain Error.
   const plain = sdk.decodeNimbusErrorEnvelope({ error: "boom" });
   assert.ok(plain instanceof Error);

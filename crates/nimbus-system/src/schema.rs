@@ -8,6 +8,7 @@ pub(crate) enum SystemTable {
     Bundles,
     ConnectivityRoutes,
     CronJobs,
+    Deploys,
     Events,
     Functions,
     Listeners,
@@ -27,11 +28,12 @@ pub(crate) enum SystemTable {
 
 impl SystemTable {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 20] = [
         Self::AdapterCapabilities,
         Self::Bundles,
         Self::ConnectivityRoutes,
         Self::CronJobs,
+        Self::Deploys,
         Self::Events,
         Self::Functions,
         Self::Listeners,
@@ -55,6 +57,7 @@ impl SystemTable {
             Self::Bundles => "bundles",
             Self::ConnectivityRoutes => "connectivity_routes",
             Self::CronJobs => "cron_jobs",
+            Self::Deploys => "deploys",
             Self::Events => "events",
             Self::Functions => "functions",
             Self::Listeners => "listeners",
@@ -132,6 +135,29 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 index("by_status", &["status"]),
             ],
         )?,
+        // One row per bundle activation, oldest to newest: the deploy history
+        // behind the console Deploys page. `bundles` and `functions` stay the
+        // active inventory; this table is the append-only record a rollback
+        // reads its target from. `functions` holds `{ path, kind }` pairs so a
+        // row can be diffed against another without the bundle on disk.
+        table(
+            SystemTable::Deploys,
+            &[
+                string("sha256", true),
+                number("generation", true),
+                number("activatedAt", true),
+                string("actor", true),
+                string("sourceRef", true),
+                string("kind", true),
+                string("silo", false),
+                array("functions", true),
+                number("functionCount", true),
+            ],
+            &[
+                index("by_sha256", &["sha256"]),
+                index("by_activatedAt", &["activatedAt"]),
+            ],
+        )?,
         table(
             SystemTable::Functions,
             &[
@@ -203,6 +229,7 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
         table(
             SystemTable::Events,
             &[
+                string("tenantId", false),
                 string("source", true),
                 string("level", true),
                 string("category", true),
@@ -217,17 +244,22 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 index("by_category", &["category"]),
                 index("by_correlationId", &["correlationId"]),
                 index("by_createdAt", &["createdAt"]),
+                index("by_tenantId", &["tenantId"]),
+                index("by_tenantId_and_createdAt", &["tenantId", "createdAt"]),
             ],
         )?,
         table(
             SystemTable::Runs,
             &[
+                string("tenantId", true),
                 string("bundleId", false),
                 string("functionPath", true),
                 string("kind", true),
                 number("durationMs", false),
                 string("status", true),
                 object("error", false),
+                string("fingerprint", false),
+                array("spans", false),
                 number("startedAt", true),
             ],
             &[
@@ -235,6 +267,9 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 index("by_functionPath", &["functionPath"]),
                 index("by_status", &["status"]),
                 index("by_startedAt", &["startedAt"]),
+                index("by_tenantId", &["tenantId"]),
+                index("by_tenantId_and_startedAt", &["tenantId", "startedAt"]),
+                index("by_fingerprint", &["fingerprint"]),
             ],
         )?,
         table(

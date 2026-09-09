@@ -12,8 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DeveloperIndexRouteImport } from './routes/developer/index'
 import { Route as DeveloperComputeRouteImport } from './routes/developer/compute'
+import { Route as DeveloperDeploysRouteImport } from './routes/developer/deploys'
 import { Route as DeveloperFilesRouteImport } from './routes/developer/files'
 import { Route as DeveloperObservabilityRouteImport } from './routes/developer/observability'
+import { Route as DeveloperSandboxesRouteImport } from './routes/developer/sandboxes'
 import { Route as DeveloperSchedulesRouteImport } from './routes/developer/schedules'
 import { Route as DeveloperServicesRouteImport } from './routes/developer/services'
 import { Route as DeveloperSettingsRouteImport } from './routes/developer/settings'
@@ -26,6 +28,7 @@ import { Route as OperatorServicesRouteImport } from './routes/operator/services
 import { Route as OperatorSettingsRouteImport } from './routes/operator/settings'
 import { Route as OperatorTenantsRouteImport } from './routes/operator/tenants'
 import { Route as DeveloperComputeFunctionRouteImport } from './routes/developer/compute_.$function'
+import { Route as DeveloperSandboxesSandboxRouteImport } from './routes/developer/sandboxes_.$sandbox'
 import { Route as DeveloperServicesServiceRouteImport } from './routes/developer/services_.$service'
 import { Route as DeveloperStorageTableRouteImport } from './routes/developer/storage_.$table'
 import { Route as OperatorServicesServiceRouteImport } from './routes/operator/services_.$service'
@@ -46,6 +49,11 @@ const DeveloperComputeRoute = DeveloperComputeRouteImport.update({
   path: '/developer/compute',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeveloperDeploysRoute = DeveloperDeploysRouteImport.update({
+  id: '/developer/deploys',
+  path: '/developer/deploys',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DeveloperFilesRoute = DeveloperFilesRouteImport.update({
   id: '/developer/files',
   path: '/developer/files',
@@ -54,6 +62,11 @@ const DeveloperFilesRoute = DeveloperFilesRouteImport.update({
 const DeveloperObservabilityRoute = DeveloperObservabilityRouteImport.update({
   id: '/developer/observability',
   path: '/developer/observability',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperSandboxesRoute = DeveloperSandboxesRouteImport.update({
+  id: '/developer/sandboxes',
+  path: '/developer/sandboxes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeveloperSchedulesRoute = DeveloperSchedulesRouteImport.update({
@@ -117,6 +130,12 @@ const DeveloperComputeFunctionRoute =
     path: '/developer/compute/$function',
     getParentRoute: () => rootRouteImport,
   } as any)
+const DeveloperSandboxesSandboxRoute =
+  DeveloperSandboxesSandboxRouteImport.update({
+    id: '/developer/sandboxes_/$sandbox',
+    path: '/developer/sandboxes/$sandbox',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DeveloperServicesServiceRoute =
   DeveloperServicesServiceRouteImport.update({
     id: '/developer/services_/$service',
@@ -143,8 +162,10 @@ const DeveloperComputeRunsRunIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/deploys': typeof DeveloperDeploysRoute
   '/developer/files': typeof DeveloperFilesRoute
   '/developer/observability': typeof DeveloperObservabilityRoute
+  '/developer/sandboxes': typeof DeveloperSandboxesRoute
   '/developer/schedules': typeof DeveloperSchedulesRoute
   '/developer/services': typeof DeveloperServicesRoute
   '/developer/settings': typeof DeveloperSettingsRoute
@@ -158,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/developer/': typeof DeveloperIndexRoute
   '/operator/': typeof OperatorIndexRoute
   '/developer/compute/$function': typeof DeveloperComputeFunctionRoute
+  '/developer/sandboxes/$sandbox': typeof DeveloperSandboxesSandboxRoute
   '/developer/services/$service': typeof DeveloperServicesServiceRoute
   '/developer/storage/$table': typeof DeveloperStorageTableRoute
   '/operator/services/$service': typeof OperatorServicesServiceRoute
@@ -166,8 +188,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/deploys': typeof DeveloperDeploysRoute
   '/developer/files': typeof DeveloperFilesRoute
   '/developer/observability': typeof DeveloperObservabilityRoute
+  '/developer/sandboxes': typeof DeveloperSandboxesRoute
   '/developer/schedules': typeof DeveloperSchedulesRoute
   '/developer/services': typeof DeveloperServicesRoute
   '/developer/settings': typeof DeveloperSettingsRoute
@@ -181,6 +205,7 @@ export interface FileRoutesByTo {
   '/developer': typeof DeveloperIndexRoute
   '/operator': typeof OperatorIndexRoute
   '/developer/compute/$function': typeof DeveloperComputeFunctionRoute
+  '/developer/sandboxes/$sandbox': typeof DeveloperSandboxesSandboxRoute
   '/developer/services/$service': typeof DeveloperServicesServiceRoute
   '/developer/storage/$table': typeof DeveloperStorageTableRoute
   '/operator/services/$service': typeof OperatorServicesServiceRoute
@@ -190,8 +215,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/deploys': typeof DeveloperDeploysRoute
   '/developer/files': typeof DeveloperFilesRoute
   '/developer/observability': typeof DeveloperObservabilityRoute
+  '/developer/sandboxes': typeof DeveloperSandboxesRoute
   '/developer/schedules': typeof DeveloperSchedulesRoute
   '/developer/services': typeof DeveloperServicesRoute
   '/developer/settings': typeof DeveloperSettingsRoute
@@ -205,6 +232,7 @@ export interface FileRoutesById {
   '/developer/': typeof DeveloperIndexRoute
   '/operator/': typeof OperatorIndexRoute
   '/developer/compute_/$function': typeof DeveloperComputeFunctionRoute
+  '/developer/sandboxes_/$sandbox': typeof DeveloperSandboxesSandboxRoute
   '/developer/services_/$service': typeof DeveloperServicesServiceRoute
   '/developer/storage_/$table': typeof DeveloperStorageTableRoute
   '/operator/services_/$service': typeof OperatorServicesServiceRoute
@@ -215,8 +243,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/developer/compute'
+    | '/developer/deploys'
     | '/developer/files'
     | '/developer/observability'
+    | '/developer/sandboxes'
     | '/developer/schedules'
     | '/developer/services'
     | '/developer/settings'
@@ -230,6 +260,7 @@ export interface FileRouteTypes {
     | '/developer/'
     | '/operator/'
     | '/developer/compute/$function'
+    | '/developer/sandboxes/$sandbox'
     | '/developer/services/$service'
     | '/developer/storage/$table'
     | '/operator/services/$service'
@@ -238,8 +269,10 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/developer/compute'
+    | '/developer/deploys'
     | '/developer/files'
     | '/developer/observability'
+    | '/developer/sandboxes'
     | '/developer/schedules'
     | '/developer/services'
     | '/developer/settings'
@@ -253,6 +286,7 @@ export interface FileRouteTypes {
     | '/developer'
     | '/operator'
     | '/developer/compute/$function'
+    | '/developer/sandboxes/$sandbox'
     | '/developer/services/$service'
     | '/developer/storage/$table'
     | '/operator/services/$service'
@@ -261,8 +295,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/developer/compute'
+    | '/developer/deploys'
     | '/developer/files'
     | '/developer/observability'
+    | '/developer/sandboxes'
     | '/developer/schedules'
     | '/developer/services'
     | '/developer/settings'
@@ -276,6 +312,7 @@ export interface FileRouteTypes {
     | '/developer/'
     | '/operator/'
     | '/developer/compute_/$function'
+    | '/developer/sandboxes_/$sandbox'
     | '/developer/services_/$service'
     | '/developer/storage_/$table'
     | '/operator/services_/$service'
@@ -285,8 +322,10 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DeveloperComputeRoute: typeof DeveloperComputeRoute
+  DeveloperDeploysRoute: typeof DeveloperDeploysRoute
   DeveloperFilesRoute: typeof DeveloperFilesRoute
   DeveloperObservabilityRoute: typeof DeveloperObservabilityRoute
+  DeveloperSandboxesRoute: typeof DeveloperSandboxesRoute
   DeveloperSchedulesRoute: typeof DeveloperSchedulesRoute
   DeveloperServicesRoute: typeof DeveloperServicesRoute
   DeveloperSettingsRoute: typeof DeveloperSettingsRoute
@@ -300,6 +339,7 @@ export interface RootRouteChildren {
   DeveloperIndexRoute: typeof DeveloperIndexRoute
   OperatorIndexRoute: typeof OperatorIndexRoute
   DeveloperComputeFunctionRoute: typeof DeveloperComputeFunctionRoute
+  DeveloperSandboxesSandboxRoute: typeof DeveloperSandboxesSandboxRoute
   DeveloperServicesServiceRoute: typeof DeveloperServicesServiceRoute
   DeveloperStorageTableRoute: typeof DeveloperStorageTableRoute
   OperatorServicesServiceRoute: typeof OperatorServicesServiceRoute
@@ -329,6 +369,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperComputeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/developer/deploys': {
+      id: '/developer/deploys'
+      path: '/developer/deploys'
+      fullPath: '/developer/deploys'
+      preLoaderRoute: typeof DeveloperDeploysRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/developer/files': {
       id: '/developer/files'
       path: '/developer/files'
@@ -341,6 +388,13 @@ declare module '@tanstack/react-router' {
       path: '/developer/observability'
       fullPath: '/developer/observability'
       preLoaderRoute: typeof DeveloperObservabilityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/sandboxes': {
+      id: '/developer/sandboxes'
+      path: '/developer/sandboxes'
+      fullPath: '/developer/sandboxes'
+      preLoaderRoute: typeof DeveloperSandboxesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/schedules': {
@@ -427,6 +481,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperComputeFunctionRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/developer/sandboxes_/$sandbox': {
+      id: '/developer/sandboxes_/$sandbox'
+      path: '/developer/sandboxes/$sandbox'
+      fullPath: '/developer/sandboxes/$sandbox'
+      preLoaderRoute: typeof DeveloperSandboxesSandboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/developer/services_/$service': {
       id: '/developer/services_/$service'
       path: '/developer/services/$service'
@@ -461,8 +522,10 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DeveloperComputeRoute: DeveloperComputeRoute,
+  DeveloperDeploysRoute: DeveloperDeploysRoute,
   DeveloperFilesRoute: DeveloperFilesRoute,
   DeveloperObservabilityRoute: DeveloperObservabilityRoute,
+  DeveloperSandboxesRoute: DeveloperSandboxesRoute,
   DeveloperSchedulesRoute: DeveloperSchedulesRoute,
   DeveloperServicesRoute: DeveloperServicesRoute,
   DeveloperSettingsRoute: DeveloperSettingsRoute,
@@ -476,6 +539,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeveloperIndexRoute: DeveloperIndexRoute,
   OperatorIndexRoute: OperatorIndexRoute,
   DeveloperComputeFunctionRoute: DeveloperComputeFunctionRoute,
+  DeveloperSandboxesSandboxRoute: DeveloperSandboxesSandboxRoute,
   DeveloperServicesServiceRoute: DeveloperServicesServiceRoute,
   DeveloperStorageTableRoute: DeveloperStorageTableRoute,
   OperatorServicesServiceRoute: OperatorServicesServiceRoute,

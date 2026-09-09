@@ -20,7 +20,7 @@ pub(super) async fn handle_direct_named_subscription(
         let query = match ctx.convex_registry.resolve_subscription_query(&name, &args) {
             Ok(query) => query,
             Err(error) => {
-                super::send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
+                super::send_request_error(ctx.outbound_tx, request_id, &error).await;
                 return;
             }
         };
@@ -35,7 +35,7 @@ pub(super) async fn handle_direct_named_subscription(
         ) {
             Ok(plan) => plan,
             Err(error) => {
-                super::send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
+                super::send_request_error(ctx.outbound_tx, request_id, &error).await;
                 return;
             }
         }
@@ -67,7 +67,7 @@ pub(super) async fn handle_direct_named_subscription(
         }
         Err(error) => {
             clear_pending_transform(ctx.transforms, &request_id);
-            super::send_request_error(ctx.outbound_tx, request_id, error.to_string()).await;
+            super::send_request_error(ctx.outbound_tx, request_id, &error).await;
         }
     }
 }

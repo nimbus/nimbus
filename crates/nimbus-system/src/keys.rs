@@ -41,6 +41,13 @@ pub(super) fn bundle_document_id(sha256: &str) -> String {
     format!("bundle:{}", stable_key_segment(sha256))
 }
 
+pub(super) fn deploy_document_id(activated_at_ms: u64, bundle_sha256: &str) -> String {
+    format!(
+        "deploy:{activated_at_ms:020}:{}",
+        stable_key_segment(bundle_sha256)
+    )
+}
+
 pub(super) fn function_document_id(bundle_sha256: &str, function_name: &str) -> String {
     format!(
         "function:{}:{}",

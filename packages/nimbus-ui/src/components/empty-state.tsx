@@ -8,7 +8,8 @@ import { CopyButton } from "./copy-button";
 import { Mascot, type MascotState } from "./mascot";
 
 export type EmptyStateCta =
-  | { label: string; to: string }
+  // search is the address's query, for a page that opens a form on arrival.
+  | { label: string; to: string; search?: Record<string, unknown> }
   | { label: string; onClick: () => void };
 
 // EmptyState is what a list shows when it has nothing to list: an icon, one
@@ -34,7 +35,8 @@ export function EmptyState({
   title: string;
   body?: ReactNode;
   cta?: EmptyStateCta;
-  // snippet is the one command that creates the first item.
+  // snippet is the one command that creates the first item. Lines end
+  // with a backslash when there is more than one, so a paste runs whole.
   snippet?: string;
   testid?: string;
   className?: string;
@@ -80,7 +82,7 @@ export function EmptyState({
           <Button
             variant="outline"
             size="sm"
-            render={<Link to={cta.to} />}
+            render={<Link to={cta.to} search={cta.search} />}
             data-testid={testid ? `${testid}-cta` : undefined}
           >
             {cta.label}
@@ -97,16 +99,42 @@ export function EmptyState({
           </Button>
         ))}
       {snippet && (
-        <div
-          className="flex max-w-full items-center gap-1 rounded-sm border border-border-1 bg-bg-panel py-0.5 pr-0.5 pl-2.5"
-          data-testid={testid ? `${testid}-snippet` : undefined}
-        >
-          <code className="truncate font-mono text-xs text-text-2">
-            {snippet}
-          </code>
-          <CopyButton text={snippet} label="command" />
-        </div>
+        <Snippet
+          snippet={snippet}
+          testid={testid ? `${testid}-snippet` : undefined}
+        />
       )}
+    </div>
+  );
+}
+
+// A one-line command is a chip that truncates; the copy control carries the
+// whole string. A multi-line command (a curl with headers and a body) is a
+// left-aligned block that scrolls sideways, because a truncated second line
+// hides the part the reader came for.
+function Snippet({ snippet, testid }: { snippet: string; testid?: string }) {
+  if (!snippet.includes("\n")) {
+    return (
+      <div
+        className="flex max-w-full items-center gap-1 rounded-sm border border-border-1 bg-bg-panel py-0.5 pr-0.5 pl-2.5"
+        data-testid={testid}
+      >
+        <code className="truncate font-mono text-xs text-text-2">
+          {snippet}
+        </code>
+        <CopyButton text={snippet} label="command" />
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex w-full max-w-xl items-start gap-1 rounded-md border border-border-1 bg-bg-panel py-1 pr-1 pl-3 text-left"
+      data-testid={testid}
+    >
+      <pre className="min-w-0 flex-1 overflow-x-auto py-1.5 text-xs leading-relaxed text-text-2">
+        <code className="font-mono">{snippet}</code>
+      </pre>
+      <CopyButton text={snippet} label="command" />
     </div>
   );
 }

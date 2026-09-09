@@ -25,9 +25,12 @@ use nimbus_compute::scheduling::{
 
 mod authz;
 mod deploy;
+mod deploys;
 mod documents;
+mod errors;
 mod graph;
 mod local_admin;
+mod logs;
 mod machines;
 mod metadata;
 mod objects;
@@ -38,6 +41,7 @@ mod scheduling;
 mod schema;
 mod service_grants;
 mod services;
+mod session_channels;
 mod sessions;
 mod source;
 mod tenants;
@@ -45,11 +49,14 @@ mod ui;
 mod version_info;
 
 pub(crate) use deploy::deploy_app;
+pub(crate) use deploys::{list_deploys, rollback_deploy};
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };
+pub(crate) use errors::error_groups;
 pub(crate) use graph::call_graph;
 pub(crate) use local_admin::{rotate_local_admin_token, shutdown_system};
+pub(crate) use logs::search_logs;
 pub(crate) use machines::{
     create_machine, delete_machine, restart_machine, start_machine, stop_machine, update_machine,
 };
@@ -70,11 +77,14 @@ pub(crate) use scheduling::{
     cancel_scheduled_job, create_cron_job, delete_cron_job, get_scheduled_job_result,
     list_cron_jobs, list_scheduled_jobs, schedule_mutation,
 };
-pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_table_schema};
+pub(crate) use schema::{
+    apply_table_schema, delete_table_schema, get_schema, get_table_schema, set_table_schema,
+};
 pub(crate) use services::{
     create_service_definition, delete_service_definition, get_service, list_service_definitions,
     restart_service, start_service, stop_service, update_service_definition,
 };
+pub(crate) use session_channels::{stream_session_channel, write_session_channel};
 pub(crate) use sessions::{close_session, get_session, list_sessions, open_session};
 pub(crate) use source::module_source;
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};

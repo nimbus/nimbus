@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Box,
   Boxes,
   Building2,
   Clock,
@@ -10,6 +11,7 @@ import {
   HardDrive,
   MonitorCog,
   Network,
+  Rocket,
   Server,
   Settings,
 } from "lucide-react";
@@ -58,6 +60,7 @@ export const DEVELOPER_NAV_GROUPS: ReadonlyArray<NavGroup> = [
     label: "Build",
     entries: [
       entry("developer", "compute", "Compute", "/developer/compute", Cpu),
+      entry("developer", "deploys", "Deploys", "/developer/deploys", Rocket),
       entry("developer", "storage", "Storage", "/developer/storage", Database),
       entry("developer", "files", "Files", "/developer/files", HardDrive),
     ],
@@ -66,6 +69,7 @@ export const DEVELOPER_NAV_GROUPS: ReadonlyArray<NavGroup> = [
     label: "Run",
     entries: [
       entry("developer", "services", "Services", "/developer/services", Boxes),
+      entry("developer", "sandboxes", "Sandboxes", "/developer/sandboxes", Box),
       entry(
         "developer",
         "schedules",

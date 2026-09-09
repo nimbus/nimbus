@@ -66,9 +66,11 @@ import { Sidebar } from "./sidebar";
 const DEVELOPER_IDS = [
   "overview",
   "compute",
+  "deploys",
   "storage",
   "files",
   "services",
+  "sandboxes",
   "schedules",
   "observability",
   "settings",
