@@ -129,10 +129,10 @@
     <table>
       <thead><tr><th>Field</th><th>Current state</th></tr></thead>
       <tbody>
-        <tr><td>Active task</td><td><a href="#MIK1">MIK1</a> index keyspace table and write-path maintenance.</td></tr>
-        <tr><td>Next action</td><td>Add the <code>index_entries</code> DDL to <code>tenant_init_statements</code>, create <code>mysql/index_entries.rs</code>, share the tuple mutation computation with <code>index_versions.rs</code>, and call the maintenance from both the commit path (<code>write.rs</code>) and the durable-journal apply path (<code>backend.rs</code>).</td></tr>
+        <tr><td>Active task</td><td><a href="#MIK2">MIK2</a> schema apply and lifecycle through the keyspace.</td></tr>
+        <tr><td>Next action</td><td>Replace the per-index DDL in <code>apply_schema_change_in_session</code>, <code>apply_table_lifecycle_in_session</code>, and the write transaction with keyspace purge and backfill in <code>mysql/index_entries.rs</code>; switch the candidate read to the keyspace so the MIK2 acceptance tests can read; delete the generated-column helpers; rename and add the MIK2 tests; prove F2 with the fault injector.</td></tr>
         <tr><td>Worktree</td><td><code>~/src/github.com/nimbus/nimbus-worktrees/mysql-index-keyspace</code>, branch <code>codex/mysql-index-keyspace</code>, HEAD 63fde8a81, dirty: this plan and the plans index only.</td></tr>
-        <tr><td>Verification</td><td>MIK0 red run recorded in <code>proof/mysql-index-keyspace/mik0-fail-before.txt</code>. MySQL fixture container is up.</td></tr>
+        <tr><td>Verification</td><td>MIK1: <code>mysql_provider</code> 43 passed, 1 failed (MIK0 test). MySQL fixture container is up.</td></tr>
         <tr><td>Running processes</td><td>None.</td></tr>
         <tr><td>Required reads</td><td><a href="#task-MIK0">MIK0</a>, the <a href="#decisions">Decisions</a> section, <code>crates/nimbus-storage/src/mysql/backend.rs</code> (<code>tenant_init_statements</code>, <code>apply_schema_change_in_session</code>, <code>create_mysql_indexes_for_table_schema</code>, <code>load_index_candidate_documents_from_session</code>), <code>crates/nimbus-storage/src/mysql/index_versions.rs</code>, <code>crates/nimbus-storage/src/index/{keyspace,bounds,encoding}.rs</code>.</td></tr>
         <tr><td>Unresolved</td><td>None.</td></tr>
@@ -312,8 +312,8 @@
       </thead>
       <tbody>
         <tr id="MIK0" data-status="done"><td>MIK0</td><td>Baseline: pin the baseline commit, create the proof root, add the many-index regression test red, capture fail-before evidence. No production behavior change.</td><td><code>done</code></td><td>2026-09-09, commit after 9e635ce23. Test <code>mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads</code> fails with error 1069 (0 passed, 1 failed). <code>proof/mysql-index-keyspace/mik0.md</code>.</td></tr>
-        <tr id="MIK1" data-status="in_progress"><td>MIK1</td><td>Index keyspace table and write-path maintenance.</td><td><code>in_progress</code></td><td></td></tr>
-        <tr id="MIK2" data-status="todo"><td>MIK2</td><td>Schema apply and table lifecycle through the keyspace; remove the generated-column and per-index DDL path.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="MIK1" data-status="done"><td>MIK1</td><td>Index keyspace table and write-path maintenance.</td><td><code>done</code></td><td>2026-09-09, d5692358f. <code>mysql_writes_maintain_index_entries</code> passes; <code>mysql_provider</code> 43 passed, 1 failed (the MIK0 test, expected until MIK2). <code>proof/mysql-index-keyspace/mik1.md</code>.</td></tr>
+        <tr id="MIK2" data-status="in_progress"><td>MIK2</td><td>Schema apply and table lifecycle through the keyspace; remove the generated-column and per-index DDL path.</td><td><code>in_progress</code></td><td></td></tr>
         <tr id="MIK3" data-status="todo"><td>MIK3</td><td>Index candidate reads through the keyspace; architecture notes.</td><td><code>todo</code></td><td></td></tr>
         <tr id="MIK4" data-status="todo"><td>MIK4</td><td>Cross-cutting verification, autoreview, pull request against main.</td><td><code>todo</code></td><td></td></tr>
         <tr id="MIK9" data-status="todo"><td>MIK9</td><td>Cleanup after the pull request merges: archive this plan, keep the proof root, replace the index entry with a retrospective.</td><td><code>todo</code></td><td></td></tr>
@@ -572,6 +572,7 @@ on the merge.</code></pre>
       <tbody>
         <tr><td>2026-09-09</td><td>meta</td><td>authored</td><td>Plan promoted directly to <code>active</code> from the PR #334 diagnosis. Baseline main @ 63fde8a81. No implementation started by this step.</td></tr>
         <tr><td>2026-09-09</td><td>MIK0</td><td>done</td><td>Red regression test committed; fail-before output and PR #334 logs in the proof root. MIK1 in_progress.</td></tr>
+        <tr><td>2026-09-09</td><td>MIK1</td><td>done</td><td><code>index_entries</code> table and write-path maintenance landed (d5692358f); tuple mutations shared with <code>index_versions</code>. MIK2 in_progress.</td></tr>
       </tbody>
     </table>
   </section>
