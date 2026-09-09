@@ -9,7 +9,7 @@ use mysql_async::{
     Conn, Opts, OptsBuilder, Params, Pool, PoolConstraints, Row, Value as MySqlValue,
 };
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexTuple,
+    CommitEntry, CronJob, Document, DocumentId, Error, Filter, HistoricalIndexTuple,
     HistoricalReadShape, IdSource, IndexDefinition, ResourcePathBinding, Result, ScheduledJob,
     ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
     SystemIdSource, SystemWallClock, TableId, TableLifecycleEvent, TableName, TableSchema,
@@ -59,11 +59,8 @@ const MIN_TENANT_HASH_HEX_LEN: usize = 16;
 const MIN_MYSQL_READ_PARALLELISM: usize = 2;
 const MYSQL_TENANT_WRITE_PARALLELISM: usize = 1;
 const MYSQL_WRITE_BEGIN_RETRY_ATTEMPTS: usize = 4;
-const MYSQL_MAX_INDEX_KEY_BYTES: usize = 3072;
-const MYSQL_INDEX_KEY_BYTES_PER_CHAR: usize = 4;
 const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
 const TRIGGER_DELIVERY_CURSOR_KEY: &str = "trigger_delivery_cursor";
-const MYSQL_INDEX_KEY_VALUE_LEN: usize = 191;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MySqlProviderConfig {

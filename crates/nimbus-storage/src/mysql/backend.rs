@@ -8,6 +8,7 @@ use crate::mysql::document_versions::{
     record_document_versions_for_events_in_session, record_document_versions_for_writes_in_session,
 };
 use crate::mysql::index_entries::{
+    purge_index_entries_for_table_in_session, reconcile_index_entries_for_table_schema_in_session,
     record_index_effects_for_events_in_session, record_index_effects_for_writes_in_session,
 };
 use crate::retention::{validate_contiguous_journal_page, validate_retention_after_page};
@@ -59,16 +60,6 @@ pub(super) fn quote_identifier(identifier: &str) -> String {
     }
     quoted.push('`');
     quoted
-}
-
-pub(super) fn mysql_index_key_prefix_chars(key_part_count: usize) -> usize {
-    let part_count = key_part_count.max(1);
-    let max_chars = MYSQL_MAX_INDEX_KEY_BYTES / MYSQL_INDEX_KEY_BYTES_PER_CHAR;
-    (max_chars / part_count).clamp(1, MYSQL_INDEX_KEY_VALUE_LEN)
-}
-
-pub(super) fn mysql_index_key_part(identifier: &str, prefix_chars: usize) -> String {
-    format!("{}({prefix_chars})", quote_identifier(identifier))
 }
 
 pub(super) async fn initialize_tenant_database(conn: &mut Conn, database_name: &str) -> Result<()> {
@@ -818,119 +809,6 @@ where
         .transpose()
 }
 
-pub(super) async fn load_index_candidate_documents_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-    table: &TableName,
-    table_schema: &TableSchema,
-    index_name: &str,
-    exact_prefix: &[Value],
-    bounds: crate::range_bound::OwnedIndexRangeBounds,
-) -> Result<Vec<Document>>
-where
-    C: Queryable,
-{
-    let crate::range_bound::OwnedIndexRangeBounds { start, end } = bounds;
-    let index_fields = index_fields_for_table_schema(table_schema, index_name)?;
-    let range_field = index_fields.get(exact_prefix.len());
-
-    let Some(table_id) = load_table_id_from_session(session, database_name, table).await? else {
-        return Ok(Vec::new());
-    };
-    let mut clauses = vec!["d.table_id = ?".to_string()];
-    let mut params = vec![MySqlValue::Bytes(table_id.to_string().into_bytes())];
-
-    for (field, value) in index_fields.iter().zip(exact_prefix.iter()) {
-        clauses.push(format!(
-            "{} = ?",
-            quote_identifier(&mysql_generated_column_name(table, field))
-        ));
-        params.push(mysql_index_text_value(value)?);
-    }
-
-    if let Some(range_field) = range_field {
-        let field_type = field_type_for_table_schema(table_schema, range_field)?;
-        match field_type {
-            FieldType::String => {
-                append_mysql_range_clause(
-                    &mut clauses,
-                    &mut params,
-                    quote_identifier(&mysql_generated_column_name(table, range_field)),
-                    crate::range_bound::map_owned_index_range_bound(
-                        start.clone(),
-                        mysql_index_text_value,
-                    )?,
-                    crate::range_bound::map_owned_index_range_bound(
-                        end.clone(),
-                        mysql_index_text_value,
-                    )?,
-                );
-            }
-            FieldType::Number => {
-                append_mysql_range_clause(
-                    &mut clauses,
-                    &mut params,
-                    mysql_numeric_column_expr(table, range_field),
-                    crate::range_bound::map_owned_index_range_bound(
-                        start.clone(),
-                        mysql_numeric_value,
-                    )?,
-                    crate::range_bound::map_owned_index_range_bound(
-                        end.clone(),
-                        mysql_numeric_value,
-                    )?,
-                );
-            }
-            _ if !matches!(start, std::ops::Bound::Unbounded)
-                || !matches!(end, std::ops::Bound::Unbounded) =>
-            {
-                return Err(Error::InvalidInput(
-                    "range scans only support string and number indexed fields".to_string(),
-                ));
-            }
-            _ => {}
-        }
-    }
-
-    let sql = format!(
-        "SELECT c.table_name, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json \
-         FROM {} AS d \
-         JOIN {} AS c ON c.table_id = d.table_id \
-         WHERE {} \
-         ORDER BY d.id",
-        qualified_table(database_name, "documents"),
-        qualified_table(database_name, "table_catalog"),
-        clauses.join(" AND ")
-    );
-    let rows: Vec<Row> = session
-        .exec(sql, Params::Positional(params))
-        .await
-        .map_err(map_mysql_error)?;
-    rows.into_iter()
-        .map(|row| {
-            let (table_name, id, creation_time, update_time, data_json, typed_fields_json): (
-                String,
-                String,
-                u64,
-                u64,
-                String,
-                String,
-            ) = mysql_async::from_row(row);
-            let table = TableName::new(table_name)?;
-            let id = DocumentId::from_str(&id)
-                .map_err(|error| Error::Serialization(error.to_string()))?;
-            row_to_document(
-                &table,
-                &id,
-                creation_time,
-                update_time,
-                data_json,
-                typed_fields_json,
-            )
-        })
-        .collect()
-}
-
 pub(super) async fn load_scheduled_jobs_from_session<C>(
     session: &mut C,
     database_name: &str,
@@ -1321,9 +1199,6 @@ where
             current,
         } => {
             ensure_table_id_from_session(session, database_name, table, table_id).await?;
-            if let Some(previous) = previous {
-                drop_mysql_indexes_for_table_schema(session, database_name, previous).await?;
-            }
             let query = format!(
                 "INSERT INTO {} (table_name, schema_json) VALUES (?, ?)
                  ON DUPLICATE KEY UPDATE schema_json = VALUES(schema_json)",
@@ -1333,13 +1208,20 @@ where
                 .exec_drop(query, (table.as_str(), serialize_json(current)?))
                 .await
                 .map_err(map_mysql_error)?;
-            create_mysql_indexes_for_table_schema(session, database_name, current).await
+            reconcile_index_entries_for_table_schema_in_session(
+                session,
+                database_name,
+                table_id,
+                previous.as_ref(),
+                current,
+            )
+            .await
         }
         SchemaChangeEvent::DeleteTable {
-            table, previous, ..
+            table, table_id, ..
         } => {
-            if let Some(previous) = previous {
-                drop_mysql_indexes_for_table_schema(session, database_name, previous).await?;
+            if let Some(table_id) = table_id {
+                purge_index_entries_for_table_in_session(session, database_name, table_id).await?;
             }
             let query = format!(
                 "DELETE FROM {} WHERE table_name = ?",
@@ -1386,11 +1268,6 @@ where
                     .await?
                     .is_none()
             {
-                if let Some(schema) =
-                    load_table_schema_from_session(session, database_name, table).await?
-                {
-                    drop_mysql_indexes_for_table_schema(session, database_name, &schema).await?;
-                }
                 let query = format!(
                     "DELETE FROM {} WHERE table_name = ?",
                     qualified_table(database_name, "schemas")
@@ -1422,134 +1299,6 @@ where
         .await
         .map_err(map_mysql_error)?
         .is_some())
-}
-
-pub(super) async fn create_mysql_indexes_for_table_schema<C>(
-    session: &mut C,
-    database_name: &str,
-    table_schema: &TableSchema,
-) -> Result<()>
-where
-    C: Queryable,
-{
-    load_table_id_from_session(session, database_name, &table_schema.table)
-        .await?
-        .ok_or_else(|| {
-            Error::Internal(format!(
-                "cannot create indexes for logical table {} before its table identity exists",
-                table_schema.table
-            ))
-        })?;
-    for field in unique_index_fields(table_schema) {
-        let column_name = mysql_generated_column_name(&table_schema.table, field);
-        if !mysql_document_column_exists(session, database_name, &column_name).await? {
-            let sql = format!(
-                "ALTER TABLE {} ADD COLUMN {} VARCHAR({}) GENERATED ALWAYS AS ({}) VIRTUAL",
-                qualified_table(database_name, "documents"),
-                quote_identifier(&column_name),
-                MYSQL_INDEX_KEY_VALUE_LEN,
-                mysql_generated_column_expr(field),
-            );
-            session.query_drop(sql).await.map_err(map_mysql_error)?;
-        }
-    }
-    for index in table_schema.maintained_indexes() {
-        let index_name = mysql_index_name(&index.id);
-        if mysql_document_index_exists(session, database_name, &index_name).await? {
-            continue;
-        }
-        let key_part_prefix = mysql_index_key_prefix_chars(index.fields.len() + 2);
-        let mut columns = Vec::with_capacity(index.fields.len() + 2);
-        columns.push(mysql_index_key_part("table_id", key_part_prefix));
-        columns.extend(index.fields.iter().map(|field| {
-            mysql_index_key_part(
-                &mysql_generated_column_name(&table_schema.table, field),
-                key_part_prefix,
-            )
-        }));
-        columns.push(mysql_index_key_part("id", key_part_prefix));
-        let sql = format!(
-            "CREATE INDEX {} ON {} ({})",
-            quote_identifier(&index_name),
-            qualified_table(database_name, "documents"),
-            columns.join(", ")
-        );
-        session.query_drop(sql).await.map_err(map_mysql_error)?;
-    }
-    Ok(())
-}
-
-pub(super) async fn drop_mysql_indexes_for_table_schema<C>(
-    session: &mut C,
-    database_name: &str,
-    table_schema: &TableSchema,
-) -> Result<()>
-where
-    C: Queryable,
-{
-    for index in table_schema.maintained_indexes() {
-        let index_name = mysql_index_name(&index.id);
-        if mysql_document_index_exists(session, database_name, &index_name).await? {
-            let sql = format!(
-                "DROP INDEX {} ON {}",
-                quote_identifier(&index_name),
-                qualified_table(database_name, "documents")
-            );
-            session.query_drop(sql).await.map_err(map_mysql_error)?;
-        }
-    }
-    for field in unique_index_fields(table_schema) {
-        let column_name = mysql_generated_column_name(&table_schema.table, field);
-        if mysql_document_column_exists(session, database_name, &column_name).await? {
-            let sql = format!(
-                "ALTER TABLE {} DROP COLUMN {}",
-                qualified_table(database_name, "documents"),
-                quote_identifier(&column_name),
-            );
-            session.query_drop(sql).await.map_err(map_mysql_error)?;
-        }
-    }
-    Ok(())
-}
-
-pub(super) async fn mysql_document_column_exists<C>(
-    session: &mut C,
-    database_name: &str,
-    column_name: &str,
-) -> Result<bool>
-where
-    C: Queryable,
-{
-    let row = session
-        .exec_first::<Row, _, _>(
-            "SELECT COLUMN_NAME \
-             FROM INFORMATION_SCHEMA.COLUMNS \
-             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'documents' AND COLUMN_NAME = ?",
-            (database_name, column_name),
-        )
-        .await
-        .map_err(map_mysql_error)?;
-    Ok(row.is_some())
-}
-
-pub(super) async fn mysql_document_index_exists<C>(
-    session: &mut C,
-    database_name: &str,
-    index_name: &str,
-) -> Result<bool>
-where
-    C: Queryable,
-{
-    let row = session
-        .exec_first::<Row, _, _>(
-            "SELECT INDEX_NAME \
-             FROM INFORMATION_SCHEMA.STATISTICS \
-             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'documents' AND INDEX_NAME = ?",
-            (database_name, index_name),
-        )
-        .await
-        .map_err(map_mysql_error)?;
-    Ok(row.is_some())
 }
 
 #[cfg(test)]

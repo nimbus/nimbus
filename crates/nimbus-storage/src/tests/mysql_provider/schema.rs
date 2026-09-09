@@ -15,83 +15,447 @@ async fn mysql_index_reads_round_trip_after_schema_write() {
     .await;
 }
 
+fn tasks_schema(table: &TableName) -> TableSchema {
+    TableSchema {
+        table: table.clone(),
+        fields: vec![
+            FieldSchema {
+                name: "team".to_string(),
+                field_type: FieldType::String,
+                required: true,
+            },
+            FieldSchema {
+                name: "status".to_string(),
+                field_type: FieldType::String,
+                required: false,
+            },
+            FieldSchema {
+                name: "rank".to_string(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ],
+        indexes: vec![nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_team_status_rank".to_string(),
+            fields: vec!["team".to_string(), "status".to_string(), "rank".to_string()],
+        }],
+        access_policy: None,
+    }
+}
+
+fn task(table: &TableName, team: &str, status: Option<&str>, rank: u64) -> Document {
+    let mut fields = serde_json::Map::from_iter([
+        ("team".to_string(), serde_json::json!(team)),
+        ("rank".to_string(), serde_json::json!(rank)),
+    ]);
+    if let Some(status) = status {
+        fields.insert("status".to_string(), serde_json::json!(status));
+    }
+    Document::new(table.clone(), fields)
+}
+
+/// A schema write fills the `index_entries` keyspace for the documents that
+/// already exist and a schema delete empties it. Neither touches the
+/// `documents` layout: no generated column and no per-index InnoDB key.
 #[tokio::test(flavor = "multi_thread")]
-async fn mysql_schema_write_creates_and_drops_generated_index_columns() {
+async fn mysql_schema_write_populates_and_clears_index_entries_without_ddl() {
     with_test_provider(|provider, config| async move {
         let tenant = TenantId::new("schema").expect("tenant id should build");
         let opened = provider
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let table_schema = TableSchema {
-            table: TableName::new("tasks").expect("table name should build"),
-            fields: vec![
-                FieldSchema {
-                    name: "team".to_string(),
-                    field_type: FieldType::String,
-                    required: true,
-                },
-                FieldSchema {
-                    name: "status".to_string(),
-                    field_type: FieldType::String,
-                    required: false,
-                },
-                FieldSchema {
-                    name: "rank".to_string(),
-                    field_type: FieldType::Number,
-                    required: false,
-                },
-            ],
-            indexes: vec![nimbus_core::IndexDefinition {
-                id: nimbus_core::IndexId::new(),
-                state: nimbus_core::IndexState::Enabled,
-                name: "by_team_status_rank".to_string(),
-                fields: vec!["team".to_string(), "status".to_string(), "rank".to_string()],
-            }],
-            access_policy: None,
-        };
+        let table = TableName::new("tasks").expect("table name should build");
+        let table_schema = tasks_schema(&table);
+        let complete = task(&table, "ops", Some("open"), 1);
+        let partial = task(&table, "ops", None, 2);
+        for document in [&complete, &partial] {
+            opened
+                .store
+                .insert(document)
+                .expect("document should insert before the schema exists");
+        }
 
         opened
             .store
             .replace_table_schema(&table_schema)
             .expect("schema write should succeed");
-        let (generated_columns, secondary_indexes) =
-            document_index_counts(&config.connection_string, opened.store.database_name()).await;
-        assert_eq!(generated_columns, 3);
-        assert_eq!(secondary_indexes, 1);
-        let generated_expressions = document_generated_column_expressions(
-            &config.connection_string,
-            opened.store.database_name(),
-        )
-        .await;
-        assert_eq!(generated_expressions.len(), 3);
-        for expression in generated_expressions {
-            let expression = expression.to_ascii_lowercase();
-            assert!(
-                expression.contains("json_extract"),
-                "generated column should extract the indexed JSON field: {expression}"
-            );
-            assert!(
-                !expression.contains("table_id"),
-                "generated column must not bake in a TableId; table_id scoping belongs in the leading index/query column: {expression}"
-            );
-            assert!(
-                !expression.contains("table_name"),
-                "generated column must not reference removed table_name column: {expression}"
-            );
-        }
+        let table_id = opened
+            .store
+            .table_id(&table)
+            .expect("table id should load")
+            .expect("table id should exist");
+        let rows = index_entry_rows(&config.connection_string, opened.store.database_name()).await;
+        assert_eq!(
+            rows.iter()
+                .map(|(row_table, row_index, row_document, _)| (
+                    row_table.as_str(),
+                    row_index.as_str(),
+                    row_document.as_str()
+                ))
+                .collect::<Vec<_>>(),
+            vec![(
+                table_id.as_str(),
+                table_schema.indexes[0].id.as_str(),
+                complete.id.to_string().as_str()
+            )],
+            "only the document with every indexed field carries a tuple: {rows:?}"
+        );
+        assert_eq!(
+            document_index_counts(&config.connection_string, opened.store.database_name()).await,
+            (0, 0),
+            "a schema write must not add generated columns or keys to documents"
+        );
+
+        let mut check_cancel = || Ok(());
+        assert_eq!(
+            opened
+                .store
+                .index_scan_prefix_cancellable(
+                    &table,
+                    "by_team_status_rank",
+                    &[serde_json::json!("ops")],
+                    &mut check_cancel,
+                )
+                .expect("index scan should succeed"),
+            vec![complete.clone()]
+        );
 
         opened
             .store
-            .delete_table_schema(&table_schema.table)
+            .delete_table_schema(&table)
             .expect("schema delete should succeed");
-        let (generated_columns, secondary_indexes) =
-            document_index_counts(&config.connection_string, opened.store.database_name()).await;
-        assert_eq!(generated_columns, 0);
-        assert_eq!(secondary_indexes, 0);
+        assert!(
+            index_entry_rows(&config.connection_string, opened.store.database_name())
+                .await
+                .is_empty(),
+            "schema delete should purge the table's keyspace rows"
+        );
+        assert_eq!(
+            document_index_counts(&config.connection_string, opened.store.database_name()).await,
+            (0, 0)
+        );
         assert_eq!(
             opened.store.load_schema().expect("schema should load"),
             Schema::default()
+        );
+        assert_eq!(
+            opened
+                .store
+                .get(&table, &complete.id)
+                .expect("document should still read")
+                .as_ref(),
+            Some(&complete)
+        );
+    })
+    .await;
+}
+
+/// A schema change backfills the indexes it adds from the documents that
+/// already exist, keeps the entries of an index it leaves unchanged, and
+/// purges the entries of an index it removes.
+#[tokio::test(flavor = "multi_thread")]
+async fn mysql_schema_apply_backfills_indexes_added_after_documents_exist() {
+    with_test_provider(|provider, config| async move {
+        let tenant = TenantId::new("schema-backfill").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("tasks").expect("table name should build");
+        let by_team = nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_team".to_string(),
+            fields: vec!["team".to_string()],
+        };
+        let by_rank = nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_rank".to_string(),
+            fields: vec!["rank".to_string()],
+        };
+        let by_status = nimbus_core::IndexDefinition {
+            id: nimbus_core::IndexId::new(),
+            state: nimbus_core::IndexState::Enabled,
+            name: "by_status".to_string(),
+            fields: vec!["status".to_string()],
+        };
+        let mut first = tasks_schema(&table);
+        first.indexes = vec![by_team.clone(), by_rank.clone()];
+        opened
+            .store
+            .replace_table_schema(&first)
+            .expect("first schema should apply");
+
+        let documents = [
+            task(&table, "ops", Some("open"), 3),
+            task(&table, "ops", None, 1),
+            task(&table, "dev", Some("done"), 2),
+        ];
+        for document in &documents {
+            opened
+                .store
+                .insert(document)
+                .expect("document should insert under the first schema");
+        }
+        let rows_by_index = |rows: &[IndexEntryRow], index: &nimbus_core::IndexDefinition| {
+            rows.iter()
+                .filter(|(_, row_index, _, _)| row_index == index.id.as_str())
+                .map(|(_, _, row_document, tuple)| (row_document.clone(), tuple.clone()))
+                .collect::<Vec<_>>()
+        };
+        let before =
+            index_entry_rows(&config.connection_string, opened.store.database_name()).await;
+        assert_eq!(rows_by_index(&before, &by_team).len(), 3);
+        assert_eq!(rows_by_index(&before, &by_rank).len(), 3);
+        let rank_rows_before = rows_by_index(&before, &by_rank);
+
+        // Add by_status, remove by_team, keep by_rank as it is.
+        let mut second = first.clone();
+        second.indexes = vec![by_rank.clone(), by_status.clone()];
+        opened
+            .store
+            .replace_table_schema(&second)
+            .expect("second schema should apply");
+        let applied = opened
+            .store
+            .load_schema()
+            .expect("schema should load")
+            .get_table(&table)
+            .cloned()
+            .expect("table schema should exist");
+        assert_eq!(
+            applied
+                .indexes
+                .iter()
+                .map(|index| index.id.clone())
+                .collect::<Vec<_>>(),
+            vec![by_rank.id.clone(), by_status.id.clone()],
+            "an unchanged index keeps its id across the apply"
+        );
+
+        let after = index_entry_rows(&config.connection_string, opened.store.database_name()).await;
+        assert!(
+            rows_by_index(&after, &by_team).is_empty(),
+            "a removed index is purged: {after:?}"
+        );
+        assert_eq!(
+            rows_by_index(&after, &by_rank),
+            rank_rows_before,
+            "an unchanged index keeps its entries"
+        );
+        assert_eq!(
+            rows_by_index(&after, &by_status)
+                .into_iter()
+                .map(|(document_id, _)| document_id)
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from([
+                documents[0].id.to_string(),
+                documents[2].id.to_string(),
+            ]),
+            "an added index is backfilled only for documents that carry the field"
+        );
+
+        let mut check_cancel = || Ok(());
+        assert_eq!(
+            opened
+                .store
+                .index_scan_prefix_cancellable(
+                    &table,
+                    "by_status",
+                    &[serde_json::json!("done")],
+                    &mut check_cancel,
+                )
+                .expect("backfilled index should read"),
+            vec![documents[2].clone()]
+        );
+        let low = serde_json::json!(2);
+        assert_eq!(
+            opened
+                .store
+                .index_scan_range_cancellable(
+                    &table,
+                    "by_rank",
+                    std::ops::Bound::Included(&low),
+                    std::ops::Bound::Unbounded,
+                    &mut check_cancel,
+                )
+                .expect("kept index should read")
+                .into_iter()
+                .map(|document| document.id)
+                .collect::<Vec<_>>(),
+            vec![documents[2].id.clone(), documents[0].id.clone()],
+            "range reads come back in encoded tuple order"
+        );
+    })
+    .await;
+}
+
+/// Fires once at `StorageCommitBeforeVisibility` after it is armed.
+struct ArmedCommitBeforeVisibilityFault {
+    armed: std::sync::atomic::AtomicBool,
+    fired: std::sync::atomic::AtomicBool,
+}
+
+impl ArmedCommitBeforeVisibilityFault {
+    fn new() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            armed: std::sync::atomic::AtomicBool::new(false),
+            fired: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+
+    fn fired(&self) -> bool {
+        self.fired.load(Ordering::Acquire)
+    }
+}
+
+impl FaultInjector for ArmedCommitBeforeVisibilityFault {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point == FaultPoint::StorageCommitBeforeVisibility
+            && self.armed.load(Ordering::Acquire)
+            && !self.fired.swap(true, Ordering::AcqRel)
+        {
+            return Err(nimbus_core::Error::Internal(
+                "injected mysql commit-before-visibility fault".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Finding F2 of the index keyspace plan: a schema apply that fails at the
+/// commit boundary leaves nothing behind. The apply is DML only, so the
+/// schema row, the keyspace rows, the journal entry, and the committer
+/// lease advance all roll back together instead of committing implicitly
+/// under DDL. A retry of the same apply then lands whole.
+#[tokio::test(flavor = "multi_thread")]
+async fn mysql_schema_apply_fault_before_commit_leaves_no_partial_state() {
+    let fault = ArmedCommitBeforeVisibilityFault::new();
+    let injector = fault.clone();
+    with_test_provider_and_fault_injector(injector, |provider, config| async move {
+        let tenant = TenantId::new("schema-fault").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("tasks").expect("table name should build");
+        let table_schema = tasks_schema(&table);
+        let document = task(&table, "ops", Some("open"), 1);
+        opened
+            .store
+            .insert(&document)
+            .expect("document should insert before the schema exists");
+        let lease = opened
+            .store
+            .acquire_committer_lease("schema-fault-owner", std::time::Duration::from_secs(30))
+            .expect("lease should be acquired");
+        let progress_before = opened
+            .store
+            .journal_progress()
+            .expect("progress should read");
+
+        fault.arm();
+        let error = opened
+            .store
+            .fenced_replace_table_schema(
+                &lease.owner_id,
+                lease.epoch,
+                progress_before.durable_head,
+                &table_schema,
+            )
+            .expect_err("the armed fault should abort the schema apply");
+        assert!(fault.fired(), "the fault point should have fired");
+        assert!(
+            matches!(
+                &error,
+                crate::CommitterLeaseError::Storage(nimbus_core::Error::Internal(message))
+                    if message.contains("injected mysql commit-before-visibility fault")
+            ),
+            "unexpected error: {error:?}"
+        );
+
+        assert_eq!(
+            opened.store.load_schema().expect("schema should load"),
+            Schema::default(),
+            "the schema row must roll back with the transaction"
+        );
+        assert!(
+            index_entry_rows(&config.connection_string, opened.store.database_name())
+                .await
+                .is_empty(),
+            "the keyspace rows must roll back with the transaction"
+        );
+        assert_eq!(
+            opened
+                .store
+                .journal_progress()
+                .expect("progress should read"),
+            progress_before,
+            "the journal must not advance"
+        );
+        assert_eq!(
+            opened
+                .store
+                .read_committer_lease()
+                .expect("lease should read")
+                .expect("lease should exist")
+                .durable_sequence,
+            progress_before.durable_head,
+            "the lease durable sequence must not run ahead of the storage head"
+        );
+
+        opened
+            .store
+            .fenced_replace_table_schema(
+                &lease.owner_id,
+                lease.epoch,
+                progress_before.durable_head,
+                &table_schema,
+            )
+            .expect("the retried schema apply should land");
+        let progress_after = opened
+            .store
+            .journal_progress()
+            .expect("progress should read");
+        assert_eq!(
+            progress_after.durable_head,
+            SequenceNumber(progress_before.durable_head.0 + 1)
+        );
+        assert_eq!(
+            opened
+                .store
+                .read_committer_lease()
+                .expect("lease should read")
+                .expect("lease should exist")
+                .durable_sequence,
+            progress_after.durable_head
+        );
+        let rows = index_entry_rows(&config.connection_string, opened.store.database_name()).await;
+        assert_eq!(
+            rows.len(),
+            1,
+            "the retry backfills the existing document: {rows:?}"
+        );
+        let mut check_cancel = || Ok(());
+        assert_eq!(
+            opened
+                .store
+                .index_scan_prefix_cancellable(
+                    &table,
+                    "by_team_status_rank",
+                    &[serde_json::json!("ops")],
+                    &mut check_cancel,
+                )
+                .expect("index scan should succeed after the retry"),
+            vec![document.clone()]
         );
     })
     .await;

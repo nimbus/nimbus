@@ -122,32 +122,6 @@ pub(super) async fn document_index_counts(
     (generated_columns, secondary_indexes)
 }
 
-pub(super) async fn document_generated_column_expressions(
-    connection_string: &str,
-    database_name: &str,
-) -> Vec<String> {
-    let opts = Opts::from_url(connection_string).expect("connection string should parse");
-    let pool = Pool::new(opts);
-    let mut conn = pool.get_conn().await.expect("mysql connection should open");
-    let expressions = conn
-        .exec::<String, _, _>(
-            "SELECT GENERATION_EXPRESSION \
-             FROM INFORMATION_SCHEMA.COLUMNS \
-             WHERE TABLE_SCHEMA = ? \
-               AND TABLE_NAME = 'documents' \
-               AND COLUMN_NAME LIKE 'gcol\\_%' \
-             ORDER BY COLUMN_NAME",
-            (database_name,),
-        )
-        .await
-        .expect("generated column expressions should query");
-    conn.disconnect()
-        .await
-        .expect("mysql connection should close");
-    pool.disconnect().await.expect("mysql pool should close");
-    expressions
-}
-
 /// One row of the current-state index keyspace:
 /// `(table_id, index_id, document_id, encoded_tuple)` in keyspace order.
 pub(super) type IndexEntryRow = (String, String, String, Vec<u8>);

@@ -1,3 +1,4 @@
+use super::index_entries::load_index_candidate_documents_from_session;
 use super::resource_paths::load_resource_path_bindings_from_session;
 use super::*;
 use crate::IndexRangeBound;

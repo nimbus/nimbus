@@ -1,7 +1,10 @@
 use super::document_versions::{
     prune_document_versions_before_in_session, record_document_versions_for_events_in_session,
 };
-use super::index_entries::record_index_effects_for_events_in_session;
+use super::index_entries::{
+    purge_index_entries_for_table_in_session, reconcile_index_entries_for_table_schema_in_session,
+    record_index_effects_for_events_in_session,
+};
 use super::index_versions::prune_index_versions_before_in_session;
 use super::*;
 use crate::sql::schema_events::{
@@ -604,11 +607,8 @@ impl MySqlWriteTransaction {
         let previous = self.load_table_schema(&table_schema.table)?;
         let mut table_schema = table_schema.clone();
         table_schema.reconcile_index_metadata(previous.as_ref());
-        if let Some(previous) = previous.as_ref() {
-            self.drop_table_indexes(previous)?;
-        }
         self.upsert_table_schema(&table_schema)?;
-        self.create_table_indexes(&table_schema)?;
+        self.reconcile_index_entries(&table_id, previous.as_ref(), &table_schema)?;
         self.schema_cache_changed = true;
         sql_record_schema_set_events(self, table_id, previous, &table_schema);
         Ok(())
@@ -618,8 +618,8 @@ impl MySqlWriteTransaction {
         self.check_cancel()?;
         let previous = self.load_table_schema(table)?;
         let table_id = self.load_table_id(table)?;
-        if let Some(previous) = previous.as_ref() {
-            self.drop_table_indexes(previous)?;
+        if let Some(table_id) = table_id.as_ref() {
+            self.purge_index_entries_for_table(table_id)?;
         }
         self.delete_table_schema_entry(table)?;
         self.schema_cache_changed = true;
@@ -1221,23 +1221,37 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn create_table_indexes(&mut self, table_schema: &TableSchema) -> Result<()> {
+    fn reconcile_index_entries(
+        &mut self,
+        table_id: &TableId,
+        previous: Option<&TableSchema>,
+        current: &TableSchema,
+    ) -> Result<()> {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
-        let table_schema = table_schema.clone();
+        let table_id = table_id.clone();
+        let previous = previous.cloned();
+        let current = current.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            create_mysql_indexes_for_table_schema(conn, &database_name, &table_schema).await
+            reconcile_index_entries_for_table_schema_in_session(
+                conn,
+                &database_name,
+                &table_id,
+                previous.as_ref(),
+                &current,
+            )
+            .await
         })
     }
 
-    pub(super) fn drop_table_indexes(&mut self, table_schema: &TableSchema) -> Result<()> {
+    fn purge_index_entries_for_table(&mut self, table_id: &TableId) -> Result<()> {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
-        let table_schema = table_schema.clone();
+        let table_id = table_id.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            drop_mysql_indexes_for_table_schema(conn, &database_name, &table_schema).await
+            purge_index_entries_for_table_in_session(conn, &database_name, &table_id).await
         })
     }
 
