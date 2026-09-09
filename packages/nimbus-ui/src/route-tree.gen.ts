@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DeveloperIndexRouteImport } from './routes/developer/index'
 import { Route as DeveloperComputeRouteImport } from './routes/developer/compute'
+import { Route as DeveloperDeploysRouteImport } from './routes/developer/deploys'
 import { Route as DeveloperFilesRouteImport } from './routes/developer/files'
 import { Route as DeveloperObservabilityRouteImport } from './routes/developer/observability'
 import { Route as DeveloperSandboxesRouteImport } from './routes/developer/sandboxes'
@@ -46,6 +47,11 @@ const DeveloperIndexRoute = DeveloperIndexRouteImport.update({
 const DeveloperComputeRoute = DeveloperComputeRouteImport.update({
   id: '/developer/compute',
   path: '/developer/compute',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperDeploysRoute = DeveloperDeploysRouteImport.update({
+  id: '/developer/deploys',
+  path: '/developer/deploys',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeveloperFilesRoute = DeveloperFilesRouteImport.update({
@@ -156,6 +162,7 @@ const DeveloperComputeRunsRunIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/deploys': typeof DeveloperDeploysRoute
   '/developer/files': typeof DeveloperFilesRoute
   '/developer/observability': typeof DeveloperObservabilityRoute
   '/developer/sandboxes': typeof DeveloperSandboxesRoute
@@ -181,6 +188,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/deploys': typeof DeveloperDeploysRoute
   '/developer/files': typeof DeveloperFilesRoute
   '/developer/observability': typeof DeveloperObservabilityRoute
   '/developer/sandboxes': typeof DeveloperSandboxesRoute
@@ -207,6 +215,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/developer/compute': typeof DeveloperComputeRoute
+  '/developer/deploys': typeof DeveloperDeploysRoute
   '/developer/files': typeof DeveloperFilesRoute
   '/developer/observability': typeof DeveloperObservabilityRoute
   '/developer/sandboxes': typeof DeveloperSandboxesRoute
@@ -234,6 +243,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/developer/compute'
+    | '/developer/deploys'
     | '/developer/files'
     | '/developer/observability'
     | '/developer/sandboxes'
@@ -259,6 +269,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/developer/compute'
+    | '/developer/deploys'
     | '/developer/files'
     | '/developer/observability'
     | '/developer/sandboxes'
@@ -284,6 +295,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/developer/compute'
+    | '/developer/deploys'
     | '/developer/files'
     | '/developer/observability'
     | '/developer/sandboxes'
@@ -310,6 +322,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DeveloperComputeRoute: typeof DeveloperComputeRoute
+  DeveloperDeploysRoute: typeof DeveloperDeploysRoute
   DeveloperFilesRoute: typeof DeveloperFilesRoute
   DeveloperObservabilityRoute: typeof DeveloperObservabilityRoute
   DeveloperSandboxesRoute: typeof DeveloperSandboxesRoute
@@ -354,6 +367,13 @@ declare module '@tanstack/react-router' {
       path: '/developer/compute'
       fullPath: '/developer/compute'
       preLoaderRoute: typeof DeveloperComputeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/deploys': {
+      id: '/developer/deploys'
+      path: '/developer/deploys'
+      fullPath: '/developer/deploys'
+      preLoaderRoute: typeof DeveloperDeploysRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/files': {
@@ -502,6 +522,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DeveloperComputeRoute: DeveloperComputeRoute,
+  DeveloperDeploysRoute: DeveloperDeploysRoute,
   DeveloperFilesRoute: DeveloperFilesRoute,
   DeveloperObservabilityRoute: DeveloperObservabilityRoute,
   DeveloperSandboxesRoute: DeveloperSandboxesRoute,

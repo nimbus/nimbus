@@ -73,6 +73,14 @@ pub fn route_inventory() -> Vec<RouteInventoryEntry> {
             "shutdown_system",
             true,
         ),
+        route("GET", "/api/admin/deploys", "native", "list_deploys", true),
+        route(
+            "POST",
+            "/api/admin/deploys/{sha256}/rollback",
+            "native",
+            "rollback_deploy",
+            true,
+        ),
         route(
             "GET",
             "/debug/runtime/metrics",

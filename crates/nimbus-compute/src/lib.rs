@@ -10,6 +10,7 @@ pub mod artifact_verifier_effects;
 pub mod cloudflare_config;
 pub mod config;
 pub mod deploy;
+pub mod deploy_artifacts;
 pub mod execution;
 pub mod machine_lifecycle;
 pub mod machine_stop_authority;

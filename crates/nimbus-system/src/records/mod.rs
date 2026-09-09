@@ -43,8 +43,10 @@ pub use connectivity::{
     record_unix_listener_observation_async,
 };
 pub use deployment::{
+    SystemDeploymentActivation, SystemDeploymentActivationFunction,
     SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,
-    SystemDeploymentRecordInput, record_deployment_state_async,
+    SystemDeploymentRecordInput, deployment_bundle_sha256, deployment_history_async,
+    record_deployment_state_async,
 };
 pub use errors::{
     ERROR_GROUP_LIMIT, ERROR_SCAN_WINDOW, ErrorGroup, ErrorGroupPage, ErrorGroupQuery, error_class,

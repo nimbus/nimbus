@@ -1,3 +1,4 @@
+import type { DeployHistory, RollbackResponse } from "./types/deploy";
 import type {
   SandboxCollection,
   SandboxCreateRequest,
@@ -334,6 +335,21 @@ export const system = {
   },
   shutdown(): Promise<ApiResult<{ accepted?: boolean }>> {
     return apiFetch(`/api/system/shutdown`, { method: "POST" });
+  },
+};
+
+// Deploy history and rollback on the local-admin routes. A rollback
+// re-activates a retained bundle; the server refuses the active bundle,
+// an unknown hash, and a bundle whose retained files fail the integrity
+// check, each as a readable error.
+export const deploys = {
+  list(): Promise<ApiResult<DeployHistory>> {
+    return apiFetch(`/api/admin/deploys`);
+  },
+  rollback(sha256: string): Promise<ApiResult<RollbackResponse>> {
+    return apiFetch(`/api/admin/deploys/${enc(sha256)}/rollback`, {
+      method: "POST",
+    });
   },
 };
 

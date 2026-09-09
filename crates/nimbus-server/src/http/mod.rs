@@ -25,6 +25,7 @@ use nimbus_compute::scheduling::{
 
 mod authz;
 mod deploy;
+mod deploys;
 mod documents;
 mod errors;
 mod graph;
@@ -48,6 +49,7 @@ mod ui;
 mod version_info;
 
 pub(crate) use deploy::deploy_app;
+pub(crate) use deploys::{list_deploys, rollback_deploy};
 pub(crate) use documents::{
     delete_document, get_document, insert_document, list_documents, update_document,
 };

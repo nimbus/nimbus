@@ -3,6 +3,7 @@ import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  deploys,
   documents,
   machines,
   objects,
@@ -464,6 +465,56 @@ describe("objects", () => {
     );
     const result = await objects.remove("demo", "assets", "docs/a.txt");
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("api-mutations deploys", () => {
+  it("reads the history and posts a rollback on the local-admin routes", async () => {
+    const seen: string[] = [];
+    server.use(
+      http.get("*/api/admin/deploys", ({ request }) => {
+        seen.push(`GET ${new URL(request.url).pathname}`);
+        return HttpResponse.json({ active: null, activations: [] });
+      }),
+      http.post("*/api/admin/deploys/:sha/rollback", async ({ request }) => {
+        seen.push(
+          `POST ${new URL(request.url).pathname} ${await request.text()}`,
+        );
+        return HttpResponse.json({
+          activated: true,
+          generation: 2,
+          previousGeneration: 1,
+          sha256: "ab/cd",
+        });
+      }),
+    );
+    const history = await deploys.list();
+    expect(history).toEqual({
+      ok: true,
+      data: { active: null, activations: [] },
+    });
+    const rollback = await deploys.rollback("ab/cd");
+    expect(rollback.ok).toBe(true);
+    expect(seen).toEqual([
+      "GET /api/admin/deploys",
+      "POST /api/admin/deploys/ab%2Fcd/rollback ",
+    ]);
+  });
+
+  it("reports a refused rollback as a readable error", async () => {
+    server.use(
+      http.post("*/api/admin/deploys/:sha/rollback", () =>
+        HttpResponse.json(
+          { error: "bundle abc is already active" },
+          { status: 400 },
+        ),
+      ),
+    );
+    expect(await deploys.rollback("abc")).toEqual({
+      ok: false,
+      error: "bundle abc is already active",
+      status: 400,
+    });
   });
 });
 

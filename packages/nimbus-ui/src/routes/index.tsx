@@ -19,6 +19,7 @@ import {
 export const RESTORABLE_SECTIONS: Record<NavView, readonly string[]> = {
   developer: [
     "compute",
+    "deploys",
     "files",
     "observability",
     "sandboxes",

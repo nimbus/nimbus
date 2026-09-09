@@ -107,6 +107,7 @@ view.
 | --- | --- | --- |
 | Overview | This app's health and recent activity | Recent runs, error rate, last deploy, schedule status, latest events |
 | Compute | Request-scoped execution | Functions list, function detail, function runner, runs |
+| Deploys | Bundle activations on this server | History newest first with each bundle's SHA-256, kind, generation, actor and function count; function-path diff of any row against the active bundle; rollback to a retained bundle behind a confirmation |
 | Services | Long-running placement (this tenant's view) | Compose-declared services in the active tenant, lifecycle state, endpoints, restart policy |
 | Sandboxes | Isolated workloads (microVMs and containers) | Live sandboxes in the active tenant, lifecycle state, endpoints, conditions, a console on each, create and stop |
 | Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
@@ -115,8 +116,10 @@ view.
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
 | Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding (all planned; the page is one empty state until the first tenant-scoped setting has an API) |
 
-9 sections. Every section is tenant-scoped — the active tenant comes from
-the sidebar tenant selector, not the URL. Services is **dual-persona** (it also
+10 sections. Every section but Deploys is tenant-scoped — the active tenant
+comes from the sidebar tenant selector, not the URL. Deploys is server-wide:
+a bundle activation is one event for the whole server, whichever silo ran
+it, and the page reads the local-admin deploy routes. Services is **dual-persona** (it also
 appears in the Operator IA below); both consoles back onto the same
 `ServicesTable` and `ServiceDoc` shape, with the Developer side filtered
 to the active tenant. See
@@ -133,7 +136,7 @@ IA decision rationale.
 | Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
 | Services | Long-running placement (cross-tenant) | Compose-declared services across every tenant, service catalog, lifecycle state, endpoints, restart policy. **Dual-persona** with the Developer IA above; both sides share `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle |
 | Observability | Cross-tenant debugging and audit | Logs, runs, and later events, traces, error groups — default cross-tenant; the tenant facet narrows through `?tenant=<id>` |
-| Settings (server) | Server administration | General, system, deploys, integrations (adapter capability matrices), shutdown; endpoints, token/session, and environment are planned |
+| Settings (server) | Server administration | General, system, integrations (adapter capability matrices), shutdown; endpoints, token/session, and environment are planned |
 
 7 sections. Server-wide by default. Tenant selector appears only on
 `/operator/observability`.
@@ -672,8 +675,6 @@ Server administration. Distinct from the Developer-side **Settings
   encryption at rest. General is what the operator sets; System is what
   the server reports.
 - Endpoints (planned): bind addresses, TLS posture, advertised URLs.
-- Deploys: release channel, current release, rollout history. Moves to
-  its own Deploys page in UIR23.
 - Token / session (planned): admin token rotation, session policy.
   Rotation itself lives under Shutdown until this sub-page exists.
 - Environment (planned): process-level env vars.
@@ -685,7 +686,8 @@ Server administration. Distinct from the Developer-side **Settings
   type `shutdown`, because the write reaches past this browser.
 
 The Settings (server) sub-panel is a **static menu** of the built
-sub-pages (`General`, `System`, `Deploys`, `Integrations`, `Shutdown`).
+sub-pages (`General`, `System`, `Integrations`, `Shutdown`). Deploys is
+its own page under the Developer view.
 `Endpoints`, `Token`, and `Environment` join the menu when their panes
 land; the route rejects their ids until then.
 
@@ -1591,16 +1593,28 @@ Native UI expectations:
 
 ## Settings And Deploys
 
-Settings owns server administration and deployment management:
+Settings owns server administration; the Deploys page owns deployment
+history and rollback:
 
 - Server info: version, uptime, listen address, data directory, storage
   backend, and active local server origin. This is the System sub-page.
 - Configuration display: runtime limits, license status and usage, auth
   provider config, adapter enablement, and storage topology. Configuration is
   read-only in Phase 1 unless a dedicated write API exists.
-- Deploys: current active bundle with sha256/source/timestamp, function
-  inventory, deploy history, and deploy trigger when the local-admin deploy
-  endpoint can accept the selected artifact.
+- Deploys (`/developer/deploys`): every bundle activation the server has
+  recorded, newest first, from `GET /api/admin/deploys`. Each row carries
+  the bundle's SHA-256 provenance hash, the activation kind (`deploy`,
+  `rollback`, `startup`), the generation, the actor, and the function count
+  with the paths added and removed against the previous activation. A row
+  opens a strip that lists the function paths that come back, stop
+  resolving, and stay unchanged against the active bundle. **Roll back to
+  this bundle** posts `POST /api/admin/deploys/{sha256}/rollback` behind a
+  `ConfirmDialog` that names how many paths stop resolving; the server
+  stages the retained files, runs the same integrity check a deploy runs,
+  and refuses a tampered bundle, the active bundle, and a bundle whose
+  files were not retained (a startup row). The menu disables the action
+  in those cases with the reason as the hint. A deploy itself arrives
+  through `nimbus deploy`; the console has no deploy trigger.
 - Token and session: current session state, token rotation with confirmation,
   and forced re-auth after rotation. Rotation lives on the Shutdown sub-page
   until the Token sub-page exists.

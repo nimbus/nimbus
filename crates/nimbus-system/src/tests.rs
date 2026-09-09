@@ -94,6 +94,7 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
         "bundles",
         "cron_jobs",
         "connectivity_routes",
+        "deploys",
         "events",
         "functions",
         "listeners",
@@ -474,6 +475,10 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
 
     let input = SystemDeploymentRecordInput {
         source_ref: "deploy:test",
+        actor: "deploy-admin",
+        kind: "deploy",
+        generation: 1,
+        silo: Some("demo"),
         functions: vec![
             SystemDeploymentFunctionRecordInput {
                 name: "messages:send",
@@ -494,9 +499,10 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
         index_fingerprint: Some("indexes-v1"),
         runtime_bundle_fingerprint: Some("runtime-bundle-sha"),
     };
-    record_deployment_state_async(&engine, &input)
+    let recorded_sha = record_deployment_state_async(&engine, &input)
         .await
         .expect("neutral deployment state should project");
+    assert_eq!(recorded_sha, "runtime-bundle-sha");
 
     let tenant_id = system_tenant_id().expect("system id should parse");
     let bundles = engine
@@ -525,7 +531,11 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
     }));
 
     let fallback_input = SystemDeploymentRecordInput {
-        source_ref: "deploy:fallback",
+        source_ref: "rollback:generation:2",
+        actor: "operator:local_admin_bearer",
+        kind: "rollback",
+        generation: 2,
+        silo: None,
         functions: vec![SystemDeploymentFunctionRecordInput {
             name: "http:echo",
             kind: "httpAction",
@@ -556,7 +566,7 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
     assert_eq!(fallback_sha.len(), 64);
     assert_eq!(
         bundles[0].fields.get("sourceRef"),
-        Some(&json!("deploy:fallback"))
+        Some(&json!("rollback:generation:2"))
     );
 
     let functions = engine
@@ -569,6 +579,31 @@ async fn record_deployment_state_projects_neutral_bundle_and_functions() {
         functions[0].fields.get("bundleId"),
         Some(&json!(fallback_sha))
     );
+
+    // The inventory was replaced, but the history kept both activations,
+    // newest first, each with the function paths it activated.
+    let history = deployment_history_async(&engine)
+        .await
+        .expect("deployment history should read");
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].sha256, fallback_sha);
+    assert_eq!(history[0].generation, 2);
+    assert_eq!(history[0].kind, "rollback");
+    assert_eq!(history[0].actor, "operator:local_admin_bearer");
+    assert_eq!(history[0].silo, None);
+    assert_eq!(
+        history[0].functions,
+        vec![SystemDeploymentActivationFunction {
+            path: "http:echo".to_owned(),
+            kind: "httpAction".to_owned(),
+        }]
+    );
+    assert_eq!(history[1].sha256, "runtime-bundle-sha");
+    assert_eq!(history[1].generation, 1);
+    assert_eq!(history[1].kind, "deploy");
+    assert_eq!(history[1].silo.as_deref(), Some("demo"));
+    assert_eq!(history[1].functions.len(), 2);
+    assert!(history[0].activated_at_ms >= history[1].activated_at_ms);
 }
 
 #[tokio::test]

@@ -8,24 +8,6 @@ export type SystemStatusDoc = {
   details?: Record<string, unknown> | null;
 } | null;
 
-export type BundleDoc = {
-  _id?: string;
-  _creationTime?: number;
-  sha256?: string;
-  sizeBytes?: number;
-  sourceRef?: string;
-  status?: string;
-};
-
-export type FunctionDoc = {
-  _id?: string;
-  bundleId?: string;
-  path?: string;
-  kind?: string;
-  argsSchema?: unknown;
-  returnsSchema?: unknown;
-};
-
 export type AdapterCapabilityDoc = {
   _id?: string;
   adapter?: string;

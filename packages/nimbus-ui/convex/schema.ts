@@ -38,6 +38,22 @@ export default defineSchema({
     .index("by_sha256", ["sha256"])
     .index("by_status", ["status"]),
 
+  // One row per bundle activation: a deploy, a rollback, or the bundle the
+  // server started with. Mirrors crates/nimbus-system/src/schema.rs.
+  deploys: defineTable({
+    sha256: v.string(),
+    generation: v.number(),
+    activatedAt: v.number(),
+    actor: v.string(),
+    sourceRef: v.string(),
+    kind: v.string(),
+    silo: v.optional(v.string()),
+    functions: v.array(v.any()),
+    functionCount: v.number(),
+  })
+    .index("by_sha256", ["sha256"])
+    .index("by_activatedAt", ["activatedAt"]),
+
   functions: defineTable({
     bundleId: v.string(),
     path: v.string(),

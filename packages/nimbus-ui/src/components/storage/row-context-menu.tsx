@@ -8,6 +8,11 @@ export type RowMenuItem = {
   /** Trailing detail — a short id, a shortcut, a value preview. */
   readonly hint?: string;
   readonly danger?: boolean;
+  /**
+   * The action is on the menu but not available for this row; the hint says
+   * why. A disabled item is skipped by arrow keys and never fires.
+   */
+  readonly disabled?: boolean;
   readonly onSelect: () => void;
 };
 
@@ -119,7 +124,9 @@ export function RowContextMenu({
 
   const moveFocus = (delta: number) => {
     const nodes = Array.from(
-      ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      ref.current?.querySelectorAll<HTMLElement>(
+        '[role="menuitem"]:not([disabled])',
+      ) ?? [],
     );
     if (nodes.length === 0) return;
     const current = nodes.indexOf(document.activeElement as HTMLElement);
@@ -152,9 +159,11 @@ export function RowContextMenu({
           type="button"
           role="menuitem"
           data-testid={testid ? `${testid}-${item.id}` : undefined}
+          disabled={item.disabled}
           className={cn(
             "flex w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-bg-raised",
             item.danger ? "text-error" : "text-text-1",
+            "disabled:cursor-not-allowed disabled:text-text-3 disabled:hover:bg-transparent",
           )}
           onClick={() => {
             item.onSelect();

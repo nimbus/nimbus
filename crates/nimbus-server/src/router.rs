@@ -513,8 +513,14 @@ impl RouterBuildConfig {
         }
         if let Some(registry) = self.deployment.convex_registry.as_ref() {
             let summary = registry.deploy_summary();
-            let input =
-                nimbus_compute::deploy::convex_system_deployment_record_input(&summary, "startup");
+            let input = nimbus_compute::deploy::convex_system_deployment_record_input(
+                &summary,
+                "startup",
+                nimbus_compute::deploy::STARTUP_ACTOR,
+                nimbus_compute::deploy::ACTIVATION_KIND_STARTUP,
+                0,
+                None,
+            );
             nimbus_system::record_deployment_state_async(&engine, &input).await?;
         }
         Ok(())
@@ -760,6 +766,11 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
             post(http::rotate_local_admin_token),
         )
         .route("/api/system/shutdown", post(http::shutdown_system))
+        .route("/api/admin/deploys", get(http::list_deploys))
+        .route(
+            "/api/admin/deploys/{sha256}/rollback",
+            post(http::rollback_deploy),
+        )
         .route("/api/system/version-info", get(http::version_info))
         .route("/api/console/source", get(http::module_source))
         .route("/api/console/graph", get(http::call_graph))

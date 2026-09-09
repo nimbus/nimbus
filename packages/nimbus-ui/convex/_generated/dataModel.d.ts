@@ -3,7 +3,7 @@ import type { GenericId } from "convex/values";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-export type TableNames = "machines" | "services" | "bundles" | "functions" | "source_packages" | "modules" | "tables" | "events" | "runs" | "scheduled_jobs" | "cron_jobs" | "routes" | "listeners" | "subscriptions" | "ports" | "adapter_capabilities" | "system_status";
+export type TableNames = "machines" | "services" | "bundles" | "deploys" | "functions" | "source_packages" | "modules" | "tables" | "events" | "runs" | "scheduled_jobs" | "cron_jobs" | "routes" | "listeners" | "subscriptions" | "ports" | "adapter_capabilities" | "system_status";
 
 export type Id<TableName extends string> = GenericId<TableName>;
 
@@ -40,6 +40,20 @@ type DocumentByTable = {
     "sizeBytes": number | undefined;
     "sourceRef": string | undefined;
     "status": string;
+  };
+  "deploys": {
+    _id: Id<"deploys">;
+    _creationTime: number;
+    _updateTime: number;
+    "sha256": string;
+    "generation": number;
+    "activatedAt": number;
+    "actor": string;
+    "sourceRef": string;
+    "kind": string;
+    "silo": string | undefined;
+    "functions": (JsonValue)[];
+    "functionCount": number;
   };
   "functions": {
     _id: Id<"functions">;
@@ -220,6 +234,7 @@ type IndexNamesByTable = {
   "machines": "by_name" | "by_state" | "by_provider";
   "services": "by_tenantId" | "by_name" | "by_machineId" | "by_state";
   "bundles": "by_sha256" | "by_status";
+  "deploys": "by_sha256" | "by_activatedAt";
   "functions": "by_bundleId" | "by_kind";
   "source_packages": "by_digest" | "by_status";
   "modules": "by_path" | "by_sourcePackageId";
