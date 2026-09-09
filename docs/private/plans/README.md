@@ -57,6 +57,19 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   from the 2026-08-26 Opus 5 aggregate review: complete materialized identity,
   atomic nonzero-base PITR import with MVCC anchors, and proof-gate repairs.
   It preserves the closed Band SA ledger and does not act on rejected claims.
+- `archive/nimbus-ui-rebuild-plan.html` - `complete, archived`
+  (2026-09-09; PRs #331–#334). Rebuilt the operator console in
+  `packages/nimbus-ui` on the Starport console stack (shadcn `base-nova` on
+  Base UI, TanStack Router, Table, Virtual, Charts) with one neutral-plus-amber
+  palette, Geist type, the single-sidebar shell with a resizable sub-panel, and
+  the face-only mascot; every page rebuilt in place with specs and e2e green;
+  the thirteen 2026-09-08 design review findings closed; and the server
+  contracts behind onboarding, thrown-error envelopes, log search, traces and
+  error groups, schema apply, Files, Sandboxes, and Deploys with rollback.
+  Open follow-ups recorded in the execution log: the Schedules projection sync
+  gap on native and runtime paths, the generated-history read-visibility race,
+  and the CodeQL path-injection alerts on `deploy_artifacts.rs` awaiting
+  dismissal. Final evidence stays in `proof/nimbus-ui-rebuild/`.
 - `archive/mysql-index-keyspace-plan.html` - `complete, archived`
   (2026-09-09; PR #336). Delivered the MySQL index keyspace: one
   bootstrap-created `index_entries` table replaces the per-index InnoDB keys
@@ -89,17 +102,6 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
-- `nimbus-ui-rebuild-plan.html` - `active`. Owns the operator console rebuild
-  in `packages/nimbus-ui`: the Starport-derived stack (shadcn `base-nova` on
-  Base UI, TanStack Router, Table, Virtual, Charts), one neutral-plus-amber
-  palette, Geist type, the single-sidebar shell with a resizable sub-panel, the
-  face-only mascot, every page rebuilt in place, the thirteen findings of the
-  2026-09-08 design review, and the five server contracts behind the
-  onboarding, observability, storage-editor, Files, Sandboxes, and Deploys
-  gaps. It does not block release-readiness or distribution. Band UI in
-  `architecture-review-2026-07-plan.md` stays closed history; new console
-  work routes here.
-
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
 - `runtime-strategy-lifecycle-plan.md` - `proposed`. Runs after release-readiness
