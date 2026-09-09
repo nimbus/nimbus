@@ -2688,6 +2688,7 @@ jobs:
           bash -n scripts/verify-machine-os-release-ref-contract-helper.sh
           bash -n scripts/ci/verify-prebuilt-v8-consumption.sh
           bash -n scripts/ci/configure-ubuntu-apt-mirrors.sh
+          bash -n scripts/ci/disable-unused-apt-sources.sh
           bash -n scripts/ci/disk-guard.sh
           bash -n scripts/ci/append-rerun-visibility.sh
           bash -n scripts/ci/shard-scaling-probe.sh
