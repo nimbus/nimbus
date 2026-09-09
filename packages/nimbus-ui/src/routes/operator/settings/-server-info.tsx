@@ -1,6 +1,5 @@
-import { CategoryChip } from "../../../components/category-chip";
 import { CopyChip } from "../../../components/copy-chip";
-import { StateChip } from "../../../components/state-chip";
+import { CategoryPill, StatePill } from "../../../components/pill";
 import { RelativeTime, Uptime } from "../../../components/time";
 import { UpgradePopover } from "../../../components/upgrade-popover";
 import { useStalenessContext } from "../../../hooks/use-staleness";
@@ -46,10 +45,13 @@ export function TenantHeaderStrip({
       : usageLimit
         ? `${usageNow} / ${usageLimit} MAU`
         : `${usageNow} MAU`;
+  // The page column is a flex column, and a child that clips its overflow is
+  // a child flexbox may shrink below its content: the strip rendered with its
+  // values cut off until it declined to shrink.
   return (
     <div
       data-testid="settings-tenant-header"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
+      className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-border-2 bg-bg-raised md:grid-cols-4"
     >
       <Cell label="Active tenant">
         <CopyChip
@@ -59,22 +61,22 @@ export function TenantHeaderStrip({
         />
       </Cell>
       <Cell label="Storage backend">
-        <span className="font-mono text-xs text-default">{storageBackend}</span>
+        <span className="font-mono text-xs text-text-1">{storageBackend}</span>
       </Cell>
       <Cell label="License">
         <span
-          className="font-mono text-xs text-default"
+          className="font-mono text-xs text-text-1"
           data-testid="settings-license-kind"
         >
           {licenseLabel}
-          {licenseStatus ? (
-            <span className="ml-1 text-muted">· {licenseStatus}</span>
+          {licenseStatus && licenseStatus !== licenseLabel ? (
+            <span className="ml-1 text-text-3">· {licenseStatus}</span>
           ) : null}
         </span>
       </Cell>
       <Cell label="Usage">
         <span
-          className="font-mono text-xs text-default tabular"
+          className="font-mono text-xs text-text-1 tabular"
           data-testid="settings-usage"
         >
           {usageLabel}
@@ -110,6 +112,7 @@ export function ServerInfoSection({
       : typeof details.storage === "string"
         ? details.storage
         : "—";
+  const dataDir = typeof details.dataDir === "string" ? details.dataDir : null;
   const encryptionSnap = encryption.kind === "ok" ? encryption.value : null;
   const encryptionEnabled: "loading" | "error" | boolean =
     encryption.kind === "loading"
@@ -122,11 +125,11 @@ export function ServerInfoSection({
     <PageSection
       title="Server"
       testid="settings-server-info"
-      description="Version, uptime, listen address, storage backend, encryption, and health."
+      description="Version, uptime, listen address, data directory, storage backend, encryption, and health."
     >
       <DefinitionList>
         <Definition label="Health">
-          <StateChip state={status?.health ?? "unknown"} />
+          <StatePill state={status?.health ?? "unknown"} />
         </Definition>
         <Definition label="Version">
           <CopyChip
@@ -139,14 +142,14 @@ export function ServerInfoSection({
           {typeof status?.startedAt === "number" ? (
             <Uptime startedAtMs={status.startedAt} />
           ) : (
-            <span className="tabular text-muted">—</span>
+            <span className="tabular text-text-3">—</span>
           )}
         </Definition>
         <Definition label="Started">
           {typeof status?.startedAt === "number" ? (
             <RelativeTime epochMs={status.startedAt} />
           ) : (
-            <span className="tabular text-muted">—</span>
+            <span className="tabular text-text-3">—</span>
           )}
         </Definition>
         <Definition label="Listen address">
@@ -163,8 +166,34 @@ export function ServerInfoSection({
             testid="settings-server-origin"
           />
         </Definition>
+        {/*
+          The server records the directory the engine opened, so the row is
+          the path the process is using and not the one the operator
+          remembers passing. A status row without it says so instead of
+          showing a placeholder that reads as a path.
+        */}
+        <Definition label="Data directory">
+          {dataDir ? (
+            <CopyChip
+              label="data directory"
+              value={dataDir}
+              testid="settings-server-data-dir"
+            >
+              <span className="block max-w-full truncate" title={dataDir}>
+                {dataDir}
+              </span>
+            </CopyChip>
+          ) : (
+            <span
+              className="font-mono text-xs text-text-3"
+              data-testid="settings-server-data-dir-missing"
+            >
+              {status ? "not reported" : "loading…"}
+            </span>
+          )}
+        </Definition>
         <Definition label="Storage backend">
-          <span className="font-mono text-xs text-default">
+          <span className="font-mono text-xs text-text-1">
             {storageBackend}
           </span>
         </Definition>
@@ -178,27 +207,27 @@ export function ServerInfoSection({
         */}
         <Definition label="Encryption">
           {encryptionEnabled === "loading" ? (
-            <span className="font-mono text-xs text-muted">loading…</span>
+            <span className="font-mono text-xs text-text-3">loading…</span>
           ) : encryptionEnabled === "error" ? (
             <span
-              className="font-mono text-xs text-danger"
+              className="font-mono text-xs text-error"
               data-testid="settings-encryption-unavailable"
             >
               unavailable
             </span>
           ) : encryptionEnabled ? (
             <span
-              className="inline-flex flex-wrap items-center gap-1.5 font-mono text-xs text-default"
+              className="inline-flex flex-wrap items-center gap-1.5 font-mono text-xs text-text-1"
               data-testid="settings-encryption-enabled"
             >
               on
               {encryptedFamilies.map((family) => (
-                <CategoryChip key={family} value={family} />
+                <CategoryPill key={family} value={family} />
               ))}
             </span>
           ) : (
             <span
-              className="font-mono text-xs text-muted"
+              className="font-mono text-xs text-text-3"
               data-testid="settings-encryption-off"
             >
               off
@@ -220,14 +249,14 @@ function UpdatesValue() {
   const { state, info } = snapshot;
 
   if (!info) {
-    return <span className="text-muted">loading…</span>;
+    return <span className="text-text-3">loading…</span>;
   }
 
   if (state === "upgrading") {
     return (
       <span
         data-testid="settings-updates-upgrading"
-        className="font-mono text-xs text-default"
+        className="font-mono text-xs text-text-1"
       >
         Updating to {info.latest}…
       </span>
@@ -235,14 +264,14 @@ function UpdatesValue() {
   }
 
   // Version freshness is not a lifecycle state either, so it takes neither
-  // StateChip's closed vocabulary nor a state dot. It reads as the plain
+  // StatePill's closed vocabulary nor a state dot. It reads as the plain
   // sentence it is, instead of being the one chip in the console whose label
   // is tinted.
   if (state === "upgraded") {
     return (
       <span
         data-testid="settings-updates-upgraded"
-        className="font-mono text-xs text-default"
+        className="font-mono text-xs text-text-1"
       >
         Updated to {info.latest}
       </span>
@@ -253,7 +282,7 @@ function UpdatesValue() {
     return (
       <span
         data-testid="settings-updates-current"
-        className="font-mono text-xs text-default"
+        className="font-mono text-xs text-text-1"
       >
         up to date
       </span>
@@ -278,11 +307,11 @@ function UpdatesValue() {
         onUpdate={startUpgrade}
         onCopyCommand={copyCommand}
         trigger={
-          <span className="inline-flex items-center gap-1.5 font-mono text-xs text-default">
+          <span className="inline-flex items-center gap-1.5 font-mono text-xs text-text-1">
             <span
               aria-hidden
               className="inline-block size-2 rounded-full"
-              style={{ background: "var(--nimbus-brand)" }}
+              style={{ background: "var(--accent)" }}
             />
             {info.latest} available — Update
           </span>

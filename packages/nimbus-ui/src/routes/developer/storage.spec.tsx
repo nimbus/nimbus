@@ -35,8 +35,8 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
 
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: () => undefined,
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: () => undefined,
 }));
 
 import { useUiStore } from "../../store/ui-store";
@@ -93,7 +93,7 @@ describe("StoragePage empty states", () => {
       );
     });
     expect(screen.getByTestId("tenant-tables-empty")).toHaveTextContent(
-      /Pick a tenant from the top-nav selector/i,
+      /Pick a tenant from the sidebar selector/i,
     );
     expect(screen.getByTestId("tenant-tables-empty")).not.toHaveTextContent(
       /CREATE TENANT/i,
@@ -275,12 +275,13 @@ describe("StoragePage loading state", () => {
       render(<StoragePage />);
     });
 
-    const loading = screen.getByTestId("tenant-tables-loading");
+    const table = screen.getByTestId("tenant-tables-table");
+    expect(table).toHaveAttribute("aria-busy", "true");
     expect(
-      loading.querySelectorAll('[data-testid="skeleton-row"]'),
+      screen.getAllByTestId("tenant-tables-table-skeleton-row"),
     ).toHaveLength(8);
     // The header is what makes the swap invisible: it must survive the load.
-    expect(loading).toHaveTextContent("Last write");
+    expect(table).toHaveTextContent("Last write");
     expect(screen.queryByTestId("tenant-tables-empty")).toBeNull();
   });
 
@@ -296,10 +297,12 @@ describe("StoragePage loading state", () => {
         /No tables/i,
       );
     });
-    expect(screen.queryByTestId("tenant-tables-loading")).toBeNull();
+    expect(screen.queryByTestId("tenant-tables-table")).toBeNull();
   });
 
-  it("keeps the skeleton header in step with the loaded table header", async () => {
+  // One component draws both states, so the skeleton and the rows share a
+  // header by construction. The load paints every column the rows will.
+  it("paints the loaded table's columns while loading", async () => {
     mockTenants(["demo"]);
     const { StoragePage } = await loadPage("demo");
 
@@ -313,17 +316,25 @@ describe("StoragePage loading state", () => {
     ]);
     const loaded = await act(async () => render(<StoragePage />));
 
-    expect(skeletonHeader).toHaveLength(5);
+    expect(skeletonHeader).toEqual([
+      "Table",
+      "Schema",
+      "Rows",
+      "Last write",
+      "Actions",
+    ]);
     expect(headerLabels(loaded.container)).toEqual(skeletonHeader);
+    expect(
+      loaded.container.querySelectorAll(
+        '[data-testid="tenant-table-row-messages"]',
+      ),
+    ).toHaveLength(1);
   });
 });
 
-// The loading header lives in the route and the loaded header lives in
-// `TablesListTable`, so drift between them is the one failure this route's
-// skeleton can hide.
 function headerLabels(container: HTMLElement) {
-  return Array.from(container.querySelectorAll("thead th")).map((cell) =>
-    cell.textContent?.trim(),
+  return Array.from(container.querySelectorAll('[role="columnheader"]')).map(
+    (cell) => cell.textContent?.trim(),
   );
 }
 

@@ -1,10 +1,9 @@
 import { useRouterState } from "@tanstack/react-router";
 import { Component, type ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import { CopyChip } from "../components/copy-chip";
-
-const ACTION_CLASS =
-  "rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default";
+import { EmptyState } from "../components/empty-state";
 
 type Props = { children: ReactNode; pathname: string };
 type State = { error: Error | null; pathname: string };
@@ -13,12 +12,12 @@ type State = { error: Error | null; pathname: string };
  * Last-resort boundary for a crash in the shell chrome itself. The router's
  * `defaultErrorComponent` (components/route-error.tsx) already catches inside
  * the `<Outlet/>`, so a failing view never reaches here; what does reach here
- * is a crash in the nav, drawers, status bar, or the providers around them —
+ * is a crash in the sidebar, panels, or the providers around them —
  * which is why this stays outside `<main>` and wraps the whole shell.
  *
  * Clearing on navigation is derived from the pathname rather than a `key`.
  * A `key` would remount the entire shell on every navigation, discarding
- * drawer state, scroll position and live connections on the ~100% of
+ * panel state, scroll position and live connections on the ~100% of
  * navigations where nothing crashed, to buy recovery on the rare one that
  * did. `getDerivedStateFromProps` pays nothing on the happy path: it drops
  * only the error flag, and React remounts the previously-thrown subtree by
@@ -54,7 +53,7 @@ class ShellErrorBoundary extends Component<Props, State> {
     return (
       <div
         role="alert"
-        className="flex h-full items-center justify-center bg-canvas text-default"
+        className="flex h-full items-center justify-center bg-bg-canvas text-text-1"
         data-testid="error-boundary"
       >
         {/* A bare `w-[480px]` hung off BOTH edges of a phone viewport —
@@ -84,41 +83,43 @@ class ShellErrorBoundary extends Component<Props, State> {
             into either suggestion. 90vw is chosen over it so the card keeps a
             gutter and still reads as a card rather than a full-bleed band. */}
         <div
-          className="w-[min(480px,90vw)] rounded-md border bg-surface p-4 border-app"
+          className="flex w-[min(480px,90vw)] flex-col items-center gap-3 rounded-lg border border-border-2 bg-bg-panel p-6"
           data-testid="error-boundary-card"
         >
-          <div className="text-sm font-mono uppercase tracking-wider text-danger">
-            Error
-          </div>
-          <p className="mt-1 text-base">
-            The console shell failed to render. Moving to another view clears
-            this screen.
-          </p>
+          <EmptyState
+            className="h-auto p-0"
+            mascot="error"
+            title="The console shell failed to render"
+            body="Moving to another view clears this screen."
+            testid="error-boundary-state"
+          />
           <CopyChip
             label="error details"
             value={details}
             testid="error-boundary-copy"
-            className="mt-3 max-w-full border border-app px-2 py-1 text-danger"
+            className="max-w-full border border-border-2 px-2 py-1 text-error"
           >
             {error.message}
           </CopyChip>
-          <div className="mt-3 flex gap-2">
-            <button
+          <div className="flex gap-2">
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={this.reset}
-              className={ACTION_CLASS}
               data-testid="error-boundary-retry"
             >
               Retry
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => window.location.reload()}
-              className={ACTION_CLASS}
               data-testid="error-boundary-reload"
             >
               Reload console
-            </button>
+            </Button>
           </div>
         </div>
       </div>

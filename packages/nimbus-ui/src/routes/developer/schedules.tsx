@@ -1,61 +1,51 @@
 import { useQuery } from "@nimbus/nimbus/react";
-import { createFileRoute, useSearch } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  useNavigate,
+  useSearch,
+} from "@tanstack/react-router";
+import { Ellipsis } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
-import { Td, Th } from "../../components/data-table";
-import { EmptyState } from "../../components/empty-state";
-import { SkeletonRows } from "../../components/loading-state";
-import { PageHeader } from "../../components/page-header";
-import { ScrollRegion } from "../../components/scroll-region";
-import { StateChip } from "../../components/state-chip";
-import { RelativeTime } from "../../components/time";
-import { formatDuration, shortId } from "../../lib/format";
+import { ConfirmDialog } from "../../components/confirm-dialog";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  DataTable,
+  dataColumns,
+  type RowAnchor,
+} from "../../components/data-table";
+import { EmptyState } from "../../components/empty-state";
+import { PageHeader } from "../../components/page-header";
+import { StatePill } from "../../components/pill";
+import {
+  RowContextMenu,
+  type RowMenuItem,
+} from "../../components/storage/row-context-menu";
+import { RelativeTime } from "../../components/time";
+import { Button } from "../../components/ui/button";
+import { shortId } from "../../lib/format";
+import {
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import { useUiStore } from "../../store/ui-store";
-
-type Section = "scheduled" | "cron";
-
-type SchedulesSearch = {
-  section?: Section;
-};
-
-type ScheduledJobDoc = {
-  _id: string;
-  tenantId?: string;
-  functionPath?: string;
-  status?: string;
-  scheduledTime?: number;
-  startedAt?: number;
-  completedAt?: number;
-};
-
-type CronJobDoc = {
-  _id: string;
-  tenantId?: string;
-  name?: string;
-  cron?: string;
-  schedule?: string;
-  functionPath?: string;
-  nextRunAt?: number;
-  lastRunAt?: number;
-  status?: string;
-};
+import { ScheduleSheet, type SheetTarget } from "./schedules/-schedule-sheet";
+import {
+  type CronJobDoc,
+  formatSchedule,
+  parseSchedulesSearch,
+  type ScheduledJobDoc,
+  type ScheduleSection,
+  type SchedulesSearch,
+} from "./schedules/-types";
+import { useScheduleActions } from "./schedules/-use-schedule-actions";
 
 export const Route = createFileRoute("/developer/schedules")({
-  validateSearch: (search: Record<string, unknown>): SchedulesSearch => ({
-    section: isSection(search.section) ? search.section : undefined,
-  }),
+  validateSearch: parseSchedulesSearch,
   component: SchedulesPage,
 });
 
-function isSection(value: unknown): value is Section {
-  return value === "scheduled" || value === "cron";
-}
-
-export const SCHEDULES_SUB_DRAWER: SubDrawerSpec = {
+export const SCHEDULES_SUB_PANEL: SubPanelSpec = {
   kind: "static",
   title: "Schedules",
   items: [
@@ -74,11 +64,20 @@ export const SCHEDULES_SUB_DRAWER: SubDrawerSpec = {
   ],
 };
 
+// A row menu anchored on one row of either table.
+type JobMenu = RowAnchor & { kind: "job"; row: ScheduledJobDoc };
+type CronMenu = RowAnchor & { kind: "cron"; row: CronJobDoc };
+type MenuState = JobMenu | CronMenu;
+
 function SchedulesPage() {
-  useContributeSubDrawer(SCHEDULES_SUB_DRAWER);
+  useContributeSubPanel(SCHEDULES_SUB_PANEL);
   const search = useSearch({ from: "/developer/schedules" });
-  const section: Section = search.section ?? "scheduled";
+  const navigate = useNavigate();
+  const section: ScheduleSection = search.section ?? "scheduled";
   const activeTenant = useUiStore((s) => s.activeTenant);
+  const actions = useScheduleActions();
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [confirmCron, setConfirmCron] = useState<CronJobDoc | null>(null);
 
   const scheduled = useQuery(api.scheduled_jobs.list, {
     tenantId: activeTenant,
@@ -92,6 +91,86 @@ function SchedulesPage() {
     limit: 200,
   }) as CronJobDoc[] | undefined;
 
+  const setSearch = useCallback(
+    (patch: Partial<SchedulesSearch>) =>
+      navigate({
+        to: "/developer/schedules",
+        search: (prev) => ({ ...parseSchedulesSearch(prev), ...patch }),
+        replace: true,
+      }),
+    [navigate],
+  );
+
+  const target: SheetTarget | undefined = search.job
+    ? { kind: "job", id: search.job }
+    : search.cron
+      ? { kind: "cron", name: search.cron }
+      : undefined;
+
+  const openJob = useCallback(
+    (row: ScheduledJobDoc) => setSearch({ job: row._id, cron: undefined }),
+    [setSearch],
+  );
+  const openCron = useCallback(
+    (row: CronJobDoc) =>
+      setSearch({ cron: row.name ?? row._id, job: undefined }),
+    [setSearch],
+  );
+  const closeSheet = useCallback(
+    () => setSearch({ job: undefined, cron: undefined }),
+    [setSearch],
+  );
+
+  const menuItems = useCallback(
+    (state: MenuState): RowMenuItem[] => {
+      if (state.kind === "job") {
+        const row = state.row;
+        const items: RowMenuItem[] = [
+          { id: "open", label: "Open job", onSelect: () => void openJob(row) },
+          {
+            id: "run",
+            label: "Run now",
+            onSelect: () => void actions.runJob(row),
+          },
+        ];
+        if ((row.status ?? "").toLowerCase() === "pending") {
+          items.push({
+            id: "cancel",
+            label: "Cancel job",
+            danger: true,
+            onSelect: () => void actions.cancelJob(row),
+          });
+        }
+        return items;
+      }
+      const row = state.row;
+      return [
+        { id: "open", label: "Open cron", onSelect: () => void openCron(row) },
+        {
+          id: "run",
+          label: "Run now",
+          onSelect: () => void actions.runCron(row),
+        },
+        {
+          id: "delete",
+          label: "Delete cron",
+          danger: true,
+          onSelect: () => setConfirmCron(row),
+        },
+      ];
+    },
+    [actions, openCron, openJob],
+  );
+
+  const deleteConfirmed = useCallback(async () => {
+    if (!confirmCron) return;
+    const ok = await actions.deleteCron(confirmCron);
+    if (ok) {
+      setConfirmCron(null);
+      if (search.cron === (confirmCron.name ?? confirmCron._id)) closeSheet();
+    }
+  }, [actions, closeSheet, confirmCron, search.cron]);
+
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
@@ -102,198 +181,306 @@ function SchedulesPage() {
         subtitle="Invocations for this tenant: one-shot scheduled jobs and recurring cron entries."
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         {section === "scheduled" ? (
-          <ScheduledTable jobs={scheduled} />
+          <ScheduledTable
+            jobs={scheduled}
+            onActivate={openJob}
+            onMenu={(row, anchor) => setMenu({ ...anchor, kind: "job", row })}
+          />
         ) : (
-          <CronTable jobs={cron} />
+          <CronTable
+            jobs={cron}
+            onActivate={openCron}
+            onMenu={(row, anchor) => setMenu({ ...anchor, kind: "cron", row })}
+          />
         )}
       </div>
+
+      {menu ? (
+        <RowContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={
+            menu.kind === "job"
+              ? `Actions for ${menu.row.functionPath ?? menu.row._id}`
+              : `Actions for ${menu.row.name ?? menu.row._id}`
+          }
+          items={menuItems(menu)}
+          restoreFocus={menu.element}
+          onClose={() => setMenu(null)}
+          testid="schedules-row-menu"
+        />
+      ) : null}
+
+      <ScheduleSheet
+        target={target}
+        jobs={scheduled}
+        crons={cron}
+        actions={actions}
+        onClose={closeSheet}
+        onDeleteCron={setConfirmCron}
+      />
+
+      <ConfirmDialog
+        open={confirmCron !== null}
+        title={
+          confirmCron
+            ? `Delete cron "${confirmCron.name ?? confirmCron._id}"?`
+            : "Delete cron?"
+        }
+        description="The scheduler stops running it and forgets its mutation. Declare it again to bring it back."
+        confirmLabel="Delete cron"
+        danger
+        busy={
+          confirmCron !== null &&
+          actions.pending[confirmCron.name ?? confirmCron._id] === "delete"
+        }
+        onConfirm={() => void deleteConfirmed()}
+        onCancel={() => setConfirmCron(null)}
+        testid="schedules-delete-cron"
+      />
     </section>
   );
 }
 
-function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
-  // Skeleton rows, not a centered spinner: the header, the panel and the 40px
-  // row rhythm all survive the load, so arriving jobs move nothing vertically.
-  // `table-auto` still re-proportions the columns on arrival. No
-  // `rowContentHeight` here or in `CronTable`: `Td`'s 40px row floor already
-  // sizes the real and the placeholder rows alike (measured 40.00px in both
-  // states).
-  if (jobs === undefined) {
-    return (
-      <SkeletonRows
-        columns={5}
-        head={<ScheduledTableHead />}
-        label="Loading scheduled jobs…"
-        testid="schedules-scheduled-loading"
-      />
-    );
-  }
-  if (jobs.length === 0) {
+const jobCol = dataColumns<ScheduledJobDoc>();
+
+function ActionsCell({
+  label,
+  testid,
+  onOpen,
+}: {
+  label: string;
+  testid: string;
+  onOpen: (anchor: RowAnchor) => void;
+}) {
+  return (
+    <span className="flex justify-end">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={`Actions for ${label}`}
+        data-testid={testid}
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          onOpen({
+            x: rect.left,
+            y: rect.bottom + 2,
+            element: event.currentTarget,
+          });
+        }}
+      >
+        <Ellipsis />
+      </Button>
+    </span>
+  );
+}
+
+function timeCell(at: number | undefined, fallback = "—") {
+  return typeof at === "number" ? (
+    <RelativeTime epochMs={at} />
+  ) : (
+    <span className="tabular text-text-3">{fallback}</span>
+  );
+}
+
+function ScheduledTable({
+  jobs,
+  onActivate,
+  onMenu,
+}: {
+  jobs: ScheduledJobDoc[] | undefined;
+  onActivate: (row: ScheduledJobDoc) => void;
+  onMenu: (row: ScheduledJobDoc, anchor: RowAnchor) => void;
+}) {
+  const columns = useMemo(
+    () => [
+      jobCol.accessor("functionPath", {
+        header: "Function",
+        size: 200,
+        cell: (ctx) => (
+          <span
+            className="block truncate font-mono text-xs text-text-1"
+            title={ctx.getValue() ?? ctx.row.original._id}
+          >
+            {ctx.getValue() ?? shortId(ctx.row.original._id, 12)}
+          </span>
+        ),
+      }),
+      jobCol.accessor("status", {
+        header: "Status",
+        size: 100,
+        cell: (ctx) => <StatePill state={ctx.getValue()} />,
+      }),
+      jobCol.accessor("scheduledTime", {
+        header: "Scheduled",
+        size: 104,
+        cell: (ctx) => timeCell(ctx.getValue()),
+      }),
+      jobCol.accessor((row) => row.result?.finishedAt, {
+        id: "finishedAt",
+        header: "Finished",
+        size: 104,
+        cell: (ctx) => timeCell(ctx.getValue()),
+      }),
+      jobCol.accessor((row) => row.result?.outcome, {
+        id: "outcome",
+        header: "Outcome",
+        size: 150,
+        cell: (ctx) => {
+          const row = ctx.row.original;
+          const outcome = ctx.getValue();
+          if (!outcome) return <span className="tabular text-text-3">—</span>;
+          return (
+            <span
+              className="block truncate font-mono text-xs text-text-1"
+              title={row.result?.error ?? outcome}
+            >
+              {row.result?.error ? `${outcome}: ${row.result.error}` : outcome}
+            </span>
+          );
+        },
+      }),
+      jobCol.display({
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        size: 40,
+        enableSorting: false,
+        cell: (ctx) => (
+          <ActionsCell
+            label={ctx.row.original.functionPath ?? ctx.row.original._id}
+            testid={`schedules-scheduled-actions-${ctx.row.original._id}`}
+            onOpen={(anchor) => onMenu(ctx.row.original, anchor)}
+          />
+        ),
+      }),
+    ],
+    [onMenu],
+  );
+
+  if (jobs !== undefined && jobs.length === 0) {
     return (
       <EmptyState
         title="No scheduled jobs"
         body="Scheduler-driven invocations appear here. The list updates as jobs are enqueued."
+        testid="schedules-scheduled-empty"
       />
     );
   }
   return (
-    <ScrollRegion label="Scheduled jobs" className="h-full">
-      <table
-        className="w-full border-collapse text-sm"
-        data-testid="schedules-scheduled-table"
-      >
-        <ScheduledTableHead />
-        <tbody>
-          {jobs.map((job) => {
-            const duration =
-              typeof job.completedAt === "number" &&
-              typeof job.startedAt === "number"
-                ? job.completedAt - job.startedAt
-                : null;
-            return (
-              <tr
-                key={job._id}
-                className="border-t border-app hover:bg-surface-2"
-                data-testid={`schedules-scheduled-${job._id}`}
-              >
-                <Td>
-                  <span className="font-mono text-default">
-                    {job.functionPath ?? shortId(job._id, 12)}
-                  </span>
-                </Td>
-                <Td>
-                  <StateChip state={job.status} />
-                </Td>
-                <Td>
-                  <span className="font-mono text-xs text-default">
-                    {job.tenantId ?? "—"}
-                  </span>
-                </Td>
-                <Td>
-                  {typeof job.scheduledTime === "number" ? (
-                    <RelativeTime epochMs={job.scheduledTime} />
-                  ) : (
-                    <span className="tabular text-muted">—</span>
-                  )}
-                </Td>
-                <Td>
-                  {duration !== null ? (
-                    <span className="tabular font-mono text-xs text-default">
-                      {formatDuration(duration)}
-                    </span>
-                  ) : (
-                    <span className="tabular text-muted">—</span>
-                  )}
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </ScrollRegion>
+    <DataTable
+      columns={columns}
+      data={jobs ?? []}
+      getRowId={(row) => row._id}
+      ariaLabel="Scheduled jobs"
+      loading={jobs === undefined}
+      onRowActivate={onActivate}
+      onRowContextMenu={onMenu}
+      rowTestid={(row) => `schedules-scheduled-${row._id}`}
+      testid="schedules-scheduled-table"
+      className="h-full"
+    />
   );
 }
 
-function ScheduledTableHead() {
-  return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-      <tr>
-        <Th>Function</Th>
-        <Th>Status</Th>
-        <Th>Tenant</Th>
-        <Th>Scheduled</Th>
-        <Th>Duration</Th>
-      </tr>
-    </thead>
-  );
-}
+const cronCol = dataColumns<CronJobDoc>();
 
-function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
-  if (jobs === undefined) {
-    return (
-      <SkeletonRows
-        columns={6}
-        head={<CronTableHead />}
-        label="Loading cron jobs…"
-        testid="schedules-cron-loading"
-      />
-    );
-  }
-  if (jobs.length === 0) {
+function CronTable({
+  jobs,
+  onActivate,
+  onMenu,
+}: {
+  jobs: CronJobDoc[] | undefined;
+  onActivate: (row: CronJobDoc) => void;
+  onMenu: (row: CronJobDoc, anchor: RowAnchor) => void;
+}) {
+  const columns = useMemo(
+    () => [
+      cronCol.accessor("name", {
+        header: "Name",
+        size: 120,
+        cell: (ctx) => (
+          <span className="block truncate font-mono text-xs text-text-1">
+            {ctx.getValue() ?? shortId(ctx.row.original._id, 12)}
+          </span>
+        ),
+      }),
+      cronCol.accessor("functionPath", {
+        header: "Function",
+        size: 170,
+        cell: (ctx) => (
+          <span className="block truncate font-mono text-xs text-text-1">
+            {ctx.getValue() ?? "—"}
+          </span>
+        ),
+      }),
+      cronCol.accessor("schedule", {
+        header: "Schedule",
+        size: 96,
+        cell: (ctx) => (
+          <span
+            className="font-mono text-xs text-text-1"
+            title={ctx.getValue()}
+          >
+            {formatSchedule(ctx.getValue())}
+          </span>
+        ),
+      }),
+      cronCol.accessor("status", {
+        header: "Status",
+        size: 96,
+        cell: (ctx) => <StatePill state={ctx.getValue()} />,
+      }),
+      cronCol.accessor("nextRunAt", {
+        header: "Next run",
+        size: 104,
+        cell: (ctx) => timeCell(ctx.getValue()),
+      }),
+      cronCol.accessor("lastRunAt", {
+        header: "Last run",
+        size: 104,
+        cell: (ctx) => timeCell(ctx.getValue(), "never"),
+      }),
+      cronCol.display({
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        size: 40,
+        enableSorting: false,
+        cell: (ctx) => (
+          <ActionsCell
+            label={ctx.row.original.name ?? ctx.row.original._id}
+            testid={`schedules-cron-actions-${ctx.row.original.name ?? ctx.row.original._id}`}
+            onOpen={(anchor) => onMenu(ctx.row.original, anchor)}
+          />
+        ),
+      }),
+    ],
+    [onMenu],
+  );
+
+  if (jobs !== undefined && jobs.length === 0) {
     return (
       <EmptyState
         title="No cron jobs"
         body="Cron-scheduled functions appear here with their schedule and next-run time."
+        testid="schedules-cron-empty"
       />
     );
   }
   return (
-    <ScrollRegion label="Cron jobs" className="h-full">
-      <table
-        className="w-full border-collapse text-sm"
-        data-testid="schedules-cron-table"
-      >
-        <CronTableHead />
-        <tbody>
-          {jobs.map((job) => (
-            <tr
-              key={job._id}
-              className="border-t border-app hover:bg-surface-2"
-              data-testid={`schedules-cron-${job.name ?? job._id}`}
-            >
-              <Td>
-                <span className="font-mono text-default">
-                  {job.name ?? shortId(job._id, 12)}
-                </span>
-              </Td>
-              <Td>
-                <span className="font-mono text-xs text-default">
-                  {job.functionPath ?? "—"}
-                </span>
-              </Td>
-              <Td>
-                <span className="font-mono text-xs text-default">
-                  {job.cron ?? job.schedule ?? "—"}
-                </span>
-              </Td>
-              <Td>
-                <StateChip state={job.status} />
-              </Td>
-              <Td>
-                {typeof job.nextRunAt === "number" ? (
-                  <RelativeTime epochMs={job.nextRunAt} />
-                ) : (
-                  <span className="tabular text-muted">—</span>
-                )}
-              </Td>
-              <Td>
-                {typeof job.lastRunAt === "number" ? (
-                  <RelativeTime epochMs={job.lastRunAt} />
-                ) : (
-                  <span className="tabular text-muted">never</span>
-                )}
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </ScrollRegion>
-  );
-}
-
-function CronTableHead() {
-  return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-      <tr>
-        <Th>Name</Th>
-        <Th>Function</Th>
-        <Th>Schedule</Th>
-        <Th>Status</Th>
-        <Th>Next run</Th>
-        <Th>Last run</Th>
-      </tr>
-    </thead>
+    <DataTable
+      columns={columns}
+      data={jobs ?? []}
+      getRowId={(row) => row.name ?? row._id}
+      ariaLabel="Cron jobs"
+      loading={jobs === undefined}
+      onRowActivate={onActivate}
+      onRowContextMenu={onMenu}
+      rowTestid={(row) => `schedules-cron-${row.name ?? row._id}`}
+      testid="schedules-cron-table"
+      className="h-full"
+    />
   );
 }

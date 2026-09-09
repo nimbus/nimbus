@@ -22,7 +22,7 @@ export const RelativeHoursOld: Story = {
 
 export const UptimeStripe: Story = {
   render: () => (
-    <div className="flex gap-4 text-xs text-muted">
+    <div className="flex gap-4 text-xs text-text-3">
       <Uptime startedAtMs={NOW - 5 * 60_000} />
       <Uptime startedAtMs={NOW - (3 * 3_600_000 + 12 * 60_000)} />
       <Uptime startedAtMs={NOW - (2 * 86_400_000 + 4 * 3_600_000)} />

@@ -31,7 +31,7 @@ pub(crate) use s3::S3_CONVENTIONAL_PORT;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
-use nimbus::{Error, TenantId};
+use nimbus::{Error, ObjectStorageConfig, TenantId};
 use nimbus_server::{
     CloudFunctionsHttpTenantBinding, CloudflareConfig, ConvexTenancyConfig, DynamoDbConfig,
     FirebaseConfig, MongoDbConfig, S3Config,
@@ -67,6 +67,9 @@ pub(crate) struct AdapterEnablement {
     pub(crate) mongodb: Option<MongoDbConfig>,
     pub(crate) dynamodb: Option<DynamoDbConfig>,
     pub(crate) s3: Option<S3Config>,
+    /// Object byte-plane placement for the native object routes and, when
+    /// the S3 listener serves, for that listener too.
+    pub(crate) object_storage: ObjectStorageConfig,
 }
 
 impl AdapterEnablement {
@@ -154,7 +157,7 @@ impl AdapterEnablement {
         if let Some(s3) = self.s3 {
             options = options.with_s3(s3);
         }
-        options
+        options.with_object_storage_config(self.object_storage)
     }
 }
 
@@ -225,7 +228,8 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     let mut store = CredentialStore::new(control_data_dir);
     let mongodb = mongodb::resolve_mongodb(command, &env_lookup, &mut store)?;
     let dynamodb = dynamodb::resolve_dynamodb(command, &env_lookup, &mut store)?;
-    let s3 = s3::resolve_s3(command, &env_lookup, &mut store)?;
+    let object_storage = s3::resolve_object_storage(&env_lookup)?;
+    let s3 = s3::resolve_s3(command, &env_lookup, &mut store, object_storage.clone())?;
     let cloudflare = cloudflare::resolve_cloudflare(command, app_dir, &mut store)?;
     let (convex_tenancy, convex_tenancy_notice) =
         convex_tenancy::resolve_convex_tenancy(command, &env_lookup)?;
@@ -243,6 +247,7 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
         mongodb,
         dynamodb,
         s3,
+        object_storage,
     })
 }
 

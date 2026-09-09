@@ -1,39 +1,55 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { useQueryMock, connStateMock, navigateMock } = vi.hoisted(() => ({
+  useQueryMock: vi.fn(),
+  connStateMock: vi.fn(),
+  navigateMock: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (config: Record<string, unknown>) => config,
+  useNavigate: () => navigateMock,
   Link: ({
     to,
+    search,
     children,
     "data-testid": testId,
     className,
   }: {
     to: string;
+    search?: Record<string, string>;
     children: React.ReactNode;
     "data-testid"?: string;
     className?: string;
   }) => (
-    <a href={to} data-testid={testId} className={className}>
+    <a
+      href={search ? `${to}?${new URLSearchParams(search)}` : to}
+      data-testid={testId}
+      className={className}
+    >
       {children}
     </a>
   ),
 }));
 
-const { useQueryMock, connStateMock } = vi.hoisted(() => ({
-  useQueryMock: vi.fn(),
-  connStateMock: vi.fn(),
-}));
-
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (ref: unknown, args: unknown) => useQueryMock(ref, args),
   useNimbusConnectionState: () => connStateMock(),
+  useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
 
 import { api } from "../../../convex/_generated/api";
 import { useUiStore } from "../../store/ui-store";
 import { routeComponent } from "../../test/route-internals";
-import { Route } from "./index";
+import {
+  connectSnippets,
+  hourlyBuckets,
+  Route,
+  type RunRow,
+  readHeadline,
+  readStats,
+} from "./index";
 
 const OverviewPage = routeComponent(Route);
 
@@ -41,287 +57,386 @@ type Doc = Record<string, unknown>;
 
 type Fixture = {
   status?: Doc | null;
-  machines?: Doc[];
-  services?: Doc[];
   tables?: Doc[];
   functions?: Doc[];
   runs?: Doc[];
-  events?: Doc[];
 };
+
+const NOW = Date.UTC(2026, 8, 8, 12, 0, 0);
+const HOUR = 60 * 60 * 1000;
 
 function mockQueries(fixture: Fixture) {
   const byRef = new Map<unknown, unknown>([
     [api.system.status, fixture.status ?? null],
-    [api.machines.list, fixture.machines ?? []],
-    [api.services.list, fixture.services ?? []],
     [api.tables.list, fixture.tables ?? []],
     [api.functions.list, fixture.functions ?? []],
     [api.runs.recent, fixture.runs ?? []],
-    [api.events.recent, fixture.events ?? []],
   ]);
-  useQueryMock.mockImplementation((ref: unknown) => byRef.get(ref));
+  useQueryMock.mockImplementation((ref: unknown) => {
+    if (!byRef.has(ref)) throw new Error("unexpected query on the overview");
+    return byRef.get(ref);
+  });
 }
 
-const SIX_FUNCTIONS: Doc[] = [
-  { _id: "f1", kind: "query" },
-  { _id: "f2", kind: "query" },
-  { _id: "f3", kind: "query" },
-  { _id: "f4", kind: "mutation" },
-  { _id: "f5", kind: "mutation" },
-  { _id: "f6", kind: "mutation" },
-];
-
-const THIRTEEN_TABLES: Doc[] = Array.from({ length: 13 }, (_, i) => ({
-  _id: `t${i}`,
-  tenantId: i % 2 === 0 ? "demo" : "acme",
-}));
-
-beforeEach(() => {
-  useQueryMock.mockReset();
+function connected() {
   connStateMock.mockReturnValue({
     isWebSocketConnected: true,
     hasEverConnected: true,
   });
+}
+
+function run(overrides: Partial<Doc> & { _id: string }): Doc {
+  return {
+    status: "ok",
+    functionPath: "messages:list",
+    durationMs: 12,
+    startedAt: NOW - 5 * 60 * 1000,
+    ...overrides,
+  };
+}
+
+// A populated server in the shape of the agent-chat example: three
+// functions, two tables, a day of runs with one failure.
+const POPULATED: Fixture = {
+  status: { name: "nimbus", version: "0.4.1", health: "ok", startedAt: NOW },
+  functions: [
+    { _id: "f1", path: "messages:list", kind: "query" },
+    { _id: "f2", path: "messages:send", kind: "mutation" },
+    { _id: "f3", path: "agent:reply", kind: "mutation" },
+  ],
+  tables: [
+    { _id: "t1", name: "messages", tenantId: "demo" },
+    { _id: "t2", name: "agentMemory", tenantId: "demo" },
+  ],
+  runs: [
+    run({ _id: "r1", functionPath: "agent:reply", durationMs: 48 }),
+    run({
+      _id: "r2",
+      status: "error",
+      functionPath: "agent:reply",
+      error: "boom",
+      startedAt: NOW - 2 * HOUR,
+    }),
+    run({ _id: "r3", startedAt: NOW - 3 * HOUR }),
+    run({ _id: "r4", startedAt: NOW - 4 * HOUR }),
+    run({ _id: "r5", startedAt: NOW - 5 * HOUR }),
+    run({ _id: "r6", startedAt: NOW - 6 * HOUR }),
+    run({ _id: "r7", startedAt: NOW - 3 * 24 * HOUR }),
+  ],
+};
+
+beforeEach(() => {
+  vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
   useUiStore.setState({ activeTenant: "demo" });
+  connected();
 });
 
 afterEach(() => {
-  useUiStore.setState({ activeTenant: null });
+  vi.useRealTimers();
+  useQueryMock.mockReset();
+  connStateMock.mockReset();
+  navigateMock.mockReset();
 });
 
-describe("Overview state vocabulary", () => {
-  it("renders function kinds as category pills, never the unknown ? glyph", () => {
-    mockQueries({ functions: SIX_FUNCTIONS, tables: THIRTEEN_TABLES });
-    render(<OverviewPage />);
-
-    const tile = screen.getByTestId("overview-count-functions");
-    const pills = Array.from(tile.querySelectorAll("[data-category]")).map(
-      (el) => el.getAttribute("data-category"),
-    );
-    expect(pills.sort()).toEqual(["mutation", "query"]);
-    // Not a state: the tile must contain no state chip at all, and so no `?`.
-    expect(tile.querySelector("[data-state]")).toBeNull();
-    expect(tile.textContent).not.toContain("?");
-    expect(tile).toHaveTextContent("query");
-    expect(tile).toHaveTextContent("mutation");
-  });
-
-  it("draws no unknown glyph anywhere on the page", () => {
+describe("headline", () => {
+  it("reads a healthy server with clean runs as idle", () => {
     mockQueries({
-      functions: SIX_FUNCTIONS,
-      tables: THIRTEEN_TABLES,
-      machines: [{ _id: "m1", state: "running" }],
-      services: [{ _id: "s1", state: "ready", tenantId: "demo" }],
-      runs: [{ _id: "r1", status: "ok", functionPath: "a:b" }],
-      events: [{ _id: "e1", level: "info", source: "system", message: "hi" }],
-      status: { health: "ok", version: "0.1.0" },
+      ...POPULATED,
+      runs: POPULATED.runs?.filter((r) => r.status === "ok"),
     });
-    const { container } = render(<OverviewPage />);
-
-    const unknown = Array.from(container.querySelectorAll("[data-state]"))
-      .filter((el) => el.getAttribute("data-glyph") === "question")
-      .map((el) => el.textContent);
-    expect(unknown).toEqual([]);
-  });
-
-  it("keeps state chips for the state-grouped tiles", () => {
-    mockQueries({ runs: [{ _id: "r1", status: "ok" }] });
     render(<OverviewPage />);
-    const tile = screen.getByTestId("overview-count-runs");
-    expect(tile.querySelector("[data-state]")).toHaveAttribute(
+    expect(screen.getByTestId("overview-mascot")).toHaveAttribute(
       "data-state",
-      "ok",
+      "idle",
     );
-  });
-});
-
-describe("Overview count tile sublines", () => {
-  it("never prints 'No state breakdown'", () => {
-    mockQueries({ functions: SIX_FUNCTIONS, tables: THIRTEEN_TABLES });
-    const { container } = render(<OverviewPage />);
-    expect(container.textContent).not.toContain("No state breakdown");
-  });
-
-  it("gives the ungroupable Tables tile a real fact instead of an apology", () => {
-    mockQueries({ tables: THIRTEEN_TABLES });
-    render(<OverviewPage />);
-    expect(
-      screen.getByTestId("overview-count-tables-subline"),
-    ).toHaveTextContent("across 2 tenants");
-  });
-
-  it("gives the Tenants tile a real fact", () => {
-    mockQueries({
-      tables: THIRTEEN_TABLES,
-      services: [
-        { _id: "s1", state: "ready", tenantId: "demo" },
-        { _id: "s2", state: "ready", tenantId: "demo" },
-      ],
-    });
-    render(<OverviewPage />);
-    expect(
-      screen.getByTestId("overview-count-tenants-subline"),
-    ).toHaveTextContent("1 with services");
-  });
-
-  it("renders an em dash, not a sentence, for a groupable tile with zero rows", () => {
-    mockQueries({ machines: [] });
-    render(<OverviewPage />);
-    const subline = screen.getByTestId("overview-count-machines-subline");
-    expect(subline.textContent?.trim()).toBe("—");
-  });
-
-  it("still reaches the loading branch for an ungroupable tile", () => {
-    connStateMock.mockReturnValue({
-      isWebSocketConnected: true,
-      hasEverConnected: false,
-    });
-    useQueryMock.mockImplementation(() => undefined);
-    render(<OverviewPage />);
-    expect(
-      screen.getByTestId("overview-count-tables-subline"),
-    ).toHaveTextContent("Loading…");
-  });
-
-  it("reserves the subline slot on every tile so the six stay flush", () => {
-    mockQueries({ functions: SIX_FUNCTIONS, tables: THIRTEEN_TABLES });
-    render(<OverviewPage />);
-    for (const id of [
-      "machines",
-      "services",
-      "tenants",
-      "tables",
-      "functions",
-      "runs",
-    ]) {
-      expect(
-        screen.getByTestId(`overview-count-${id}-subline`).className,
-      ).toContain("min-h-5");
-    }
-  });
-});
-
-describe("Overview top strip", () => {
-  it("refuses to shrink so the page scrolls instead of clipping the header", () => {
-    mockQueries({});
-    render(<OverviewPage />);
-    // The strip is `overflow-hidden`, so without `shrink-0` flexbox silently
-    // eats it — at 1440px it had collapsed to a 2px hairline.
-    expect(screen.getByTestId("overview-top-strip").className).toContain(
-      "shrink-0",
+    expect(screen.getByTestId("overview-sentence")).toHaveTextContent(
+      "The server is up and every recent run succeeded.",
     );
   });
 
-  it("prints no licence at all until the server has reported one", () => {
-    // The strip renders on mount, before any query answers. It used to fall
-    // through to the literal "developer" — a value the server never sent,
-    // rendered in the same face and colour as a real reading.
-    useQueryMock.mockImplementation(() => undefined);
+  it("names the failures of the last day in the sentence", () => {
+    mockQueries(POPULATED);
     render(<OverviewPage />);
-
-    expect(screen.getByTestId("overview-license-loading")).toBeInTheDocument();
-    expect(screen.getByTestId("overview-top-strip")).not.toHaveTextContent(
-      /developer/i,
+    expect(screen.getByTestId("overview-mascot")).toHaveAttribute(
+      "data-state",
+      "error",
+    );
+    expect(screen.getByTestId("overview-sentence")).toHaveTextContent(
+      "1 run failed in the last 24 hours",
     );
   });
 
-  it("shows the loading marker, not a fabricated reading, for every status cell", () => {
-    useQueryMock.mockImplementation(() => undefined);
+  it("puts the tenant, endpoint, and version on one fact line", () => {
+    mockQueries(POPULATED);
     render(<OverviewPage />);
-
-    for (const cell of [
-      "overview-server",
-      "overview-version",
-      "overview-uptime",
-      "overview-storage",
-      "overview-license",
-      "overview-started",
-      "overview-updated",
-    ]) {
-      expect(screen.getByTestId(`${cell}-loading`)).toBeInTheDocument();
-    }
+    const facts = screen.getByTestId("overview-facts");
+    expect(within(facts).getByTestId("overview-fact-tenant")).toHaveTextContent(
+      "tenant demo",
+    );
+    expect(
+      within(facts).getByTestId("overview-fact-endpoint"),
+    ).toHaveTextContent("http://nimbus.example:9000");
+    expect(
+      within(facts).getByTestId("overview-fact-version"),
+    ).toHaveTextContent("v0.4.1");
   });
 
-  it("says offline rather than loading once the socket has dropped", () => {
+  it("leaves a version the server did not report off the line", () => {
+    mockQueries({ ...POPULATED, status: { health: "ok" } });
+    render(<OverviewPage />);
+    expect(screen.queryByTestId("overview-fact-version")).toBeNull();
+    expect(screen.getByTestId("overview-facts")).not.toHaveTextContent("—");
+  });
+
+  it("shows the working face until the status and the lists load", () => {
+    useQueryMock.mockReturnValue(undefined);
+    render(<OverviewPage />);
+    expect(screen.getByTestId("overview-mascot")).toHaveAttribute(
+      "data-state",
+      "working",
+    );
+    expect(screen.queryByTestId("overview-onboarding")).toBeNull();
+    expect(screen.getByTestId("overview-stats-loading")).toBeInTheDocument();
+  });
+
+  it("prefers a dropped connection over a healthy status document", () => {
     connStateMock.mockReturnValue({
       isWebSocketConnected: false,
       hasEverConnected: true,
     });
-    useQueryMock.mockImplementation(() => undefined);
+    // The status document arrived before the socket dropped; the lists
+    // never did.
+    useQueryMock.mockImplementation((ref: unknown) =>
+      ref === api.system.status ? POPULATED.status : undefined,
+    );
     render(<OverviewPage />);
-
-    expect(screen.getByTestId("overview-license-offline")).toBeInTheDocument();
-  });
-
-  it("renders an em dash for a field a settled status omits", () => {
-    // `null` is an answer — the deployment has no status row — so the strip
-    // must settle rather than sit on the loading marker for the life of the
-    // page. A field the server did not report is still not a value.
-    mockQueries({ status: null });
-    render(<OverviewPage />);
-
-    expect(screen.queryByTestId("overview-license-loading")).toBeNull();
-    expect(screen.getByTestId("overview-top-strip")).not.toHaveTextContent(
-      /developer/i,
+    expect(screen.getByTestId("overview-mascot")).toHaveAttribute(
+      "data-state",
+      "error",
+    );
+    expect(screen.getByTestId("overview-sentence")).toHaveTextContent(
+      "connection to the server dropped",
     );
   });
 
-  it("reports the licence the server actually sent", () => {
-    mockQueries({
-      status: { version: "1.2.3", details: { license: "enterprise" } },
+  it("repeats a health the server reports as anything but ok", () => {
+    const reading = readHeadline(
+      { kind: "ok", value: { health: "degraded" } },
+      { kind: "ok", value: { functions: [], tables: [], runs: [] } },
+      false,
+    );
+    expect(reading).toEqual({
+      mascot: "error",
+      sentence: "The server reports its health as degraded.",
     });
-    render(<OverviewPage />);
-
-    expect(screen.getByTestId("overview-top-strip")).toHaveTextContent(
-      "enterprise",
-    );
-  });
-
-  it("reserves each value line so the strip does not resize when status lands", () => {
-    // The loading marker is a bare `·` at text-sm and the loaded cells are
-    // text-xs chips. Without a floor the eight-cell grid changed height under
-    // itself the moment the query answered.
-    mockQueries({});
-    render(<OverviewPage />);
-
-    const values = screen
-      .getByTestId("overview-top-strip")
-      .querySelectorAll(":scope > div > span:last-child");
-    expect(values).toHaveLength(8);
-    for (const value of values) {
-      expect(value.className).toContain("min-h-5");
-    }
   });
 });
 
-describe("Overview activity feeds", () => {
-  it("gives an empty events feed a two-line message and a next action", () => {
-    mockQueries({ events: [] });
+describe("connect panel", () => {
+  it("offers curl, the TypeScript SDK, and the Convex client as tabs", () => {
+    mockQueries(POPULATED);
     render(<OverviewPage />);
-    const empty = screen.getByTestId("overview-events-empty");
-    expect(empty).toHaveTextContent("No events recorded yet");
-    expect(empty).toHaveTextContent(
-      "Server, scheduler, and function activity streams here live.",
+    const tabs = screen.getByTestId("overview-connect-tabs");
+    expect(
+      within(tabs)
+        .getAllByRole("tab")
+        .map((t) => t.textContent),
+    ).toEqual(["curl", "TypeScript SDK", "Convex client"]);
+    const snippet = screen.getByTestId("overview-connect-snippet");
+    expect(snippet).toHaveAttribute("data-snippet", "curl");
+    expect(snippet).toHaveTextContent(
+      "http://nimbus.example:9000/api/tenants/demo/query",
     );
-    expect(screen.getByTestId("overview-events-empty-cta")).toHaveAttribute(
+    expect(snippet).toHaveTextContent('"table": "messages"');
+
+    fireEvent.click(screen.getByTestId("overview-connect-tab-sdk"));
+    expect(snippet).toHaveAttribute("data-snippet", "sdk");
+    expect(snippet).toHaveTextContent(
+      'new NimbusClient("http://nimbus.example:9000/convex/demo")',
+    );
+    expect(snippet).toHaveTextContent("api.messages.list");
+
+    fireEvent.click(screen.getByTestId("overview-connect-tab-convex"));
+    expect(snippet).toHaveAttribute("data-snippet", "convex");
+    expect(snippet).toHaveTextContent("ConvexReactClient");
+  });
+
+  it("falls back to the quick start names on an empty server", () => {
+    const snippets = connectSnippets({
+      serverUrl: "",
+      tenant: null,
+      functionPath: null,
+      table: null,
+    });
+    expect(snippets.curl).toContain(
+      "http://localhost:3210/api/tenants/demo/query",
+    );
+    expect(snippets.sdk).toContain("api.messages.list");
+  });
+});
+
+describe("stats", () => {
+  it("shows functions, tables, runs, and errors for the last day", () => {
+    mockQueries(POPULATED);
+    render(<OverviewPage />);
+    const stats = screen.getByTestId("overview-stats");
+    expect(
+      within(stats).getByTestId("overview-stat-functions-value"),
+    ).toHaveTextContent("3");
+    expect(
+      within(stats).getByTestId("overview-stat-functions"),
+    ).toHaveTextContent("2 mutation · 1 query");
+    expect(
+      within(stats).getByTestId("overview-stat-tables-value"),
+    ).toHaveTextContent("2");
+    expect(
+      within(stats).getByTestId("overview-stat-runs-value"),
+    ).toHaveTextContent("6");
+    expect(
+      within(stats).getByTestId("overview-stat-errors-value"),
+    ).toHaveTextContent("1");
+    expect(within(stats).getByTestId("overview-stat-errors")).toHaveAttribute(
       "href",
-      "/developer/compute",
+      "/developer/observability?tab=runs&status=error",
     );
   });
 
-  it("centres the empty state in the height the stretched grid hands it", () => {
-    mockQueries({ runs: [] });
+  it("draws a sparkline for runs and errors only", () => {
+    mockQueries(POPULATED);
     render(<OverviewPage />);
-    const empty = screen.getByTestId("overview-runs-empty");
-    expect(empty.className).toContain("flex-1");
-    expect(empty.className).toContain("justify-center");
-    expect(empty.className).toContain("text-center");
+    const stats = screen.getByTestId("overview-stats");
+    expect(
+      within(stats).queryByRole("img", { name: "Functions by hour" }),
+    ).toBeNull();
+    expect(
+      within(stats).getByRole("img", { name: "Runs, 24h by hour" }),
+    ).toBeInTheDocument();
+    expect(
+      within(stats).getByRole("img", { name: "Errors, 24h by hour" }),
+    ).toBeInTheDocument();
   });
 
-  it("does not duplicate the header's View all link as the empty-state action", () => {
-    mockQueries({ events: [] });
+  it("buckets a day of runs by hour, oldest first", () => {
+    const runs: RunRow[] = [
+      {
+        id: "a",
+        status: "ok",
+        functionPath: "x",
+        durationMs: 1,
+        startedAt: NOW - 30 * 60 * 1000,
+      },
+      {
+        id: "b",
+        status: "ok",
+        functionPath: "x",
+        durationMs: 1,
+        startedAt: NOW - 23 * HOUR - 30 * 60 * 1000,
+      },
+      {
+        id: "c",
+        status: "ok",
+        functionPath: "x",
+        durationMs: 1,
+        startedAt: NOW - 25 * HOUR,
+      },
+    ];
+    const points = hourlyBuckets(runs, () => true, NOW);
+    expect(points).toHaveLength(24);
+    expect(points[0].value).toBe(1);
+    expect(points[23].value).toBe(1);
+    expect(points.reduce((sum, p) => sum + p.value, 0)).toBe(2);
+  });
+
+  it("hides a stat that has no value", () => {
+    const stats = readStats(
+      {
+        functions: [{ _id: "f1", path: "a:b", kind: "query" }],
+        tables: [],
+        runs: [],
+      },
+      "demo",
+      NOW,
+    );
+    expect(stats.map((s) => s.id)).toEqual(["functions"]);
+  });
+});
+
+describe("recent runs", () => {
+  it("lists the five newest runs and links to the rest", () => {
+    mockQueries(POPULATED);
     render(<OverviewPage />);
-    const cta = screen.getByTestId("overview-events-empty-cta");
-    expect(cta.getAttribute("href")).not.toBe("/developer/observability");
+    const table = screen.getByTestId("overview-runs-table");
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toHaveTextContent("agent:reply");
+    expect(rows[1]).toHaveTextContent(/error/i);
+    expect(screen.getByTestId("overview-runs-all")).toHaveAttribute(
+      "href",
+      "/developer/observability?tab=runs",
+    );
+  });
+
+  it("opens the run on activation", () => {
+    mockQueries(POPULATED);
+    render(<OverviewPage />);
+    const table = screen.getByTestId("overview-runs-table");
+    fireEvent.click(within(table).getAllByRole("row")[1]);
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/developer/compute/runs/$runId",
+      params: { runId: "r1" },
+    });
+  });
+});
+
+describe("empty tenant", () => {
+  it("renders the first-run panel instead of empty tiles", () => {
+    mockQueries({ status: { health: "ok", version: "0.4.1" } });
+    render(<OverviewPage />);
+    expect(screen.getByTestId("overview-mascot")).toHaveAttribute(
+      "data-state",
+      "empty",
+    );
+    const panel = screen.getByTestId("overview-onboarding");
+    expect(
+      within(panel).getByTestId("overview-onboarding-title"),
+    ).toHaveTextContent("Nothing here yet");
+    expect(
+      within(panel).getByTestId("overview-onboarding-progress"),
+    ).toHaveTextContent("0 of 3 steps done");
+    expect(
+      within(panel).getByTestId("overview-onboarding-step-install"),
+    ).toHaveTextContent("brew install nimbus/tap/nimbus");
+    expect(screen.queryByTestId("overview-stats")).toBeNull();
+    expect(screen.queryByTestId("overview-runs")).toBeNull();
+    // The connect panel stays: it is how the numbers start moving.
+    expect(screen.getByTestId("overview-connect")).toBeInTheDocument();
+  });
+
+  it("marks steps done from the same queries and retires on the first run", () => {
+    mockQueries({
+      status: { health: "ok" },
+      functions: [{ _id: "f1", path: "messages:list", kind: "query" }],
+    });
+    const { rerender } = render(<OverviewPage />);
+    const panel = screen.getByTestId("overview-onboarding");
+    expect(
+      within(panel).getByTestId("overview-onboarding-step-install"),
+    ).toHaveAttribute("data-done", "true");
+    expect(
+      within(panel).getByTestId("overview-onboarding-step-run"),
+    ).toHaveAttribute("data-done", "false");
+    expect(
+      within(panel).getByTestId("overview-onboarding-progress"),
+    ).toHaveTextContent("2 of 3 steps done");
+
+    mockQueries({
+      status: { health: "ok" },
+      functions: [{ _id: "f1", path: "messages:list", kind: "query" }],
+      runs: [run({ _id: "r1" })],
+    });
+    rerender(<OverviewPage />);
+    expect(screen.queryByTestId("overview-onboarding")).toBeNull();
+    expect(screen.getByTestId("overview-stats")).toBeInTheDocument();
+    expect(screen.getByTestId("overview-runs")).toBeInTheDocument();
   });
 });

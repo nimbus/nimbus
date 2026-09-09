@@ -13,7 +13,13 @@ const {
   invalidateMock: vi.fn(),
   useQueryMock: vi.fn(),
   tenantListRef: {
-    current: { kind: "loaded", tenants: [{ id: "acme", backend: "sqlite" }] },
+    current: {
+      kind: "loaded",
+      tenants: [
+        { id: "acme", backend: "sqlite" },
+        { id: "globex", backend: "libsql" },
+      ],
+    },
   },
 }));
 
@@ -36,7 +42,7 @@ vi.mock("../hooks/use-tenant-list", () => ({
 }));
 
 import { useUiStore } from "../store/ui-store";
-import { CommandPalette } from "./command-palette";
+import { CommandPalette, RECENT_KEY } from "./command-palette";
 
 const ROWS: Record<string, Array<Record<string, unknown>>> = {
   "tables:list": [
@@ -51,6 +57,14 @@ const ROWS: Record<string, Array<Record<string, unknown>>> = {
   ],
 };
 
+const LOADED_TENANTS = {
+  kind: "loaded",
+  tenants: [
+    { id: "acme", backend: "sqlite" },
+    { id: "globex", backend: "libsql" },
+  ],
+};
+
 beforeEach(() => {
   pathnameRef.current = "/developer/compute";
   navigateMock.mockReset();
@@ -60,6 +74,7 @@ beforeEach(() => {
   useQueryMock.mockImplementation((ref: { name: string }, args: unknown) =>
     args === "skip" ? undefined : ROWS[ref.name],
   );
+  tenantListRef.current = LOADED_TENANTS;
   useUiStore.setState({ paletteOpen: true, activeTenant: "acme" });
 });
 
@@ -69,11 +84,24 @@ function type(value: string) {
   });
 }
 
+function key(name: string) {
+  fireEvent.keyDown(screen.getByTestId("command-palette-input"), {
+    key: name,
+  });
+}
+
+function selectedTestId(): string | null {
+  const selected = document.querySelectorAll('[data-selected="true"]');
+  expect(selected).toHaveLength(1);
+  return selected[0]?.getAttribute("data-testid") ?? null;
+}
+
 describe("CommandPalette", () => {
   it("holds no query subscriptions while it is closed", () => {
     useUiStore.setState({ paletteOpen: false });
     render(<CommandPalette />);
     expect(useQueryMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("command-palette")).toBeNull();
   });
 
   it("holds no query subscriptions until the operator types", () => {
@@ -82,7 +110,100 @@ describe("CommandPalette", () => {
     expect(useQueryMock).not.toHaveBeenCalled();
   });
 
-  it("reaches a table by name, not only the drawer sections", async () => {
+  it("is a modal dialog with a 640px surface", () => {
+    render(<CommandPalette />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveAccessibleName("Command palette");
+    expect(dialog.className.split(/\s+/)).toContain("sm:max-w-[640px]");
+  });
+
+  // The three groups are the palette's fixed shape. Resources join them only
+  // once the operator types, so an open palette is the console map, not a
+  // dump of every row on the server.
+  it("opens on the Routes, Tenants and Actions groups", () => {
+    render(<CommandPalette />);
+    const routes = screen.getByTestId("palette-group-routes");
+    const tenants = screen.getByTestId("palette-group-tenants");
+    const actions = screen.getByTestId("palette-group-actions");
+    expect(routes).toHaveTextContent("Routes");
+    expect(tenants).toHaveTextContent("Tenants");
+    expect(actions).toHaveTextContent("Actions");
+    // The current view's pages lead; the other console follows.
+    const rows = Array.from(
+      routes.querySelectorAll('[data-testid^="palette-item-"]'),
+    ).map((row) => row.getAttribute("data-testid"));
+    expect(rows[0]).toBe("palette-item-developer:overview");
+    expect(rows).toContain("palette-item-operator:machines");
+    expect(rows.indexOf("palette-item-operator:nodes")).toBeGreaterThan(
+      rows.indexOf("palette-item-developer:settings"),
+    );
+    expect(screen.getByTestId("palette-item-tenant:acme")).toHaveAttribute(
+      "data-checked",
+      "true",
+    );
+    expect(
+      screen.getByTestId("palette-item-tenant:globex"),
+    ).not.toHaveAttribute("data-checked");
+    expect(
+      screen.getByTestId("palette-action-Refresh current view"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("palette-action-Open system tenant lens"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("palette-action-Switch to Operator console"),
+    ).toBeInTheDocument();
+  });
+
+  it("moves the selection with the arrow keys and opens it with Enter", () => {
+    render(<CommandPalette />);
+    expect(selectedTestId()).toBe("palette-item-developer:overview");
+    key("ArrowDown");
+    expect(selectedTestId()).toBe("palette-item-developer:compute");
+    key("ArrowDown");
+    expect(selectedTestId()).toBe("palette-item-developer:storage");
+    key("ArrowUp");
+    expect(selectedTestId()).toBe("palette-item-developer:compute");
+    key("Enter");
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/developer/compute" });
+    expect(useUiStore.getState().paletteOpen).toBe(false);
+  });
+
+  it("closes through the dialog and hands focus back to the store", () => {
+    render(<CommandPalette />);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(useUiStore.getState().paletteOpen).toBe(false);
+  });
+
+  it("writes the keyboard contract in the footer", () => {
+    render(<CommandPalette />);
+    const footer = screen.getByTestId("command-palette-footer");
+    expect(footer).toHaveTextContent("palette");
+    expect(footer).toHaveTextContent("tenant lens");
+    expect(footer).toHaveTextContent("filter page");
+    const keys = Array.from(footer.querySelectorAll("[data-slot=kbd]")).map(
+      (node) => node.textContent,
+    );
+    expect(keys).toContain("K");
+    expect(keys).toContain("\\");
+    expect(keys).toContain("/");
+  });
+
+  it("keeps the tenant lens chord off the operator console", () => {
+    pathnameRef.current = "/operator/machines";
+    render(<CommandPalette />);
+    expect(screen.getByTestId("command-palette-footer")).not.toHaveTextContent(
+      "tenant lens",
+    );
+    expect(
+      screen.queryByTestId("palette-action-Open system tenant lens"),
+    ).toBeNull();
+    expect(
+      screen.getByTestId("palette-action-Switch to Developer console"),
+    ).toBeInTheDocument();
+  });
+
+  it("reaches a table by name, not only the console pages", async () => {
     render(<CommandPalette />);
     type("documents");
     await waitFor(() => {
@@ -90,8 +211,8 @@ describe("CommandPalette", () => {
         screen.getByTestId("palette-item-table:tbl_1"),
       ).toBeInTheDocument();
     });
-    // "documents" must not also match the Storage section, or the resource row
-    // would be buried under the 15 sections it was added to complement.
+    // "documents" must not also match the Storage page, or the resource row
+    // would be buried under the pages it was added to complement.
     expect(screen.queryByTestId("palette-item-developer:storage")).toBeNull();
   });
 
@@ -137,14 +258,31 @@ describe("CommandPalette", () => {
     // The whole target is persisted, not a bare key: a key alone could only be
     // resolved against the nav list, so every stored resource would come back
     // as a dead row.
-    const stored = JSON.parse(
-      window.localStorage.getItem("nimbus-ui:palette:recent") ?? "[]",
-    );
+    const stored = JSON.parse(window.localStorage.getItem(RECENT_KEY) ?? "[]");
     expect(stored[0]).toMatchObject({
       kind: "table",
       key: "table:tbl_1",
       href: "/developer/storage/documents",
     });
+  });
+
+  it("lists recents ahead of the routes on the next open", () => {
+    window.localStorage.setItem(
+      RECENT_KEY,
+      JSON.stringify([
+        {
+          kind: "table",
+          key: "table:tbl_1",
+          label: "documents",
+          href: "/developer/storage/documents",
+        },
+      ]),
+    );
+    render(<CommandPalette />);
+    expect(screen.getByTestId("palette-group-recent")).toHaveTextContent(
+      "documents",
+    );
+    expect(selectedTestId()).toBe("palette-item-table:tbl_1");
   });
 
   it("skips the tenant-scoped table read when no tenant is active", () => {
@@ -157,31 +295,39 @@ describe("CommandPalette", () => {
     expect(tableCall?.[1]).toBe("skip");
   });
 
-  // The palette's one text field cancelled the console-wide outline and put
-  // nothing in its place. `autoFocus` masks that on open; tab to the mode
-  // toggle and back and the caret is the only thing left saying where focus
-  // is. Vitest runs with `css: false`, so there is no cascade here to measure —
-  // what this holds is that the input does not opt out of the outline the base
-  // layer paints, and that it names no other token in its place. The
-  // repo-wide version of the rule lives in styles/contrast.spec.ts.
+  it("makes a tenant the active scope from the developer console", () => {
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByTestId("palette-item-tenant:globex"));
+    expect(useUiStore.getState().activeTenant).toBe("globex");
+    expect(useUiStore.getState().paletteOpen).toBe(false);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("lands on the developer console when a tenant is picked elsewhere", () => {
+    pathnameRef.current = "/operator/machines";
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByTestId("palette-item-tenant:globex"));
+    expect(useUiStore.getState().activeTenant).toBe("globex");
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/developer" });
+  });
+
+  // The registry input hides the element outline in the utilities layer,
+  // beneath the console's unlayered `:focus-visible` rule, so the outline
+  // still paints. What this holds is that the palette never re-adds a bare
+  // `outline-none` and names no token other than the accent in its place.
   it("keeps the console-wide focus outline on the palette input", () => {
     render(<CommandPalette />);
     const input = screen.getByTestId("command-palette-input");
-    // Anchored on whitespace as well as on `:` and the start of the string:
-    // the two precedents for this assertion (documents-table.spec.tsx,
-    // query-bar.spec.tsx) match `(^|:)outline-none`, which reads a variant
-    // prefix but walks straight past a bare `outline-none` sitting between two
-    // other utilities — which is exactly the form this input carried.
     expect(input.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
     for (const [, token] of input.className.matchAll(
-      /var\((--nimbus-[a-z0-9-]+)\)/g,
+      /var\((--[a-z0-9-]+)\)/g,
     )) {
-      expect(token).toBe("--nimbus-focus");
+      expect(token).toBe("--accent");
     }
   });
 
   // "Refresh current view" used to call window.location.reload(), which is a
-  // different action than the one it names: the socket drops, and the drawer
+  // different action than the one it names: the socket drops, and the panel
   // state and the query bar's filters go with it.
   it("refreshes the view in place rather than reloading the app", () => {
     const reload = vi.fn();
@@ -192,7 +338,6 @@ describe("CommandPalette", () => {
     });
     try {
       render(<CommandPalette />);
-      fireEvent.click(screen.getByTestId("palette-mode-run"));
       fireEvent.click(
         screen.getByTestId("palette-action-Refresh current view"),
       );
@@ -204,18 +349,32 @@ describe("CommandPalette", () => {
     }
   });
 
-  it("says so when the tenant list fails instead of dropping the group", async () => {
+  it("switches the console through the view switcher rule", () => {
+    render(<CommandPalette />);
+    fireEvent.click(
+      screen.getByTestId("palette-action-Switch to Operator console"),
+    );
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/operator" });
+    expect(useUiStore.getState().paletteOpen).toBe(false);
+  });
+
+  it("flips the theme from the actions group", () => {
+    useUiStore.setState({ themeMode: "light", theme: "light" });
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByTestId("palette-action-Switch to dark theme"));
+    expect(useUiStore.getState().theme).toBe("dark");
+    useUiStore.getState().setThemeMode("light");
+  });
+
+  it("says so when the tenant list fails instead of dropping the group", () => {
     tenantListRef.current = { kind: "error", message: "boom" } as never;
     render(<CommandPalette />);
+    expect(screen.getByTestId("palette-group-tenants-error")).toHaveTextContent(
+      "boom",
+    );
     type("acme");
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("palette-group-tenants-error"),
-      ).toHaveTextContent("boom");
-    });
-    tenantListRef.current = {
-      kind: "loaded",
-      tenants: [{ id: "acme", backend: "sqlite" }],
-    };
+    expect(screen.getByTestId("palette-group-tenants-error")).toHaveTextContent(
+      "boom",
+    );
   });
 });

@@ -4,6 +4,8 @@ pub(super) use super::*;
 mod diagnostics;
 #[path = "core_http/documents_and_commits.rs"]
 mod documents_and_commits;
+#[path = "core_http/objects.rs"]
+mod objects;
 #[path = "core_http/queries/mod.rs"]
 mod queries;
 #[path = "core_http/schema.rs"]

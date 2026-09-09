@@ -617,6 +617,7 @@ fn adapterless_enablement() -> crate::start::adapters::AdapterEnablement {
         mongodb: None,
         dynamodb: None,
         s3: None,
+        object_storage: nimbus::ObjectStorageConfig::default(),
     }
 }
 

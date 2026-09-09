@@ -4,39 +4,42 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import {
-  type MouseEvent as ReactMouseEvent,
-  useCallback,
-  useMemo,
-  useState,
-} from "react";
+import { Ellipsis, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";
-import { Td, Th } from "../../components/data-table";
+import {
+  DataTable,
+  dataColumns,
+  type RowAnchor,
+} from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
+import {
+  RowContextMenu,
+  type RowMenuItem,
+} from "../../components/storage/row-context-menu";
 import { fetchTenants } from "../../hooks/use-tenant-list";
 import { tenants as tenantApi } from "../../lib/api-mutations";
-import { cn } from "../../lib/cn";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { TableDoc } from "../../lib/types/table";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
-
-// Matches components/storage/documents-table.tsx: a row click must not hijack
-// the tenant link, the copy chip, or the delete button that sit inside it.
-const INTERACTIVE = "button, a, input, label, [role='menuitem']";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
+import { CreateTenantDialog } from "./tenants/-create-tenant-dialog";
 
 type TenantsSearch = {
+  // `?create=1` opens the create dialog on arrival. The tenant selector
+  // sends a developer here when the server has no tenant at all.
   create?: 1;
 };
 
-type TenantRow = {
+export type TenantRow = {
   tenantId: string;
   tableCount: number;
   totalRows: number;
@@ -45,6 +48,8 @@ type TenantRow = {
 type LoaderResult =
   | { kind: "ok"; tenants: string[]; tables: TableDoc[] }
   | { kind: "error"; message: string };
+
+type MenuState = RowAnchor & { row: TenantRow };
 
 export const Route = createFileRoute("/operator/tenants")({
   validateSearch: (search: Record<string, unknown>): TenantsSearch => ({
@@ -74,61 +79,87 @@ export const Route = createFileRoute("/operator/tenants")({
   component: TenantsPage,
 });
 
+// tenantRows joins the tenant list with the table inventory. A tenant that
+// the list does not name but that owns tables is still a row, so the page
+// never hides data the engine holds.
+export function tenantRows(
+  tenants: ReadonlyArray<string>,
+  tables: ReadonlyArray<TableDoc>,
+): TenantRow[] {
+  const byTenant = new Map<string, { count: number; rows: number }>();
+  for (const table of tables) {
+    if (!table.tenantId) continue;
+    const entry = byTenant.get(table.tenantId) ?? { count: 0, rows: 0 };
+    entry.count += 1;
+    entry.rows += table.rowCount ?? 0;
+    byTenant.set(table.tenantId, entry);
+  }
+  const ids = new Set<string>([...tenants, ...byTenant.keys()]);
+  return Array.from(ids)
+    .sort()
+    .map((id) => ({
+      tenantId: id,
+      tableCount: byTenant.get(id)?.count ?? 0,
+      totalRows: byTenant.get(id)?.rows ?? 0,
+    }));
+}
+
+const col = dataColumns<TenantRow>();
+
 function TenantsPage() {
   const data = Route.useLoaderData();
+  const { create } = Route.useSearch();
   const router = useRouter();
   const navigate = useNavigate();
   const tenants = data.kind === "ok" ? data.tenants : [];
   const tables = data.kind === "ok" ? data.tables : [];
   const serverError = data.kind === "error" ? data.message : null;
 
+  const rows = useMemo(() => tenantRows(tenants, tables), [tenants, tables]);
+
+  const reload = useCallback(() => router.invalidate(), [router]);
+
+  // ---- create ------------------------------------------------------------
+  const [createOpen, setCreateOpen] = useState(create === 1);
   const [creating, setCreating] = useState(false);
-  const [newTenant, setNewTenant] = useState("");
-  const [deletingTenant, setDeletingTenant] = useState<string | null>(null);
-  const [confirmTenant, setConfirmTenant] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | undefined>();
+  useEffect(() => {
+    if (create === 1) setCreateOpen(true);
+  }, [create]);
 
-  const rows: TenantRow[] = useMemo(() => {
-    const byTenant = new Map<string, { count: number; rows: number }>();
-    for (const t of tables) {
-      if (!t.tenantId) continue;
-      const entry = byTenant.get(t.tenantId) ?? { count: 0, rows: 0 };
-      entry.count += 1;
-      entry.rows += t.rowCount ?? 0;
-      byTenant.set(t.tenantId, entry);
+  const openCreate = useCallback(() => {
+    setCreateError(undefined);
+    setCreateOpen(true);
+  }, []);
+
+  // Closing also clears `?create=1`, so a refresh does not reopen a dialog
+  // the operator already dismissed.
+  const closeCreate = useCallback(() => {
+    setCreateOpen(false);
+    setCreateError(undefined);
+    if (create === 1) {
+      void navigate({ to: "/operator/tenants", search: {}, replace: true });
     }
-    const ids = new Set<string>([...tenants, ...byTenant.keys()]);
-    return Array.from(ids)
-      .sort()
-      .map((id) => ({
-        tenantId: id,
-        tableCount: byTenant.get(id)?.count ?? 0,
-        totalRows: byTenant.get(id)?.rows ?? 0,
-      }));
-  }, [tenants, tables]);
-
-  const reload = useCallback(() => {
-    void router.invalidate();
-  }, [router]);
+  }, [create, navigate]);
 
   const handleCreate = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      const id = newTenant.trim();
-      if (!id) return;
+    async (id: string) => {
       setCreating(true);
+      setCreateError(undefined);
       const result = await tenantApi.create(id);
       setCreating(false);
       if (!result.ok) {
-        toast.error(result.error);
+        setCreateError(result.error);
         return;
       }
       toast.success(`Created tenant ${id}`);
-      setNewTenant("");
-      reload();
+      closeCreate();
+      await reload();
     },
-    [newTenant, reload],
+    [closeCreate, reload],
   );
 
+  // ---- open / copy -------------------------------------------------------
   // This page has no detail drawer, so opening a tenant means going to its
   // data rather than revealing a panel beside the table.
   const openTenant = useCallback(
@@ -138,34 +169,147 @@ function TenantsPage() {
     [navigate],
   );
 
-  const confirmTenantRow = rows.find((r) => r.tenantId === confirmTenant);
+  const copyTenantId = useCallback(async (tenantId: string) => {
+    try {
+      await navigator.clipboard.writeText(tenantId);
+      toast("Copied tenant id", { description: tenantId });
+    } catch {
+      toast.error("Clipboard is unavailable in this browser context.");
+    }
+  }, []);
+
+  // ---- delete ------------------------------------------------------------
+  const [confirmTenant, setConfirmTenant] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | undefined>();
+  const confirmRow = rows.find((row) => row.tenantId === confirmTenant);
+
+  const askDelete = useCallback((tenantId: string) => {
+    setDeleteError(undefined);
+    setConfirmTenant(tenantId);
+  }, []);
 
   const runDelete = useCallback(
     async (id: string) => {
-      setDeletingTenant(id);
-      setConfirmTenant(null);
+      setDeleting(true);
+      setDeleteError(undefined);
       const result = await tenantApi.remove(id);
-      setDeletingTenant(null);
+      setDeleting(false);
       if (!result.ok) {
-        toast.error(result.error);
+        // The refusal stays next to the control that drew it; the dialog
+        // is still open with the same tenant named.
+        setDeleteError(result.error);
         return;
       }
       toast.success(`Deleted tenant ${id}`);
-      reload();
+      setConfirmTenant(null);
+      await reload();
     },
     [reload],
   );
 
-  const subDrawerSpec = useMemo<SubDrawerSpec>(
+  // ---- row menu ----------------------------------------------------------
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const menuItems = useCallback(
+    (row: TenantRow): RowMenuItem[] => [
+      {
+        id: "open",
+        label: "Open storage",
+        onSelect: () => openTenant(row.tenantId),
+      },
+      {
+        id: "copy",
+        label: "Copy tenant id",
+        hint: row.tenantId,
+        onSelect: () => void copyTenantId(row.tenantId),
+      },
+      {
+        id: "delete",
+        label: "Delete tenant…",
+        danger: true,
+        onSelect: () => askDelete(row.tenantId),
+      },
+    ],
+    [askDelete, copyTenantId, openTenant],
+  );
+
+  const columns = useMemo(
+    () => [
+      col.accessor("tenantId", {
+        header: "Tenant",
+        size: 320,
+        cell: (ctx) => {
+          const id = ctx.getValue();
+          return (
+            <span className="flex items-center gap-2">
+              <span className="truncate font-mono text-text-1">{id}</span>
+              <CopyChip
+                label="tenant id"
+                value={id}
+                hideUntilHover
+                testid={`tenants-copy-${id}`}
+              >
+                copy
+              </CopyChip>
+            </span>
+          );
+        },
+      }),
+      col.accessor("tableCount", {
+        header: () => <span className="block text-right">Tables</span>,
+        size: 96,
+        cell: (ctx) => <NumberCell value={ctx.getValue()} />,
+      }),
+      col.accessor("totalRows", {
+        header: () => <span className="block text-right">Rows</span>,
+        size: 112,
+        cell: (ctx) => <NumberCell value={ctx.getValue()} />,
+      }),
+      col.display({
+        id: "actions",
+        header: () => <span className="sr-only">Actions</span>,
+        size: 48,
+        enableSorting: false,
+        cell: (ctx) => {
+          const row = ctx.row.original;
+          return (
+            <span className="flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Actions for ${row.tenantId}`}
+                data-testid={`tenants-row-actions-${row.tenantId}`}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setMenu({
+                    row,
+                    x: rect.left,
+                    y: rect.bottom + 2,
+                    element: event.currentTarget,
+                  });
+                }}
+              >
+                <Ellipsis />
+              </Button>
+            </span>
+          );
+        },
+      }),
+    ],
+    [],
+  );
+
+  const subPanelSpec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Tenants",
-      search: { placeholder: "Filter tenants" },
+      search: { placeholder: "Filter tenants", rows: tenants.length },
       children:
         tenants.length === 0 ? (
-          <div className="px-3 py-6 text-xs text-muted">
+          <div className="px-3 py-6 text-xs text-text-3">
             <p>No tenants yet.</p>
-            <p className="mt-2">Use Create tenant above to add one.</p>
+            <p className="mt-2">Create tenant adds the first one.</p>
           </div>
         ) : (
           <ul className="flex flex-col gap-px px-2 py-2">
@@ -174,8 +318,8 @@ function TenantsPage() {
                 <Link
                   to="/developer/storage"
                   search={{ as: tenantId }}
-                  data-testid={`sub-drawer-item-op-${tenantId}`}
-                  className="flex h-8 items-center rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+                  data-testid={`sub-panel-item-op-${tenantId}`}
+                  className="flex h-8 items-center rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
                 >
                   <span className="flex-1 truncate font-mono text-xs">
                     {tenantId}
@@ -188,177 +332,92 @@ function TenantsPage() {
     }),
     [tenants],
   );
-  useContributeSubDrawer(subDrawerSpec);
+  useContributeSubPanel(subPanelSpec);
 
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
-      data-testid="page-storage"
+      data-testid="page-tenants"
     >
       <PageHeader
         title="Tenants"
         subtitle={
           <>
             Tenants own tables and documents. The{" "}
-            <code className="font-mono text-default">_nimbus</code> system
-            tenant is operator-only and not listed here.
+            <code className="font-mono text-text-1">_nimbus</code> system tenant
+            is operator-only and not listed here.
           </>
         }
         trailing={
-          <form
-            onSubmit={handleCreate}
-            className="flex items-center gap-2"
-            data-testid="storage-create-form"
-          >
-            <label htmlFor="storage-create-id" className="sr-only">
-              New tenant id
-            </label>
-            <input
-              id="storage-create-id"
-              type="text"
-              value={newTenant}
-              onChange={(e) => setNewTenant(e.target.value)}
-              placeholder="tenant-id"
-              className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
-              data-testid="storage-create-input"
-              disabled={creating}
-            />
-            <button
-              type="submit"
-              disabled={creating || !newTenant.trim()}
-              className={cn(
-                "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
-                creating || !newTenant.trim()
-                  ? "text-muted"
-                  : "text-default hover:bg-surface",
-              )}
-              data-testid="storage-create-submit"
-            >
-              {creating ? "creating…" : "create tenant"}
-            </button>
-          </form>
+          <Button size="sm" onClick={openCreate} data-testid="tenants-create">
+            <Plus data-icon="inline-start" />
+            Create tenant
+          </Button>
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         {serverError ? (
           <EmptyState
             title="Tenants endpoint unavailable"
             body={
               <>
-                This deployment can&apos;t reach{" "}
-                <code className="font-mono text-default">/api/tenants</code>:{" "}
+                This deployment cannot reach{" "}
+                <code className="font-mono text-text-1">/api/tenants</code>:{" "}
                 <span
-                  className="font-mono text-default"
-                  data-testid="storage-server-error"
+                  className="font-mono text-text-1"
+                  data-testid="tenants-error"
                 >
                   {serverError}
                 </span>
-                . The server may be offline or this build doesn&apos;t ship the
+                . The server may be offline, or this build does not ship the
                 tenants endpoint.
               </>
             }
-            cta={{
-              label: "Retry",
-              onClick: reload,
-            }}
-            testid="storage-server-error-envelope"
+            cta={{ label: "Retry", onClick: () => void reload() }}
+            testid="tenants-error-envelope"
           />
         ) : rows.length === 0 ? (
           <EmptyState
-            title="No tenants"
-            body="Use the form above or POST /api/tenants to create your first tenant. Tables and documents live inside tenants."
-            testid="storage-empty"
+            title="No tenants yet"
+            body="A tenant owns tables, documents, and services. Create one and the console starts writing data to it."
+            cta={{ label: "Create tenant", onClick: openCreate }}
+            testid="tenants-empty"
           />
         ) : (
-          <div className="h-full overflow-auto">
-            <table
-              className="w-full border-collapse text-sm"
-              data-testid="storage-tenants-table"
-            >
-              <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-                <tr>
-                  <Th>Tenant</Th>
-                  <Th align="right">Tables</Th>
-                  <Th align="right">Rows</Th>
-                  <Th align="right">Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={row.tenantId}
-                    className="group cursor-pointer border-t border-app hover:bg-surface-2"
-                    data-testid={`storage-tenant-row-${row.tenantId}`}
-                    onClick={(event: ReactMouseEvent<HTMLTableRowElement>) => {
-                      if ((event.target as HTMLElement).closest(INTERACTIVE)) {
-                        return;
-                      }
-                      openTenant(row.tenantId);
-                    }}
-                  >
-                    <Td>
-                      <Link
-                        to="/developer/storage"
-                        search={{ as: row.tenantId }}
-                        className="font-mono text-default hover:underline"
-                        data-testid={`storage-tenant-link-${row.tenantId}`}
-                      >
-                        {row.tenantId}
-                      </Link>
-                      <span className="ml-2 align-middle">
-                        <CopyChip
-                          label="tenant id"
-                          value={row.tenantId}
-                          hideUntilHover
-                          testid={`storage-tenant-copy-${row.tenantId}`}
-                        >
-                          copy
-                        </CopyChip>
-                      </span>
-                    </Td>
-                    <Td align="right" mono>
-                      {row.tableCount}
-                    </Td>
-                    <Td align="right" mono>
-                      {row.totalRows}
-                    </Td>
-                    <Td align="right">
-                      <button
-                        type="button"
-                        // `aria-disabled`, not `disabled`: this button is what
-                        // the confirm dialog hands focus back to, and it grays
-                        // out in the same commit that closes the dialog. A
-                        // disabled element cannot take focus, so that restore
-                        // was a silent no-op and the operator was left on
-                        // <body> with no focus ring and Tab starting again at
-                        // the top of the page. The handler is what refuses the
-                        // second press.
-                        onClick={() => {
-                          if (deletingTenant === row.tenantId) return;
-                          setConfirmTenant(row.tenantId);
-                        }}
-                        aria-disabled={deletingTenant === row.tenantId}
-                        className={cn(
-                          "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide aria-disabled:cursor-not-allowed",
-                          deletingTenant === row.tenantId
-                            ? "text-muted"
-                            : "text-danger hover:bg-surface-2",
-                        )}
-                        data-testid={`storage-tenant-delete-${row.tenantId}`}
-                      >
-                        {deletingTenant === row.tenantId
-                          ? "deleting…"
-                          : "delete"}
-                      </button>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={columns}
+            data={rows}
+            getRowId={(row) => row.tenantId}
+            ariaLabel="Tenants"
+            onRowActivate={(row) => openTenant(row.tenantId)}
+            onRowContextMenu={(row, anchor) => setMenu({ ...anchor, row })}
+            rowTestid={(row) => `tenants-row-${row.tenantId}`}
+            testid="tenants-table"
+            className="min-h-0 flex-1"
+          />
         )}
       </div>
+
+      {menu ? (
+        <RowContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={`Tenant ${menu.row.tenantId} actions`}
+          items={menuItems(menu.row)}
+          restoreFocus={menu.element}
+          onClose={() => setMenu(null)}
+          testid="tenants-row-menu"
+        />
+      ) : null}
+
+      <CreateTenantDialog
+        open={createOpen}
+        busy={creating}
+        error={createError}
+        onSubmit={(id) => void handleCreate(id)}
+        onCancel={closeCreate}
+      />
 
       <ConfirmDialog
         open={confirmTenant !== null}
@@ -366,28 +425,44 @@ function TenantsPage() {
           confirmTenant ? `Delete tenant "${confirmTenant}"?` : "Delete tenant?"
         }
         description={
-          confirmTenantRow && confirmTenantRow.tableCount > 0 ? (
-            <p>
+          confirmRow && confirmRow.tableCount > 0 ? (
+            <>
               This removes{" "}
-              <span className="font-mono text-default tabular">
-                {confirmTenantRow.tableCount}
+              <span className="font-mono text-text-1 tabular">
+                {confirmRow.tableCount}
               </span>{" "}
-              table{confirmTenantRow.tableCount === 1 ? "" : "s"} and all
-              documents. This action cannot be undone.
-            </p>
+              table{confirmRow.tableCount === 1 ? "" : "s"} and every document
+              in them.
+            </>
           ) : (
-            <p>The tenant has no tables. This action cannot be undone.</p>
+            "The tenant has no tables."
           )
         }
         confirmLabel="Delete"
         danger
-        busy={deletingTenant !== null}
-        onCancel={() => setConfirmTenant(null)}
+        busy={deleting}
+        typedConfirmation={
+          confirmRow && confirmRow.tableCount > 0 && confirmTenant
+            ? { phrase: confirmTenant }
+            : undefined
+        }
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) setConfirmTenant(null);
+        }}
         onConfirm={() => {
           if (confirmTenant) void runDelete(confirmTenant);
         }}
-        testid="storage-delete-tenant-dialog"
+        testid="tenants-delete-dialog"
       />
     </section>
+  );
+}
+
+function NumberCell({ value }: { value: number }) {
+  return (
+    <span className="block text-right font-mono text-xs tabular text-text-2">
+      {value}
+    </span>
   );
 }

@@ -18,7 +18,7 @@ export function LoadingCell<T>({
       return (
         <span
           aria-hidden
-          className="tabular text-muted"
+          className="tabular text-text-3"
           data-testid={testid ? `${testid}-loading` : undefined}
           title="Loading…"
         >
@@ -28,7 +28,7 @@ export function LoadingCell<T>({
     case "offline":
       return (
         <span
-          className="font-mono text-xs uppercase tracking-wide text-muted"
+          className="text-xs font-medium text-text-3"
           data-testid={testid ? `${testid}-offline` : undefined}
           title="Disconnected — value will refresh on reconnect"
         >
@@ -38,7 +38,7 @@ export function LoadingCell<T>({
     case "error":
       return (
         <span
-          className="font-mono text-xs text-danger"
+          className="font-mono text-xs text-error"
           data-testid={testid ? `${testid}-error` : undefined}
           title={value.message}
         >

@@ -33,7 +33,7 @@ export function IntegrationsSection({
       description="Adapter capability matrix. Caveats render inline next to the affected feature."
     >
       {capabilities === undefined ? (
-        <p className="text-sm text-muted">Loading capability matrix…</p>
+        <p className="text-sm text-text-3">Loading capability matrix…</p>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {ADAPTERS.map(({ id, label }) => {
@@ -42,17 +42,17 @@ export function IntegrationsSection({
               <article
                 key={id}
                 data-testid={`settings-adapter-${id}`}
-                className="rounded-md border border-app bg-surface p-3"
+                className="rounded-md border border-border-2 bg-bg-panel p-3"
               >
                 <header className="mb-2 flex items-baseline justify-between">
-                  <span className="text-sm text-default">{label}</span>
-                  <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
+                  <span className="text-sm text-text-1">{label}</span>
+                  <span className="text-xs font-medium text-text-3">
                     {features.length} feature{features.length === 1 ? "" : "s"}
                   </span>
                 </header>
                 {features.length === 0 ? (
                   <p
-                    className="text-xs text-muted"
+                    className="text-xs text-text-3"
                     data-testid={`settings-adapter-${id}-empty`}
                   >
                     Not claimed — no capability records published.
@@ -66,7 +66,7 @@ export function IntegrationsSection({
                         data-testid={`settings-adapter-${id}-feature-${f.feature ?? ""}`}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-xs text-default">
+                          <span className="font-mono text-xs text-text-1">
                             {f.feature ?? "—"}
                           </span>
                           <CapabilityChip status={f.status ?? "unknown"} />
@@ -104,12 +104,6 @@ function CapabilityChip({ status }: { status: string }) {
       ? "text-success"
       : tone === "warning"
         ? "text-warning"
-        : "text-muted";
-  return (
-    <span
-      className={`font-mono text-xs uppercase tracking-[0.14em] ${colorClass}`}
-    >
-      {status}
-    </span>
-  );
+        : "text-text-3";
+  return <span className={`text-xs font-medium ${colorClass}`}>{status}</span>;
 }

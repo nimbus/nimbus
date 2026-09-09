@@ -1,6 +1,4 @@
-import { useEffect, useRef } from "react";
-
-import { cn } from "../../../lib/cn";
+import { cn } from "@/lib/utils";
 
 /**
  * A settings page section: a titled header rule plus its content.
@@ -31,7 +29,7 @@ export function PageSection({
   children: React.ReactNode;
 }) {
   const danger = tone === "danger";
-  const ruleClass = danger ? "border-danger/40" : "border-app";
+  const ruleClass = danger ? "border-error/40" : "border-border-2";
   return (
     <section
       data-testid={testid}
@@ -42,13 +40,13 @@ export function PageSection({
     >
       <header className={cn("border-b pb-2", ruleClass)}>
         <h2
-          className={cn("text-sm", danger ? "text-danger" : "text-default")}
+          className={cn("text-sm", danger ? "text-error" : "text-text-1")}
           style={{ fontSize: "var(--text-base)" }}
         >
           {title}
         </h2>
         {description ? (
-          <p className="text-xs text-muted">{description}</p>
+          <p className="text-xs text-text-3">{description}</p>
         ) : null}
       </header>
       {children}
@@ -81,10 +79,8 @@ export function Definition({
 }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-xs uppercase tracking-[0.14em] text-muted">
-        {label}
-      </dt>
-      <dd className="text-sm text-default">{children}</dd>
+      <dt className="text-xs font-medium text-text-3">{label}</dt>
+      <dd className="text-sm text-text-1">{children}</dd>
     </div>
   );
 }
@@ -97,67 +93,9 @@ export function Cell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-xs uppercase tracking-[0.14em] text-muted">
-        {label}
-      </span>
+    <div className="flex flex-col gap-1 bg-bg-panel px-3 py-2">
+      <span className="text-xs font-medium text-text-3">{label}</span>
       <span className="text-sm">{children}</span>
-    </div>
-  );
-}
-
-export function DialogShell({
-  title,
-  onClose,
-  testid,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  testid: string;
-  children: React.ReactNode;
-}) {
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    previouslyFocusedRef.current =
-      (document.activeElement as HTMLElement | null) ?? null;
-    return () => {
-      previouslyFocusedRef.current?.focus?.();
-    };
-  }, []);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-      data-testid={`${testid}-backdrop`}
-    >
-      <button
-        type="button"
-        aria-label="Close dialog"
-        onClick={onClose}
-        className="absolute inset-0 cursor-default"
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        data-testid={testid}
-        className="relative z-10 w-full max-w-md rounded-md border border-app bg-surface p-4 shadow-lg"
-      >
-        <header className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-sm text-default">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Dismiss"
-            className="font-mono text-xs text-muted hover:text-default"
-          >
-            ✕
-          </button>
-        </header>
-        {children}
-      </div>
     </div>
   );
 }

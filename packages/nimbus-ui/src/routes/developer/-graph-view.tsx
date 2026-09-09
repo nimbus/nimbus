@@ -18,12 +18,14 @@ const HEADER_H = 26;
 const PAD = 28;
 const COL_W = NODE_W + COL_GAP_X;
 
-export function GraphView() {
+// `focus` names the function a page is about; its node is drawn with the
+// accent border so the reader finds it among the columns.
+export function GraphView({ focus }: { focus?: string } = {}) {
   const state = useApiRead<GraphData>("/api/console/graph");
 
   return (
     <div
-      className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
+      className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel"
       data-testid="compute-graph"
     >
       {state.kind === "ok" ? (
@@ -32,7 +34,7 @@ export function GraphView() {
             No functions deployed yet. Deploy an app to see its call graph.
           </Centered>
         ) : (
-          <GraphCanvas graph={state.value} />
+          <GraphCanvas graph={state.value} focus={focus} />
         )
       ) : state.kind === "loading" ? (
         <Centered>Loading call graph…</Centered>
@@ -46,7 +48,7 @@ export function GraphView() {
   );
 }
 
-function GraphCanvas({ graph }: { graph: GraphData }) {
+function GraphCanvas({ graph, focus }: { graph: GraphData; focus?: string }) {
   const router = useRouter();
 
   const layout = useMemo(() => {
@@ -113,7 +115,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--nimbus-muted)" />
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-3)" />
         </marker>
       </defs>
 
@@ -123,11 +125,9 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
           key={module}
           x={PAD + mi * COL_W}
           y={PAD}
-          className="font-mono"
-          fontSize="10"
-          letterSpacing="1.4"
-          fill="var(--nimbus-muted)"
-          style={{ textTransform: "uppercase" }}
+          fontSize="12"
+          fontWeight="500"
+          fill="var(--text-3)"
         >
           {module}
         </text>
@@ -148,7 +148,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
             key={`${edge.from}->${edge.to}`}
             d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`}
             fill="none"
-            stroke="var(--nimbus-muted)"
+            stroke="var(--text-3)"
             strokeWidth="1.5"
             strokeOpacity="0.7"
             markerEnd="url(#nimbus-graph-arrow)"
@@ -160,8 +160,13 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
       {graph.nodes.map((node) => {
         const p = layout.pos.get(node.id);
         if (!p) return null;
+        const focused = focus !== undefined && node.id === focus;
         return (
-          <g key={node.id} transform={`translate(${p.x}, ${p.y})`}>
+          <g
+            key={node.id}
+            transform={`translate(${p.x}, ${p.y})`}
+            data-focused={focused ? "true" : undefined}
+          >
             <a
               href={functionLocation(node.id).href}
               data-testid={`graph-node-${node.id}`}
@@ -185,15 +190,16 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
                 width={NODE_W}
                 height={NODE_H}
                 rx="6"
-                fill="var(--nimbus-surface-2)"
-                stroke="var(--nimbus-border-strong)"
+                fill="var(--bg-raised)"
+                stroke={focused ? "var(--accent)" : "var(--border-3)"}
+                strokeWidth={focused ? 2 : 1}
               />
               <text
                 x={10}
                 y={NODE_H / 2 + 4}
                 className="font-mono"
                 fontSize="12"
-                fill="var(--nimbus-text)"
+                fill="var(--text-1)"
               >
                 {node.name}
               </text>
@@ -207,7 +213,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-40 items-center justify-center px-6 text-center text-xs text-muted">
+    <div className="flex h-40 items-center justify-center px-6 text-center text-xs text-text-3">
       {children}
     </div>
   );

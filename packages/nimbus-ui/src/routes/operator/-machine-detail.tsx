@@ -3,7 +3,7 @@ import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { CopyChip } from "../../components/copy-chip";
-import { StateChip } from "../../components/state-chip";
+import { StatePill } from "../../components/pill";
 import { RelativeTime } from "../../components/time";
 import { formatMemory, shortId } from "../../lib/format";
 import type { EventDoc, MachineDoc } from "./-machine-types";
@@ -28,6 +28,7 @@ export function MachineDetail({
     level: null,
     category: null,
     correlationId: null,
+    tenantId: null,
     limit: 100,
   });
   const events = useMemo<EventDoc[] | undefined>(() => {
@@ -49,19 +50,19 @@ export function MachineDetail({
       // width so it stays whole and closeable at any width; the machines table
       // beside it still yields its space first, because its `flex-1` basis of 0
       // absorbs no shrink. The storage inspectors carry the same constraint.
-      className="flex w-[420px] min-w-0 flex-col gap-3 overflow-y-auto rounded-md border border-app bg-surface p-4"
+      className="flex w-[420px] min-w-0 flex-col gap-3 overflow-y-auto rounded-md border border-border-2 bg-bg-panel p-4"
       data-testid="machines-detail"
     >
       <header className="flex items-start justify-between gap-2">
         <div>
-          <h2 className="font-mono text-base text-default">{machine.name}</h2>
-          <p className="text-xs text-muted">{machine.kind ?? "machine"}</p>
+          <h2 className="font-mono text-base text-text-1">{machine.name}</h2>
+          <p className="text-xs text-text-3">{machine.kind ?? "machine"}</p>
         </div>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close machine detail"
-          className="rounded px-2 py-1 font-mono text-xs text-muted hover:bg-surface-2 hover:text-default"
+          className="rounded-xs px-2 py-1 font-mono text-xs text-text-3 hover:bg-bg-raised hover:text-text-1"
         >
           close
         </button>
@@ -69,10 +70,10 @@ export function MachineDetail({
 
       <Section title="Status">
         <KvRow label="state">
-          <StateChip state={machine.state} />
+          <StatePill state={machine.state} />
         </KvRow>
         <KvRow label="provider">
-          <span className="font-mono text-xs text-default">
+          <span className="font-mono text-xs text-text-1">
             {machine.provider ?? "—"}
           </span>
         </KvRow>
@@ -99,17 +100,17 @@ export function MachineDetail({
 
       <Section title="Resources">
         <KvRow label="cpus">
-          <span className="tabular font-mono text-xs text-default">
+          <span className="tabular font-mono text-xs text-text-1">
             {machine.resources?.cpus ?? "—"}
           </span>
         </KvRow>
         <KvRow label="memory">
-          <span className="tabular font-mono text-xs text-default">
+          <span className="tabular font-mono text-xs text-text-1">
             {formatMemory(machine.resources?.memoryMiB)}
           </span>
         </KvRow>
         <KvRow label="disk">
-          <span className="tabular font-mono text-xs text-default">
+          <span className="tabular font-mono text-xs text-text-1">
             {machine.resources?.diskGiB !== undefined
               ? `${machine.resources.diskGiB} GiB`
               : "—"}
@@ -119,9 +120,9 @@ export function MachineDetail({
 
       <Section title={`Services (${services?.length ?? 0})`}>
         {services === undefined ? (
-          <span className="text-xs text-muted">Loading…</span>
+          <span className="text-xs text-text-3">Loading…</span>
         ) : services.length === 0 ? (
-          <span className="text-xs text-muted">
+          <span className="text-xs text-text-3">
             No services bound to this machine.
           </span>
         ) : (
@@ -132,10 +133,10 @@ export function MachineDetail({
                 className="flex items-center justify-between gap-2 font-mono text-xs"
                 data-testid={`machines-detail-service-${svc.name ?? svc._id}`}
               >
-                <span className="truncate text-default">
+                <span className="truncate text-text-1">
                   {svc.name ?? svc._id}
                 </span>
-                <StateChip state={svc.state} />
+                <StatePill state={svc.state} />
               </li>
             ))}
           </ul>
@@ -144,9 +145,9 @@ export function MachineDetail({
 
       <Section title="Recent events">
         {events === undefined ? (
-          <span className="text-xs text-muted">Loading…</span>
+          <span className="text-xs text-text-3">Loading…</span>
         ) : events.length === 0 ? (
-          <span className="text-xs text-muted">No events recorded yet.</span>
+          <span className="text-xs text-text-3">No events recorded yet.</span>
         ) : (
           <ul
             className="flex flex-col gap-1"
@@ -164,8 +165,8 @@ export function MachineDetail({
                   key={evt._id}
                   className="flex items-baseline gap-2 font-mono text-xs"
                 >
-                  <StateChip state={evt.level ?? "info"} showDot={false} />
-                  <span className="flex-1 truncate text-default">
+                  <StatePill state={evt.level ?? "info"} />
+                  <span className="flex-1 truncate text-text-1">
                     {evt.message ?? evt.category ?? "(event)"}
                   </span>
                   {ts !== null ? <RelativeTime epochMs={ts} /> : null}
@@ -188,9 +189,7 @@ function Section({
 }) {
   return (
     <section className="flex flex-col gap-1.5">
-      <h3 className="text-xs uppercase tracking-[0.14em] text-muted">
-        {title}
-      </h3>
+      <h3 className="text-xs font-medium text-text-3">{title}</h3>
       <div className="flex flex-col gap-1">{children}</div>
     </section>
   );
@@ -205,9 +204,7 @@ function KvRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="font-mono text-xs uppercase tracking-wide text-muted">
-        {label}
-      </span>
+      <span className="text-xs font-medium text-text-3">{label}</span>
       <span className="min-w-0 text-right">{children}</span>
     </div>
   );

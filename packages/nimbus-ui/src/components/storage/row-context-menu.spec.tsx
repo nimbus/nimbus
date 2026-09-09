@@ -94,7 +94,7 @@ describe("RowContextMenu", () => {
     }
   });
 
-  it("closes on an outside pointer press and on a scroll", () => {
+  it("closes on an outside pointer press and on a scroll", async () => {
     for (const fire of [
       () => fireEvent.pointerDown(document.body),
       () => fireEvent.scroll(document.body),
@@ -110,10 +110,34 @@ describe("RowContextMenu", () => {
           testid="row-menu"
         />,
       );
+      await nextFrame();
       fire();
       expect(onClose).toHaveBeenCalled();
       view.unmount();
     }
+  });
+
+  // A browser dispatches scroll events asynchronously, so the scroll-into-
+  // view that precedes a press on an actions button at the table edge lands
+  // on the frame the menu mounts. Measured in Chromium: the menu opened and
+  // closed on the same frame, so the button appeared dead.
+  it("ignores a scroll that was already pending when it opened", async () => {
+    const onClose = vi.fn();
+    render(
+      <RowContextMenu
+        x={10}
+        y={10}
+        label="Row actions"
+        items={items()}
+        onClose={onClose}
+        testid="row-menu"
+      />,
+    );
+    fireEvent.scroll(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+    await nextFrame();
+    fireEvent.scroll(document.body);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   // Dismissal must not key off `contextmenu`: in a real browser the menu is
@@ -217,3 +241,9 @@ describe("RowContextMenu", () => {
     expect(screen.getAllByRole("menuitem")).toHaveLength(3);
   });
 });
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}

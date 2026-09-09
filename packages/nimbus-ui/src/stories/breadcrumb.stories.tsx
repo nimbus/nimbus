@@ -50,7 +50,7 @@ export const LongPathTruncation: Story = {
     ],
   },
   render: (args) => (
-    <div className="w-[420px] rounded border border-app bg-surface px-3 py-2">
+    <div className="w-[420px] rounded-xs border border-border-2 bg-bg-panel px-3 py-2">
       <Breadcrumb {...args} />
     </div>
   ),

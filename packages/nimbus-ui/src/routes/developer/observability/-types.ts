@@ -1,26 +1,30 @@
-// One canonical declaration of the observability tab universe. The full
-// union (`ObservabilityTab`) is what shows up in the tab strip; the active
-// subset (`ActiveObservabilityTab`) is what the route's `tab` search param
-// is allowed to take. Both unions derive from the literal arrays below so
-// adding a tab is a single-line change.
-export const ACTIVE_OBSERVABILITY_TABS = ["logs", "runs"] as const;
-export const DISABLED_OBSERVABILITY_TABS = ["events", "errors"] as const;
+// One canonical declaration of the observability tabs. The route's `tab`
+// search param and the tab strip both derive from this list, so adding a
+// tab is a single-line change. Traces and Errors join it when their pages
+// exist (UIR20); until then the console does not name them.
+export const OBSERVABILITY_TABS = [
+  { id: "logs", label: "Logs" },
+  { id: "runs", label: "Runs" },
+] as const;
 
-export type ActiveObservabilityTab = (typeof ACTIVE_OBSERVABILITY_TABS)[number];
-export type DisabledObservabilityTab =
-  (typeof DISABLED_OBSERVABILITY_TABS)[number];
-export type ObservabilityTab =
-  | ActiveObservabilityTab
-  | DisabledObservabilityTab;
+export type ObservabilityTab = (typeof OBSERVABILITY_TABS)[number]["id"];
 
+// The developer and operator observability routes share one search shape,
+// so a link from one to the other carries its filters across unchanged and
+// the tab components read the same object on both surfaces.
 export type ObservabilitySearch = {
-  tab?: ActiveObservabilityTab;
+  tab?: ObservabilityTab;
+  // The tenant scope. Absent means "the surface's default": the active
+  // tenant on the developer page, every tenant on the operator page.
+  tenant?: string;
   level?: string;
   category?: string;
   source?: string;
   correlationId?: string;
   status?: string;
   functionPath?: string;
+  // The run whose detail sheet is open on the Runs tab.
+  run?: string;
   follow?: boolean;
   pauseOnError?: boolean;
 };
@@ -28,6 +32,7 @@ export type ObservabilitySearch = {
 export type EventDoc = {
   _id: string;
   _creationTime?: number;
+  tenantId?: string;
   source?: string;
   level?: string;
   category?: string;
@@ -40,6 +45,7 @@ export type EventDoc = {
 export type RunDoc = {
   _id: string;
   _creationTime?: number;
+  tenantId?: string;
   bundleId?: string;
   functionPath?: string;
   kind?: string;
@@ -49,8 +55,8 @@ export type RunDoc = {
   startedAt?: number;
 };
 
-export function parseTab(value: unknown): ActiveObservabilityTab | undefined {
-  return ACTIVE_OBSERVABILITY_TABS.find((id) => id === value);
+export function parseTab(value: unknown): ObservabilityTab | undefined {
+  return OBSERVABILITY_TABS.find((tab) => tab.id === value)?.id;
 }
 
 export function parseString(value: unknown): string | undefined {
@@ -63,4 +69,35 @@ export function parseBool(value: unknown): boolean | undefined {
   if (value === true || value === "1" || value === "true") return true;
   if (value === false || value === "0" || value === "false") return false;
   return undefined;
+}
+
+// Both routes validate through this one parser so a search object built on
+// one surface is valid on the other.
+export function parseObservabilitySearch(
+  search: Record<string, unknown>,
+): ObservabilitySearch {
+  return {
+    tab: parseTab(search.tab),
+    tenant: parseString(search.tenant),
+    level: parseString(search.level),
+    category: parseString(search.category),
+    source: parseString(search.source),
+    correlationId: parseString(search.correlationId),
+    status: parseString(search.status),
+    functionPath: parseString(search.functionPath),
+    run: parseString(search.run),
+    follow: parseBool(search.follow),
+    pauseOnError: parseBool(search.pauseOnError),
+  };
+}
+
+// The log line facets. Any of them set means the empty pane is a filter
+// outcome, not a statement about the deployment.
+export function hasLineFilters(search: ObservabilitySearch): boolean {
+  return (
+    search.level !== undefined ||
+    search.category !== undefined ||
+    search.source !== undefined ||
+    search.correlationId !== undefined
+  );
 }

@@ -95,3 +95,29 @@ export function formatMemory(mib: number | undefined | null): string {
   }
   return `${mib} MiB`;
 }
+
+/** Format a count for prose and table footers: `1,000`. */
+export function formatCount(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/**
+ * Format a byte count the way the rest of the console sizes memory: binary
+ * units, one fractional digit under ten, none above. `0 B` stays honest
+ * for an empty object.
+ */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === undefined || bytes === null || !Number.isFinite(bytes)) {
+    return "—";
+  }
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = Math.max(0, bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  if (unit === 0) return `${Math.round(value)} B`;
+  const digits = value < 10 && value % 1 !== 0 ? 1 : 0;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}

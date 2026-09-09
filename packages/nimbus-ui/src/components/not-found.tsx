@@ -5,7 +5,7 @@ import { EmptyState } from "./empty-state";
 
 /**
  * Router-level not-found component. It renders inside the root `<Outlet/>`,
- * so the top nav, primary drawer, tenant selector and status bar stay mounted
+ * so the sidebar and tenant selector stay mounted
  * and the operator keeps a working way out of a stale link.
  */
 export function NotFound() {
@@ -18,7 +18,7 @@ export function NotFound() {
       body={
         <>
           Nothing is mounted at{" "}
-          <code className="rounded border border-app bg-surface-2 px-1 font-mono text-default">
+          <code className="rounded-xs border border-border-2 bg-bg-raised px-1 font-mono text-text-1">
             {pathname}
           </code>
           . The link is stale, or the view moved to a different path.

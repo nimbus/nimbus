@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { cn } from "../lib/cn";
+import { cn } from "@/lib/utils";
 
 /**
  * Canonical page header for every route surface: a title, an optional muted
@@ -29,7 +29,7 @@ export function PageHeader({
     >
       <div className="min-w-0">
         <h1
-          className="text-xl text-default"
+          className="text-xl text-text-1"
           style={{ fontSize: "var(--text-xl)" }}
         >
           {title}
@@ -46,7 +46,7 @@ export function PageHeader({
         {subtitle ? (
           <p
             data-slot="page-subtitle"
-            className="max-w-[110ch] text-sm text-muted"
+            className="max-w-[110ch] text-sm text-text-3"
           >
             {subtitle}
           </p>

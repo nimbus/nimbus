@@ -6,7 +6,7 @@ use nimbus_core::{
     TenantId, Timestamp, WriteOp, WriteOpType,
 };
 use nimbus_storage::{
-    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectConditionOutcome,
+    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBucketSummary, ObjectConditionOutcome,
     ObjectDeleteConditionOutcome, ObjectDeleteExpectedState, ObjectExpectedState, ObjectManifest,
     ObjectMultipartUpload, ObjectUploadConditionOutcome, ObjectUploadExpectedState,
     multipart_upload_document_id, object_manifest_document_id,
@@ -334,6 +334,17 @@ impl TenantObjectMeta {
         self.runtime
             .read_storage()
             .execute(move |store| store.list_object_manifests(&bucket, &prefix, limit))
+            .await
+    }
+
+    /// Every bucket at least one manifest names, with object counts and byte
+    /// totals. Buckets have no row of their own, so this is a scan over the
+    /// manifest table; it serves operator surfaces, not the S3 hot path.
+    pub async fn list_buckets(&self) -> Result<Vec<ObjectBucketSummary>> {
+        let _operation = self.runtime.enter_operation(&self.tenant_id)?;
+        self.runtime
+            .read_storage()
+            .execute(move |store| store.list_object_buckets())
             .await
     }
 

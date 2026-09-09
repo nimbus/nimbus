@@ -2,7 +2,16 @@ import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { documents, machines, schema, system, tenants } from "./api-mutations";
+import {
+  documents,
+  machines,
+  objects,
+  schedules,
+  schema,
+  services,
+  system,
+  tenants,
+} from "./api-mutations";
 
 const server = setupServer();
 
@@ -212,6 +221,113 @@ describe("api-mutations request shapes", () => {
   });
 });
 
+describe("api-mutations services and schedules", () => {
+  it("service start and stop POST no body to the lifecycle routes", async () => {
+    const seen: Array<{ url: string; body: string }> = [];
+    server.use(
+      http.post(
+        "*/api/tenants/:t/services/:name/:action",
+        async ({ request }) => {
+          seen.push({ url: request.url, body: await request.text() });
+          return HttpResponse.json({ name: "api", state: "starting" });
+        },
+      ),
+    );
+    const start = await services.start("acme", "api");
+    const stop = await services.stop("acme", "web api");
+    expect(start).toEqual({
+      ok: true,
+      data: { name: "api", state: "starting" },
+    });
+    expect(stop.ok).toBe(true);
+    expect(seen.map((s) => new URL(s.url).pathname)).toEqual([
+      "/api/tenants/acme/services/api/start",
+      "/api/tenants/acme/services/web%20api/stop",
+    ]);
+    expect(seen.map((s) => s.body)).toEqual(["", ""]);
+  });
+
+  it("service restart sends the source generation and request id in camelCase", async () => {
+    let body: unknown;
+    server.use(
+      http.post(
+        "*/api/tenants/:t/services/:name/restart",
+        async ({ request }) => {
+          body = await request.json();
+          return HttpResponse.json(
+            { request_id: "r1", disposition: "accepted" },
+            { status: 202 },
+          );
+        },
+      ),
+    );
+    const result = await services.restart("acme", "api", {
+      sourceGeneration: 3,
+      requestId: "r1",
+    });
+    expect(result.ok).toBe(true);
+    expect(body).toEqual({ sourceGeneration: 3, requestId: "r1" });
+  });
+
+  it("runNow POSTs run_after_ms 0 with the mutation and returns the job id", async () => {
+    let body: unknown;
+    server.use(
+      http.post("*/api/tenants/:t/schedule", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ job_id: "job-9" }, { status: 201 });
+      }),
+    );
+    const mutation = {
+      type: "insert" as const,
+      table: "pings",
+      fields: { at: 1 },
+    };
+    const result = await schedules.runNow("acme", mutation);
+    expect(result).toEqual({ ok: true, data: { job_id: "job-9" } });
+    expect(body).toEqual({ run_after_ms: 0, mutation });
+  });
+
+  it("cancel DELETEs the job route and removeCron DELETEs the cron route", async () => {
+    const urls: string[] = [];
+    server.use(
+      http.delete("*/api/tenants/:t/schedule/:job", ({ request }) => {
+        urls.push(new URL(request.url).pathname);
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.delete("*/api/tenants/:t/crons/:name", ({ request }) => {
+        urls.push(new URL(request.url).pathname);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    expect((await schedules.cancel("acme", "job:1")).ok).toBe(true);
+    expect((await schedules.removeCron("acme", "sweep")).ok).toBe(true);
+    expect(urls).toEqual([
+      "/api/tenants/acme/schedule/job%3A1",
+      "/api/tenants/acme/crons/sweep",
+    ]);
+  });
+
+  it("listCrons GETs the tenant cron list as typed data", async () => {
+    server.use(
+      http.get("*/api/tenants/:t/crons", () =>
+        HttpResponse.json({
+          crons: [
+            {
+              name: "sweep",
+              schedule: { type: "interval", seconds: 60 },
+              mutation: { type: "insert", table: "pings", fields: {} },
+              enabled: true,
+            },
+          ],
+        }),
+      ),
+    );
+    const result = await schedules.listCrons("acme");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.crons?.[0]?.name).toBe("sweep");
+  });
+});
+
 describe("api-mutations request-fidelity", () => {
   it("omits Content-Type on no-body writes but sends it when a body is present", async () => {
     let dropCt: string | null = "unset";
@@ -262,5 +378,74 @@ describe("api-mutations request-fidelity", () => {
     );
     await system.rotateToken("old-token");
     expect(auth).toBe("Bearer old-token");
+  });
+});
+
+describe("objects", () => {
+  it("lists buckets and objects under a prefix on the native object route", async () => {
+    let listUrl = "";
+    server.use(
+      http.get("*/api/tenants/:t/objects", () =>
+        HttpResponse.json({
+          buckets: [{ bucket: "assets", objectCount: 2, totalBytes: 12 }],
+        }),
+      ),
+      http.get("*/api/tenants/:t/objects/:bucket", ({ request }) => {
+        listUrl = request.url;
+        return HttpResponse.json({
+          bucket: "assets",
+          prefix: "docs/",
+          objects: [],
+          truncated: false,
+        });
+      }),
+    );
+    const buckets = await objects.buckets("demo");
+    expect(buckets).toEqual({
+      ok: true,
+      data: { buckets: [{ bucket: "assets", objectCount: 2, totalBytes: 12 }] },
+    });
+    const listing = await objects.list("demo", "assets", "docs/", 500);
+    expect(listing.ok).toBe(true);
+    expect(listUrl).toMatch(/\/api\/tenants\/demo\/objects\/assets\?/);
+    expect(new URL(listUrl).searchParams.get("prefix")).toBe("docs/");
+    expect(new URL(listUrl).searchParams.get("limit")).toBe("500");
+  });
+
+  it("keeps the slashes of a key in the address and escapes the rest", () => {
+    expect(objects.url("demo", "assets", "docs/hello world.txt")).toBe(
+      "/api/tenants/demo/objects/assets/docs/hello%20world.txt",
+    );
+    expect(objects.url("demo", "a b", "x#y.txt", { download: true })).toBe(
+      "/api/tenants/demo/objects/a%20b/x%23y.txt?download=1",
+    );
+  });
+
+  it("reads an object as text and reports a missing one by status", async () => {
+    server.use(
+      http.get("*/api/tenants/:t/objects/:bucket/hello.txt", () =>
+        HttpResponse.text("hello", { status: 200 }),
+      ),
+      http.get("*/api/tenants/:t/objects/:bucket/gone.txt", () =>
+        HttpResponse.json({ error: { message: "missing" } }, { status: 404 }),
+      ),
+    );
+    expect(await objects.readText("demo", "assets", "hello.txt")).toEqual({
+      ok: true,
+      data: "hello",
+    });
+    const gone = await objects.readText("demo", "assets", "gone.txt");
+    expect(gone.ok).toBe(false);
+    if (!gone.ok) expect(gone.status).toBe(404);
+  });
+
+  it("deletes one object", async () => {
+    server.use(
+      http.delete("*/api/tenants/:t/objects/:bucket/docs/a.txt", () =>
+        HttpResponse.json(null, { status: 204 }),
+      ),
+    );
+    const result = await objects.remove("demo", "assets", "docs/a.txt");
+    expect(result.ok).toBe(true);
   });
 });

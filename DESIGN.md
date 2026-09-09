@@ -109,13 +109,13 @@ view.
 | Compute | Request-scoped execution | Functions list, function detail, function runner, runs |
 | Services | Long-running placement (this tenant's view) | Compose-declared services in the active tenant, lifecycle state, endpoints, restart policy |
 | Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
-| Storage | Schema-aware data | Tables, document browser, schema panel, indexes, query builder |
-| Files | Opaque bytes / blob storage | Buckets, object browser, presigned URLs (placeholder in this baseline) |
+| Storage | Schema-aware data | Tables, document browser, schema tab, indexes tab, query builder |
+| Files | Opaque bytes / blob storage | Buckets, object browser, upload, preview, download over the console session |
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
-| Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding |
+| Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding (all planned; the page is one empty state until the first tenant-scoped setting has an API) |
 
 8 sections. Every section is tenant-scoped — the active tenant comes from
-the top-nav selector, not the URL. Services is **dual-persona** (it also
+the sidebar tenant selector, not the URL. Services is **dual-persona** (it also
 appears in the Operator IA below); both consoles back onto the same
 `ServicesTable` and `ServiceDoc` shape, with the Developer side filtered
 to the active tenant. See
@@ -131,15 +131,15 @@ IA decision rationale.
 | Machines | Outer dev-VM lifecycle (macOS/Windows) | Machine list, detail (boot image, upgrade state, services placed on it), start/stop/restart/SSH/OS apply/remove. A machine is a guest VM that hosts sandboxes — **not** a cluster node. Absent on pure-Linux nodes. |
 | Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
 | Services | Long-running placement (cross-tenant) | Compose-declared services across every tenant, service catalog, lifecycle state, endpoints, restart policy. **Dual-persona** with the Developer IA above; both sides share `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle |
-| Observability | Cross-tenant debugging and audit | Logs, events, traces, error groups — default cross-tenant; optional `?tenant=<id>` filter |
-| Settings (server) | Server administration | General, endpoints, deploys, token/session, environment, integrations (adapter capability matrices), shutdown |
+| Observability | Cross-tenant debugging and audit | Logs, runs, and later events, traces, error groups — default cross-tenant; the tenant facet narrows through `?tenant=<id>` |
+| Settings (server) | Server administration | General, system, deploys, integrations (adapter capability matrices), shutdown; endpoints, token/session, and environment are planned |
 
 7 sections. Server-wide by default. Tenant selector appears only on
 `/operator/observability`.
 
 ### Secondary navigation rules
 
-- Within each view, every primary section can opt into a **sub-drawer**
+- Within each view, every primary section can opt into a **sub-panel**
   to its right with two modes: **static menu** (fixed list of sub-pages,
   e.g. Settings, Network) or **dynamic list** (resource list fed by a
   query, e.g. Storage tables, Compute functions, Tenants, Machines).
@@ -167,16 +167,32 @@ remain authoritative for the Developer side.
 
 ### Overview (Developer)
 
-The Overview screen is a dense control panel:
+The Overview answers one question first, then the three things a developer
+comes here for. Top to bottom:
 
-- Health: server status, uptime, version, storage backend, adapter listeners.
-- Compute: active functions, recent runs, failed runs, scheduler lag.
-- Storage: tenant count, table/collection count, write activity, index health.
-- Network: HTTP, WebSocket, MongoDB, Firebase, machine API listener state.
-- Machines and services: state counts with direct links to details.
-- Recent activity: unified event feed with level, source, request ID, time.
+- Headline: the mascot in the state the server is in (idle, working, error,
+  empty) and one sentence that says why, for example "The server is up. 2
+  runs failed in the last 24 hours." Under it, one mono fact line: tenant,
+  server URL, version. A fact the server did not report is left out.
+- Connect: the server URL and one snippet per client, as tabs: curl against
+  the native HTTP API, the TypeScript SDK, the Convex client. Each snippet
+  is addressed to the active tenant and names a function and a table the
+  server actually has, so it runs as pasted.
+- Stats: one row of at most four tiles — functions, tables, runs in the last
+  24 hours, errors in the last 24 hours — each a link to the page that owns
+  it. Runs and errors carry an hourly sparkline from the chart seam. A tile
+  with nothing behind it is not shown.
+- Recent runs: the five newest runs as a table, with a link to the Runs tab
+  of Observability.
 
-No large greeting, hero illustration, or marketing copy.
+A server with no functions, no tables in the active tenant, and no runs shows
+the first-run panel in place of the stats and the runs table: the empty
+mascot, three steps (install the CLI, run `nimbus dev` in an app, call a
+function) with the command for each, and live completion from the same
+queries that fill the stats. The connect panel stays.
+
+No greeting, no marketing copy, and no tile for a number the server has not
+reported.
 
 ### Compute (Developer)
 
@@ -184,31 +200,39 @@ Compute owns request-scoped function execution for the active tenant.
 Service lifecycle lives in `Services` — a dual-persona surface present
 in both consoles. Compute and Services are siblings, not parent/child.
 
-- Compute has two **compute types**, Functions and Sandboxes, selected in the
-  secondary nav (the sub-drawer); Services and Sessions stay top-level. Search
-  and filters live in the main section's toolbar (shadcn data-table convention).
-- Functions: a bundle → module → function **tree** with folder/file/kind icons,
-  built from the deployed functions. Open one for its detail (Statistics,
-  Source, Logs, Runs).
+- The sub-panel is the **function tree**: bundle → module → function, built
+  from the deployed functions, with a filter box at the top. The same tree
+  backs the Compute page and every function page, so the list an operator is
+  scanning keeps its shape when they open an item from it.
+- The Compute page has three **page tabs**: Functions (a DataTable of path,
+  kind, adapter, last status, last run), Sandboxes (live runtime state, no
+  placeholder data), and Graph (the call graph of the deployed bundle). Search
+  and filters stay in the sub-panel; the table has no second toolbar.
+- A function page has four tabs: **Overview** (kind, adapter, bundle, last
+  status, last run, and the argument list read from the validator), **Source**,
+  **Runs**, and **Graph** (the call graph focused on this function). Logs are
+  not a function tab; Observability owns logs and the run page links there.
 - Source tab: the deployed module source, served from the **content-addressed
   source-package store** (`GET /api/console/source`), hash-verified, syntax-
   highlighted, with the source-package digest shown as provenance. Source is the
   read-artifact (original TS), distinct from the runtime bundle; it is captured
   at `nimbus deploy` and deduplicated by content digest. A navigable
-  **DEFINES / CALLS** symbols strip (oxc structural index — exports + `api.*` /
-  `internal.*` references) links across functions.
-- Function runner: schema-aware argument editor, identity/mock identity
-  controls where supported, query result panel, logs/result correlation,
-  and clear execution mode for queries, mutations, actions, HTTP
-  handlers, and scheduled functions.
-- Runs: status, function/action/route, request ID, duration, error,
-  logs, trace waterfall. Filtered to the active tenant.
+  **DEFINES / CALLS / CALLED BY** symbols strip (oxc structural index — exports
+  + `api.*` / `internal.*` references) links across functions. When no source
+  was captured the tab is an empty state that shows the exact
+  `nimbus dev --app-dir <dir>` command with a copy control.
+- Function runner: the bottom drawer of every function page. See
+  [Function Runner](#function-runner) for the contract.
+- Runs: a DataTable of status, run id, duration, and start time. A row opens
+  the run page, whose breadcrumb is Compute › Runs › id and whose kind is a
+  category pill and whose timings are monospaced. Filtered to the active
+  tenant.
 - Sandboxes: live runtime state (not a deployment record); the view reads from
   the sandbox runtime (wiring in progress) — no placeholder data.
 
 Deploys are gated by a client-side TypeScript typecheck (`--typecheck
 enable|try|disable`, mirroring `convex deploy`): codegen → bundle → typecheck,
-aborting on type errors. Tenant is implicit from the top-nav selector — the
+aborting on type errors. Tenant is implicit from the sidebar tenant selector — the
 runner does not show a tenant chooser.
 
 Convex-like function runner behavior is useful, but it must be Nimbus-aware:
@@ -219,33 +243,58 @@ play (query / mutation / action / HTTP route / scheduled job).
 
 Services owns long-running placement for the active tenant. Same surface
 as the Operator-side `/operator/services` (see §Services below); the
-Developer side filters `ServicesTable` to the active tenant and hides
+Developer side renders `ServicesTable` for the active tenant and hides
 the cross-tenant column.
 
-- Service list: name, kind, lifecycle state, placement (machine),
-  health, endpoints, restart policy. Scoped to the active tenant.
-- Service detail: backing image, environment, ports, dependencies,
-  lifecycle history. Cross-links to **Operator → Machines** for the
-  underlying machine record.
-- Actions: start, stop, restart, drain, remove — gated by tenant
-  permissions, not visible if the active tenant lacks placement rights.
+- Service list on `DataTable`: name, lifecycle state as a `StatePill`,
+  kind, placement (machine), endpoint count, updated. Scoped to the
+  active tenant. Row activation opens the detail; right-click or the
+  trailing actions button opens a `RowContextMenu` with `Open service`,
+  the lifecycle actions the state allows, and `Show logs` (the
+  Observability Logs tab narrowed to `source=service`).
+- Lifecycle actions: `start`, `stop`, `restart`. A live service offers
+  stop and restart, a stopped one offers start, a failed one offers
+  start and restart, and a service in flight offers none. The row shows
+  the optimistic state (`starting`, `stopping`, `restarting`) while the
+  request is out, returns to the real state when it settles, and keeps
+  the real state plus the refusal text under the pill when the route
+  says no. `restart` sends the row's `sourceGeneration` and a fresh
+  request id.
+- Service detail: header with kind, state pill, bundle chip, and the
+  same lifecycle buttons; tabs `Overview` (stats, endpoints, health),
+  `Logs` (the live `source=service` event stream for the tenant, with a
+  link to Observability), `Config` (bundle and endpoints). Cross-links
+  to **Operator → Machines** for the underlying machine record.
 
-The Services sub-drawer (Developer) is a **dynamic list** of services
-declared in the active tenant's `compose.yaml`. The Developer side
-never lists system services from `_nimbus`; the System Tenant Lens
-(⌘\\) is the only Developer-side path to system service state.
+The Services sub-panel (Developer) is a **dynamic list** of services
+declared in the active tenant's `compose.yaml`, each with a `StateDot`.
+The Developer side never lists system services from `_nimbus`; the
+System Tenant Lens (⌘\\) is the only Developer-side path to system
+service state.
 
 ### Schedules (Developer)
 
 Schedules owns periodic and future-dated work for the active tenant.
 
-- Scheduled jobs list: function path, next run, last run, status,
-  cancel / retry where supported.
-- Cron jobs list: name, cron expression, next run, last run, history
-  link to a run-level detail page.
-- Schedule detail: queued runs, recent runs, error history, retry policy.
+- Scheduled jobs on `DataTable`: function path, status pill, scheduled
+  time, finished time, outcome (with the error text when the job
+  failed). Row activation opens the job sheet through `?job=`; the row
+  menu offers `Open job`, `Run now`, and `Cancel job` on a pending job.
+- Cron jobs on `DataTable`: name, function path, schedule as an
+  operator would say it (`every 30s`), status pill, next run, last run.
+  Row activation opens the cron sheet through `?cron=`; the row menu
+  offers `Open cron`, `Run now`, and `Delete cron` behind a
+  `ConfirmDialog`.
+- Schedule sheet: facts, the recorded mutation, the error when there
+  is one, and the footer actions. `Run now` re-enqueues the job's
+  mutation as a new one-shot job with no delay; for a cron it reads the
+  cron's mutation from the crons route first, because the system record
+  does not hold it. The scheduler writes a job's outcome into its
+  system record when the job history route is read, so a row can sit on
+  `pending` after it ran; recording outcomes as they happen belongs to
+  the scheduler, not the console.
 
-The Schedules sub-drawer is a **static menu** with two items
+The Schedules sub-panel is a **static menu** with two items
 (`Scheduled` / `Cron`).
 
 ### Storage (Developer)
@@ -261,17 +310,20 @@ view assumes a tenant is selected.
 - Document actions: insert new document, edit in a drawer with schema
   validation preview, delete with confirmation, and bulk delete only after
   explicit selection.
-- Schema panel for optional Nimbus schemas and adapter-derived schema views,
-  including create, edit, delete, and validation error display.
-- Indexes panel with name, fields, status, usage when available, create/drop
+- Schema tab for optional Nimbus schemas and adapter-derived schema views,
+  including create, edit, delete, and validation error display. The tab is
+  a full-width view of the table page, addressed by `?tab=schema`, not a
+  side inspector beside the grid.
+- Indexes tab with name, fields, status, usage when available, create/drop
   actions where implemented, and warnings about write cost or unsupported
-  index types.
+  index types. Addressed by `?tab=indexes`; read-only until the index API
+  exists.
 - Query builder that makes index use visible and refuses unbounded scans where
   the backend would be unsafe.
 
-The Storage sub-drawer is a **dynamic list** of tables for the active
+The Storage sub-panel is a **dynamic list** of tables for the active
 tenant. URL is store-driven (`/developer/storage/<table>`), not
-`/developer/storage/<tenant>/<table>` — the tenant lives in the top-nav.
+`/developer/storage/<tenant>/<table>` — the tenant lives in the sidebar.
 
 The Storage UI should feel familiar to Convex Data, MongoDB Atlas Data
 Explorer, and Firebase Firestore Data, but the implementation should be one
@@ -279,19 +331,35 @@ Nimbus document browser with adapter-specific labels and type renderers.
 
 ### Files (Developer)
 
-Files owns opaque-byte / S3-compatible blob storage for the active
-tenant. Ships as a placeholder surface in this baseline; the routes and
-sub-drawer are real, the underlying feature is not implemented yet.
+Files owns opaque-byte / S3-compatible object storage for the active
+tenant. It reads and writes through the console's own object route
+family on `/api/tenants/{tenant}/objects`, which rides the console
+session like every other console write; the S3 listener is a separate
+front door with its own credentials, which the console never holds.
 
-- Buckets / namespaces list with object count and total bytes.
-- Object browser with prefix navigation, last-modified / size columns,
-  upload, download, copy presigned URL.
-- Object detail drawer: metadata, content type, lifecycle policy if any.
-
-The Files sub-drawer is a **dynamic list** of buckets.
-
-The placeholder state honors the token system and renders an honest
-"Not yet implemented" line — no fake bucket data, no synthesized objects.
+- The sub-panel is a **dynamic list** of buckets with object count and
+  total bytes. A bucket exists once it holds an object; **New bucket**
+  names one and opens its (empty) listing so the first upload lands
+  there.
+- The page lists one prefix level on the shared `DataTable`: Name,
+  Size, Type, Modified, and a row menu. Keys that continue past the next
+  slash fold into a folder row. The bucket, the prefix, and the open
+  object all live in the address (`?bucket=&prefix=&object=`). A
+  breadcrumb above the table walks the prefix.
+- Upload is a drop anywhere on the listing or the Upload chooser. Each
+  file becomes one whole object keyed by its name under the current
+  prefix; an upload strip shows progress, the result, or the server's
+  reason for a refusal. The route takes whole objects up to 16 MiB and
+  never creates a tenant.
+- The object sheet holds the facts (size, type, modified, etag), a
+  preview for images and text under 256 KiB, Download, Copy link, and
+  Delete. The link is the console's object route, so it answers for a
+  signed-in console session only. There are no presigned URLs.
+- Downloads and previews come back with `content-security-policy:
+  sandbox` and `nosniff`, so a stored page cannot script the console.
+- The listing is read on demand (there is no live query over objects)
+  and again after every write the console makes. A listing carries up
+  to 1000 keys under the prefix and says when it stopped short.
 
 ### Observability (Developer)
 
@@ -299,15 +367,29 @@ Observability is the Developer-side debugging surface. Defaults to the
 active tenant; never cross-tenant in this view. (The Operator console
 owns the cross-tenant feed under `/operator/observability`.)
 
-- Logs: structured records with level, timestamp, request ID, function
-  path, tenant, search and filters.
-- Events: ordered domain events (mutation applied, scheduler fired,
-  service restarted) for the active tenant.
-- Traces: per-request waterfall with span timing and inline log lines.
-- Errors: grouped failures with last seen, count, sample traces.
+- Logs: one stream of runs and the log lines that belong to them. Each
+  run is a group with its status, function path, kind, duration, and line
+  count; a line that names no run sits in the `server` group. The facet
+  bar holds tenant, level, category, source, and correlation. `Follow`
+  keeps the newest line in view; `Pause on error` freezes the stream at
+  the first line at `error` level or above.
+- Runs: recent function runs on `DataTable` with status pills. A row
+  opens a right-side sheet that shows the run summary, the error, and
+  the correlated lines; `Show in logs` narrows the Logs tab to that run
+  and `Open run` goes to the full run page.
+- Events (UIR20): ordered domain events (mutation applied, scheduler
+  fired, service restarted) for the active tenant.
+- Errors (UIR20): grouped failures with last seen, count, sample traces.
 
-The Observability sub-drawer is a **static menu**
-(`Logs` / `Events` / `Traces` / `Errors`).
+Observability has no sub-panel. Its views are page-header tabs
+(`Logs` / `Runs`, driven by `?tab=`), and a tab appears only once its
+page exists: the strip never names a view the operator cannot open.
+
+Every filter lives in the address (`?tenant=`, `?level=`, `?category=`,
+`?source=`, `?correlationId=`, `?status=`, `?functionPath=`, `?run=`), so
+a view is a link. Run and event rows carry no tenant column yet; the
+tenant facet is honest about that with a note under the bar and the
+query applies the scope to rows that name a tenant.
 
 ### Settings (tenant)
 
@@ -322,8 +404,13 @@ permissions.
   this tenant routes through.
 - Integrations enabled on this tenant.
 
-The Settings (tenant) sub-drawer is a **static menu** of sub-pages
+The Settings (tenant) sub-panel is a **static menu** of sub-pages
 (`Environment`, `Secrets`, `Schema`, `Integrations`, `Adapter binding`).
+None of the five is built: no tenant-scoped setting has a write API in
+this build. A static menu lists only pages that exist, so the page
+contributes no sub-panel and shows one empty state that names the five
+planned sub-pages and links to the operator settings. The menu and the
+`?section=` search arrive with the first built sub-page.
 
 ## Core Screens — Operator console
 
@@ -336,34 +423,64 @@ local host, sourced from system status. The screen is shaped as a node
 list so it scales to a real cluster without a redesign. A node is
 distinct from a **machine** (the outer dev VM under Machines).
 
-- Node identity and health: listen address, health, role (standalone
-  today), Nimbus version, build info, uptime, embed integrity hash.
-- Hosted on this node: live counts of tenants, machines, services, and
-  per-adapter listeners (Convex HTTP/WS, MongoDB wire, Firebase
-  REST/Listen, native WebSocket, machine API).
-- Upgrades: pending release / upgrade state, last upgrade, current
-  channel.
-- Recent admin actions: token rotation, tenant create, machine restart.
+The page reads top to bottom the way the Developer overview does:
 
-No sub-drawer. When clustering lands this becomes a multi-row node list
-with a per-node detail page (Raft role, peer reachability, placement).
+- Headline: the mascot beside one sentence that says what the node is
+  doing. Priority order: connection dropped, status read failed,
+  inventory read failed, reading, unhealthy, failing services, no
+  services placed, every service running, or "R of N services running".
+  The face state follows the sentence (error, working, empty, idle).
+- Facts line under the headline: listen address, version, uptime, and
+  data directory as copy chips separated by `·`. Identity lives here
+  once; the node card does not repeat it.
+- Node card: name (`local node`), role subline ("standalone ·
+  clustering is not active"), a health pill, and three cells for
+  started, last update, and the build hash. Loading, offline, and error
+  render inside the cells through `LoadingCell`.
+- Hosted on this node: four tiles that link to Tenants, Machines,
+  Services, and Network. Each tile shows a large count and a subline
+  that says what the count is made of: machines and services carry a
+  state summary ("2 running · 1 stopped"), listeners carry the adapter
+  list ("http, ws"). A count never stands alone.
+- Recent events: the five newest events as a `DataTable` (level dot and
+  word, source, message, relative time) with a "View all logs" link.
+  Activating a row opens Observability on the Logs tab narrowed to the
+  event's correlation id when it has one.
+
+No sub-panel. When clustering lands the node card becomes one row per
+node with a per-node detail page (Raft role, peer reachability,
+placement). Upgrade state and recent admin actions are not shown yet;
+Settings owns upgrades.
 
 ### Tenants (Operator)
 
 Tenants owns the tenant lifecycle (the Developer console can't create
 tenants — that's an admin concern).
 
-- Tenant list: name, backend, table count, quota, last write, current
-  adapter binding.
-- Create tenant: backend selector, adapter binding, optional schema
-  bootstrap.
-- Archive tenant: confirmation with resource-count warning.
-- Per-tenant adapter binding override.
-- Empty state on fresh install: prominent "Create your first tenant"
-  CTA; matches the inline Developer-side fallback.
+- Tenant list: a `DataTable` with id (as a copy chip), table count, and
+  a row menu. Clicking a row opens the tenant in the Developer storage
+  view (`/developer/storage?as=<id>`). Right-click or the `⋯` button
+  opens the row menu: open, copy id, delete.
+- Create tenant: `Create` is the one primary action in the header. It
+  opens a dialog with a single id input; the server owns the id rule
+  and a refusal (for example "tenant already exists") stays in the
+  dialog beside the input. While the request is in flight the submit
+  reads "Creating…". Success closes the dialog, toasts "Created tenant
+  <id>", and the row appears through a loader invalidation. The
+  Developer console hands off with `?create=1`, which opens the dialog
+  on arrival and clears itself on close.
+- Delete tenant: lives in the row menu only, never inline, and runs
+  through `ConfirmDialog`. The description says how many tables go with
+  the tenant; when the count is above zero the operator types the
+  tenant id before `Delete` enables. A server refusal stays in the
+  dialog.
+- Empty state on fresh install: "Create your first tenant" CTA that
+  opens the same dialog; matches the inline Developer-side fallback.
+- Backend selector, adapter binding, quotas, and last write are not
+  wired; the server exposes ids and table counts only.
 
-The Tenants sub-drawer is a **dynamic list** of tenants. Selecting a
-tenant opens its admin detail page.
+The Tenants sub-panel is a **dynamic list** of tenants. Selecting a
+tenant opens it in the Developer storage view.
 
 ### Machines (Operator)
 
@@ -373,17 +490,32 @@ supplies the kernel sandboxes need; it is **not** a cluster node (see
 Nodes), and pure-Linux nodes have none. Do not frame this screen as
 "host" lifecycle — the host is the node.
 
-- Machine list: name, provider, architecture, OS image reference, digest,
-  state, resource allocation, last boot, last upgrade.
-- Machine detail: boot image, desired image, actual image, guest Nimbus
-  version/hash, forwarded API, services placed on it, ports, logs,
-  upgrade/rollback state.
-- Actions: start, stop, restart, SSH, OS apply, OS upgrade, remove.
+- Header summary: the trailing slot says what the fleet is, not a bare
+  total: "3 machines · 2 running · 1 stopped" on the first line and the
+  summed allocation ("6 vCPU · 12 GiB memory · 120 GiB disk") on the
+  second. Zero capacity leaves the second line out; an in-flight read
+  says "loading…".
+- Machine list: name, state as a `StateDot` with the state word beside
+  it (an in-flight action shows its optimistic state and the row error
+  under it), provider, kind, CPU, memory, disk, updated, and a pinned
+  actions column. The table keeps its nine columns through the skeleton
+  so the swap from loading to loaded moves nothing.
+- Machine detail: the inspector beside the table opens from a row or
+  from the sub-panel; it shows the identity, resources, and metadata
+  the server records. Boot image, desired versus actual image, guest
+  Nimbus hash, forwarded API, and placed services arrive with the
+  provider work that records them.
+- Actions: start, stop, restart, delete (behind `ConfirmDialog`). SSH,
+  OS apply, and OS upgrade are not wired.
 - macOS copy must be clear that services run as containers inside the
   Linux guest and that machine actions converge the guest VM's state. Do
   not imply per-service nested microVMs on macOS.
 
-The Machines sub-drawer is a **dynamic list** of machines.
+The Machines sub-panel is a **dynamic list** of machines. Each item is a
+button with a `StateDot`, the name, and the state word; it selects the
+machine in place (the inspector opens beside the table) and carries
+`aria-current` while selected, so the panel and the table agree on
+which machine is open.
 
 ### Network (Operator)
 
@@ -401,7 +533,11 @@ Network makes the active local topology inspectable.
 - Security: origin allowlist, session state, token rotation, denied
   requests.
 
-The Network sub-drawer is a **static menu** (`Routes` / `WS` / `Ports`
+Every count on Network is labelled with what it counts (listeners by
+adapter, active subscriptions, published ports); a number never stands
+alone next to a heading.
+
+The Network sub-panel is a **static menu** (`Routes` / `WS` / `Ports`
 / `Listeners` / `Security`).
 
 ### Services (Operator)
@@ -411,57 +547,72 @@ described under **Services (Developer)** above. The same
 `ServicesTable` component backs both routes; only the query and the
 visible columns differ.
 
-- Service list: cross-tenant, grouped by tenant. Adds a `Tenant` column
-  not present on the Developer side. Includes system services
-  (`_nimbus`-owned) that the Developer console hides.
-- Service detail: identical schema to the Developer side — backing
-  image, environment, ports, dependencies, lifecycle history. The
-  difference is permissions: Operator actions are not tenant-gated.
-- Actions: start, stop, restart, drain, remove. Operator can act on
-  any tenant's services and on system services.
+- Service list: cross-tenant, with a `Tenant` column not present on
+  the Developer side, the same row menu and optimistic lifecycle
+  states. Includes system services (`_nimbus`-owned) that the Developer
+  console hides.
+- Service detail: the same header, state pill, and lifecycle buttons;
+  tabs `Placement` (machine, attachment, provider) and `Logs` (the same
+  live service stream). The difference is permissions: Operator actions
+  are not tenant-gated.
+- Actions: start, stop, restart. Operator can act on any tenant's
+  services and on system services.
 
 A service has both a service identity (here) and a machine placement
 (under **Operator → Machines**). Cross-link both ways; do not duplicate
 the full detail page on the machine side.
 
-The Services sub-drawer (Operator) is a **dynamic list** of services,
+The Services sub-panel (Operator) is a **dynamic list** of services,
 grouped by tenant. State chips render per service. The Developer and
-Operator sub-drawers share the same item template — only the grouping
+Operator sub-panels share the same item template — only the grouping
 and the tenant scope of the query differ.
 
 ### Observability (Operator)
 
 The Operator-side cross-tenant feed of the same data store. Defaults to
-all tenants. An optional `?tenant=<id>` filter (set via the top-nav
-selector when this route is active) narrows to one tenant without
-leaving the Operator console.
+all tenants. The tenant facet in the bar adds an `all tenants` option
+ahead of the tenant list; picking one narrows the view through
+`?tenant=<id>` without leaving the Operator console.
 
-- Logs: cross-tenant log stream with the same filter set as Developer.
-- Events: cross-tenant ordered domain events.
-- Traces: cross-tenant per-request waterfall.
-- Errors: cross-tenant grouped failures.
+- Logs: the same run-grouped stream and facet bar as Developer, across
+  every tenant.
+- Runs: the same `DataTable` and run sheet as Developer, across every
+  tenant.
+- Events (UIR20): cross-tenant ordered domain events.
+- Errors (UIR20): cross-tenant grouped failures.
 
-The Observability sub-drawer is a **static menu** (`Logs` / `Events` /
-`Traces` / `Errors`). The same `<ObservabilityShell>` component backs
-both Developer and Operator routes; only the query input differs.
+The Operator page uses the same page-header tab strip as the Developer
+page (`Logs` / `Runs`, driven by `?tab=`) through the shared `PageTabs`
+component; only the default tenant scope differs.
 
 ### Settings (server)
 
 Server administration. Distinct from the Developer-side **Settings
 (tenant)**.
 
-- General: server name, build info.
-- Endpoints: bind addresses, TLS posture, advertised URLs.
-- Deploys: release channel, current release, rollout history.
-- Token / session: admin token rotation, session policy.
-- Environment: process-level env vars.
+- General: appearance (mode only: light, dark, system), license and
+  usage, effective configuration.
+- System: server identity. Version and update posture, health, uptime,
+  listen address, local origin, data directory, storage backend,
+  encryption at rest. General is what the operator sets; System is what
+  the server reports.
+- Endpoints (planned): bind addresses, TLS posture, advertised URLs.
+- Deploys: release channel, current release, rollout history. Moves to
+  its own Deploys page in UIR23.
+- Token / session (planned): admin token rotation, session policy.
+  Rotation itself lives under Shutdown until this sub-page exists.
+- Environment (planned): process-level env vars.
 - Integrations: adapter capability matrices (Convex / MongoDB / Firebase
   / Cloud Functions / Native HTTP/WS).
-- Shutdown: graceful shutdown with running-machine warning.
+- Shutdown: admin-token rotation and graceful shutdown. Both writes go
+  through `ConfirmDialog`: rotation asks for the current bearer and
+  keeps Confirm inert until one is typed; shutdown asks the operator to
+  type `shutdown`, because the write reaches past this browser.
 
-The Settings (server) sub-drawer is a **static menu** of sub-pages
-(`General`, `Endpoints`, `Deploys`, `Token`, `Environment`,
-`Integrations`, `Shutdown`).
+The Settings (server) sub-panel is a **static menu** of the built
+sub-pages (`General`, `System`, `Deploys`, `Integrations`, `Shutdown`).
+`Endpoints`, `Token`, and `Environment` join the menu when their panes
+land; the route rejects their ids until then.
 
 ### Operator → Settings (server) → Integrations (Adapters)
 
@@ -488,83 +639,112 @@ where the user is about to depend on the feature.
 
 ## Layout System
 
-The console uses a **three-pane shell** beneath a **top horizontal nav**:
+The console is a **three-column shell**: the sidebar, an optional
+sub-panel, and the page.
 
 ```
-┌───────────────────────────────────────────────────────────────────────┐
-│ TopNav: logo · view switcher (Developer ⇄ Operator) · tenant select  │
-├──────────────┬──────────────┬──────────────────────────────────────────┤
-│              │              │                                          │
-│  Primary     │  Sub-drawer  │  Main content                            │
-│  drawer      │  (optional)  │  (route Outlet)                          │
-│  (active     │  static menu │                                          │
-│   view's     │  or dynamic  │                                          │
-│   sidebar    │  list,       │                                          │
-│   IA)        │  per route)  │                                          │
-│              │              │                                          │
-├──────────────┴──────────────┴──────────────────────────────────────────┤
-│ Status bar: connection · embed integrity · build · time                │
-└───────────────────────────────────────────────────────────────────────┘
+┌──────────────┬──────────────┬──────────────────────────────────────────┐
+│ mascot nimbus│              │                                          │
+│ Dev ⇄ Op     │  Sub-panel   │  Main content                            │
+│ tenant/server│  (optional,  │  (route Outlet)                          │
+│              │  resizable;  │                                          │
+│  grouped     │  static menu │                                          │
+│  nav rows    │  or dynamic  │                                          │
+│              │  list)       │                                          │
+│ status · ver │              │                                          │
+│ update row   │              │                                          │
+│ theme · fold │              │                                          │
+└──────────────┴──────────────┴──────────────────────────────────────────┘
 ```
 
-### Top nav
+### Sidebar
 
-A single horizontal row at the top of the window:
+The left column is the console's one navigation surface
+(`packages/nimbus-ui/src/shell/sidebar/`). Top to bottom:
 
-- **Left:** logo + dynamic wordmark (`Nimbus / developer console` or
-  `Nimbus / operator console` depending on active view).
-- **Middle:** **view switcher** — a segmented pill control with two
-  options (Developer, Operator), keyboard accessible (←/→ to focus, Enter
-  to activate), `aria-pressed` reflects active view.
-- **Right:** **tenant selector** (visibility table below) and global
-  controls (command palette button, theme toggle, session menu).
+- **Brand row** (56px): the outline mascot next to the lowercase
+  wordmark; a link to the active view's home page.
+- **Scope row:** the **view switcher**, a two-segment `SegmentedControl`
+  (Developer, Operator) at full width, then the **tenant selector**
+  (Developer) or the **server identity line** (Operator: the hostname,
+  copyable, in mono).
+- **Nav groups:** the active view's rows under uppercase group labels
+  (Build / Run / Observe for Developer; Fleet / Access / Observe for
+  Operator). The home row and Settings sit outside the groups. Rows carry
+  no count badges.
+- **Footer:** the connection dot with its label and the server version,
+  the theme toggle labelled with the current theme name (`Light theme` /
+  `Dark theme`; it flips between the two, and Settings keeps the
+  system option), and the Collapse control.
 
 The view switcher is the source of truth for view, alongside the URL
 prefix (`/developer/*` → Developer, `/operator/*` → Operator). Clicking the
 inactive segment navigates to the last-visited route in that view (or
 the view's default landing) and persists `nimbus-ui:last-view`.
 
+Two widths:
+
+- **Expanded** (`w-60`, 240px): everything above.
+- **Rail** (`w-16`, 64px): icons only. Every row keeps its name in an
+  `aria-label` and shows it in a tooltip to the right; the view switcher
+  becomes two stacked icon radios; the tenant or server becomes one button
+  that expands the sidebar.
+
+The Collapse control is the last footer row, carries
+`aria-expanded` and `aria-controls="sidebar"`, is keyboard activatable,
+and never moves focus on toggle. The choice persists to
+`nimbus-ui:sidebar-collapsed` on desktop only; below the desktop tier the
+rail is the default and an expand is held in memory for that tier.
+
 ### Tenant selector behavior
 
 | View | Selector visible? | Default | Notes |
 | --- | --- | --- | --- |
 | Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist, the trigger is replaced by a compact "Create tenant" CTA that deep-links to `/operator/tenants?new=1` |
-| Operator | hidden by default | n/a | rendered only on `/operator/observability` where it acts as an optional cross-tenant filter (default "All tenants"); selection encoded as `?tenant=<id>` |
+| Operator | hidden | n/a | the sidebar shows the server identity line instead; `/operator/observability` narrows through the tenant facet in its own bar (default `all tenants`, encoded as `?tenant=<id>`) |
 
-The selector is rendered by the same component in both views; visibility
-and the active-vs-filter mode are driven by view + active route.
+The selector is one component with two modes: the developer mode sets the
+active tenant, the `operator-filter` mode writes `?tenant=`.
 
-### Primary drawer
+### Sub-panel
 
-The left-most column. Renders the active view's sidebar IA (7 items per
-view; see Information Architecture above). Toggles between two widths:
+A second column between the sidebar and the main content. Rendered
+when the active route contributes a sub-panel spec; absent otherwise
+(the content area reflows naturally). The page never remounts when a
+spec arrives or leaves: one resizable group wraps the main column on
+every route, and the sub-panel column and its separator are the only
+conditional children.
 
-- **Expanded** (`w-56` default): icon + label + count.
-- **Collapsed** (`w-12`): icon only; label appears in a native `title`
-  tooltip.
+Geometry, on desktop:
 
-State persists to `nimbus-ui:primary-drawer-collapsed`. The toggle lives
-at the bottom of the drawer (Convex pattern), is keyboard activatable
-(Enter / Space), and never moves focus on toggle.
-
-### Sub-drawer
-
-A second column between the primary drawer and the main content. Rendered
-when the active route opts into a sub-drawer; absent otherwise (the
-content area reflows naturally). Fixed width `w-64` in this baseline.
+- Resizable between 180px and 400px; 240px by default. A 1px separator
+  carries the drag handle; it takes the accent colour on hover, focus,
+  and drag.
+- The separator is a keyboard target: `ArrowLeft` / `ArrowRight` step
+  the width, `Home` / `End` jump to the limits, `Enter` collapses and
+  expands. A step past the minimum collapses the panel.
+- Collapsed, the panel is a 32px rail with the expand button and one
+  icon per sub-view. Expanding restores the last chosen width.
+- The width and the collapsed state persist per section under
+  `nimbus-ui:panel:<section>` (`storage`, `compute`, `tenants`,
+  `settings`, ...), so Storage can stay wide while Settings stays
+  narrow. Stored widths clamp to the limits on read.
 
 Two contributor modes:
 
 - **Static menu** — a fixed list of sub-pages with an active state.
-  Used by Settings (both views), Network, Schedules, Observability.
-  Pattern reference: Convex `SettingsSidebar`.
-- **Dynamic list** — a resource list fed by a query, with optional
-  search input. Used by Storage tables, Compute functions, Tenants,
-  Machines, Services, Files. Pattern reference: Convex `DataSidebar`.
+  Used by Settings (both views), Network, Schedules. Pattern reference:
+  Convex `SettingsSidebar`. A static menu lists only pages that exist;
+  a page that is not built yet is not a menu item, disabled or
+  otherwise.
+- **Dynamic list** — a resource list fed by a query. Used by Storage
+  tables, Compute functions, Tenants, Machines, Services, Files. Pattern
+  reference: Convex `DataSidebar`. The search field appears once the
+  list exceeds twenty rows; below that, a list scans faster than it
+  filters.
 
-Routes declare their sub-drawer via a route-level `subDrawer` option
-that resolves at the layout level. Routes without a sub-drawer reserve
-no space.
+Routes contribute their spec with `useContributeSubPanel`; the layout
+resolves it at the root. Routes without a sub-panel reserve no space.
 
 ### Main content patterns
 
@@ -574,32 +754,39 @@ no space.
   above.
 - **Resource detail**: header summary, tabs, split panes for logs/JSON.
 - **Data browser** (Storage): table plus right-side document drawer.
-- **Logs / runs** (Observability): timeline table plus correlated
-  detail drawer.
+- **Logs / runs** (Observability): run-grouped log stream; runs table
+  plus right-side run sheet.
 
-### Status bar
+### Page tabs
 
-Persistent at the bottom across both views. Shows connection state,
-embed integrity, build version, current time. Shared component.
+A page with a short, fixed set of views (Observability: Logs / Runs)
+switches between them with a tab strip under its header, driven by the
+`?tab=` search param so every view has an address. `PageTabs` is the
+shared component. A list the operator can grow is a sub-panel instead.
 
 ### Responsive behavior
 
-- **Desktop:** all three columns visible; primary drawer toggles
-  collapse, sub-drawer toggles closed.
-- **Tablet:** primary drawer collapses to icon rail by default;
-  sub-drawer becomes an overlay sheet anchored to the right of the
-  collapsed primary drawer.
-- **Mobile:** primary drawer + sub-drawer collapse into a single
-  hamburger sheet; bottom navigation surfaces the active view's
-  sections; the view switcher moves into the session menu.
+- **Desktop** (≥1024px): all three columns visible; the sidebar
+  toggles between expanded and rail, the sub-panel resizes and
+  collapses to its rail.
+- **Tablet** (768–1023px): the sidebar is the rail by default; the
+  sub-panel is always its 32px rail, and the expand button opens the
+  list as an overlay sheet anchored to the right of the rail. The
+  desktop width and collapsed state are not written at this tier.
+- **Mobile** (<768px): the sub-panel overlay as on tablet.
+- **Small screen** (<640px): the sidebar leaves the flow. A 48px top bar
+  holds the menu button and the mascot lockup, and the whole sidebar body
+  (scope row, nav groups, theme toggle) opens in a left sheet that closes
+  on every navigation. The sidebar has one breakpoint; the tiers above
+  belong to the sub-panel.
 
 ### Do-not list
 
 - Do not put page sections inside decorative cards. Cards are for
   repeated items, small metrics, modals, and genuinely framed tools.
-- Do not duplicate primary navigation in the sub-drawer. The sub-drawer
-  is per-section; cross-section navigation always uses the primary
-  drawer or the command palette.
+- Do not duplicate primary navigation in the sub-panel. The sub-panel
+  is per-section; cross-section navigation always uses the sidebar or
+  the command palette.
 - Do not mirror Settings between the two views. The split (tenant vs
   server) is deliberate and exclusive.
 
@@ -614,103 +801,96 @@ native chrome surface in `nimbus/desktop`. For the logo, marketing surfaces,
 favicon, app icon, and the desktop setup card, see **Brand Palette** below —
 the two tiers are intentionally distinct.
 
-The product palette has two orthogonal axes:
+The product palette has one axis: **mode**, `light` / `dark` / `system`.
+There is one palette: neutral grounds and one amber accent. Mode is user
+controlled from Settings → Appearance and from the appearance menu in the
+shell, and persists to `localStorage` (`nimbus-ui:theme`). The shell sets
+`data-theme` on `<html>`. Dark is the default token set on `:root`; light is
+the override under `[data-theme="light"]`.
 
-- **Mode** — `light` / `dark` / `system`. Controls neutrals + reading direction.
-- **Palette** — `blue` (default) / `mono` / `warm`. Controls brand + accent +
-  link identity. Each palette pairs a light variant with a dark variant from
-  the Nimbus Color Palette (see Brand Palette below).
+Tokens live in `packages/nimbus-ui/src/styles/tokens.css` as hex and rgba
+literals. `@theme inline` bridges them to Tailwind utilities (`bg-bg-panel`,
+`text-text-3`, `border-border-2`, `text-accent-link`, ...) and to the shadcn
+registry names (`background`, `muted`, `ring`, ...), so a registry component
+paints the same tokens without edits.
 
-Both are user-controlled from Settings → Appearance and persist to
-`localStorage` (`nimbus-ui:theme`, `nimbus-ui:palette`). The shell sets
-`data-theme` and `data-palette` on `<html>` so the cascade resolves the
-right token set per request.
+Grounds and borders:
 
-Palette pairs (light → dark):
-
-| Palette | Light variant     | Dark variant     | Use                              |
-| ---     | ---               | ---              | ---                              |
-| `warm`  | Warm              | Night Blue       | Product default — the "sky cycle": golden daylight, night-blue dark |
-| `blue`  | Cool Blue         | Night Blue       | Cool alternative                 |
-| `mono`  | Monochrome        | Reverse Mono     | Minimal / enterprise / print     |
-
-Dark mode is Night Blue for every palette except `mono` (Reverse Mono).
-The light-mode choice is the palette's identity; night looks the same
-sky for everyone.
-
-Colors are defined in OKLCH so light and dark perceptual lightness stay
-parity-matched. Semantic state tokens (`--success`, `--warning`, `--danger`,
-`--running`, `--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are
-stable across all palettes — `Ready` is green and `Running` is teal in every
-theme, so a status never changes meaning when the palette does.
-
-Tokens that swap per palette (the default shown: Warm light / Night Blue
-dark; the Cool Blue light column lives in `globals.css` under
-`[data-palette="blue"]`):
-
-| Token | Default light (Warm, OKLCH) | Default dark (Night Blue, OKLCH) | Use |
+| Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--bg` | `oklch(96.5% 0.020 82)` | `oklch(13% 0.026 263)` | App background |
-| `--surface` | `oklch(100% 0 0)` | `oklch(19% 0.030 258)` | Panels, tables, popovers |
-| `--surface-2` | `oklch(96% 0.025 82)` | `oklch(24% 0.030 258)` | Secondary panels, selected rows |
-| `--border` | `oklch(90% 0.025 82)` | `oklch(32% 0.030 258)` | Hairline borders and dividers |
-| `--border-strong` | `oklch(82% 0.040 78)` | `oklch(40% 0.030 258)` | Emphasis borders |
-| `--text` | `oklch(20% 0.020 60)` | `oklch(91% 0.014 252)` | Primary text |
-| `--muted` | `oklch(53% 0.013 75)` | `oklch(67% 0.026 248)` | Secondary text |
-| `--brand` | `oklch(73% 0.17 65)` (`#F59E0B`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
-| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Selection identity: the selected row's left bar, `::selection`. Never a focus ring in a light palette — 1.71:1 on `--surface-2` in Warm, under the 3:1 floor. Not a state colour — `Running` has its own `--running` |
-| `--focus` | `oklch(62% 0.17 55)` | `var(--accent)` | The focus ring, and the only token that paints one. Set against `--surface-2`, the darkest ground a light palette paints on: 3.42:1 Warm, 3.94:1 Blue, 4.15:1 Mono, against WCAG 2.2 SC 1.4.11's 3:1 non-text floor. Resolves to `--accent` in the dark palettes, where that measures 9.87:1 and clears the floor easily |
-| `--link` | `oklch(55% 0.17 52)` | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
+| `--bg-canvas` | `#0a0b0c` | `#ffffff` | The page |
+| `--bg-panel` | `#101112` | `#fafafa` | Sidebar, cards, tables, popovers |
+| `--bg-raised` | `#18191b` | `#f4f4f5` | Inputs, code chips, menus, selected rows |
+| `--bg-hover` | `#1f2124` | `#ececee` | Hovered rows and controls |
+| `--border-1` | `rgba(255,255,255,.05)` | `rgba(0,0,0,.06)` | Hairlines inside a panel |
+| `--border-2` | `rgba(255,255,255,.08)` | `rgba(0,0,0,.10)` | Panel and control edges |
+| `--border-3` | `rgba(255,255,255,.12)` | `rgba(0,0,0,.15)` | Emphasis edges, checkbox boxes |
 
-Semantic tokens (stable across all palettes):
+Text:
 
-Every light value here is set against `--surface-2`, the darkest ground a
-light palette paints text on — not against `--surface`, which is pure white in
-all three light palettes and clears AA for colours that fail everywhere else.
-
-| Token | Light (OKLCH) | Dark (OKLCH) | Use |
+| Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--success` | `oklch(52% 0.14 145)` | `oklch(72% 0.16 145)` | `Ready`, `Healthy` |
-| `--running` | `oklch(60% 0.13 207)` | `oklch(85% 0.10 197)` | `Running` |
-| `--warning` | `oklch(54.5% 0.15 72)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
-| `--starting` | `oklch(70% 0.17 50)` | `oklch(80% 0.18 50)` | `Starting`, `Provisioning` |
-| `--draining` | `oklch(55% 0.13 280)` | `oklch(72% 0.14 280)` | `Draining`, `Stopping` |
-| `--queued` | `oklch(60% 0.020 240)` | `oklch(70% 0.020 240)` | `Queued`, `Pending` |
-| `--danger` | `oklch(56% 0.20 25)` | `oklch(70% 0.20 25)` | `Failed`, destructive |
-| `--stale` | `oklch(50% 0.012 240)` | `oklch(60% 0.012 240)` | Disconnected/stale (strikethrough) |
-| `--violet` | `oklch(55% 0.18 295)` | `oklch(75% 0.16 295)` | Functions/runs only |
+| `--text-1` | `#f6f7f8` | `#18181b` | Primary text, headings, values |
+| `--text-2` | `#c9ced6` | `#3f3f46` | Body copy, cell text |
+| `--text-3` | `#8b909a` | `#66666e` | Labels, metadata, icons at rest |
+| `--text-4` | `#62666d` | `#a1a1aa` | Disabled only; below AA by design |
+
+Accent:
+
+| Token | Dark | Light | Use |
+| --- | --- | --- | --- |
+| `--accent` | `#f0b23e` | `#b45309` | Identity, selection, the focus ring, `::selection` |
+| `--accent-hover` | `#f6c35c` | `#92400e` | Hovered accent fill |
+| `--accent-ink` | `#1a1204` | `#ffffff` | Text on an accent fill |
+| `--accent-link` | `#f0b23e` | `#975c06` | Hyperlinks only |
+| `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(180,83,9,.14)` | Selected-row wash |
+
+Semantic tokens (each has a `-tint` at 14% for washes):
+
+| Token | Dark | Light | Use |
+| --- | --- | --- | --- |
+| `--success` | `#4ade80` | `#15753a` | `Ready`, `Healthy`, additions |
+| `--warning` | `#fb923c` | `#b53b0a` | `Degraded`, `Starting`, `Reconnecting` |
+| `--error` | `#f87171` | `#b91c1c` | `Failed`, destructive, removals |
+| `--error-ink` | `#1f0a0a` | `#ffffff` | Text on an error fill |
+| `--info` | `#60a5fa` | `#1d4ed8` | `Running`, informational |
 
 Rules:
 
-- **Four identity tokens, four different jobs.** `--brand` carries
-  primary identity (active nav, primary CTA, dominant brand fill).
-  `--accent` is selection. `--focus` is the focus ring, and no other token
-  paints one: `--accent` at 1.71:1 and `--brand` at 2.21:1 both miss the
-  3:1 non-text floor on `--surface-2` in Warm light. In the dark palettes
-  `--focus` is defined as `var(--accent)`, so the two coincide there — the
-  rule is that a focus ring names `--focus`, never `--accent` directly.
-  `--link` is hyperlinks. Never paint buttons with `--link`. Never paint
-  active nav with `--accent` — that's `--brand`'s job.
-- **State colors are universal.** Status state colors do not vary by
-  palette. A red `Failed` chip looks the same in Mono as in Blue.
-- **Status colors must always have text or icon labels.** Color alone is
+- **One accent, four jobs.** `--accent` carries identity (the active nav
+  item, the primary CTA), selection (the selected row's bar and wash), the
+  focus ring, and `::selection`. There is no second identity colour.
+  `--accent-link` is hyperlinks and nothing else: never paint a button or
+  a nav item with it.
+- **Semantic colours never use the accent hue.** `Running` is `--info`
+  (blue), never amber. A state token and the accent are never the same
+  literal, so a status never reads as "selected".
+- **Contrast is measured, not assumed.** `src/styles/contrast.spec.ts`
+  reads `tokens.css` and holds every text token to 4.5:1 on all four
+  grounds, `--accent` to 3:1 on all four grounds (SC 1.4.11), the two ink
+  tokens to 4.5:1 on their fills, and `--text-4` below `--text-3`. The
+  light deviations from the exemplar (`--text-3`, `--success`, `--warning`,
+  `--accent-link`) exist to pass those gates.
+- **Status colours must always have text or icon labels.** Colour alone is
   never the only signal.
-- **Surfaces never use accent or brand as a fill.** Identity colors appear
-  as a 1–2px left bar, an inline dot, a 2px `--focus` ring, a small icon, or a
-  small CTA — never as a section background.
-- Tailwind v4 `@theme` directive should expose the non-palette tokens as
-  CSS variables; palette-scoped tokens live in `@layer base` under
-  `[data-palette=…]` selectors.
-
+- **Surfaces never use the accent as a fill.** The accent appears as a
+  1–2px bar, an inline dot, the ring, a small icon, or a small CTA — never
+  as a section background. A wash uses the `-tint`.
+- **One focus ring.** The unlayered `:focus-visible` rule in `globals.css`
+  paints a 2px ring of `--accent` at 40% and a 4px halo at 20% on every
+  focusable element, registry primitives included. No Nimbus-owned
+  component binds its own ring or outline colour under a focus variant. A
+  text field may add `focus-visible:border-accent` so the edge and the ring
+  agree.
 ### Brand Palette
 
 The brand palette is **distinct from the product palette above**. Use it
 only for:
 
-- The logo mark and its variants (`docs/brand/logo/`, `nimbus-logo.svg`,
-  `nimbus-mark.svg`)
+- The marketing logo variants (`docs/brand/logo/`)
 - README hero images and marketing pages
-- The favicon and desktop app icon
+- The solid mascot as favicon, app icon, and sign-in sticker (see
+  **Mascot** below)
 - The desktop "CLI not found" setup card (`cli-not-found.html`) — this is
   the user's *first* contact with the app and is intentionally brand-tier
 - Print, social-media images, and external touchpoints
@@ -722,24 +902,17 @@ surface, pick the equivalent product-tier token instead.
 
 #### Two-Tier Bridge
 
-Four values cross tiers, by design:
+One family crosses tiers, by design:
 
-- **Golden Hour.** Brand `#D97706` (Golden Hour stroke) drives the
-  default light `--link` `oklch(62% 0.17 55)`, with the amber family
-  (`#F59E0B` / `#FFB84D`) as the default light `--brand` / `--accent`.
-  The Warm logo variant's golden fill `#FFE7B3` stays brand-tier.
-- **Brand blue.** Brand `#3B82F6` (Cool Blue primary, solid form) drives
-  `--brand` in the `blue` palette's light variant; Night Blue `#60A5FA`
-  drives the default dark `--brand` — same hexes inside the app.
-- **Teal accent.** Brand "Interactive Elements" gradient
-  `#67E8F9 → #06B6D4` (Tailwind cyan-300 → cyan-500) drives the dark
-  `--accent` `oklch(85% 0.10 197)` (and the blue palette's light accent)
-  in solid form. The brand gradient is reserved for logos and marketing;
-  the solid form is the in-app accent.
-- **Ink.** Hex `#0F172A` is shared across tiers as primary text on light
-  surfaces and as the Warm logo variant's stroke.
+- **Golden Hour.** Brand `#D97706` (Golden Hour stroke) is the amber the
+  product accent is built from. `--accent` is `#f0b23e` in dark and
+  `#b45309` in light, and `--accent-link` is `#975c06` in light. Each is
+  measured against the product grounds rather than copied from the brand
+  sheet.
 
-No other color crosses tiers.
+No other colour crosses tiers. The blue, teal, and slate brand variants stay
+on the logo and marketing surfaces. The product has no blue identity and no
+teal accent.
 
 #### Variants
 
@@ -755,10 +928,12 @@ No other color crosses tiers.
 | `golden-hour` | `#D97706`                | `#FFFFFF`            | `#FFFBEB`  |
 | `slate`       | `#475569`                | `#FFFFFF`            | `#F1F5F9`  |
 
-The canonical logo SVG (`packages/nimbus-ui/public/nimbus-logo.svg`) and
-tight mark (`nimbus-mark.svg`) accept `--logo-stroke` and `--logo-fill` as
-CSS variables. Variant rendering is parameter substitution — the path data
-is identical across all variants. `gen-variants.sh` also emits a
+The marketing variants under `docs/brand/logo/` still carry the original
+wisp cloud; they are the marketing tier and change on their own schedule.
+The console mark (`packages/nimbus-ui/public/nimbus-logo.svg`) is the
+mascot body with the idle face, and it accepts the same `--logo-stroke` and
+`--logo-fill` CSS variables. Variant rendering is parameter substitution — the
+path data is identical across all variants. `gen-variants.sh` also emits a
 `-transparent` companion for every variant (same colors, no background
 rect, viewBox cropped to the ink bounds so lockups control their own
 spacing) for placement on surfaces that own their own background: the
@@ -767,15 +942,14 @@ docs hero, the docs top-nav, README badges. The wordmark is lowercase
 
 #### Usage Guidelines
 
-- **Warm** — the light-mode identity of the sky-cycle default: product UI
-  and docs light-mode favicon/logo, marketing pages, app icon, and the
-  desktop setup card.
+- **Warm** — the light-mode identity: docs light-mode favicon/logo,
+  marketing pages, app icon, and the desktop setup card.
 - **Golden Hour** — brand-forward marketing accents; its `#D97706` stroke
-  is the tier bridge into the default light `--link`.
-- **Cool Blue** — the `blue` palette's light variant (explicit choice in
-  Settings → Appearance), and cool-toned marketing touchpoints.
-- **Night Blue** — the dark-mode identity everywhere: product UI and docs
-  dark-mode favicon/logo, and the default dark palette.
+  is the tier bridge into the product `--accent`.
+- **Cool Blue** — cool-toned marketing touchpoints only. The product has no
+  blue palette.
+- **Night Blue** — docs dark-mode favicon/logo and dark marketing
+  surfaces. The product dark mode is neutral, not blue.
 - **Monochrome** / **Reverse Mono** — minimal, enterprise, print. Tray
   icon uses monochrome on light menu bars; macOS auto-inverts for dark.
 - **Sunset Red**, **Soft Purple**, **Slate** — reserved for future
@@ -785,6 +959,37 @@ The completed execution record for brand rollout, including the variant
 regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
 in `docs/private/plans/archive/brand-system-plan.md`.
 
+#### Mascot
+
+The Nimbus mark is a cloud with a face. The body is the union of three
+circles and a rounded base in a 120×92 box, with no wisp, so it reads as
+one shape from 16px up. The face carries the state; nothing else moves.
+`packages/nimbus-ui/src/components/mascot.tsx` is the single source of the
+drawing; the static assets are exports of it.
+
+| Variant   | Where                                                   | Colour                                                  |
+|-----------|---------------------------------------------------------|---------------------------------------------------------|
+| `outline` | The mark: sidebar brand row, mobile top bar, inline text | `currentColor` stroke, `--bg-panel` fill                |
+| `solid`   | The sticker: favicon, app icon, sign-in card, empty states at 32px and above | `--accent` body, `--accent-ink` face (fixed `#f0b23e` / `#1a1204` in static assets) |
+
+- **States.** `idle` (dot eyes, smile), `working` (eyes to the side, flat
+  mouth, thought dots), `error` (crossed eyes, wobble, one drop), `empty`
+  (closed eyes, flat mouth, zz), `celebrate` (arc eyes, grin, sparks). A
+  state is a prop, never a separate asset.
+- **Motion.** The eyes blink once every six seconds and nothing else
+  animates. The component leaves the animation out of the DOM under
+  `prefers-reduced-motion: reduce`; the `globals.css` backstop is the
+  second net.
+- **Sizes.** 16 in a tab, 24 to 30 in the nav, 32 in a card header, 48 and
+  up in an empty state. Below 24px the outline stroke thickens from 5 to 7
+  units so it survives the tab bar.
+- **Static exports.** `favicon.svg` and `favicon.ico` (16, 32, 48) and
+  `icon-512.png` (solid face on a `#0a0b0c` tile) under
+  `packages/nimbus-ui/public/`. The favicon is one fixed-colour drawing, so
+  the console does not swap it when the theme changes.
+- **Accent rule.** The amber body is the accent, so the solid variant appears
+  only where the accent may appear: once per surface, never as a wash.
+
 ### Documentation Site (nimbusdocs.com)
 
 The Documentation site is the third brand surface, sitting between the
@@ -793,16 +998,13 @@ governing rule: **the doc body is product-tier; the splash hero is the
 site's single brand-tier moment.** Renderer: Astro Starlight in
 `website/`; tokens live in `website/src/styles/custom.css`.
 
-- **Doc body = product tier.** Starlight's gray scale maps to the default
-  palette's OKLCH neutrals — Warm light / Night Blue dark
-  (`--bg`/`--surface`/`--border`/`--text`/`--muted`, the sky-cycle columns
-  verbatim). Starlight has a single accent family: light
-  `--sl-color-accent` ← warm `--link` (#D97706) with accent-high deepened
-  to amber-800 strength for link text on paper; dark `--sl-color-accent`
-  ← `--brand` (#60A5FA) with accent-high ← `--link`. The product tier's
-  brand/accent/link three-way split intentionally collapses to one
-  identity family per mode in docs — teal stays out of the doc body. No
-  gradients in the doc body.
+- **Doc body = product tier.** Starlight's gray scale maps to the product
+  neutrals (`--bg-canvas`/`--bg-panel`/`--border-2`/`--text-1`/`--text-3`,
+  both modes verbatim). Starlight has a single accent family: light
+  `--sl-color-accent` ← `--accent-link` (#975c06) with accent-high deepened
+  for link text on paper; dark `--sl-color-accent` ← `--accent` (#f0b23e).
+  One identity family per mode — teal and blue stay out of the doc body.
+  No gradients in the doc body.
 - **Splash hero = brand tier, once.** Dark mode renders the hero title in
   the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`
   over Night Blue. Light mode is golden daylight, so its hero composes
@@ -817,9 +1019,9 @@ site's single brand-tier moment.** Renderer: Astro Starlight in
   on `data-theme` changes (an SVG `prefers-color-scheme` query can only
   see the OS, so a light page on a dark OS would otherwise show the night
   favicon). The auto media-query `favicon.svg` stays as the no-JS
-  fallback. All three files are byte-identical to the operator console
-  set under `packages/nimbus-ui/public/`, and the console's
-  `ThemeController` does the same swap.
+  fallback. The docs site keeps its own copies of these files; the
+  operator console ships the solid mascot as its favicon instead (see
+  **Mascot** above) and swaps nothing.
 - **Typography.** Body uses the system UI stack; code/IDs/paths use
   JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
   letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px
@@ -840,30 +1042,44 @@ the short spoken hook (README banner headline). Nimbus is
 
 ### Typography
 
-- Body / UI: system UI stack
-  (`-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif`).
-- Monospace: **JetBrains Mono** (self-hosted via `@fontsource/jetbrains-mono`)
-  with `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace` as
-  fallbacks. Used for IDs, digests, request IDs, function paths, ports,
-  bytes/duration values, code blocks, JSON/BSON values, and shell snippets.
-- Body: 14px desktop, 15px mobile.
-- Compact table text: 13px.
-- Page title: 22px (single value, not a range).
-- Section heading: 16px.
-- Label/caption: 12px.
-- Monospace baseline: matches body line-height so monospace IDs in a row
-  align with surrounding sans-serif text.
+- Body / UI: **Geist** (self-hosted from `packages/nimbus-ui/public/fonts/`,
+  weights 400, 500, 600) with `system-ui, "Segoe UI", sans-serif` as
+  fallbacks.
+- Monospace: **Geist Mono** (self-hosted, weights 400, 500, 600) with
+  `"JetBrains Mono", ui-monospace, monospace` as fallbacks. Used for IDs,
+  digests, request IDs, function paths, ports, bytes/duration values, code
+  blocks, JSON/BSON values, and shell snippets.
+- Scale (`--text-*` in `tokens.css`; the Tailwind defaults are reset, so
+  only these steps exist):
+
+| Step | Size / line | Tracking | Use |
+| --- | --- | --- | --- |
+| `xs` | 12 / 16 | 0 | Labels, captions, table metadata |
+| `sm` | 13 / 18 | 0 | Compact table text, menus, chips |
+| `base` | 14 / 20 | 0 | Body |
+| `md` | 16 / 24 | 0 | Section heading |
+| `lg` | 20 / 28 | `-0.01em` | Page title |
+| `xl` | 24 / 32 | `-0.01em` | Empty states and onboarding |
+| `2xl` | 32 / 38 | `-0.02em` | Metric values |
+
+- Monospace inline runs at `0.93em` with `-0.01em` tracking so an ID in a
+  row reads at the same cadence as the sans around it. Code blocks run at
+  `1em`.
 
 Rules:
 
 - Do not scale type with viewport width.
-- Letter spacing is `0`. Monospace letter spacing is `-0.01em` so JetBrains
-  Mono reads at the same visual cadence as body text inline.
-- Reserve large display type for empty states and onboarding, not dashboards.
-- Code, IDs, digests, function paths, ports, and bytes use monospace.
-- **All numeric columns** (durations, counts, sizes, ports, rates, percentages,
-  timestamps) must apply `font-variant-numeric: tabular-nums`. Without this,
-  live tables jitter on every tick. This is a hard requirement, not a polish.
+- **Labels are sentence case** in the sans at `text-xs font-medium
+  text-text-3`. Tracked small caps (`uppercase` + `tracking-*`) are retired;
+  the sidebar group heading is the one place that may keep them.
+- **Mono is the voice of data, never of labels.** A category chip, a column
+  header, or a form label is sans. A value, an ID, or a path is mono.
+- Reserve `xl` and `2xl` for empty states, onboarding, and metric values,
+  not for dashboard chrome.
+- **All numeric columns** (durations, counts, sizes, ports, rates,
+  percentages, timestamps) must apply `font-variant-numeric: tabular-nums`.
+  Without this, live tables jitter on every tick. This is a hard
+  requirement, not a polish.
 - Status badges use tabular lining figures so counters do not reflow.
 
 ### Spacing And Shape
@@ -873,7 +1089,11 @@ Rules:
 - Comfortable row: 44-48px.
 - Panel padding: 12-16px.
 - Page gap: 16-24px.
-- Radius: 6px default, 8px maximum for cards/panels.
+- Radius scale (`--radius-*` in `tokens.css`; the Tailwind defaults are
+  reset): `xs` 4px for chips and inline code, `sm` 6px for controls and
+  inputs, `md` 8px for cards, panels and popovers, `lg` 12px for dialogs,
+  `xl` 16px for onboarding cards, `full` for dots and pills. Bare `rounded`
+  and the `2xl`+ steps compile to nothing; a spec gates them.
 - Icon button: 32px square, 36px on touch surfaces.
 
 Stable dimensions are required for tables, metric panels, toolbars, counters,
@@ -897,14 +1117,23 @@ Tables are the default shape for resources:
 - Row click opens detail; row checkbox selects for bulk actions.
 - Inline actions appear on hover and are also reachable by keyboard.
 - Empty state stays compact and includes the next useful action.
-- Loading state preserves table geometry with skeleton rows.
+- Loading state preserves table geometry with skeleton rows. `DataTable`
+  draws them itself (`loading`, `skeletonRows`) under the real header, so a
+  page never swaps a centered label for the table.
+- Past 100 rows `DataTable` virtualizes: only the rows in and around the
+  viewport are in the DOM (`data-virtual="true"`, `aria-rowcount` for the
+  full count). A 200-row page costs the same as a short one.
+- Right-click on a row is a peer of click. `DataTable` reports the row and
+  an anchor (`onRowContextMenu`); Shift+F10 and the ContextMenu key raise
+  the same menu from the keyboard. Arrow keys move focus between rows, one
+  row at a time in the tab order, and Enter or Space activates.
 
 ### Forms And Editors
 
 - Use **`SegmentedControl`** as the canonical exclusive-choice control for
   ≤4 options (`packages/nimbus-ui/src/components/segmented-control.tsx`).
-  Both the top-nav DEVELOPER/OPERATOR view switcher and the appearance
-  mode toggle render through it so they cannot drift. `role="radiogroup"`
+  Both the sidebar Developer/Operator view switcher and the Settings
+  appearance mode toggle render through it so they cannot drift. `role="radiogroup"`
   with each segment `role="radio"`; ArrowLeft/Right (and ArrowUp/Down)
   move focus, Home/End jump to the edges, Enter/Space commit.
 - Use **`Select`** for >4 options or when a label-prefixed dropdown reads
@@ -925,15 +1154,15 @@ State → token binding (mandatory; do not improvise mappings):
 | State | Token | Dot glyph |
 | --- | --- | --- |
 | `Ready`, `Healthy`, `OK`, `Active`, `Connected`, `Completed` | `--success` | ● solid |
-| `Running` | `--running` | ● pulsing (respects `prefers-reduced-motion`) |
-| `Starting`, `Provisioning`, `Restarting` | `--starting` | ◐ half-filled |
-| `Draining`, `Stopping`, `Deleting` | `--draining` | ◐ half-filled |
-| `Queued`, `Pending` | `--queued` | ○ outline |
+| `Running` | `--info` | ● pulsing (respects `prefers-reduced-motion`) |
+| `Starting`, `Provisioning`, `Restarting` | `--warning` | ◐ half-filled |
+| `Draining`, `Stopping`, `Deleting` | `--text-3` | ◐ half-filled |
+| `Queued`, `Pending` | `--text-3` | ○ outline |
 | `NotReady`, `Degraded`, `Reconnecting` | `--warning` | ● solid |
-| `Stopped`, `Created`, `Idle`, `Paused`, `Uninitialized` | `--muted` | ○ outline |
-| `Failed`, `Crashed`, `Offline` | `--danger` | ● solid |
-| `Stale` (post-disconnect) | `--stale` | ● solid + label strikethrough |
-| `Unknown` | `--muted` | ? glyph |
+| `Stopped`, `Created`, `Idle`, `Paused`, `Uninitialized` | `--text-3` | ○ outline |
+| `Failed`, `Crashed`, `Offline` | `--error` | ● solid |
+| `Stale` (post-disconnect) | `--text-3` | ● solid + label strikethrough |
+| `Unknown` | `--text-3` | ? glyph |
 
 Each row is a state *family*. Names after the first are aliases that fold onto
 that family — they do not get their own tone. Add a new state by folding it onto
@@ -946,7 +1175,8 @@ console lost track of this resource"), which makes an unlisted state a visible
 bug rather than a silent miscolour. Lock the two sides together with a test that
 asserts every state a route or hook can emit renders a non-`?` glyph.
 
-Categorical (filled pill, monospace label, 11px):
+Categorical (filled pill on `--bg-raised`, sentence case, `text-xs
+font-medium` in the sans):
 
 - Function kind: `Query`, `Mutation`, `Action`, `HTTP`, `Scheduled`, `Cron`.
 - Adapter: `Convex`, `MongoDB`, `Firebase`, `CloudFn`, `Native`.
@@ -957,16 +1187,27 @@ Do not place more than two categorical badges on the same row.
 
 ### Logs And Events
 
-- Logs are a virtualized table by default.
-- Required columns: time, level, source, request/run ID, message.
-- Detail drawer shows structured fields and correlated entries.
-- Search by request ID, execution ID, run ID, function path, source, and text.
-- Preserve scroll position while new logs arrive.
-- Provide pause/resume follow mode.
+- Logs are one table whose rows group under the run that wrote them. A
+  group head carries the run status pill, function path, kind, duration,
+  relative time, and line count; lines that belong to no run sit under
+  the `server` head.
+- Required columns: time, level, source, message, run.
+- The run sheet shows the run summary, the error, and the correlated
+  lines. A log line jumps to its run page; a run row opens the sheet.
+- Filters are a facet bar: tenant, level, category, source, and
+  correlation on Logs; tenant, status, and function on Runs. Every facet
+  lives in the address.
+- `Follow` keeps the newest line in view. `Pause on error` freezes the
+  stream at the first line at `error` level or above and `Resume` picks
+  the stream back up.
+- Preserve scroll position while new lines arrive when follow is off.
 
 ### Data Browser
 
-- Use cursor pagination, not unbounded fetches.
+- Use cursor pagination, not unbounded fetches. One page is 200 documents,
+  drawn by the virtualized `DataTable`; sorting stays server-side
+  (`manualSorting`) and every click on the active column flips its
+  direction.
 - Show active filters and sort order as editable chips.
 - Document values open in a drawer with JSON/BSON/Firestore type fidelity.
 - Inline editing is allowed only when the backend supports the exact mutation
@@ -975,10 +1216,24 @@ Do not place more than two categorical badges on the same row.
 
 ### Function Runner
 
-- Argument editor must be schema-aware when `argsSchema` is available.
+- The runner is a bottom drawer on the function page. Its toggle bar shows the
+  kind and adapter as category pills, the active tenant as read-only text, and
+  the state of the last run as a pill (running, ok with duration, error).
+- The argument editor is schema-aware when `argsSchema` is available. Both the
+  SDK validator shape (`{kind, fields}`) and the Convex JSON shape
+  (`{type, value}`) produce **Form** mode: one field per argument, text for
+  string and id, number for number, a checkbox for boolean, a JSON textarea for
+  everything else, with the optional marker on the type. **JSON** mode is
+  always available and the two modes carry values across the switch. Without a
+  validator the editor is JSON only.
+- Submit is the **Run function** button or ⌘⏎ (Ctrl+⏎ elsewhere). Plain Enter
+  in a text field does not submit, so a mutation never runs by accident.
+- Tenant is implicit from the sidebar tenant selector. The runner shows it and
+  never offers a second chooser.
 - Query runs can auto-refresh/react when backed by subscriptions.
 - Mutations and actions run only on explicit submit.
-- Results and logs share the same request/run correlation ID.
+- Results and logs share the same request/run correlation ID; the result panel
+  shows it as a copy chip for both success and error envelopes.
 - Identity controls are labeled as simulated/admin-local identity unless a
   real auth provider is active.
 
@@ -988,36 +1243,42 @@ A global command palette is table stakes for a developer console. Triggered
 by `⌘K` (macOS) / `Ctrl-K` (Windows/Linux), the palette must:
 
 - Open from anywhere — sidebar, table, drawer, modal, runner — without
-  losing the underlying view's scroll or focus state.
-- Provide three search modes in the same surface:
-  - **Navigate**: jump to a resource by name, ID, or path (machines,
-    tenants, tables, functions, runs, services, ports).
-  - **Run**: invoke an action (Start machine X, Rotate token, Shutdown,
-    Create tenant, Open function runner).
-  - **Filter**: when triggered from a list, filter the current view.
-- Show keyboard hints next to every action (`⏎ Run`, `⌘⏎ Open in new
-  tab`, `⌘C Copy ID`).
-- Surface recent commands at the top and persist across reloads.
+  losing the underlying view's scroll or focus state. Closing it returns
+  focus to the control that opened it.
+- Open on one list, 640px wide, with three fixed groups and no mode toggle:
+  - **Routes**: every page of the current console first, then the other
+    console's pages, each tagged `Developer` or `Operator`.
+  - **Tenants**: every tenant, the active one checked. A pick in the
+    developer console switches the active tenant in place; a pick from the
+    operator console switches and opens the developer console.
+  - **Actions**: switch console, open the system tenant lens (developer
+    only), refresh the current view, switch theme.
+- Add resource groups as the operator types: tables, functions, services,
+  machines, HTTP routes, each found by name, ID, or path.
+- Show recent picks at the top of the empty list, persisted under
+  `nimbus-ui:commands:recent`.
+- Write the keyboard contract in its footer: `↑ ↓` move, `⏎` open, `⎋`
+  close, `⌘K` palette, `⌘\` tenant lens, `/` filter page. Show the
+  shortcut beside every action that has one.
 
-Implementation: `cmdk` library, mounted at the app root.
+Implementation: the shadcn `command` primitive (`cmdk` inside a Base UI
+dialog), mounted at the app root.
 
-### Bottom Status Bar
+### Sidebar Footer
 
-A persistent thin bar (24-28px) anchored to the bottom of the viewport.
-Frees the sidebar from meta-state and gives the operator one always-visible
-read of system identity. Reference: VS Code, Podman Desktop.
+The console has no bottom status bar. What was in it lives in the sidebar
+footer, which is on every screen and reads top to bottom: the connection
+line (state dot, `Connected`, server version), the update row, the theme
+toggle, and the collapse control. The server URL is on the Settings page.
 
-Required slots, left to right:
-
-- Connection state dot + label (`Connected`, `Reconnecting`, `Offline`).
-- Active server URL (monospace, truncated, click-to-copy).
-- Server version + build hash (monospace, click opens release notes).
-- Active tenant (monospace, click opens tenant switcher).
-- Inflight request count (when > 0).
-- Right side: keyboard hints (`⌘K palette` `⌘\\ system tenant lens`).
-
-The bar never wraps. Truncate aggressively; rely on title attributes for
-full values.
+The update row is the one footer row that is not always there. It appears
+under the connection line when the server is behind the latest release
+(`Update to 0.2.0`, pending dot, opens the upgrade popover), follows the
+upgrade while it runs (`Updating to 0.2.0…`), holds `Updated to 0.2.0`
+for a moment after, and is absent when the console is current. In the rail
+the row is its dot with a tooltip; the button keeps its label for a screen
+reader. The three tones read from the shared state palette (`pending`,
+`starting`, `ready`), never a private table.
 
 ### Resource Breadcrumb
 
@@ -1046,11 +1307,8 @@ the resource header), the chip is permanent rather than hover-only.
 
 ### Toast / Notification Queue
 
-Use `sonner` for transient feedback. Anchor: bottom-right, offset by
-`calc(var(--statusbar-height) + 12px)` so the toast stack clears the
-fixed status bar at every viewport. The same `--statusbar-height` token
-drives the status bar height, so the gap stays correct if either changes.
-Rules:
+Use `sonner` for transient feedback. Anchor: bottom-right, with the
+default offset; nothing fixed sits under the toast stack. Rules:
 
 - Mutations confirm via toast (`Started machine-01`), not via modal.
 - Errors show until dismissed; never auto-disappear.
@@ -1090,9 +1348,9 @@ comparison, and document edits before save. Pattern:
 
 - Side-by-side on desktop, unified on tablet/mobile.
 - Line-level diff with intra-line highlights.
-- Removed: `--danger` left border + `--danger`-tinted surface.
-- Added: `--success` left border + `--success`-tinted surface.
-- No saturated reds/greens — use the same OKLCH state tokens.
+- Removed: `--error` left border + `--error-tint` surface.
+- Added: `--success` left border + `--success-tint` surface.
+- No saturated reds/greens — use the same state tokens.
 - Diffs over 200 lines collapse unchanged regions to `… N unchanged lines`.
 
 ### Keyboard Hints
@@ -1224,8 +1482,8 @@ Native UI expectations:
 
 Settings owns server administration and deployment management:
 
-- Server info: version, uptime, listen address, storage backend, and active
-  local server origin.
+- Server info: version, uptime, listen address, data directory, storage
+  backend, and active local server origin. This is the System sub-page.
 - Configuration display: runtime limits, license status and usage, auth
   provider config, adapter enablement, and storage topology. Configuration is
   read-only in Phase 1 unless a dedicated write API exists.
@@ -1233,8 +1491,11 @@ Settings owns server administration and deployment management:
   inventory, deploy history, and deploy trigger when the local-admin deploy
   endpoint can accept the selected artifact.
 - Token and session: current session state, token rotation with confirmation,
-  and forced re-auth after rotation.
-- Shutdown: graceful shutdown with confirmation and clear disconnect state.
+  and forced re-auth after rotation. Rotation lives on the Shutdown sub-page
+  until the Token sub-page exists.
+- Shutdown: graceful shutdown with typed confirmation and clear disconnect
+  state. Both writes use the shared `ConfirmDialog`; nothing on the page
+  hand-rolls a modal.
 
 ## Copy And Terminology
 
@@ -1294,10 +1555,11 @@ Tone:
 - Cross-tenant user data browsing uses the REST API unless a safe generated
   function surface exists for that exact tenant.
 - Do not introduce a second data orchestration path for the UI.
-- Prefer shadcn/ui source components, Base UI (MUI) primitives, Tailwind v4
-  with `@theme` OKLCH tokens, `cmdk` for the command palette, `sonner` for
-  toasts, `shiki` for syntax highlighting, JetBrains Mono for monospace
-  (via `@fontsource/jetbrains-mono`), Lucide for icons, TanStack Router,
+- Prefer shadcn `base-nova` registry components on Base UI primitives,
+  Tailwind v4 with the hex role tokens in `tokens.css` bridged through
+  `@theme inline`, `cmdk` for the command palette, `sonner` for toasts,
+  `shiki` for syntax highlighting, Geist and Geist Mono self-hosted for
+  type, Lucide for icons, TanStack Router, Table, Virtual and Charts,
   Zustand, Vitest, React Testing Library, and Playwright as described in
   `docs/private/plans/archive/desktop-ui-plan.md`.
 

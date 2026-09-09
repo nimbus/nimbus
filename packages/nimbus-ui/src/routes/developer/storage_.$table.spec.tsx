@@ -10,13 +10,20 @@ vi.mock("@tanstack/react-router", () => ({
     children,
     "data-testid": testId,
     className,
+    "aria-current": ariaCurrent,
   }: {
     to: string;
     children: ReactNode;
     "data-testid"?: string;
     className?: string;
+    "aria-current"?: "page";
   }) => (
-    <a href={to} data-testid={testId} className={className}>
+    <a
+      href={to}
+      data-testid={testId}
+      className={className}
+      aria-current={ariaCurrent}
+    >
       {children}
     </a>
   ),
@@ -25,7 +32,7 @@ vi.mock("@tanstack/react-router", () => ({
 const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
 
 vi.mock("@nimbus/nimbus/react", () => ({
-  useQuery: (..._args: unknown[]) => useQueryMock(),
+  useQuery: (...args: unknown[]) => useQueryMock(...args),
 }));
 
 const { removeMock, insertMock, updateMock } = vi.hoisted(() => ({
@@ -57,8 +64,8 @@ const { toastMock, refreshMock, pageRef } = vi.hoisted(() => {
 
 vi.mock("sonner", () => ({ toast: toastMock }));
 
-vi.mock("../../components/storage/tables-sub-drawer", () => ({
-  useTablesSubDrawer: () => undefined,
+vi.mock("../../components/storage/tables-sub-panel", () => ({
+  useTablesSubPanel: () => undefined,
 }));
 
 vi.mock("../../components/storage/use-document-page", () => ({
@@ -91,10 +98,10 @@ function deferred() {
   return { promise, resolve };
 }
 
-function renderPage() {
+function renderPage(search: Record<string, unknown> = {}) {
   const route = Route as unknown as Record<string, unknown>;
   route.useParams = () => ({ table: "messages" });
-  route.useSearch = () => ({});
+  route.useSearch = () => search;
   route.useNavigate = () => () => undefined;
   const Component = routeComponent(Route);
   return render(<Component />);
@@ -198,9 +205,9 @@ describe("bulk document delete partial failure", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByTestId("documents-row-doc_a")).toHaveAttribute(
+    expect(screen.getByTestId("documents-row-doc_a")).not.toHaveAttribute(
       "aria-selected",
-      "false",
+      "true",
     );
   });
 
@@ -313,72 +320,69 @@ describe("bulk document delete outliving its route", () => {
   });
 });
 
+/** Answers the `tables.byName` query with a row and every other query with nothing. */
+function serveTableMeta(schema: Record<string, unknown> | null) {
+  useQueryMock.mockImplementation((_ref: unknown, args: unknown) =>
+    args && typeof args === "object" && "name" in args
+      ? { _id: "t1", tenantId: "demo", name: "messages", schema }
+      : undefined,
+  );
+}
+
 /**
- * The table shares a flex row with the schema and index inspectors. As
- * `flex-1` with `overflow-hidden` its automatic minimum width resolves to
- * zero, so it used to yield every pixel to the 420px panel and collapse to
- * its own two borders -- measured at roughly 2px on 390px and 500px
- * viewports. happy-dom performs no layout, so the floor utility is the only
- * thing a test here can read back.
+ * Documents, Schema and Indexes are peers of one table, addressed by the
+ * `tab` search param so each has a URL and the back button works.
  */
-describe("document table column floor", () => {
-  it("keeps a minimum width the inspector panel cannot take", () => {
+describe("table views", () => {
+  it("shows the documents grid by default and links the peer views", () => {
     renderPage();
-
-    const classes = screen
-      .getByTestId("documents-table-column")
-      .className.split(" ");
-    expect(classes).toContain("min-w-[20rem]");
-    // The floor is only a floor: the column still takes the whole row when no
-    // panel is open.
-    expect(classes).toContain("flex-1");
+    expect(screen.getByTestId("documents-table")).toBeInTheDocument();
+    expect(screen.getByTestId("documents-tab-documents")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByTestId("documents-tab-schema")).toBeInTheDocument();
+    expect(screen.getByTestId("documents-tab-indexes")).toBeInTheDocument();
+    // The Query tab lands with the query console; until then it is absent.
+    expect(screen.queryByTestId("documents-tab-query")).toBeNull();
   });
 
-  /**
-   * The floor above fixed the table and moved the starvation onto the
-   * inspector: the table stopped yielding, so the panel became the side that
-   * goes to nothing. Side-by-side costs 320px (the floor) + 16px (`gap-4`) +
-   * 420px (the panel) = 756px of row width, and a browser measurement of the
-   * real flex row read the panel at 6px on a 390px viewport, where the row has
-   * 342px of content width.
-   *
-   * 756px is measured against the row's own container rather than the
-   * viewport. A media query cannot see this row: the shell's drawers sit
-   * between the viewport and the page and take 80px collapsed or 480px
-   * expanded, so one viewport width yields row widths 400px apart. `lg` was
-   * the closest single number and still starved the panel to 160px at a
-   * 1024px viewport with both drawers open, and to 416px at 1280px -- both
-   * measured. Against the container those cases stack correctly instead.
-   *
-   * happy-dom performs no layout and evaluates no container query, so the
-   * direction utility is the only observable a test here can read back.
-   */
-  it("stacks the inspector under the table until the row can afford it", () => {
-    renderPage();
-
-    const row = screen.getByTestId("documents-table-column").parentElement;
-    const classes = row?.className.split(" ") ?? [];
-    expect(classes).toContain("flex-col");
-    expect(classes).toContain("@min-[756px]/documents-row:flex-row");
-    // A viewport variant here is the specific regression to guard: it reads
-    // correct but cannot see the drawers.
-    expect(classes).not.toContain("lg:flex-row");
-    // The panel half is inseparable from this: a stacking row whose panel is
-    // still a fixed 420px just clips it horizontally instead. Asserted on the
-    // panels themselves in schema-panel.spec.tsx and index-panel.spec.tsx.
-    expect(classes).toContain("overflow-hidden");
+  it("gives the schema view the page instead of a side panel", () => {
+    serveTableMeta({ table: "messages", fields: [], indexes: [] });
+    renderPage({ tab: "schema" });
+    expect(screen.getByTestId("documents-schema-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("documents-table")).toBeNull();
+    expect(screen.getByTestId("documents-tab-schema")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
-  // The container the two panels' `@min-[756px]/documents-row:` queries name.
-  // It lives here, they live in components/storage, and nothing in the type
-  // system connects the two -- if this class is dropped the queries silently
-  // stop matching and both panels stay full-width at every size.
-  it("declares the documents-row container the panels query", () => {
-    renderPage();
+  // The editor seeds its draft on mount. Opening the tab straight from a
+  // link, before the table row has loaded, must not seed an empty draft
+  // that then hides the real schema behind a stale textarea.
+  it("waits for the table row before it seeds the schema editor", () => {
+    renderPage({ tab: "schema" });
+    expect(screen.getByTestId("documents-schema-loading")).toBeInTheDocument();
+    expect(screen.queryByTestId("documents-schema-textarea")).toBeNull();
+  });
 
-    const classes = screen
-      .getByTestId("page-table-documents")
-      .className.split(" ");
-    expect(classes).toContain("@container/documents-row");
+  it("seeds the editor with the table's schema", () => {
+    serveTableMeta({
+      table: "messages",
+      fields: [{ name: "author", field_type: "string", required: true }],
+      indexes: [{ name: "by_author", fields: ["author"] }],
+    });
+    renderPage({ tab: "schema" });
+    const textarea = screen.getByTestId(
+      "documents-schema-textarea",
+    ) as HTMLTextAreaElement;
+    expect(textarea.value).toContain("by_author");
+  });
+
+  it("shows the indexes view on its own tab", () => {
+    renderPage({ tab: "indexes" });
+    expect(screen.getByTestId("documents-indexes-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("documents-table")).toBeNull();
   });
 });

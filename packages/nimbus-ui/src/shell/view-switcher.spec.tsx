@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { navigateMock, pathnameRef } = vi.hoisted(() => ({
@@ -102,15 +103,17 @@ describe("ViewSwitcher", () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
-  it("moves focus between segments on ArrowLeft/ArrowRight", () => {
+  it("moves focus between segments on ArrowLeft/ArrowRight", async () => {
+    const user = userEvent.setup();
     setPathname("/developer");
     render(<ViewSwitcher />);
     const dev = screen.getByTestId("view-switcher-developer");
     const op = screen.getByTestId("view-switcher-operator");
-    dev.focus();
-    fireEvent.keyDown(dev, { key: "ArrowRight" });
-    expect(document.activeElement).toBe(op);
-    fireEvent.keyDown(op, { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(dev);
+    await user.tab();
+    expect(dev).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(op).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(dev).toHaveFocus();
   });
 });

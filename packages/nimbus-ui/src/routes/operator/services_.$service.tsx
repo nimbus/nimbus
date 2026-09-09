@@ -2,32 +2,39 @@ import {
   createFileRoute,
   Link,
   notFound,
-  useNavigate,
   useSearch,
 } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
+import { PageTabs } from "../../components/page-tabs";
+import { CategoryPill, StatePill } from "../../components/pill";
 import { AdminServiceDetailLoaderError } from "../../components/service-loader-errors";
-import { StateChip } from "../../components/state-chip";
-import { cn } from "../../lib/cn";
+import { StateDot } from "../../components/state-dot";
 import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-  useSubDrawerSearch,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+  useSubPanelSearch,
+} from "../../shell/sub-panel";
+import {
+  LifecycleButtons,
+  shownStateOf,
+} from "../developer/services/-lifecycle-buttons";
+import { useServiceActions } from "../developer/services/-service-lifecycle";
+import { ServiceLogs } from "../developer/services/-service-logs";
 import { groupByTenant } from "./services";
 
-export type DetailTab = "placement";
+export type DetailTab = "placement" | "logs";
 
 export const TABS: ReadonlyArray<{ id: DetailTab; label: string }> = [
   { id: "placement", label: "Placement" },
+  { id: "logs", label: "Logs" },
 ];
 
 type DetailSearch = {
@@ -66,41 +73,33 @@ export const Route = createFileRoute("/operator/services_/$service")({
 });
 
 export function isTab(value: unknown): value is DetailTab {
-  return value === "placement";
+  return value === "placement" || value === "logs";
 }
 
 function AdminServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
   const { service, services, bundles, machines } = Route.useLoaderData();
   const search = useSearch({ from: "/operator/services_/$service" });
-  const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "placement";
+  const actions = useServiceActions();
 
   const bundle = useMemo<Doc<"bundles"> | null>(() => {
     if (!service.bundleId) return null;
     return bundles.find((b) => b._id === service.bundleId) ?? null;
   }, [service, bundles]);
 
-  const spec = useMemo<SubDrawerSpec>(
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
       title: "Services",
-      search: { placeholder: "Filter services" },
+      search: { placeholder: "Filter services", rows: services.length },
       children: (
-        <AdminDetailSubDrawer services={services} activeServiceId={serviceId} />
+        <AdminDetailSubPanel services={services} activeServiceId={serviceId} />
       ),
     }),
     [services, serviceId],
   );
-  useContributeSubDrawer(spec);
-
-  const setTab = (next: DetailTab) =>
-    navigate({
-      to: "/operator/services/$service",
-      params: { service: serviceId },
-      search: { tab: next },
-      replace: true,
-    });
+  useContributeSubPanel(spec);
 
   const displayName = service.name ?? shortId(serviceId, 12);
 
@@ -109,72 +108,66 @@ function AdminServiceDetailPage() {
       className="flex h-full flex-col overflow-hidden"
       data-testid="page-admin-service-detail"
     >
-      <div className="flex shrink-0 flex-col gap-2 border-b border-app px-6 pb-3 pt-4">
+      <div className="flex shrink-0 flex-col gap-3 border-b border-border-2 px-6 pb-3 pt-4">
         <Breadcrumb
           segments={[
             { label: "Services", href: "/operator/services" },
             { label: displayName, active: true },
           ]}
         />
-        <header className="flex flex-wrap items-baseline gap-3">
-          <h1
-            className="font-mono text-default"
-            style={{ fontSize: "var(--text-lg)" }}
-          >
-            {displayName}
-          </h1>
-          {service.kind ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted">
-              {service.kind}
-            </span>
-          ) : null}
-          {service.state ? <StateChip state={service.state} /> : null}
-          {service.tenantId ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted">
-              {service.tenantId}
-            </span>
-          ) : null}
-          {bundle?.sha256 ? (
-            <CopyChip
-              label="bundle sha256"
-              value={bundle.sha256}
-              testid="admin-service-detail-bundle"
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h1
+              className="font-mono text-text-1"
+              style={{ fontSize: "var(--text-lg)" }}
             >
-              {shortHash(bundle.sha256, 12)}
-            </CopyChip>
-          ) : null}
+              {displayName}
+            </h1>
+            {service.kind ? <CategoryPill value={service.kind} /> : null}
+            <StatePill
+              state={shownStateOf(service, actions)}
+              data-testid="admin-service-detail-state"
+            />
+            {service.tenantId ? (
+              <span className="rounded-xs border border-border-2 px-1.5 py-0.5 font-mono text-xs text-text-3">
+                {service.tenantId}
+              </span>
+            ) : null}
+            {bundle?.sha256 ? (
+              <CopyChip
+                label="bundle sha256"
+                value={bundle.sha256}
+                testid="admin-service-detail-bundle"
+              >
+                {shortHash(bundle.sha256, 12)}
+              </CopyChip>
+            ) : null}
+          </div>
+          <LifecycleButtons
+            service={service}
+            actions={actions}
+            testid="admin-service-detail-action"
+          />
         </header>
+        <PageTabs
+          label="Admin service detail sections"
+          tabs={TABS}
+          active={tab}
+          testid="admin-service-detail-tabs"
+          itemTestid="admin-service-detail-tab"
+        />
       </div>
 
-      <nav
-        aria-label="Admin service detail sections"
-        className="flex shrink-0 gap-px border-b border-app bg-surface-2 px-6"
-        data-testid="admin-service-detail-tabs"
-      >
-        {TABS.map((t) => {
-          const isActive = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              aria-current={isActive ? "page" : undefined}
-              data-testid={`admin-service-detail-tab-${t.id}`}
-              className={cn(
-                "flex items-center px-3 py-2 font-mono text-xs",
-                isActive
-                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
-                  : "text-muted hover:text-default",
-              )}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </nav>
-
       <div className="min-h-0 flex-1 overflow-hidden">
-        <PlacementTab service={service} machines={machines} />
+        {tab === "logs" ? (
+          <ServiceLogs
+            tenantId={service.tenantId}
+            serviceName={service.name ?? service._id}
+            testid="admin-service-tab-logs"
+          />
+        ) : (
+          <PlacementTab service={service} machines={machines} />
+        )}
       </div>
     </section>
   );
@@ -194,7 +187,7 @@ function PlacementTab({
 
   return (
     <div
-      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-default"
+      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-text-1"
       data-testid="admin-service-tab-placement"
     >
       <Stat label="Tenant" value={service.tenantId ?? "—"} />
@@ -204,7 +197,7 @@ function PlacementTab({
           service.machineId ? (
             <Link
               to="/operator/machines"
-              className="font-mono text-default hover:underline"
+              className="font-mono text-text-1 hover:underline"
             >
               {machine?.name ?? shortId(service.machineId, 12)}
             </Link>
@@ -215,7 +208,7 @@ function PlacementTab({
       />
       <Stat
         label="Machine state"
-        value={machine?.state ? <StateChip state={machine.state} /> : "—"}
+        value={machine?.state ? <StatePill state={machine.state} /> : "—"}
       />
     </div>
   );
@@ -224,22 +217,20 @@ function PlacementTab({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
-        {label}
-      </span>
-      <span className="font-mono text-xs text-default">{value}</span>
+      <span className="w-32 text-xs font-medium text-text-3">{label}</span>
+      <span className="font-mono text-xs text-text-1">{value}</span>
     </div>
   );
 }
 
-function AdminDetailSubDrawer({
+function AdminDetailSubPanel({
   services,
   activeServiceId,
 }: {
   services: ServiceDoc[];
   activeServiceId: string;
 }) {
-  const filter = useSubDrawerSearch().trim().toLowerCase();
+  const filter = useSubPanelSearch().trim().toLowerCase();
   const filtered = filter
     ? services.filter(
         (s) =>
@@ -251,14 +242,14 @@ function AdminDetailSubDrawer({
     : services;
   if (services.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         No services registered.
       </div>
     );
   }
   if (filtered.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         No services match the filter.
       </div>
     );
@@ -268,7 +259,7 @@ function AdminDetailSubDrawer({
     <ul className="flex flex-col gap-2 px-2 py-2">
       {grouped.map(([tenant, items]) => (
         <li key={tenant} className="flex flex-col gap-px">
-          <div className="px-2 pb-1 pt-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">
+          <div className="px-2 pb-1 pt-2 text-xs font-medium text-text-3">
             {tenant}
           </div>
           {items.map((svc) => {
@@ -278,19 +269,20 @@ function AdminDetailSubDrawer({
                 key={svc._id}
                 to="/operator/services/$service"
                 params={{ service: svc._id }}
-                data-testid={`sub-drawer-item-op-service-${svc.name ?? svc._id}`}
+                data-testid={`sub-panel-item-op-service-${svc.name ?? svc._id}`}
                 className={cn(
                   "flex h-8 items-center gap-2 rounded-md px-2 text-sm",
                   isActive
-                    ? "bg-surface-2 text-default"
-                    : "text-muted hover:bg-surface-2 hover:text-default",
+                    ? "bg-bg-raised text-text-1"
+                    : "text-text-3 hover:bg-bg-raised hover:text-text-1",
                 )}
               >
+                <StateDot state={svc.state} />
                 <span className="flex-1 truncate font-mono text-xs">
                   {svc.name ?? shortId(svc._id, 12)}
                 </span>
                 {svc.state ? (
-                  <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
+                  <span className="tabular text-xs font-medium text-text-3">
                     {svc.state}
                   </span>
                 ) : null}
@@ -310,15 +302,14 @@ function AdminServiceNotFound() {
       className="flex h-full flex-col items-center justify-center gap-2 text-center"
       data-testid="admin-service-not-found"
     >
-      <span className="font-mono text-sm text-default">Service not found</span>
-      <span className="max-w-md text-xs text-muted">
+      <span className="font-mono text-sm text-text-1">Service not found</span>
+      <span className="max-w-md text-xs text-text-3">
         No service matches the id{" "}
-        <code className="font-mono text-default">{shortId(serviceId, 12)}</code>
-        .
+        <code className="font-mono text-text-1">{shortId(serviceId, 12)}</code>.
       </span>
       <Link
         to="/operator/services"
-        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
       >
         ← back to services
       </Link>

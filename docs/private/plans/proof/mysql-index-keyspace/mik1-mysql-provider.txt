@@ -1,0 +1,64 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.71s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_storage-e8c79b8d527b45cf)
+
+running 44 tests
+test tests::mysql_provider::foundation::mysql_opened_tenant_exposes_store_identity_and_read_storage ... ok
+test tests::mysql_provider::committer_lease::mysql_lease_takeover_after_expiry_fences_stale_epoch_under_concurrency ... ok
+test tests::mysql_provider::committer_lease::mysql_committer_lease_transitions_use_provider_time_and_fence_stale_owners ... ok
+test tests::mysql_provider::committer_lease::mysql_committer_lease_concurrent_acquire_has_exactly_one_winner ... ok
+test tests::mysql_provider::execution_units::mysql_disabled_cron_job_still_reports_scheduled_work ... ok
+test tests::mysql_provider::foundation::mysql_provider_reloads_registry_after_reconnect ... ok
+test tests::mysql_provider::execution_units::mysql_resource_path_bindings_round_trip_without_table_name_delimiter_tricks ... ok
+test tests::mysql_provider::execution_units::mysql_trigger_delivery_cursor_round_trips_in_metadata ... ok
+test tests::mysql_provider::execution_units::mysql_execution_unit_batch_persists_and_removes_resource_path_bindings_atomically ... ok
+test tests::mysql_provider::execution_units::mysql_execution_unit_batch_and_scheduler_state_round_trip ... ok
+test tests::mysql_provider::journal::mysql_batch_journal_insert_uses_one_provider_statement ... ok
+test tests::mysql_provider::journal::mysql_packet_bounded_journal_chunks_commit_atomically ... ok
+test tests::mysql_provider::journal::mysql_durable_journal_recovery_applies_pending_records ... ok
+test tests::mysql_provider::journal::mysql_durable_replay_retires_recreated_table_identity ... ok
+test tests::mysql_provider::journal::mysql_materialized_verification_root_is_provider_independent ... ok
+test tests::mysql_provider::journal::mysql_direct_writes_dedupe_and_journal_progress_round_trip ... ok
+test tests::mysql_provider::journal::mysql_materialized_position_matches_the_provider_independent_reference ... ok
+test tests::mysql_provider::foundation::mysql_provider_manages_tenant_registry_and_databases ... ok
+test tests::mysql_provider::journal::mysql_pending_prefix_blocks_generic_zero_write ... ok
+test tests::mysql_provider::index_entries::mysql_writes_maintain_index_entries ... ok
+test tests::mysql_provider::journal::mysql_pipeline_lease_cas_precedes_all_statements ... ok
+test tests::mysql_provider::journal::mysql_durable_update_guard_reports_corruption ... ok
+test tests::mysql_provider::journal::mysql_pre_admission_cancellation_is_not_a_pipeline_failure ... ok
+test tests::mysql_provider::journal::mysql_sql_pipeline_cancellation_rolls_back ... ok
+test tests::mysql_provider::journal::mysql_sql_pipeline_post_runner_cancellation_is_counted_once ... ok
+test tests::mysql_provider::journal::mysql_tenant_event_journal_replays_mixed_history ... ok
+test tests::mysql_provider::journal::mysql_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes ... ok
+test tests::mysql_provider::journal::mysql_ppsc_identical_replay_is_idempotent_for_all_write_shapes ... ok
+test tests::mysql_provider::committer_lease::mysql_fenced_durable_apply_contract_is_atomic ... ok
+test tests::mysql_provider::schema::mysql_index_reads_round_trip_after_schema_write ... ok
+test tests::mysql_provider::schema::mysql_schema_write_creates_and_drops_generated_index_columns ... ok
+test tests::mysql_provider::retention::mysql_provider_page_rejects_concurrent_retention_prune ... ok
+test tests::mysql_provider::versions::mysql_document_versions_are_materialized_during_durable_recovery ... ok
+test tests::mysql_provider::versions::mysql_document_versions_storage_diagnostic_reports_format_and_range ... ok
+test tests::mysql_provider::versions::mysql_document_versions_track_direct_write_history ... ok
+test tests::mysql_provider::schema::mysql_table_lifecycle_activates_hidden_identity_and_diagnostics_track_layout ... ok
+test tests::mysql_provider::retention::mysql_provider_retention_checkpoint_fault_rolls_back_every_delete ... ok
+test tests::mysql_provider::retention::mysql_provider_retention_sql_error_preserves_error_and_rolls_back ... ok
+test tests::mysql_provider::versions::mysql_index_versions_track_direct_write_history ... ok
+test tests::mysql_provider::versions::mysql_historical_index_prefix_composite_range_and_pagination_are_stable ... ok
+test tests::mysql_provider::versions::mysql_index_versions_are_materialized_during_durable_recovery ... ok
+test tests::mysql_provider::versions::mysql_historical_index_scan_eq_and_range_use_versioned_visibility ... ok
+test tests::mysql_provider::retention::mysql_provider_stale_lease_retention_is_atomic_and_restart_safe ... ok
+test tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads ... FAILED
+
+failures:
+
+---- tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads stdout ----
+
+thread 'tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads' (290169429) panicked at crates/nimbus-storage/src/tests/mysql_provider/schema.rs:294:14:
+a schema with more than 64 indexes should apply on MySQL: Storage { kind: Other, message: "Server error: `ERROR 42000 (1069): Too many keys specified; max 64 keys allowed'" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::mysql_provider::schema::mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads
+
+test result: FAILED. 43 passed; 1 failed; 0 ignored; 0 measured; 420 filtered out; finished in 2.29s
+
+error: test failed, to rerun pass `-p nimbus-storage --lib`

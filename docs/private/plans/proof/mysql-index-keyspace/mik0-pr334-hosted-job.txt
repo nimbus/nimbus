@@ -1,0 +1,777 @@
+﻿2026-09-09T16:48:28.5929610Z Current runner version: '2.337.0'
+2026-09-09T16:48:28.5998618Z ##[group]Runner Image Provisioner
+2026-09-09T16:48:28.6000090Z Hosted Compute Agent
+2026-09-09T16:48:28.6000786Z Version: 20260828.587
+2026-09-09T16:48:28.6001514Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-09T16:48:28.6002359Z Build Date: 2026-08-28T16:44:25Z
+2026-09-09T16:48:28.6003117Z Worker ID: {b0be0812-0700-4df0-a327-13e57341485e}
+2026-09-09T16:48:28.6003893Z Azure Region: northcentralus
+2026-09-09T16:48:28.6004553Z ##[endgroup]
+2026-09-09T16:48:28.6006170Z ##[group]Operating System
+2026-09-09T16:48:28.6006900Z Ubuntu
+2026-09-09T16:48:28.6007450Z 24.04.4
+2026-09-09T16:48:28.6007972Z LTS
+2026-09-09T16:48:28.6008578Z ##[endgroup]
+2026-09-09T16:48:28.6009480Z ##[group]Runner Image
+2026-09-09T16:48:28.6010214Z Image: ubuntu-24.04
+2026-09-09T16:48:28.6010806Z Version: 20260831.293.1
+2026-09-09T16:48:28.6012156Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260831.293/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-09T16:48:28.6013712Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260831.293
+2026-09-09T16:48:28.6014800Z ##[endgroup]
+2026-09-09T16:48:28.6015909Z ##[group]GITHUB_TOKEN Permissions
+2026-09-09T16:48:28.6017981Z Contents: read
+2026-09-09T16:48:28.6018645Z Metadata: read
+2026-09-09T16:48:28.6019496Z ##[endgroup]
+2026-09-09T16:48:28.6021664Z Secret source: Actions
+2026-09-09T16:48:28.6022639Z Cache mode: write
+2026-09-09T16:48:28.6023494Z Prepare workflow directory
+2026-09-09T16:48:28.6428108Z Prepare all required actions
+2026-09-09T16:48:28.6476105Z Getting action download info
+2026-09-09T16:48:28.9136202Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-09-09T16:48:29.0066991Z Download action repository 'actions/download-artifact@v8' (SHA:3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c)
+2026-09-09T16:48:29.3363004Z Download action repository 'taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8' (SHA:5bf6ce016fd2e72eefc647cbca1e4213f65955b8)
+2026-09-09T16:48:29.8513371Z Complete job name: External Provider Integration Tests (mysql)
+2026-09-09T16:48:29.9398538Z ##[group]Run actions/checkout@v6
+2026-09-09T16:48:29.9399684Z with:
+2026-09-09T16:48:29.9477284Z   repository: nimbus/nimbus
+2026-09-09T16:48:29.9481856Z   token: ***
+2026-09-09T16:48:29.9482348Z   ssh-strict: true
+2026-09-09T16:48:29.9482839Z   ssh-user: git
+2026-09-09T16:48:29.9483347Z   persist-credentials: true
+2026-09-09T16:48:29.9483885Z   clean: true
+2026-09-09T16:48:29.9484371Z   sparse-checkout-cone-mode: true
+2026-09-09T16:48:29.9484946Z   fetch-depth: 1
+2026-09-09T16:48:29.9485420Z   fetch-tags: false
+2026-09-09T16:48:29.9485913Z   show-progress: true
+2026-09-09T16:48:29.9486410Z   lfs: false
+2026-09-09T16:48:29.9486886Z   submodules: false
+2026-09-09T16:48:29.9487390Z   set-safe-directory: true
+2026-09-09T16:48:29.9487952Z   allow-unsafe-pr-checkout: false
+2026-09-09T16:48:29.9489412Z env:
+2026-09-09T16:48:29.9489892Z   CARGO_TERM_COLOR: always
+2026-09-09T16:48:29.9490476Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:48:29.9490999Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:48:29.9491611Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:48:29.9492164Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:48:29.9492693Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:48:29.9493215Z ##[endgroup]
+2026-09-09T16:48:30.0545449Z Syncing repository: nimbus/nimbus
+2026-09-09T16:48:30.0548745Z ##[group]Getting Git version info
+2026-09-09T16:48:30.0550219Z Working directory is '/home/runner/work/nimbus/nimbus'
+2026-09-09T16:48:30.0552160Z [command]/usr/bin/git version
+2026-09-09T16:48:30.0559550Z git version 2.55.0
+2026-09-09T16:48:30.0581294Z ##[endgroup]
+2026-09-09T16:48:30.0595692Z Temporarily overriding HOME='/home/runner/work/_temp/572bcde5-67df-4ba9-9553-68962b4e3ff0' before making global git config changes
+2026-09-09T16:48:30.0598326Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-09T16:48:30.0601154Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/nimbus/nimbus
+2026-09-09T16:48:30.0670080Z Deleting the contents of '/home/runner/work/nimbus/nimbus'
+2026-09-09T16:48:30.0675518Z ##[group]Determining repository object format
+2026-09-09T16:48:30.0678348Z ##[endgroup]
+2026-09-09T16:48:30.0680056Z ##[group]Initializing the repository
+2026-09-09T16:48:30.0680874Z [command]/usr/bin/git init /home/runner/work/nimbus/nimbus
+2026-09-09T16:48:30.0755863Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-09T16:48:30.0757618Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-09T16:48:30.0759442Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-09T16:48:30.0760789Z hint: call:
+2026-09-09T16:48:30.0761493Z hint:
+2026-09-09T16:48:30.0762370Z hint: 	git config --global init.defaultBranch <name>
+2026-09-09T16:48:30.0763444Z hint:
+2026-09-09T16:48:30.0764455Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-09T16:48:30.0766191Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-09T16:48:30.0767628Z hint:
+2026-09-09T16:48:30.0768406Z hint: 	git branch -m <name>
+2026-09-09T16:48:30.0769685Z hint:
+2026-09-09T16:48:30.0770901Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-09T16:48:30.0779909Z Initialized empty Git repository in /home/runner/work/nimbus/nimbus/.git/
+2026-09-09T16:48:30.0783431Z [command]/usr/bin/git remote add origin https://github.com/nimbus/nimbus
+2026-09-09T16:48:30.0823355Z ##[endgroup]
+2026-09-09T16:48:30.0824896Z ##[group]Disabling automatic garbage collection
+2026-09-09T16:48:30.0827033Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-09T16:48:30.0864508Z ##[endgroup]
+2026-09-09T16:48:30.0865889Z ##[group]Setting up auth
+2026-09-09T16:48:30.0866846Z Removing SSH command configuration
+2026-09-09T16:48:30.0872737Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-09T16:48:30.0912229Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-09T16:48:30.1253195Z Removing HTTP extra header
+2026-09-09T16:48:30.1262648Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-09T16:48:30.1304207Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-09T16:48:30.1556647Z Removing includeIf entries pointing to credentials config files
+2026-09-09T16:48:30.1563302Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-09T16:48:30.1602345Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-09T16:48:30.1847089Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-09T16:48:30.1890126Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/nimbus/nimbus/.git.path /home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:48:30.1926262Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/nimbus/nimbus/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:48:30.1970171Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:48:30.2004837Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:48:30.2038420Z ##[endgroup]
+2026-09-09T16:48:30.2039994Z ##[group]Fetching the repository
+2026-09-09T16:48:30.2046815Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +67548e944d2d3db6cea11f1e249038b43db165ff:refs/remotes/pull/334/merge
+2026-09-09T16:48:34.4103571Z From https://github.com/nimbus/nimbus
+2026-09-09T16:48:34.4104280Z  * [new ref]           67548e944d2d3db6cea11f1e249038b43db165ff -> pull/334/merge
+2026-09-09T16:48:34.4109441Z ##[endgroup]
+2026-09-09T16:48:34.4109998Z ##[group]Determining the checkout info
+2026-09-09T16:48:34.4110714Z ##[endgroup]
+2026-09-09T16:48:34.4115900Z [command]/usr/bin/git sparse-checkout disable
+2026-09-09T16:48:34.4167979Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-09T16:48:34.4201483Z ##[group]Checking out the ref
+2026-09-09T16:48:34.4205919Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/334/merge
+2026-09-09T16:48:35.4737313Z Updating files:  37% (17009/45385)
+2026-09-09T16:48:35.4942932Z Updating files:  38% (17247/45385)
+2026-09-09T16:48:35.5142042Z Updating files:  39% (17701/45385)
+2026-09-09T16:48:35.5341936Z Updating files:  40% (18154/45385)
+2026-09-09T16:48:35.5532447Z Updating files:  41% (18608/45385)
+2026-09-09T16:48:35.5722491Z Updating files:  42% (19062/45385)
+2026-09-09T16:48:35.5940990Z Updating files:  43% (19516/45385)
+2026-09-09T16:48:35.6118640Z Updating files:  44% (19970/45385)
+2026-09-09T16:48:35.6314421Z Updating files:  45% (20424/45385)
+2026-09-09T16:48:35.6703479Z Updating files:  46% (20878/45385)
+2026-09-09T16:48:35.7199948Z Updating files:  47% (21331/45385)
+2026-09-09T16:48:35.7386173Z Updating files:  48% (21785/45385)
+2026-09-09T16:48:35.7583843Z Updating files:  49% (22239/45385)
+2026-09-09T16:48:35.7888313Z Updating files:  50% (22693/45385)
+2026-09-09T16:48:35.8207880Z Updating files:  51% (23147/45385)
+2026-09-09T16:48:35.8416569Z Updating files:  52% (23601/45385)
+2026-09-09T16:48:35.8600381Z Updating files:  53% (24055/45385)
+2026-09-09T16:48:35.8790387Z Updating files:  54% (24508/45385)
+2026-09-09T16:48:35.8985348Z Updating files:  55% (24962/45385)
+2026-09-09T16:48:35.9169844Z Updating files:  56% (25416/45385)
+2026-09-09T16:48:35.9356320Z Updating files:  57% (25870/45385)
+2026-09-09T16:48:35.9539660Z Updating files:  58% (26324/45385)
+2026-09-09T16:48:35.9725066Z Updating files:  59% (26778/45385)
+2026-09-09T16:48:35.9927319Z Updating files:  60% (27231/45385)
+2026-09-09T16:48:36.0129408Z Updating files:  61% (27685/45385)
+2026-09-09T16:48:36.0323377Z Updating files:  62% (28139/45385)
+2026-09-09T16:48:36.0600052Z Updating files:  63% (28593/45385)
+2026-09-09T16:48:36.0824573Z Updating files:  64% (29047/45385)
+2026-09-09T16:48:36.1049864Z Updating files:  65% (29501/45385)
+2026-09-09T16:48:36.1285140Z Updating files:  66% (29955/45385)
+2026-09-09T16:48:36.1502718Z Updating files:  67% (30408/45385)
+2026-09-09T16:48:36.1685556Z Updating files:  68% (30862/45385)
+2026-09-09T16:48:36.1877914Z Updating files:  69% (31316/45385)
+2026-09-09T16:48:36.2271736Z Updating files:  70% (31770/45385)
+2026-09-09T16:48:36.2788360Z Updating files:  71% (32224/45385)
+2026-09-09T16:48:36.2959857Z Updating files:  72% (32678/45385)
+2026-09-09T16:48:36.3209033Z Updating files:  73% (33132/45385)
+2026-09-09T16:48:36.3471960Z Updating files:  74% (33585/45385)
+2026-09-09T16:48:36.3830583Z Updating files:  75% (34039/45385)
+2026-09-09T16:48:36.4036747Z Updating files:  76% (34493/45385)
+2026-09-09T16:48:36.4219211Z Updating files:  77% (34947/45385)
+2026-09-09T16:48:36.4401496Z Updating files:  78% (35401/45385)
+2026-09-09T16:48:36.4590407Z Updating files:  79% (35855/45385)
+2026-09-09T16:48:36.4634288Z Updating files:  80% (36308/45385)
+2026-09-09T16:48:36.4777986Z Updating files:  80% (36409/45385)
+2026-09-09T16:48:36.4967541Z Updating files:  81% (36762/45385)
+2026-09-09T16:48:36.5149211Z Updating files:  82% (37216/45385)
+2026-09-09T16:48:36.5334406Z Updating files:  83% (37670/45385)
+2026-09-09T16:48:36.5527659Z Updating files:  84% (38124/45385)
+2026-09-09T16:48:36.5736001Z Updating files:  85% (38578/45385)
+2026-09-09T16:48:36.5938485Z Updating files:  86% (39032/45385)
+2026-09-09T16:48:36.6129657Z Updating files:  87% (39485/45385)
+2026-09-09T16:48:36.6328011Z Updating files:  88% (39939/45385)
+2026-09-09T16:48:36.6507390Z Updating files:  89% (40393/45385)
+2026-09-09T16:48:36.6708539Z Updating files:  90% (40847/45385)
+2026-09-09T16:48:36.7061455Z Updating files:  91% (41301/45385)
+2026-09-09T16:48:36.7421775Z Updating files:  92% (41755/45385)
+2026-09-09T16:48:36.7771359Z Updating files:  93% (42209/45385)
+2026-09-09T16:48:36.8526267Z Updating files:  94% (42662/45385)
+2026-09-09T16:48:36.8950903Z Updating files:  95% (43116/45385)
+2026-09-09T16:48:36.9256834Z Updating files:  96% (43570/45385)
+2026-09-09T16:48:36.9540950Z Updating files:  97% (44024/45385)
+2026-09-09T16:48:37.0234390Z Updating files:  98% (44478/45385)
+2026-09-09T16:48:37.0802579Z Updating files:  99% (44932/45385)
+2026-09-09T16:48:37.0803219Z Updating files: 100% (45385/45385)
+2026-09-09T16:48:37.0804020Z Updating files: 100% (45385/45385), done.
+2026-09-09T16:48:37.1783260Z Note: switching to 'refs/remotes/pull/334/merge'.
+2026-09-09T16:48:37.1783945Z 
+2026-09-09T16:48:37.1784655Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-09T16:48:37.1785456Z changes and commit them, and you can discard any commits you make in this
+2026-09-09T16:48:37.1786172Z state without impacting any branches by switching back to a branch.
+2026-09-09T16:48:37.1786584Z 
+2026-09-09T16:48:37.1786871Z If you want to create a new branch to retain commits you create, you may
+2026-09-09T16:48:37.1787592Z do so (now or later) by using -c with the switch command. Example:
+2026-09-09T16:48:37.1787997Z 
+2026-09-09T16:48:37.1788167Z   git switch -c <new-branch-name>
+2026-09-09T16:48:37.1788446Z 
+2026-09-09T16:48:37.1788596Z Or undo this operation with:
+2026-09-09T16:48:37.1789053Z 
+2026-09-09T16:48:37.1789184Z   git switch -
+2026-09-09T16:48:37.1789392Z 
+2026-09-09T16:48:37.1789909Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-09T16:48:37.1790747Z 
+2026-09-09T16:48:37.1791346Z HEAD is now at 67548e94 Merge 3c91066a23d705916228598821cc9b0174311f76 into fdbbacadef7f48bbedc4ad94f9c2f5b82b51fec8
+2026-09-09T16:48:37.1823893Z ##[endgroup]
+2026-09-09T16:48:37.1880449Z [command]/usr/bin/git log -1 --format=%H
+2026-09-09T16:48:37.1915857Z 67548e944d2d3db6cea11f1e249038b43db165ff
+2026-09-09T16:48:37.2185536Z ##[group]Run actions/download-artifact@v8
+2026-09-09T16:48:37.2185840Z with:
+2026-09-09T16:48:37.2186045Z   name: ui-artifacts
+2026-09-09T16:48:37.2186280Z   path: packages/nimbus-ui
+2026-09-09T16:48:37.2186524Z   merge-multiple: false
+2026-09-09T16:48:37.2186752Z   repository: nimbus/nimbus
+2026-09-09T16:48:37.2186981Z   run-id: 34375734144
+2026-09-09T16:48:37.2187202Z   skip-decompress: false
+2026-09-09T16:48:37.2187431Z   digest-mismatch: error
+2026-09-09T16:48:37.2187645Z env:
+2026-09-09T16:48:37.2187845Z   CARGO_TERM_COLOR: always
+2026-09-09T16:48:37.2188106Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:48:37.2188338Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:48:37.2188583Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:48:37.2189073Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:48:37.2189342Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:48:37.2189574Z ##[endgroup]
+2026-09-09T16:48:37.3543411Z Downloading single artifact
+2026-09-09T16:48:37.5029243Z Preparing to download the following artifacts:
+2026-09-09T16:48:37.5030381Z - ui-artifacts (ID: 10113853133, Size: 1072428, Expected Digest: sha256:fd8d9d695d0fcd02582b08d9179f96191c3d2c8bb85ff2bf4ac3d050407de69a)
+2026-09-09T16:48:37.7992645Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/4e3ab8c1-f3b9-4205-b4ef-b36716e58486/workflow-job-run-f9eb98d5-787a-57f5-9fbd-77c92e7687c3/artifacts/50ce782ec5f899f11415a960297b030a9d2a5ec8f6e33a534661c1be0263a654.zip
+2026-09-09T16:48:37.7995094Z Starting download of artifact to: /home/runner/work/nimbus/nimbus/packages/nimbus-ui
+2026-09-09T16:48:37.9101113Z (node:2256) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-09-09T16:48:37.9102051Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-09T16:48:38.0665493Z SHA256 digest of downloaded artifact is fd8d9d695d0fcd02582b08d9179f96191c3d2c8bb85ff2bf4ac3d050407de69a
+2026-09-09T16:48:38.0666118Z Artifact download completed successfully.
+2026-09-09T16:48:38.0666451Z Total of 1 artifact(s) downloaded
+2026-09-09T16:48:38.0670935Z Download artifact has finished successfully
+2026-09-09T16:48:38.0802524Z ##[group]Run find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
+2026-09-09T16:48:38.0803216Z [36;1mfind packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +[0m
+2026-09-09T16:48:38.0850052Z shell: /usr/bin/bash -e {0}
+2026-09-09T16:48:38.0850331Z env:
+2026-09-09T16:48:38.0850569Z   CARGO_TERM_COLOR: always
+2026-09-09T16:48:38.0850836Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:48:38.0851093Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:48:38.0851358Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:48:38.0851616Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:48:38.0851858Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:48:38.0852107Z ##[endgroup]
+2026-09-09T16:48:38.1040770Z ##[group]Run actions/download-artifact@v8
+2026-09-09T16:48:38.1041070Z with:
+2026-09-09T16:48:38.1041294Z   name: embedded-packages
+2026-09-09T16:48:38.1041579Z   path: crates/nimbus-assets/embedded/packages
+2026-09-09T16:48:38.1041900Z   merge-multiple: false
+2026-09-09T16:48:38.1042148Z   repository: nimbus/nimbus
+2026-09-09T16:48:38.1042393Z   run-id: 34375734144
+2026-09-09T16:48:38.1042621Z   skip-decompress: false
+2026-09-09T16:48:38.1042867Z   digest-mismatch: error
+2026-09-09T16:48:38.1043088Z env:
+2026-09-09T16:48:38.1043288Z   CARGO_TERM_COLOR: always
+2026-09-09T16:48:38.1043528Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:48:38.1043777Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:48:38.1044041Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:48:38.1044293Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:48:38.1044529Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:48:38.1044766Z ##[endgroup]
+2026-09-09T16:48:38.2420305Z Downloading single artifact
+2026-09-09T16:48:38.3879707Z Preparing to download the following artifacts:
+2026-09-09T16:48:38.3880486Z - embedded-packages (ID: 10113854897, Size: 12313246, Expected Digest: sha256:93492019365e14ae4a0308015da3cf0fa0fe2d67bfe0eaa9876f67ac60f9f18d)
+2026-09-09T16:48:38.6862375Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/4e3ab8c1-f3b9-4205-b4ef-b36716e58486/workflow-job-run-f9eb98d5-787a-57f5-9fbd-77c92e7687c3/artifacts/07181f979e9f2166505b9f00cb64306b2f7ed5caabebc1423e80f3964e6a7c61.zip
+2026-09-09T16:48:38.6863946Z Starting download of artifact to: /home/runner/work/nimbus/nimbus/crates/nimbus-assets/embedded/packages
+2026-09-09T16:48:38.8419288Z (node:2271) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-09-09T16:48:38.8420912Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-09T16:48:39.4491243Z SHA256 digest of downloaded artifact is 93492019365e14ae4a0308015da3cf0fa0fe2d67bfe0eaa9876f67ac60f9f18d
+2026-09-09T16:48:39.4492114Z Artifact download completed successfully.
+2026-09-09T16:48:39.4492445Z Total of 1 artifact(s) downloaded
+2026-09-09T16:48:39.4496147Z Download artifact has finished successfully
+2026-09-09T16:48:39.4739326Z ##[group]Run find crates/nimbus-assets/embedded/packages -exec touch {} +
+2026-09-09T16:48:39.4739909Z [36;1mfind crates/nimbus-assets/embedded/packages -exec touch {} +[0m
+2026-09-09T16:48:39.4779086Z shell: /usr/bin/bash -e {0}
+2026-09-09T16:48:39.4779367Z env:
+2026-09-09T16:48:39.4779599Z   CARGO_TERM_COLOR: always
+2026-09-09T16:48:39.4779861Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:48:39.4780297Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:48:39.4780571Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:48:39.4780829Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:48:39.4781086Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:48:39.4781338Z ##[endgroup]
+2026-09-09T16:48:39.5018146Z ##[group]Run actions/download-artifact@v8
+2026-09-09T16:48:39.5018460Z with:
+2026-09-09T16:48:39.5018701Z   name: nimbus-tests-archive
+2026-09-09T16:48:39.5019245Z   path: /home/runner/work/_temp/nimbus-tests-archive
+2026-09-09T16:48:39.5019599Z   merge-multiple: false
+2026-09-09T16:48:39.5019852Z   repository: nimbus/nimbus
+2026-09-09T16:48:39.5020101Z   run-id: 34375734144
+2026-09-09T16:48:39.5020347Z   skip-decompress: false
+2026-09-09T16:48:39.5020600Z   digest-mismatch: error
+2026-09-09T16:48:39.5020829Z env:
+2026-09-09T16:48:39.5021047Z   CARGO_TERM_COLOR: always
+2026-09-09T16:48:39.5021297Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:48:39.5021534Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:48:39.5021819Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:48:39.5022097Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:48:39.5022350Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:48:39.5022604Z ##[endgroup]
+2026-09-09T16:48:39.6490671Z Downloading single artifact
+2026-09-09T16:48:39.8145869Z Preparing to download the following artifacts:
+2026-09-09T16:48:39.8147168Z - nimbus-tests-archive (ID: 10114995643, Size: 2074967910, Expected Digest: sha256:f6f87ebcb94c054fd53ba6210004d8dc20962d2af9a1ce528eab90c49a6a3953)
+2026-09-09T16:48:40.0766150Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/4e3ab8c1-f3b9-4205-b4ef-b36716e58486/workflow-job-run-f8c582d9-1f42-51a4-a3c0-cab1663ea200/artifacts/2e48a8dab679f6eb58f14b3739eee8598d03b3ecabb14a7b522d98ac0bf11d4b.zip
+2026-09-09T16:48:40.0768409Z Starting download of artifact to: /home/runner/work/_temp/nimbus-tests-archive
+2026-09-09T16:48:40.2245922Z (node:2286) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-09-09T16:48:40.2247515Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-09T16:49:40.0691481Z SHA256 digest of downloaded artifact is f6f87ebcb94c054fd53ba6210004d8dc20962d2af9a1ce528eab90c49a6a3953
+2026-09-09T16:49:40.0692454Z Artifact download completed successfully.
+2026-09-09T16:49:40.0692940Z Total of 1 artifact(s) downloaded
+2026-09-09T16:49:40.0697227Z Download artifact has finished successfully
+2026-09-09T16:49:40.0851200Z ##[group]Run actions/download-artifact@v8
+2026-09-09T16:49:40.0851538Z with:
+2026-09-09T16:49:40.0851775Z   name: nextest-config
+2026-09-09T16:49:40.0852061Z   path: /home/runner/work/_temp/nextest-config
+2026-09-09T16:49:40.0852393Z   merge-multiple: false
+2026-09-09T16:49:40.0852653Z   repository: nimbus/nimbus
+2026-09-09T16:49:40.0852923Z   run-id: 34375734144
+2026-09-09T16:49:40.0853166Z   skip-decompress: false
+2026-09-09T16:49:40.0853430Z   digest-mismatch: error
+2026-09-09T16:49:40.0853686Z env:
+2026-09-09T16:49:40.0853909Z   CARGO_TERM_COLOR: always
+2026-09-09T16:49:40.0854168Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:49:40.0854415Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:49:40.0854680Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:49:40.0854947Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:49:40.0855193Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:49:40.0855448Z ##[endgroup]
+2026-09-09T16:49:40.2208045Z Downloading single artifact
+2026-09-09T16:49:40.3582599Z Preparing to download the following artifacts:
+2026-09-09T16:49:40.3583784Z - nextest-config (ID: 10115049026, Size: 2280, Expected Digest: sha256:c1329937c22998935e4c22bcadb291533905c0c1f92938698f7a674d7534ddff)
+2026-09-09T16:49:40.6263865Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/4e3ab8c1-f3b9-4205-b4ef-b36716e58486/workflow-job-run-f8c582d9-1f42-51a4-a3c0-cab1663ea200/artifacts/5cccf2b05f71ae88043f94c1b7fd11be832487f6d949fc445da811543c25bb43.zip
+2026-09-09T16:49:40.6266306Z Starting download of artifact to: /home/runner/work/_temp/nextest-config
+2026-09-09T16:49:40.7294591Z (node:2309) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-09-09T16:49:40.7295822Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-09T16:49:40.7348705Z SHA256 digest of downloaded artifact is c1329937c22998935e4c22bcadb291533905c0c1f92938698f7a674d7534ddff
+2026-09-09T16:49:40.7349765Z Artifact download completed successfully.
+2026-09-09T16:49:40.7350129Z Total of 1 artifact(s) downloaded
+2026-09-09T16:49:40.7353545Z Download artifact has finished successfully
+2026-09-09T16:49:40.7456687Z ##[group]Run bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
+2026-09-09T16:49:40.7457736Z [36;1mbash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"[0m
+2026-09-09T16:49:40.7498419Z shell: /usr/bin/bash -e {0}
+2026-09-09T16:49:40.7498712Z env:
+2026-09-09T16:49:40.7499148Z   CARGO_TERM_COLOR: always
+2026-09-09T16:49:40.7499419Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:49:40.7499676Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:49:40.7499951Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:49:40.7500224Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:49:40.7500490Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:49:40.7500758Z ##[endgroup]
+2026-09-09T16:49:40.7663025Z .config/nextest.toml: OK
+2026-09-09T16:49:40.7691620Z deno-src-checkout.tgz: OK
+2026-09-09T16:49:40.8155787Z restored deno extension sources under /home/runner/.cargo/git/checkouts
+2026-09-09T16:49:40.8156662Z installed nextest config at .config/nextest.toml
+2026-09-09T16:49:40.8157442Z NIMBUS_TESTS_ARCHIVE=/home/runner/work/_temp/nimbus-tests-archive/nimbus-tests.tar.zst
+2026-09-09T16:49:40.8267722Z ##[group]Run taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8
+2026-09-09T16:49:40.8268181Z with:
+2026-09-09T16:49:40.8268417Z   tool: nextest@0.9.143
+2026-09-09T16:49:40.8268669Z   fallback: none
+2026-09-09T16:49:40.8269179Z   checksum: true
+2026-09-09T16:49:40.8269405Z env:
+2026-09-09T16:49:40.8269627Z   CARGO_TERM_COLOR: always
+2026-09-09T16:49:40.8269897Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:49:40.8270155Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:49:40.8270450Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:49:40.8270735Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:49:40.8270998Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:49:40.8271436Z   NIMBUS_TESTS_ARCHIVE: /home/runner/work/_temp/nimbus-tests-archive/nimbus-tests.tar.zst
+2026-09-09T16:49:40.8271901Z ##[endgroup]
+2026-09-09T16:49:40.8346464Z ##[start-action display=Run bail() {;id=__taiki-e_install-action.__run]
+2026-09-09T16:49:40.8376660Z ##[group]Run bail() {
+2026-09-09T16:49:40.8376996Z [36;1mbail() {[0m
+2026-09-09T16:49:40.8377363Z [36;1m  printf '::error::install-action: %s\n' "$*"[0m
+2026-09-09T16:49:40.8377736Z [36;1m  exit 1[0m
+2026-09-09T16:49:40.8377988Z [36;1m}[0m
+2026-09-09T16:49:40.8378427Z [36;1m# If /bin/sh is dash, environment variable containing % is not imported, but is fine[0m
+2026-09-09T16:49:40.8379261Z [36;1m# because it also means that it will not be exposed to subprocess.[0m
+2026-09-09T16:49:40.8379759Z [36;1mif /usr/bin/env | grep -Eq '^BASH_FUNC_'; then[0m
+2026-09-09T16:49:40.8380370Z [36;1m  bail 'bash function injection via BASH_FUNC_ environment variable is not allowed for security reasons'[0m
+2026-09-09T16:49:40.8380944Z [36;1mfi[0m
+2026-09-09T16:49:40.8381234Z [36;1mif ! command -v bash >/dev/null; then[0m
+2026-09-09T16:49:40.8381648Z [36;1m  if grep -Eq '^ID=alpine' /etc/os-release; then[0m
+2026-09-09T16:49:40.8382159Z [36;1m    printf '::group::Install packages required for install-action (bash)\n'[0m
+2026-09-09T16:49:40.8382675Z [36;1m    # NB: sync with apk_install in main.sh[0m
+2026-09-09T16:49:40.8383056Z [36;1m    if command -v sudo >/dev/null; then[0m
+2026-09-09T16:49:40.8383621Z [36;1m      sudo apk --no-cache add bash[0m
+2026-09-09T16:49:40.8384033Z [36;1m    elif command -v doas >/dev/null; then[0m
+2026-09-09T16:49:40.8384402Z [36;1m      doas apk --no-cache add bash[0m
+2026-09-09T16:49:40.8384735Z [36;1m    else[0m
+2026-09-09T16:49:40.8385007Z [36;1m      apk --no-cache add bash[0m
+2026-09-09T16:49:40.8385323Z [36;1m    fi[0m
+2026-09-09T16:49:40.8385596Z [36;1m    printf '::endgroup::\n'[0m
+2026-09-09T16:49:40.8385903Z [36;1m  else[0m
+2026-09-09T16:49:40.8386192Z [36;1m    bail 'this action requires bash'[0m
+2026-09-09T16:49:40.8386531Z [36;1m  fi[0m
+2026-09-09T16:49:40.8386772Z [36;1mfi[0m
+2026-09-09T16:49:40.8387113Z [36;1mbash --noprofile --norc "${GITHUB_ACTION_PATH:?}/main.sh"[0m
+2026-09-09T16:49:40.8390045Z shell: /usr/bin/env -u ENV -u BASH_ENV -u CDPATH -u SHELLOPTS -u BASHOPTS /bin/sh -eu {0}
+2026-09-09T16:49:40.8390615Z env:
+2026-09-09T16:49:40.8390905Z   CARGO_TERM_COLOR: always
+2026-09-09T16:49:40.8391220Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:49:40.8391511Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:49:40.8391820Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:49:40.8392123Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:49:40.8392412Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:49:40.8392886Z   NIMBUS_TESTS_ARCHIVE: /home/runner/work/_temp/nimbus-tests-archive/nimbus-tests.tar.zst
+2026-09-09T16:49:40.8393374Z   INPUT_TOOL: nextest@0.9.143
+2026-09-09T16:49:40.8393669Z   INPUT_CHECKSUM: true
+2026-09-09T16:49:40.8393948Z   INPUT_FALLBACK: none
+2026-09-09T16:49:40.8394221Z   DEFAULT_GITHUB_TOKEN: 
+2026-09-09T16:49:40.8394655Z   ACTION_USER_AGENT: taiki-e/install-action (5bf6ce016fd2e72eefc647cbca1e4213f65955b8)
+2026-09-09T16:49:40.8395124Z   RUNNER_OS: Linux
+2026-09-09T16:49:40.8395390Z   RUNNER_ARCH: X64
+2026-09-09T16:49:40.8395658Z ##[endgroup]
+2026-09-09T16:49:40.8543158Z info: host platform: x86_64_linux
+2026-09-09T16:49:40.8785300Z info: installing cargo-nextest@0.9.143
+2026-09-09T16:49:40.9007108Z info: downloading https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.143/cargo-nextest-0.9.143-x86_64-unknown-linux-gnu.tar.gz
+2026-09-09T16:49:42.3090869Z info: verifying sha256 checksum for cargo-nextest-0.9.143-x86_64-unknown-linux-gnu.tar.gz
+2026-09-09T16:49:42.5803376Z info: cargo-nextest installed at /home/runner/.cargo/bin/cargo-nextest
+2026-09-09T16:49:42.5806765Z + cargo-nextest nextest --version
+2026-09-09T16:49:42.5837678Z cargo-nextest 0.9.143 (60fa45f63 2026-08-04)
+2026-09-09T16:49:42.5838152Z release: 0.9.143
+2026-09-09T16:49:42.5838553Z commit-hash: 60fa45f638ffc3f35e74afa65737f45fcd32db2a
+2026-09-09T16:49:42.5839195Z commit-date: 2026-08-04
+2026-09-09T16:49:42.5839576Z host: x86_64-unknown-linux-gnu
+2026-09-09T16:49:42.5842570Z 
+2026-09-09T16:49:42.5863750Z ##[end-action id=__taiki-e_install-action.__run;outcome=success;conclusion=success;duration_ms=1751]
+2026-09-09T16:49:42.5870376Z ##[start-action display=Run Set-StrictMode -Version Latest;id=__taiki-e_install-action.__run_2]
+2026-09-09T16:49:42.5876253Z ##[end-action id=__taiki-e_install-action.__run_2;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-09-09T16:49:42.5911581Z ##[group]Run bash scripts/ci/install-path-poison.sh cargo rustc rustup node npm npx
+2026-09-09T16:49:42.5912217Z [36;1mbash scripts/ci/install-path-poison.sh cargo rustc rustup node npm npx[0m
+2026-09-09T16:49:42.5951724Z shell: /usr/bin/bash -e {0}
+2026-09-09T16:49:42.5952010Z env:
+2026-09-09T16:49:42.5952236Z   CARGO_TERM_COLOR: always
+2026-09-09T16:49:42.5952516Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:49:42.5952773Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:49:42.5953043Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:49:42.5953320Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:49:42.5953579Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:49:42.5954019Z   NIMBUS_TESTS_ARCHIVE: /home/runner/work/_temp/nimbus-tests-archive/nimbus-tests.tar.zst
+2026-09-09T16:49:42.5954497Z ##[endgroup]
+2026-09-09T16:49:42.6181481Z installed PATH poison shims in /home/runner/work/_temp/nimbus-path-poison for: cargo rustc rustup node npm npx
+2026-09-09T16:49:42.6215011Z ##[group]Run NIMBUS_EXTERNAL_PROVIDER_ARCHIVE_FILE="${NIMBUS_TESTS_ARCHIVE}" make test-external-provider PROVIDER=mysql
+2026-09-09T16:49:42.6215862Z [36;1mNIMBUS_EXTERNAL_PROVIDER_ARCHIVE_FILE="${NIMBUS_TESTS_ARCHIVE}" make test-external-provider PROVIDER=mysql[0m
+2026-09-09T16:49:42.6254584Z shell: /usr/bin/bash -e {0}
+2026-09-09T16:49:42.6254885Z env:
+2026-09-09T16:49:42.6255122Z   CARGO_TERM_COLOR: always
+2026-09-09T16:49:42.6255402Z   CARGO_INCREMENTAL: 0
+2026-09-09T16:49:42.6255665Z   CARGO_PROFILE_DEV_DEBUG: 0
+2026-09-09T16:49:42.6255953Z   CARGO_PROFILE_TEST_DEBUG: 0
+2026-09-09T16:49:42.6256223Z   RUSTC_WRAPPER: sccache
+2026-09-09T16:49:42.6256482Z   SCCACHE_GHA_ENABLED: true
+2026-09-09T16:49:42.6256918Z   NIMBUS_TESTS_ARCHIVE: /home/runner/work/_temp/nimbus-tests-archive/nimbus-tests.tar.zst
+2026-09-09T16:49:42.6257368Z ##[endgroup]
+2026-09-09T16:49:42.7970785Z NIMBUS_PROVIDER_FIXTURE_KEEP=0 NIMBUS_PROVIDER_FIXTURE_REUSE=0 \
+2026-09-09T16:49:42.7971589Z 	NIMBUS_EXTERNAL_PROVIDER_TEST_FILTER="" \
+2026-09-09T16:49:42.7972404Z 	bash scripts/single-flight.sh --key test-external-provider-mysql -- \
+2026-09-09T16:49:42.7973190Z 	bash scripts/external-provider-fixture.sh run "mysql"
+2026-09-09T16:49:43.3704418Z starting mysql fixture (mysql:8.4)
+2026-09-09T16:49:43.4379064Z  mysql Pulling 
+2026-09-09T16:49:43.9955862Z  4bb6eac2f26a Pulling fs layer 
+2026-09-09T16:49:43.9956407Z  fc5464550662 Pulling fs layer 
+2026-09-09T16:49:43.9956716Z  e432419b7832 Pulling fs layer 
+2026-09-09T16:49:43.9957107Z  efcdee021140 Pulling fs layer 
+2026-09-09T16:49:43.9957395Z  17ed162ed4d4 Pulling fs layer 
+2026-09-09T16:49:43.9957764Z  c97b16353903 Pulling fs layer 
+2026-09-09T16:49:43.9958056Z  376471fc2810 Pulling fs layer 
+2026-09-09T16:49:43.9958330Z  54c6505f4c64 Pulling fs layer 
+2026-09-09T16:49:43.9958705Z  5d5c020522d1 Pulling fs layer 
+2026-09-09T16:49:43.9959178Z  9aec5f91e544 Pulling fs layer 
+2026-09-09T16:49:43.9959449Z  efcdee021140 Waiting 
+2026-09-09T16:49:43.9959894Z  17ed162ed4d4 Waiting 
+2026-09-09T16:49:43.9960132Z  c97b16353903 Waiting 
+2026-09-09T16:49:43.9960357Z  376471fc2810 Waiting 
+2026-09-09T16:49:43.9960582Z  54c6505f4c64 Waiting 
+2026-09-09T16:49:43.9960808Z  5d5c020522d1 Waiting 
+2026-09-09T16:49:43.9961032Z  9aec5f91e544 Waiting 
+2026-09-09T16:49:44.0710409Z  e432419b7832 Downloading [=>                                                 ]  15.79kB/783.6kB
+2026-09-09T16:49:44.0792369Z  fc5464550662 Downloading [==================================================>]     885B/885B
+2026-09-09T16:49:44.0792865Z  fc5464550662 Verifying Checksum 
+2026-09-09T16:49:44.0793179Z  fc5464550662 Download complete 
+2026-09-09T16:49:44.0849491Z  e432419b7832 Downloading [==================================================>]  783.6kB/783.6kB
+2026-09-09T16:49:44.0850583Z  e432419b7832 Download complete 
+2026-09-09T16:49:44.0987068Z  4bb6eac2f26a Downloading [>                                                  ]  490.9kB/47.93MB
+2026-09-09T16:49:44.1679129Z  efcdee021140 Downloading [>                                                  ]  64.94kB/6.193MB
+2026-09-09T16:49:44.1696586Z  17ed162ed4d4 Downloading [==================================================>]   2.61kB/2.61kB
+2026-09-09T16:49:44.1697557Z  17ed162ed4d4 Verifying Checksum 
+2026-09-09T16:49:44.1698507Z  17ed162ed4d4 Download complete 
+2026-09-09T16:49:44.2001812Z  4bb6eac2f26a Downloading [==================================>                ]  33.42MB/47.93MB
+2026-09-09T16:49:44.2013960Z  efcdee021140 Verifying Checksum 
+2026-09-09T16:49:44.2015747Z  efcdee021140 Download complete 
+2026-09-09T16:49:44.2430682Z  4bb6eac2f26a Verifying Checksum 
+2026-09-09T16:49:44.2432409Z  4bb6eac2f26a Download complete 
+2026-09-09T16:49:44.2572602Z  c97b16353903 Downloading [==================================================>]     334B/334B
+2026-09-09T16:49:44.2573618Z  c97b16353903 Verifying Checksum 
+2026-09-09T16:49:44.2574427Z  c97b16353903 Download complete 
+2026-09-09T16:49:44.2677555Z  4bb6eac2f26a Extracting [>                                                  ]  491.5kB/47.93MB
+2026-09-09T16:49:44.2978408Z  376471fc2810 Downloading [>                                                  ]  523.7kB/51.64MB
+2026-09-09T16:49:44.3307019Z  54c6505f4c64 Downloading [==================================================>]     321B/321B
+2026-09-09T16:49:44.3307749Z  54c6505f4c64 Download complete 
+2026-09-09T16:49:44.3465329Z  5d5c020522d1 Downloading [>                                                  ]  535.4kB/132.4MB
+2026-09-09T16:49:44.3776642Z  4bb6eac2f26a Extracting [==>                                                ]  1.966MB/47.93MB
+2026-09-09T16:49:44.4044837Z  376471fc2810 Downloading [===========================>                       ]  28.31MB/51.64MB
+2026-09-09T16:49:44.4272393Z  9aec5f91e544 Downloading [=================================>                 ]  3.502kB/5.226kB
+2026-09-09T16:49:44.4273724Z  9aec5f91e544 Downloading [==================================================>]  5.226kB/5.226kB
+2026-09-09T16:49:44.4274666Z  9aec5f91e544 Verifying Checksum 
+2026-09-09T16:49:44.4275488Z  9aec5f91e544 Download complete 
+2026-09-09T16:49:44.4468319Z  5d5c020522d1 Downloading [==========>                                        ]  27.71MB/132.4MB
+2026-09-09T16:49:44.4914689Z  376471fc2810 Verifying Checksum 
+2026-09-09T16:49:44.4915244Z  376471fc2810 Download complete 
+2026-09-09T16:49:44.5012557Z  4bb6eac2f26a Extracting [=======>                                           ]  6.881MB/47.93MB
+2026-09-09T16:49:44.5480201Z  5d5c020522d1 Downloading [======================>                            ]  58.73MB/132.4MB
+2026-09-09T16:49:44.6083218Z  4bb6eac2f26a Extracting [=======>                                           ]  7.373MB/47.93MB
+2026-09-09T16:49:44.6482301Z  5d5c020522d1 Downloading [==================================>                ]  92.36MB/132.4MB
+2026-09-09T16:49:44.7134890Z  4bb6eac2f26a Extracting [============>                                      ]  12.29MB/47.93MB
+2026-09-09T16:49:44.7503335Z  5d5c020522d1 Downloading [===============================================>   ]  125.5MB/132.4MB
+2026-09-09T16:49:44.7706442Z  5d5c020522d1 Verifying Checksum 
+2026-09-09T16:49:44.7706982Z  5d5c020522d1 Download complete 
+2026-09-09T16:49:44.8162554Z  4bb6eac2f26a Extracting [====================>                              ]  19.66MB/47.93MB
+2026-09-09T16:49:44.9204211Z  4bb6eac2f26a Extracting [=============================>                     ]  28.02MB/47.93MB
+2026-09-09T16:49:45.0308360Z  4bb6eac2f26a Extracting [==================================>                ]  32.93MB/47.93MB
+2026-09-09T16:49:45.1451780Z  4bb6eac2f26a Extracting [===========================================>       ]  41.78MB/47.93MB
+2026-09-09T16:49:45.4613953Z  4bb6eac2f26a Extracting [==============================================>    ]  44.73MB/47.93MB
+2026-09-09T16:49:45.5629940Z  4bb6eac2f26a Extracting [=================================================> ]  47.19MB/47.93MB
+2026-09-09T16:49:45.5733335Z  4bb6eac2f26a Extracting [==================================================>]  47.93MB/47.93MB
+2026-09-09T16:49:45.5861836Z  4bb6eac2f26a Pull complete 
+2026-09-09T16:49:45.5877322Z  fc5464550662 Extracting [==================================================>]     885B/885B
+2026-09-09T16:49:45.5881102Z  fc5464550662 Extracting [==================================================>]     885B/885B
+2026-09-09T16:49:47.7003431Z  fc5464550662 Pull complete 
+2026-09-09T16:49:47.7014502Z  e432419b7832 Extracting [==>                                                ]  32.77kB/783.6kB
+2026-09-09T16:49:47.7137023Z  e432419b7832 Extracting [==================================================>]  783.6kB/783.6kB
+2026-09-09T16:49:47.7140235Z  e432419b7832 Extracting [==================================================>]  783.6kB/783.6kB
+2026-09-09T16:49:47.7195865Z  e432419b7832 Pull complete 
+2026-09-09T16:49:47.7209778Z  efcdee021140 Extracting [>                                                  ]  65.54kB/6.193MB
+2026-09-09T16:49:47.8218457Z  efcdee021140 Extracting [====================>                              ]   2.49MB/6.193MB
+2026-09-09T16:49:47.8955020Z  efcdee021140 Extracting [==================================================>]  6.193MB/6.193MB
+2026-09-09T16:49:47.9117083Z  efcdee021140 Pull complete 
+2026-09-09T16:49:47.9126232Z  17ed162ed4d4 Extracting [==================================================>]   2.61kB/2.61kB
+2026-09-09T16:49:47.9132204Z  17ed162ed4d4 Extracting [==================================================>]   2.61kB/2.61kB
+2026-09-09T16:49:47.9204032Z  17ed162ed4d4 Pull complete 
+2026-09-09T16:49:47.9212861Z  c97b16353903 Extracting [==================================================>]     334B/334B
+2026-09-09T16:49:47.9216323Z  c97b16353903 Extracting [==================================================>]     334B/334B
+2026-09-09T16:49:47.9273279Z  c97b16353903 Pull complete 
+2026-09-09T16:49:47.9374888Z  376471fc2810 Extracting [>                                                  ]  524.3kB/51.64MB
+2026-09-09T16:49:48.0400951Z  376471fc2810 Extracting [========>                                          ]  8.389MB/51.64MB
+2026-09-09T16:49:48.1403110Z  376471fc2810 Extracting [===========>                                       ]  12.06MB/51.64MB
+2026-09-09T16:49:48.2441049Z  376471fc2810 Extracting [==================>                                ]   19.4MB/51.64MB
+2026-09-09T16:49:48.3450200Z  376471fc2810 Extracting [==========================>                        ]  27.26MB/51.64MB
+2026-09-09T16:49:48.4454222Z  376471fc2810 Extracting [==================================>                ]  35.65MB/51.64MB
+2026-09-09T16:49:48.5520698Z  376471fc2810 Extracting [=========================================>         ]  42.47MB/51.64MB
+2026-09-09T16:49:48.6522395Z  376471fc2810 Extracting [===============================================>   ]  48.76MB/51.64MB
+2026-09-09T16:49:48.6854077Z  376471fc2810 Extracting [==================================================>]  51.64MB/51.64MB
+2026-09-09T16:49:48.7906983Z  376471fc2810 Pull complete 
+2026-09-09T16:49:48.7915098Z  54c6505f4c64 Extracting [==================================================>]     321B/321B
+2026-09-09T16:49:48.7918622Z  54c6505f4c64 Extracting [==================================================>]     321B/321B
+2026-09-09T16:49:48.7988937Z  54c6505f4c64 Pull complete 
+2026-09-09T16:49:48.8091520Z  5d5c020522d1 Extracting [>                                                  ]  557.1kB/132.4MB
+2026-09-09T16:49:48.9162537Z  5d5c020522d1 Extracting [===>                                               ]  8.913MB/132.4MB
+2026-09-09T16:49:49.0247167Z  5d5c020522d1 Extracting [====>                                              ]  12.81MB/132.4MB
+2026-09-09T16:49:49.1431813Z  5d5c020522d1 Extracting [=======>                                           ]  20.05MB/132.4MB
+2026-09-09T16:49:49.2504013Z  5d5c020522d1 Extracting [========>                                          ]  22.28MB/132.4MB
+2026-09-09T16:49:49.3911509Z  5d5c020522d1 Extracting [==========>                                        ]  26.74MB/132.4MB
+2026-09-09T16:49:49.4940696Z  5d5c020522d1 Extracting [===========>                                       ]  30.64MB/132.4MB
+2026-09-09T16:49:49.6126970Z  5d5c020522d1 Extracting [============>                                      ]  33.42MB/132.4MB
+2026-09-09T16:49:49.8475230Z  5d5c020522d1 Extracting [=============>                                     ]  34.54MB/132.4MB
+2026-09-09T16:49:50.0142158Z  5d5c020522d1 Extracting [=============>                                     ]  35.09MB/132.4MB
+2026-09-09T16:49:50.1863152Z  5d5c020522d1 Extracting [=============>                                     ]  35.65MB/132.4MB
+2026-09-09T16:49:50.3540484Z  5d5c020522d1 Extracting [=============>                                     ]  36.21MB/132.4MB
+2026-09-09T16:49:50.5349891Z  5d5c020522d1 Extracting [=============>                                     ]  36.77MB/132.4MB
+2026-09-09T16:49:50.6680053Z  5d5c020522d1 Extracting [==============>                                    ]  37.32MB/132.4MB
+2026-09-09T16:49:50.8291115Z  5d5c020522d1 Extracting [==============>                                    ]  37.88MB/132.4MB
+2026-09-09T16:49:51.0146197Z  5d5c020522d1 Extracting [==============>                                    ]  38.44MB/132.4MB
+2026-09-09T16:49:51.2308466Z  5d5c020522d1 Extracting [==============>                                    ]  39.55MB/132.4MB
+2026-09-09T16:49:51.4257362Z  5d5c020522d1 Extracting [===============>                                   ]  40.11MB/132.4MB
+2026-09-09T16:49:51.6106836Z  5d5c020522d1 Extracting [===============>                                   ]  40.67MB/132.4MB
+2026-09-09T16:49:51.8235869Z  5d5c020522d1 Extracting [===============>                                   ]  41.22MB/132.4MB
+2026-09-09T16:49:51.9927302Z  5d5c020522d1 Extracting [===============>                                   ]  41.78MB/132.4MB
+2026-09-09T16:49:52.1992895Z  5d5c020522d1 Extracting [===============>                                   ]  42.34MB/132.4MB
+2026-09-09T16:49:52.3397815Z  5d5c020522d1 Extracting [================>                                  ]  42.89MB/132.4MB
+2026-09-09T16:49:52.4674692Z  5d5c020522d1 Extracting [================>                                  ]  43.45MB/132.4MB
+2026-09-09T16:49:52.6064437Z  5d5c020522d1 Extracting [================>                                  ]  44.01MB/132.4MB
+2026-09-09T16:49:52.7623378Z  5d5c020522d1 Extracting [================>                                  ]  44.56MB/132.4MB
+2026-09-09T16:49:52.9375628Z  5d5c020522d1 Extracting [=================>                                 ]  45.12MB/132.4MB
+2026-09-09T16:49:53.0911422Z  5d5c020522d1 Extracting [=================>                                 ]  45.68MB/132.4MB
+2026-09-09T16:49:53.2291511Z  5d5c020522d1 Extracting [=================>                                 ]  46.24MB/132.4MB
+2026-09-09T16:49:53.4095406Z  5d5c020522d1 Extracting [=================>                                 ]  46.79MB/132.4MB
+2026-09-09T16:49:53.5621553Z  5d5c020522d1 Extracting [=================>                                 ]  47.35MB/132.4MB
+2026-09-09T16:49:53.7257487Z  5d5c020522d1 Extracting [==================>                                ]  47.91MB/132.4MB
+2026-09-09T16:49:53.9034826Z  5d5c020522d1 Extracting [==================>                                ]  48.46MB/132.4MB
+2026-09-09T16:49:54.0203522Z  5d5c020522d1 Extracting [==================>                                ]  49.02MB/132.4MB
+2026-09-09T16:49:54.1437926Z  5d5c020522d1 Extracting [===================>                               ]  51.25MB/132.4MB
+2026-09-09T16:49:54.3200109Z  5d5c020522d1 Extracting [===================>                               ]  51.81MB/132.4MB
+2026-09-09T16:49:54.4427519Z  5d5c020522d1 Extracting [====================>                              ]  53.48MB/132.4MB
+2026-09-09T16:49:54.5462049Z  5d5c020522d1 Extracting [======================>                            ]   59.6MB/132.4MB
+2026-09-09T16:49:54.6501066Z  5d5c020522d1 Extracting [=========================>                         ]   67.4MB/132.4MB
+2026-09-09T16:49:54.7573590Z  5d5c020522d1 Extracting [============================>                      ]   75.2MB/132.4MB
+2026-09-09T16:49:54.8590862Z  5d5c020522d1 Extracting [===============================>                   ]     83MB/132.4MB
+2026-09-09T16:49:54.9641054Z  5d5c020522d1 Extracting [==================================>                ]  91.91MB/132.4MB
+2026-09-09T16:49:55.0686936Z  5d5c020522d1 Extracting [=====================================>             ]  100.3MB/132.4MB
+2026-09-09T16:49:55.1736782Z  5d5c020522d1 Extracting [=========================================>         ]  109.7MB/132.4MB
+2026-09-09T16:49:55.2764795Z  5d5c020522d1 Extracting [=============================================>     ]  119.8MB/132.4MB
+2026-09-09T16:49:55.3850842Z  5d5c020522d1 Extracting [================================================>  ]  127.6MB/132.4MB
+2026-09-09T16:49:55.4455923Z  5d5c020522d1 Extracting [==================================================>]  132.4MB/132.4MB
+2026-09-09T16:49:56.6472793Z  5d5c020522d1 Pull complete 
+2026-09-09T16:49:56.6481623Z  9aec5f91e544 Extracting [==================================================>]  5.226kB/5.226kB
+2026-09-09T16:49:56.6485408Z  9aec5f91e544 Extracting [==================================================>]  5.226kB/5.226kB
+2026-09-09T16:49:56.6577950Z  9aec5f91e544 Pull complete 
+2026-09-09T16:49:56.6629468Z  mysql Pulled 
+2026-09-09T16:49:56.6656992Z  Network nimbus-external-provider-tests_default  Creating
+2026-09-09T16:49:56.7029683Z  Network nimbus-external-provider-tests_default  Created
+2026-09-09T16:49:56.7034818Z  Container nimbus-external-provider-tests-mysql-1  Creating
+2026-09-09T16:49:56.7227432Z  Container nimbus-external-provider-tests-mysql-1  Created
+2026-09-09T16:49:56.7234182Z  Container nimbus-external-provider-tests-mysql-1  Starting
+2026-09-09T16:49:56.9002096Z  Container nimbus-external-provider-tests-mysql-1  Started
+2026-09-09T16:50:04.7036618Z [32;1m  Extracting[0m [1m89[0m binaries (including [1m4[0m non-test binaries), [1m4[0m build script output directories, and [1m14[0m linked paths to [1m/tmp/nextest-archive-H6BrTT[0m
+2026-09-09T16:50:28.3893356Z [32;1m   Extracted[0m [1m940[0m files to [1m/tmp/nextest-archive-H6BrTT[0m in 23.49s
+2026-09-09T16:50:28.5210337Z ────────────
+2026-09-09T16:50:28.5211201Z [32;1m Nextest run[0m ID [1meb1a04d9-2c9e-4d5d-87f9-3a9c0440ca69[0m with nextest profile: [1mci-pr[0m
+2026-09-09T16:50:28.5212566Z [32;1m    Starting[0m [1m54[0m tests across [1m7[0m binaries ([1m1329[0m tests and [1m78[0m binaries [33;1mskipped[0m)
+2026-09-09T16:50:29.3871438Z [32;1m        PASS[0m [   0.746s] ( 1/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_background_poll_loads_unloaded_tenants_with_scheduled_work[0m
+2026-09-09T16:50:29.9752893Z [32;1m        PASS[0m [   0.704s] ( 2/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_background_poll_refreshes_loaded_runtime_schema_and_journal_state[0m
+2026-09-09T16:50:38.7601354Z [31;1m        FAIL[0m [  10.234s] ( 3/54) [35;1mnimbus-system[0m [36mprojection::reconciliation_tests[0m[36m::[0m[34;1mprojection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete[0m
+2026-09-09T16:50:38.7602610Z [31;1m [0m [31;1mstdout[0m [31;1m───[0m
+2026-09-09T16:50:38.7604977Z 
+2026-09-09T16:50:38.7605157Z     running 1 test
+2026-09-09T16:50:38.7606028Z     test projection::reconciliation_tests::projection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete ... FAILED
+2026-09-09T16:50:38.7606539Z 
+2026-09-09T16:50:38.7606646Z     failures:
+2026-09-09T16:50:38.7606785Z 
+2026-09-09T16:50:38.7606874Z     failures:
+2026-09-09T16:50:38.7607369Z         projection::reconciliation_tests::projection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete
+2026-09-09T16:50:38.7607864Z 
+2026-09-09T16:50:38.7608375Z     test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 96 filtered out; finished in 10.22s
+2026-09-09T16:50:38.7609262Z     [0m
+2026-09-09T16:50:38.7609668Z [31;1m [0m [31;1mstderr[0m [31;1m───[0m
+2026-09-09T16:50:38.7609972Z 
+2026-09-09T16:50:38.7611351Z     [0m[31;1mthread 'projection::reconciliation_tests::projection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete' (3977) panicked at crates/nimbus-system/src/projection/reconciliation_tests.rs:275:13:[0m
+2026-09-09T16:50:38.7635548Z     [31;1mruntime reconciliation should publish without another source mutation: Elapsed(()); source_snapshot=Ok(([TableName("tasks")], ProjectionToken { tenant_incarnation: 1, lease_epoch: 1, durable_sequence: SequenceNumber(1) })); diagnostics=Ok(MutationJournalStats { frontiers: MutationFrontierStats { assigned_high_water: SequenceNumber(1), active_assigned_head: SequenceNumber(1), durable_head: SequenceNumber(1), storage_applied_head: SequenceNumber(1), published_head: SequenceNumber(1), applied_head: SequenceNumber(1), assignment_lag: 0, apply_lag: 0, publication_lag: 0, visibility_lag: 0 }, queue_depth: 0, queue_capacity: 256, oldest_queue_age_nanos: 0, pending_response_count: 0, worker_running: false, worker_start_count: 0, worker_restart_count: 0, queue_rejection_count: 0, worker_failure_count: 0, read_wait_count: 0, total_read_wait_nanos: 0, committer_inbox_depth: 0, committer_inbox_capacity: 128, committer_send_timeout_millis: 500, committer_send_timeout_count: 0, committer_lease_acquired: false, committer_lease_epoch: 0, committer_lease_expires_at: Timestamp(0), committer_lease_fenced: false, committer_lease_acquire_count: 0, committer_lease_renewal_count: 0, committer_lease_renewal_failure_count: 0, committer_lease_renewal_failure_streak: 0, committer_lease_last_success_age_millis: None, committer_lease_renewal_worker_running: false, publisher_queue_depth: 0, publisher_queue_capacity: 32, publisher_send_timeout_count: 0, publisher_transient_error_count: 0, publisher_fatal_error_count: 0, publisher_ambiguous_error_count: 0, committer_arm: OrderedPublisher, observer_queue_depth: 0, observer_queue_peak_depth: 0, observer_queue_capacity: 4096, observer_queue_high_watermark: 3072, observer_queue_high_water_warning_count: 0, observer_queue_cap_breach_count: 0, observer_catch_up_enqueue_failure_count: 0, provider_catch_up_failure_count: 0, observer_dispatch_poisoned: false, observer_spawned_work_depth: 0, observer_spawned_work_capacity: 1024, observer_spawned_work_high_watermark: 768, observer_spawned_work_high_water_warning_count: 0, observer_spawned_work_cap_breach_count: 0, observer_spawned_work_dropped_event_count: 0, observer_spawned_work_dirty_scope_count: 1, observer_spawned_work_token_lag_scope_count: 1, observer_spawned_work_stale_no_op_count: 0, observer_spawned_work_delayed_retry_count: 8, observer_spawned_work_consecutive_failure_count: 8, observer_spawned_work_current_retry_backoff_millis: 5000, observer_spawned_work_reconciliation_retry_count: 0, observer_spawned_work_current_reconciliation_backoff_millis: 0, observer_spawned_work_poisoned: false }); system_diagnostics=Some(MutationJournalStats { frontiers: MutationFrontierStats { assigned_high_water: SequenceNumber(18), active_assigned_head: SequenceNumber(18), durable_head: SequenceNumber(18), storage_applied_head: SequenceNumber(18), published_head: SequenceNumber(18), applied_head: SequenceNumber(18), assignment_lag: 0, apply_lag: 0, publication_lag: 0, visibility_lag: 0 }, queue_depth: 0, queue_capacity: 256, oldest_queue_age_nanos: 0, pending_response_count: 0, worker_running: false, worker_start_count: 0, worker_restart_count: 0, queue_rejection_count: 0, worker_failure_count: 0, read_wait_count: 0, total_read_wait_nanos: 0, committer_inbox_depth: 0, committer_inbox_capacity: 128, committer_send_timeout_millis: 500, committer_send_timeout_count: 0, committer_lease_acquired: false, committer_lease_epoch: 0, committer_lease_expires_at: Timestamp(0), committer_lease_fenced: false, committer_lease_acquire_count: 0, committer_lease_renewal_count: 0, committer_lease_renewal_failure_count: 0, committer_lease_renewal_failure_streak: 0, committer_lease_last_success_age_millis: None, committer_lease_renewal_worker_running: false, publisher_queue_depth: 0, publisher_queue_capacity: 32, publisher_send_timeout_count: 0, publisher_transient_error_count: 0, publisher_fatal_error_count: 0, publisher_ambiguous_error_count: 0, committer_arm: OrderedPublisher, observer_queue_depth: 0, observer_queue_peak_depth: 0, observer_queue_capacity: 4096, observer_queue_high_watermark: 3072, observer_queue_high_water_warning_count: 0, observer_queue_cap_breach_count: 0, observer_catch_up_enqueue_failure_count: 0, provider_catch_up_failure_count: 0, observer_dispatch_poisoned: false, observer_spawned_work_depth: 0, observer_spawned_work_capacity: 1024, observer_spawned_work_high_watermark: 768, observer_spawned_work_high_water_warning_count: 0, observer_spawned_work_cap_breach_count: 0, observer_spawned_work_dropped_event_count: 0, observer_spawned_work_dirty_scope_count: 0, observer_spawned_work_token_lag_scope_count: 0, observer_spawned_work_stale_no_op_count: 0, observer_spawned_work_delayed_retry_count: 0, observer_spawned_work_consecutive_failure_count: 0, observer_spawned_work_current_retry_backoff_millis: 0, observer_spawned_work_reconciliation_retry_count: 0, observer_spawned_work_current_reconciliation_backoff_millis: 0, observer_spawned_work_poisoned: false }); visible_row=None[0m
+2026-09-09T16:50:38.7659196Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace[0m
+2026-09-09T16:50:38.7659790Z 
+2026-09-09T16:51:14.9770621Z [33;1m        SLOW[0m [> 45.000s] (─────) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_ppsc_seeded_journal_differential[0m
+2026-09-09T16:51:34.6415290Z [32;1m        PASS[0m [  64.666s] ( 4/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_ppsc_seeded_journal_differential[0m
+2026-09-09T16:51:34.9620196Z [32;1m        PASS[0m [   0.320s] ( 5/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_provider_publisher_contract[0m
+2026-09-09T16:51:35.1239765Z [32;1m        PASS[0m [   0.162s] ( 6/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_schedule_only_execution_unit_rejects_stale_provider_holder[0m
+2026-09-09T16:51:35.2642549Z [32;1m        PASS[0m [   0.140s] ( 7/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_scheduler_writes_are_atomically_fenced[0m
+2026-09-09T16:51:35.4258324Z [32;1m        PASS[0m [   0.162s] ( 8/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_stale_trigger_outcome_cannot_overwrite_successor_state[0m
+2026-09-09T16:51:35.5504337Z [32;1m        PASS[0m [   0.124s] ( 9/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mmysql_tenant_creation_async_contract[0m
+2026-09-09T16:51:47.4582390Z [32;1m        PASS[0m [  11.908s] (10/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mppsc_provider_takeover_extension_matches_postgres_mysql_and_libsql[0m
+2026-09-09T16:51:47.7303127Z [32;1m        PASS[0m [   0.272s] (11/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mtyped_mysql_config_collection_group_queries_use_path_binding_metadata[0m
+2026-09-09T16:51:47.9286079Z [32;1m        PASS[0m [   0.198s] (12/54) [35;1mnimbus-engine[0m [36mtests::mysql_provider[0m[36m::[0m[34;1mtyped_mysql_config_supports_async_schema_mutation_journal_and_scheduler_paths[0m
+2026-09-09T16:51:48.0423932Z [32;1m        PASS[0m [   0.114s] (13/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::committer_lease[0m[36m::[0m[34;1mmysql_committer_lease_concurrent_acquire_has_exactly_one_winner[0m
+2026-09-09T16:51:48.1353137Z [32;1m        PASS[0m [   0.093s] (14/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::committer_lease[0m[36m::[0m[34;1mmysql_committer_lease_transitions_use_provider_time_and_fence_stale_owners[0m
+2026-09-09T16:51:48.4943336Z [32;1m        PASS[0m [   0.359s] (15/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::committer_lease[0m[36m::[0m[34;1mmysql_fenced_durable_apply_contract_is_atomic[0m
+2026-09-09T16:51:48.5947588Z [32;1m        PASS[0m [   0.101s] (16/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::committer_lease[0m[36m::[0m[34;1mmysql_lease_takeover_after_expiry_fences_stale_epoch_under_concurrency[0m
+2026-09-09T16:51:48.6847202Z [32;1m        PASS[0m [   0.090s] (17/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::execution_units[0m[36m::[0m[34;1mmysql_disabled_cron_job_still_reports_scheduled_work[0m
+2026-09-09T16:51:48.8027779Z [32;1m        PASS[0m [   0.118s] (18/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::execution_units[0m[36m::[0m[34;1mmysql_execution_unit_batch_and_scheduler_state_round_trip[0m
+2026-09-09T16:51:48.9089406Z [32;1m        PASS[0m [   0.106s] (19/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::execution_units[0m[36m::[0m[34;1mmysql_execution_unit_batch_persists_and_removes_resource_path_bindings_atomically[0m
+2026-09-09T16:51:49.0118424Z [32;1m        PASS[0m [   0.103s] (20/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::execution_units[0m[36m::[0m[34;1mmysql_resource_path_bindings_round_trip_without_table_name_delimiter_tricks[0m
+2026-09-09T16:51:49.0995577Z [32;1m        PASS[0m [   0.088s] (21/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::execution_units[0m[36m::[0m[34;1mmysql_trigger_delivery_cursor_round_trips_in_metadata[0m
+2026-09-09T16:51:49.1849992Z [32;1m        PASS[0m [   0.085s] (22/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::foundation[0m[36m::[0m[34;1mmysql_opened_tenant_exposes_store_identity_and_read_storage[0m
+2026-09-09T16:51:49.3901316Z [32;1m        PASS[0m [   0.205s] (23/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::foundation[0m[36m::[0m[34;1mmysql_provider_manages_tenant_registry_and_databases[0m
+2026-09-09T16:51:49.4767780Z [32;1m        PASS[0m [   0.087s] (24/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::foundation[0m[36m::[0m[34;1mmysql_provider_reloads_registry_after_reconnect[0m
+2026-09-09T16:51:49.5652002Z [32;1m        PASS[0m [   0.088s] (25/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_batch_journal_insert_uses_one_provider_statement[0m
+2026-09-09T16:51:49.6926187Z [32;1m        PASS[0m [   0.127s] (26/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_direct_writes_dedupe_and_journal_progress_round_trip[0m
+2026-09-09T16:51:49.7991936Z [32;1m        PASS[0m [   0.106s] (27/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_durable_journal_recovery_applies_pending_records[0m
+2026-09-09T16:51:49.9036573Z [32;1m        PASS[0m [   0.105s] (28/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_durable_replay_retires_recreated_table_identity[0m
+2026-09-09T16:51:50.0696585Z [32;1m        PASS[0m [   0.166s] (29/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_durable_update_guard_reports_corruption[0m
+2026-09-09T16:51:50.1846360Z [32;1m        PASS[0m [   0.115s] (30/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_materialized_position_matches_the_provider_independent_reference[0m
+2026-09-09T16:51:50.2952828Z [32;1m        PASS[0m [   0.110s] (31/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_materialized_verification_root_is_provider_independent[0m
+2026-09-09T16:51:50.3902539Z [32;1m        PASS[0m [   0.095s] (32/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_packet_bounded_journal_chunks_commit_atomically[0m
+2026-09-09T16:51:50.4979260Z [32;1m        PASS[0m [   0.108s] (33/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_pending_prefix_blocks_generic_zero_write[0m
+2026-09-09T16:51:50.5837619Z [32;1m        PASS[0m [   0.086s] (34/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_pipeline_lease_cas_precedes_all_statements[0m
+2026-09-09T16:51:50.7201143Z [32;1m        PASS[0m [   0.136s] (35/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes[0m
+2026-09-09T16:51:50.8591477Z [32;1m        PASS[0m [   0.139s] (36/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_ppsc_identical_replay_is_idempotent_for_all_write_shapes[0m
+2026-09-09T16:51:50.9452834Z [32;1m        PASS[0m [   0.086s] (37/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_pre_admission_cancellation_is_not_a_pipeline_failure[0m
+2026-09-09T16:51:51.0344613Z [32;1m        PASS[0m [   0.089s] (38/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_sql_pipeline_cancellation_rolls_back[0m
+2026-09-09T16:51:51.1294854Z [32;1m        PASS[0m [   0.095s] (39/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_sql_pipeline_post_runner_cancellation_is_counted_once[0m
+2026-09-09T16:51:51.2357989Z [32;1m        PASS[0m [   0.106s] (40/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::journal[0m[36m::[0m[34;1mmysql_tenant_event_journal_replays_mixed_history[0m
+2026-09-09T16:51:51.5846194Z [32;1m        PASS[0m [   0.349s] (41/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::retention[0m[36m::[0m[34;1mmysql_provider_page_rejects_concurrent_retention_prune[0m
+2026-09-09T16:51:52.1468428Z [32;1m        PASS[0m [   0.562s] (42/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::retention[0m[36m::[0m[34;1mmysql_provider_retention_checkpoint_fault_rolls_back_every_delete[0m
+2026-09-09T16:51:52.7224313Z [32;1m        PASS[0m [   0.575s] (43/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::retention[0m[36m::[0m[34;1mmysql_provider_retention_sql_error_preserves_error_and_rolls_back[0m
+2026-09-09T16:51:53.3472748Z [32;1m        PASS[0m [   0.625s] (44/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::retention[0m[36m::[0m[34;1mmysql_provider_stale_lease_retention_is_atomic_and_restart_safe[0m
+2026-09-09T16:51:53.4733639Z [32;1m        PASS[0m [   0.126s] (45/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::schema[0m[36m::[0m[34;1mmysql_index_reads_round_trip_after_schema_write[0m
+2026-09-09T16:51:53.6015545Z [32;1m        PASS[0m [   0.128s] (46/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::schema[0m[36m::[0m[34;1mmysql_schema_write_creates_and_drops_generated_index_columns[0m
+2026-09-09T16:51:53.7438519Z [32;1m        PASS[0m [   0.142s] (47/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::schema[0m[36m::[0m[34;1mmysql_table_lifecycle_activates_hidden_identity_and_diagnostics_track_layout[0m
+2026-09-09T16:51:53.8654935Z [32;1m        PASS[0m [   0.122s] (48/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::versions[0m[36m::[0m[34;1mmysql_document_versions_are_materialized_during_durable_recovery[0m
+2026-09-09T16:51:53.9824772Z [32;1m        PASS[0m [   0.117s] (49/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::versions[0m[36m::[0m[34;1mmysql_document_versions_storage_diagnostic_reports_format_and_range[0m
+2026-09-09T16:51:54.0908421Z [32;1m        PASS[0m [   0.108s] (50/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::versions[0m[36m::[0m[34;1mmysql_document_versions_track_direct_write_history[0m
+2026-09-09T16:51:54.2371164Z [32;1m        PASS[0m [   0.146s] (51/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::versions[0m[36m::[0m[34;1mmysql_historical_index_prefix_composite_range_and_pagination_are_stable[0m
+2026-09-09T16:51:54.3791300Z [32;1m        PASS[0m [   0.142s] (52/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::versions[0m[36m::[0m[34;1mmysql_historical_index_scan_eq_and_range_use_versioned_visibility[0m
+2026-09-09T16:51:54.5052568Z [32;1m        PASS[0m [   0.126s] (53/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::versions[0m[36m::[0m[34;1mmysql_index_versions_are_materialized_during_durable_recovery[0m
+2026-09-09T16:51:54.6338552Z [32;1m        PASS[0m [   0.128s] (54/54) [35;1mnimbus-storage[0m [36mtests::mysql_provider::versions[0m[36m::[0m[34;1mmysql_index_versions_track_direct_write_history[0m
+2026-09-09T16:51:54.6341446Z ────────────
+2026-09-09T16:51:54.6342526Z [31;1m     Summary[0m [  86.113s] [1m54[0m tests run: [1m53[0m [32;1mpassed[0m ([1m1[0m [33;1mslow[0m), [1m1[0m [31;1mfailed[0m, [1m1329[0m [33;1mskipped[0m
+2026-09-09T16:51:54.6344784Z [31;1m        FAIL[0m [  10.234s] ( 3/54) [35;1mnimbus-system[0m [36mprojection::reconciliation_tests[0m[36m::[0m[34;1mprojection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete[0m
+2026-09-09T16:51:56.4795826Z [31;1merror[0m: test run failed
+2026-09-09T16:51:56.4821855Z --- mysql fixture logs ---
+2026-09-09T16:51:56.5516827Z mysql-1  | 2026-09-09 16:49:56+00:00 [Note] [Entrypoint]: Entrypoint script for MySQL Server 8.4.11-1.el9 started.
+2026-09-09T16:51:56.5517961Z mysql-1  | 2026-09-09 16:49:57+00:00 [Note] [Entrypoint]: Switching to dedicated user 'mysql'
+2026-09-09T16:51:56.5519171Z mysql-1  | 2026-09-09 16:49:57+00:00 [Note] [Entrypoint]: Entrypoint script for MySQL Server 8.4.11-1.el9 started.
+2026-09-09T16:51:56.5520145Z mysql-1  | 2026-09-09 16:49:57+00:00 [Note] [Entrypoint]: Initializing database files
+2026-09-09T16:51:56.5521144Z mysql-1  | 2026-09-09T16:49:57.318126Z 0 [System] [MY-015017] [Server] MySQL Server Initialization - start.
+2026-09-09T16:51:56.5522480Z mysql-1  | 2026-09-09T16:49:57.319498Z 0 [System] [MY-013169] [Server] /usr/sbin/mysqld (mysqld 8.4.11) initializing of server in progress as process 81
+2026-09-09T16:51:56.5523962Z mysql-1  | 2026-09-09T16:49:57.323621Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-09-09T16:51:56.5525086Z mysql-1  | 2026-09-09T16:49:57.418713Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-09-09T16:51:56.5526628Z mysql-1  | 2026-09-09T16:49:58.072638Z 6 [Warning] [MY-010453] [Server] root@localhost is created with an empty password ! Please consider switching off the --initialize-insecure option.
+2026-09-09T16:51:56.5528192Z mysql-1  | 2026-09-09T16:49:59.255251Z 0 [System] [MY-015018] [Server] MySQL Server Initialization - end.
+2026-09-09T16:51:56.5529386Z mysql-1  | 2026-09-09 16:49:59+00:00 [Note] [Entrypoint]: Database files initialized
+2026-09-09T16:51:56.5530270Z mysql-1  | 2026-09-09 16:49:59+00:00 [Note] [Entrypoint]: Starting temporary server
+2026-09-09T16:51:56.5531203Z mysql-1  | 2026-09-09T16:49:59.299001Z 0 [System] [MY-015015] [Server] MySQL Server - start.
+2026-09-09T16:51:56.5532375Z mysql-1  | 2026-09-09T16:49:59.490566Z 0 [System] [MY-010116] [Server] /usr/sbin/mysqld (mysqld 8.4.11) starting as process 133
+2026-09-09T16:51:56.5533632Z mysql-1  | 2026-09-09T16:49:59.500090Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-09-09T16:51:56.5534640Z mysql-1  | 2026-09-09T16:49:59.638176Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-09-09T16:51:56.5535751Z mysql-1  | 2026-09-09T16:49:59.827732Z 0 [Warning] [MY-010068] [Server] CA certificate ca.pem is self signed.
+2026-09-09T16:51:56.5537352Z mysql-1  | 2026-09-09T16:49:59.827769Z 0 [System] [MY-013602] [Server] Channel mysql_main configured to support TLS. Encrypted connections are now supported for this channel.
+2026-09-09T16:51:56.5539923Z mysql-1  | 2026-09-09T16:49:59.829910Z 0 [Warning] [MY-011810] [Server] Insecure configuration for --pid-file: Location '/var/run/mysqld' in the path is accessible to all OS users. Consider choosing a different directory.
+2026-09-09T16:51:56.5541079Z mysql-1  | 2026-09-09T16:49:59.841204Z 0 [System] [MY-011323] [Server] X Plugin ready for connections. Socket: /var/run/mysqld/mysqlx.sock
+2026-09-09T16:51:56.5542128Z mysql-1  | 2026-09-09T16:49:59.841291Z 0 [System] [MY-010931] [Server] /usr/sbin/mysqld: ready for connections. Version: '8.4.11'  socket: '/var/run/mysqld/mysqld.sock'  port: 0  MySQL Community Server - GPL.
+2026-09-09T16:51:56.5542974Z mysql-1  | 2026-09-09 16:49:59+00:00 [Note] [Entrypoint]: Temporary server started.
+2026-09-09T16:51:56.5543466Z mysql-1  | '/var/lib/mysql/mysql.sock' -> '/var/run/mysqld/mysqld.sock'
+2026-09-09T16:51:56.5543940Z mysql-1  | 2026-09-09 16:50:01+00:00 [Note] [Entrypoint]: Creating database test
+2026-09-09T16:51:56.5544312Z mysql-1  | 
+2026-09-09T16:51:56.5544637Z mysql-1  | 2026-09-09 16:50:01+00:00 [Note] [Entrypoint]: Stopping temporary server
+2026-09-09T16:51:56.5545317Z mysql-1  | 2026-09-09T16:50:01.072912Z 11 [System] [MY-013172] [Server] Received SHUTDOWN from user root. Shutting down mysqld (Version: 8.4.11).
+2026-09-09T16:51:56.5546690Z mysql-1  | 2026-09-09T16:50:02.219055Z 0 [System] [MY-010910] [Server] /usr/sbin/mysqld: Shutdown complete (mysqld 8.4.11)  MySQL Community Server - GPL.
+2026-09-09T16:51:56.5547434Z mysql-1  | 2026-09-09T16:50:02.219076Z 0 [System] [MY-015016] [Server] MySQL Server - end.
+2026-09-09T16:51:56.5547959Z mysql-1  | 2026-09-09 16:50:03+00:00 [Note] [Entrypoint]: Temporary server stopped
+2026-09-09T16:51:56.5548341Z mysql-1  | 
+2026-09-09T16:51:56.5548735Z mysql-1  | 2026-09-09 16:50:03+00:00 [Note] [Entrypoint]: MySQL init process done. Ready for start up.
+2026-09-09T16:51:56.5549621Z mysql-1  | 
+2026-09-09T16:51:56.5550169Z mysql-1  | 2026-09-09T16:50:03.091079Z 0 [System] [MY-015015] [Server] MySQL Server - start.
+2026-09-09T16:51:56.5550947Z mysql-1  | 2026-09-09T16:50:03.270815Z 0 [System] [MY-010116] [Server] /usr/sbin/mysqld (mysqld 8.4.11) starting as process 1
+2026-09-09T16:51:56.5551685Z mysql-1  | 2026-09-09T16:50:03.275962Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-09-09T16:51:56.5552313Z mysql-1  | 2026-09-09T16:50:03.412315Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-09-09T16:51:56.5552934Z mysql-1  | 2026-09-09T16:50:03.574496Z 0 [Warning] [MY-010068] [Server] CA certificate ca.pem is self signed.
+2026-09-09T16:51:56.5553785Z mysql-1  | 2026-09-09T16:50:03.574535Z 0 [System] [MY-013602] [Server] Channel mysql_main configured to support TLS. Encrypted connections are now supported for this channel.
+2026-09-09T16:51:56.5554979Z mysql-1  | 2026-09-09T16:50:03.576994Z 0 [Warning] [MY-011810] [Server] Insecure configuration for --pid-file: Location '/var/run/mysqld' in the path is accessible to all OS users. Consider choosing a different directory.
+2026-09-09T16:51:56.5556167Z mysql-1  | 2026-09-09T16:50:03.594502Z 0 [System] [MY-011323] [Server] X Plugin ready for connections. Bind-address: '::' port: 33060, socket: /var/run/mysqld/mysqlx.sock
+2026-09-09T16:51:56.5557281Z mysql-1  | 2026-09-09T16:50:03.594584Z 0 [System] [MY-010931] [Server] /usr/sbin/mysqld: ready for connections. Version: '8.4.11'  socket: '/var/run/mysqld/mysqld.sock'  port: 3306  MySQL Community Server - GPL.
+2026-09-09T16:51:56.8667628Z  Container nimbus-external-provider-tests-mysql-1  Stopping
+2026-09-09T16:51:58.3823105Z  Container nimbus-external-provider-tests-mysql-1  Stopped
+2026-09-09T16:51:58.3875380Z  Container nimbus-external-provider-tests-mysql-1  Removing
+2026-09-09T16:51:58.3911910Z  Container nimbus-external-provider-tests-mysql-1  Removed
+2026-09-09T16:51:58.3971100Z make: *** [Makefile:248: test-external-provider] Error 100
+2026-09-09T16:51:58.4012214Z ##[error]Process completed with exit code 2.
+2026-09-09T16:51:58.4148360Z Post job cleanup.
+2026-09-09T16:51:58.5899489Z [command]/usr/bin/git version
+2026-09-09T16:51:58.5951623Z git version 2.55.0
+2026-09-09T16:51:58.6015627Z Temporarily overriding HOME='/home/runner/work/_temp/fcd1bf5c-b996-47ea-a8f9-5eaa88d753f7' before making global git config changes
+2026-09-09T16:51:58.6017232Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-09T16:51:58.6022356Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/nimbus/nimbus
+2026-09-09T16:51:58.6079781Z Removing SSH command configuration
+2026-09-09T16:51:58.6089536Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-09T16:51:58.6151414Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-09T16:51:58.6615945Z Removing HTTP extra header
+2026-09-09T16:51:58.6623417Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-09T16:51:58.6666855Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-09T16:51:58.6990339Z Removing includeIf entries pointing to credentials config files
+2026-09-09T16:51:58.7000692Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-09T16:51:58.7053850Z includeif.gitdir:/home/runner/work/nimbus/nimbus/.git.path
+2026-09-09T16:51:58.7054433Z includeif.gitdir:/home/runner/work/nimbus/nimbus/.git/worktrees/*.path
+2026-09-09T16:51:58.7054895Z includeif.gitdir:/github/workspace/.git.path
+2026-09-09T16:51:58.7055285Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-09T16:51:58.7059028Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/nimbus/nimbus/.git.path
+2026-09-09T16:51:58.7095631Z /home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7108544Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/nimbus/nimbus/.git.path /home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7157915Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/nimbus/nimbus/.git/worktrees/*.path
+2026-09-09T16:51:58.7187718Z /home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7198617Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/nimbus/nimbus/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7239410Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-09T16:51:58.7267061Z /github/runner_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7276763Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7317426Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-09T16:51:58.7345535Z /github/runner_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7354540Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config
+2026-09-09T16:51:58.7403409Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-09T16:51:58.7689402Z Removing credentials config '/home/runner/work/_temp/git-credentials-82eb5477-48e4-4a9f-8d83-fb9239c0b281.config'
+2026-09-09T16:51:58.7855578Z Cleaning up orphan processes

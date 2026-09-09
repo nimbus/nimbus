@@ -3,12 +3,11 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
-import { LoadingState, SkeletonRows } from "../../components/loading-state";
+import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { TablesListTable } from "../../components/storage/tables-list-table";
-import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
+import { useTablesSubPanel } from "../../components/storage/tables-sub-panel";
 import { useTenantList } from "../../hooks/use-tenant-list";
 import type { TableDoc } from "../../lib/types/table";
 import { useUiStore } from "../../store/ui-store";
@@ -30,7 +29,7 @@ function StoragePage() {
 
   // Shared with the table detail route, so the Tables list stays beside the
   // documents instead of vanishing on drill-in.
-  useTablesSubDrawer({ tenant, tables, hasTenants });
+  useTablesSubPanel({ tenant, tables, hasTenants });
 
   return (
     <section
@@ -67,7 +66,7 @@ function StoragePage() {
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {!tenant ? (
           // `useTenantList` reports three kinds and this panel has to honour
           // all three. Reducing them to a boolean sent "Select a tenant" —
@@ -85,9 +84,9 @@ function StoragePage() {
               body={
                 <>
                   This deployment can&apos;t reach{" "}
-                  <code className="font-mono text-default">/api/tenants</code>:{" "}
+                  <code className="font-mono text-text-1">/api/tenants</code>:{" "}
                   <span
-                    className="font-mono text-default"
+                    className="font-mono text-text-1"
                     data-testid="tenant-tables-tenants-error-message"
                   >
                     {tenantList.message}
@@ -108,55 +107,23 @@ function StoragePage() {
           ) : (
             <EmptyState
               title="Select a tenant"
-              body="Pick a tenant from the top-nav selector to see its tables."
+              body="Pick a tenant from the sidebar selector to see its tables."
               testid="tenant-tables-empty"
             />
           )
-        ) : tables === undefined ? (
-          // Skeleton rows, not a centered spinner: the header, the panel and
-          // the 40px row rhythm all survive the load, so arriving tables move
-          // nothing vertically. `table-auto` still re-proportions the columns
-          // on arrival — the bars are not the content it measures. No
-          // `rowContentHeight`: `Td`'s 40px row floor already sizes the real
-          // and the placeholder rows alike (measured 40.00px in both states).
-          <SkeletonRows
-            columns={5}
-            head={<TablesTableHead />}
-            label="Loading tables…"
-            testid="tenant-tables-loading"
-          />
-        ) : tables.length === 0 ? (
+        ) : tables !== undefined && tables.length === 0 ? (
           <EmptyState
             title="No tables"
             body={`Insert a document via POST /api/tenants/${tenant}/documents or call ctx.db.insert("<table>", ...) from a registered function. Tables appear here as soon as they receive their first write.`}
             testid="tenant-tables-empty"
           />
         ) : (
+          // The list table draws its own skeleton rows while `tables` is
+          // undefined, under the same header the rows arrive under, so the
+          // load moves nothing vertically.
           <TablesListTable tables={tables} />
         )}
       </div>
     </section>
-  );
-}
-
-/**
- * The Tables list header, declared here because the loading branch and the
- * loaded table are owned by different files: `TablesListTable` renders the
- * rows, this route renders the placeholder that has to match them. Keep the
- * two column sets in step — the skeleton is only honest while it is.
- */
-function TablesTableHead() {
-  return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-      <tr>
-        <Th>Table</Th>
-        <Th>Schema</Th>
-        <Th align="right">Rows</Th>
-        <Th>Last write</Th>
-        <Th align="right" className="w-px">
-          actions
-        </Th>
-      </tr>
-    </thead>
   );
 }

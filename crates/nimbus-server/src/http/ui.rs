@@ -208,8 +208,6 @@ fn short_prefix(ticket: &str) -> &str {
 }
 
 fn render_auth_page(error: Option<&str>) -> String {
-    let latin_400 = find_embedded_font("jetbrains-mono-latin-400-normal").unwrap_or_default();
-    let latin_500 = find_embedded_font("jetbrains-mono-latin-500-normal").unwrap_or_default();
     let (error_block, aria_invalid) = match error {
         Some(message) => (
             format!(
@@ -221,8 +219,6 @@ fn render_auth_page(error: Option<&str>) -> String {
         None => (String::new(), String::new()),
     };
     ui::auth_page_template()
-        .replace("{{ JETBRAINS_MONO_400 }}", &latin_400)
-        .replace("{{ JETBRAINS_MONO_500 }}", &latin_500)
         .replace("{{ NIMBUS_VERSION }}", env!("CARGO_PKG_VERSION"))
         .replace("{{ ERROR_BLOCK }}", &error_block)
         .replace("{{ ARIA_INVALID }}", &aria_invalid)
@@ -251,20 +247,6 @@ fn escape_html(value: &str) -> String {
         }
     }
     out
-}
-
-fn find_embedded_font(stem: &str) -> Option<String> {
-    ui::iter().find_map(|name| {
-        let candidate = name.as_ref();
-        if candidate.starts_with("assets/")
-            && candidate.contains(stem)
-            && candidate.ends_with(".woff2")
-        {
-            Some(candidate.to_string())
-        } else {
-            None
-        }
-    })
 }
 
 pub(crate) async fn create_ui_session(

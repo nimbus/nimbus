@@ -26,6 +26,10 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  resolve: {
+    // The tsconfig "@" alias, restated for the dev server and the build.
+    alias: { "@": new URL("./src", import.meta.url).pathname },
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

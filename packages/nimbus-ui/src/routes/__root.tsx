@@ -6,23 +6,26 @@ import {
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ToastT } from "sonner";
-import { Toaster, toast, useSonner } from "sonner";
+import { toast, useSonner } from "sonner";
+
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { StalenessProvider } from "../hooks/use-staleness";
 import { CommandPalette } from "../shell/command-palette";
 import { DisconnectedOverlay } from "../shell/disconnected-overlay";
 import { AppErrorBoundary } from "../shell/error-boundary";
 import { KeyboardContract } from "../shell/keyboard-contract";
 import { viewFromPathname } from "../shell/nav-entries";
-import { PrimaryDrawer } from "../shell/primary-drawer";
-import { StatusBar } from "../shell/status-bar";
-import { SubDrawer, SubDrawerProvider } from "../shell/sub-drawer";
+import { MobileTopBar } from "../shell/sidebar/mobile-sheet";
+import { Sidebar } from "../shell/sidebar/sidebar";
+import { SubPanelLayout, SubPanelProvider } from "../shell/sub-panel";
 import { SystemTenantLens } from "../shell/system-tenant-lens";
 import { ThemeController } from "../shell/theme-controller";
-import { TopNav } from "../shell/top-nav";
 import {
   useTenantBootstrap,
   useTenantSwitchInvalidation,
 } from "../shell/use-tenant-bootstrap";
+import { useSmallScreen } from "../shell/use-viewport-tier";
 import { persistLastRouteForView, useUiStore } from "../store/ui-store";
 
 type RootSearch = {
@@ -38,6 +41,10 @@ export const Route = createRootRoute({
 
 function ShellLayout() {
   const [toastRegion, setToastRegion] = useState<HTMLElement | null>(null);
+  // Below 640px the sidebar is a sheet behind a top-bar button; above it,
+  // the column. The tree differs on either side of the line, so the choice
+  // is made here and not in a stylesheet.
+  const small = useSmallScreen();
   useLastRouteTracker();
   useTenantBootstrap();
   useTenantSwitchInvalidation();
@@ -46,74 +53,66 @@ function ShellLayout() {
       <ThemeController />
       <KeyboardContract />
       <StalenessProvider>
-        <SubDrawerProvider>
-          <div className="flex h-screen flex-col bg-canvas text-default">
-            {/* The first tab stop in the console, and the only way past the
+        <TooltipProvider>
+          <SubPanelProvider>
+            <div className="flex h-screen flex-col bg-bg-canvas text-text-1">
+              {/* The first tab stop in the console, and the only way past the
                 chrome. Everything the shell renders ahead of <main> is a tab
-                stop: the build-hash chip, the view switcher, the tenant
-                selector, the appearance menu, every primary-drawer link, the
-                two collapse buttons, the sub-drawer search, and then the whole
-                function tree, one stop per folder, module and leaf. That last
+                stop: the brand link, the view switcher, the tenant selector,
+                every sidebar row, the theme toggle, the two collapse buttons,
+                the sub-panel search, and then the whole function tree, one
+                stop per folder, module and leaf. That last
                 one has no bound on a real deployment, so without this link
                 reaching page content by keyboard is not a fixed cost.
 
                 It is translated off the top of the viewport rather than
                 `hidden` or `display: none`, because either of those would take
                 it out of the tab order and leave nothing to skip with. */}
-            <a
-              href="#main-content"
-              className="fixed top-2 left-2 z-50 -translate-y-16 rounded border px-3 py-2 text-sm border-app bg-surface text-default focus:translate-y-0"
-            >
-              Skip to content
-            </a>
-            <TopNav />
-            <div className="flex min-h-0 flex-1">
-              <PrimaryDrawer />
-              <SubDrawer />
-              {/* `tabIndex={-1}` is what moves the caret. An anchor to a
-                  container that cannot hold focus scrolls the page in every
-                  browser but leaves the next Tab back in the chrome, which is
-                  the walk the link exists to avoid. */}
-              <main
-                id="main-content"
-                tabIndex={-1}
-                className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+              <a
+                href="#main-content"
+                className="fixed top-2 left-2 z-50 -translate-y-16 rounded-xs border px-3 py-2 text-sm border-border-2 bg-bg-panel text-text-1 focus:translate-y-0"
               >
-                <DisconnectedOverlay />
-                <div className="flex-1 overflow-auto">
-                  <Outlet />
-                </div>
-              </main>
+                Skip to content
+              </a>
+              {small ? <MobileTopBar /> : null}
+              <div className="flex min-h-0 flex-1">
+                {small ? null : <Sidebar />}
+                <SubPanelLayout>
+                  {/* `tabIndex={-1}` is what moves the caret. An anchor to a
+                    container that cannot hold focus scrolls the page in every
+                    browser but leaves the next Tab back in the chrome, which is
+                    the walk the link exists to avoid. */}
+                  <main
+                    id="main-content"
+                    tabIndex={-1}
+                    className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+                  >
+                    <DisconnectedOverlay />
+                    <div className="flex-1 overflow-auto">
+                      <Outlet />
+                    </div>
+                  </main>
+                </SubPanelLayout>
+              </div>
             </div>
-            <StatusBar />
-          </div>
-          <CommandPalette />
-          <SystemTenantLens />
-        </SubDrawerProvider>
-        <ToastLifetimes />
-        <ToastOverflow region={toastRegion} />
-        <Toaster
-          ref={setToastRegion}
-          position="bottom-right"
-          offset="calc(var(--statusbar-height) + 12px)"
-          visibleToasts={VISIBLE_TOAST_LIMIT}
-          // Never expire a toast on sonner's clock. See ToastLifetimes: this is
-          // half of the split, and the half that keeps an error on screen.
-          duration={Number.POSITIVE_INFINITY}
-          toastOptions={{
+            <CommandPalette />
+            <SystemTenantLens />
+          </SubPanelProvider>
+          <ToastLifetimes />
+          <ToastOverflow region={toastRegion} />
+          <Toaster
+            ref={setToastRegion}
+            position="bottom-right"
+            visibleToasts={VISIBLE_TOAST_LIMIT}
+            // Never expire a toast on sonner's clock. See ToastLifetimes: this is
+            // half of the split, and the half that keeps an error on screen.
+            duration={Number.POSITIVE_INFINITY}
             // A toast that never expires has to be closable, and swiping is not
             // a keyboard gesture. Every toast gets the button so the affordance
             // does not appear only on the failures.
-            closeButton: true,
-            style: {
-              background: "var(--nimbus-surface)",
-              color: "var(--nimbus-text)",
-              border: "1px solid var(--nimbus-border)",
-              fontFamily: "var(--font-mono)",
-              fontSize: "12px",
-            },
-          }}
-        />
+            toastOptions={{ closeButton: true }}
+          />
+        </TooltipProvider>
       </StalenessProvider>
     </AppErrorBoundary>
   );
@@ -261,7 +260,7 @@ function ToastOverflow({ region }: { region: HTMLElement | null }) {
     // appears and again whenever the count changes.
     <li
       data-testid="toast-overflow"
-      className="absolute right-0 bottom-[calc(var(--front-toast-height)_+_2_*_var(--gap)_+_8px)] rounded border px-2 py-0.5 font-mono text-xs border-app bg-surface text-muted"
+      className="absolute right-0 bottom-[calc(var(--front-toast-height)_+_2_*_var(--gap)_+_8px)] rounded-xs border px-2 py-0.5 font-mono text-xs border-border-2 bg-bg-panel text-text-3"
     >
       +{hidden} more
     </li>,
@@ -274,10 +273,13 @@ export function useLastRouteTracker() {
   // A location that matches no route must not become the view's remembered
   // route: persisting it makes the dead end self-restoring on the next reload
   // and on every view switch.
+  // `_notFound` is the flag the router sets on the match that renders the
+  // global not-found component. It is the same predicate router-core uses
+  // for its own first-error lookup.
   const isNotFound = useRouterState({
     select: (s) =>
       s.matches.some(
-        (match) => match.status === "notFound" || match.globalNotFound === true,
+        (match) => match.status === "notFound" || match._notFound === true,
       ),
   });
   const setLastView = useUiStore((s) => s.setLastView);

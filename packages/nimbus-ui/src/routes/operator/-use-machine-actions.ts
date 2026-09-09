@@ -8,7 +8,7 @@ export type LifecycleAction = "start" | "stop" | "restart" | "delete";
 
 // State a machine optimistically shows while its lifecycle request is in
 // flight, before the reactive query reports the settled state. Every value
-// here must resolve to a named state in `components/state-chip.tsx`, or the
+// here must resolve to a named state in `components/state-dot.tsx`, or the
 // row answers a lifecycle click with a question mark; `use-machine-actions.spec.tsx`
 // locks the two files together.
 export const OPTIMISTIC_STATES: Record<LifecycleAction, string> = {

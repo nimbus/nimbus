@@ -264,6 +264,10 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
         status.fields["details"]["listenAddress"],
         json!(listen_addr.to_string())
     );
+    assert_eq!(
+        status.fields["details"]["dataDir"],
+        json!(engine.data_dir().display().to_string())
+    );
     assert!(
         status.fields.get("startedAt").is_some_and(Value::is_number),
         "system status should record server start time: {status:?}"

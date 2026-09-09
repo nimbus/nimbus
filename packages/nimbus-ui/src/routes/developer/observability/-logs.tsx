@@ -10,17 +10,40 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { toast } from "sonner";
 
 import { api } from "../../../../convex/_generated/api";
-import { Td, Th } from "../../../components/data-table";
 import { EmptyState } from "../../../components/empty-state";
+import {
+  FacetBar,
+  FacetButton,
+  FacetInput,
+  FacetToggle,
+} from "../../../components/facet-bar";
 import { LoadingState } from "../../../components/loading-state";
-import { StateChip } from "../../../components/state-chip";
+import { CategoryPill, StatePill } from "../../../components/pill";
+import { Select } from "../../../components/select";
+import {
+  RowContextMenu,
+  type RowMenuItem,
+} from "../../../components/storage/row-context-menu";
+import { Td, Th } from "../../../components/table-cells";
 import { RelativeTime } from "../../../components/time";
-import { cn } from "../../../lib/cn";
-import { shortId } from "../../../lib/format";
-import { FilterInput, FilterSelect } from "./-filters";
-import type { EventDoc, ObservabilitySearch } from "./-types";
+import { formatDuration, shortId } from "../../../lib/format";
+import {
+  ALL_OPTION,
+  type ObservabilityTabProps,
+  SystemLensButton,
+  TenantFacet,
+  TenantScopeNote,
+} from "./-facets";
+import { groupLogs, type LogGroup } from "./-log-groups";
+import {
+  type EventDoc,
+  hasLineFilters,
+  type ObservabilitySearch,
+  type RunDoc,
+} from "./-types";
 
 const LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
 
@@ -41,6 +64,9 @@ function getPerfStore(): NimbusPerfEventStore | undefined {
   return typeof window === "undefined" ? undefined : window.__nimbusEvents;
 }
 
+// The perf harness (tests/perf/log-stream.spec.ts) feeds the stream through
+// a window-level store instead of the server, so the render cost of the
+// stream is measured on its own.
 function usePerfEventStream(): EventDoc[] | undefined {
   const subscribe = useCallback((listener: () => void) => {
     const store = getPerfStore();
@@ -60,47 +86,43 @@ function usePerfEventStream(): EventDoc[] | undefined {
   return getPerfStore() ? snapshot : undefined;
 }
 
-export function LogsTab({ search }: { search: ObservabilitySearch }) {
-  const navigate = useNavigate({ from: "/developer/observability" });
+function isAlarm(level: string | undefined): boolean {
+  const l = (level ?? "").toLowerCase();
+  return l === "error" || l === "warn";
+}
+
+export function LogsTab({
+  search,
+  tenantId,
+  allowAllTenants,
+  setSearch,
+  setSearchAction,
+}: ObservabilityTabProps) {
   const live = useQuery(api.events.recent, {
+    tenantId,
     source: search.source ?? null,
     level: search.level ?? null,
     category: search.category ?? null,
     correlationId: search.correlationId ?? null,
     limit: 200,
   }) as EventDoc[] | undefined;
+  const runs = useQuery(api.runs.recent, {
+    tenantId,
+    bundleId: null,
+    functionPath: null,
+    status: null,
+    limit: 200,
+  }) as RunDoc[] | undefined;
   const perf = usePerfEventStream();
   const events = perf ?? live;
 
   const follow = search.follow ?? false;
   const pauseOnError = search.pauseOnError ?? false;
 
-  const setSearch = useCallback(
-    (patch: Partial<ObservabilitySearch>) => {
-      void navigate({
-        to: "/developer/observability",
-        search: (prev) => ({ ...prev, ...patch }),
-        replace: true,
-      });
-    },
-    [navigate],
-  );
-
-  const setSearchAction = useCallback(
-    (patch: Partial<ObservabilitySearch>) => {
-      void navigate({
-        to: "/developer/observability",
-        search: (prev) => ({ ...prev, ...patch }),
-      });
-    },
-    [navigate],
-  );
-
   // `undefined` travels the whole way to the stream rather than being
-  // collapsed here. `events` is undefined until the query lands — and again
-  // after every filter change, which re-keys the query — so flattening it to
-  // `[]` made a pending read indistinguishable from a genuinely empty one and
-  // let the panel claim "no events" before it had asked.
+  // collapsed here. Both reads are undefined until they land, and again
+  // after every facet change re-keys them, so flattening to `[]` would
+  // report a pending read as an empty log.
   const sorted = useMemo(() => {
     if (events === undefined) return undefined;
     return events
@@ -108,29 +130,44 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
       .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }, [events]);
 
-  const lastErrorRef = useRef<string | null>(null);
+  // Pause on error freezes the stream at the newest alarm line: lines and
+  // runs newer than it are held back until the reader resumes, so the
+  // failure stays at the top while they read it.
+  const pausedAtRef = useRef<{ id: string; at: number } | null>(null);
   const [paused, setPaused] = useState(false);
   useEffect(() => {
     if (!pauseOnError) {
       setPaused(false);
+      pausedAtRef.current = null;
       return;
     }
     const newest = sorted?.[0];
     if (!newest) return;
-    const isError =
-      (newest.level ?? "").toLowerCase() === "error" ||
-      (newest.level ?? "").toLowerCase() === "warn";
-    if (isError && lastErrorRef.current !== newest._id) {
+    if (isAlarm(newest.level) && pausedAtRef.current?.id !== newest._id) {
+      pausedAtRef.current = { id: newest._id, at: newest.createdAt ?? 0 };
       setPaused(true);
-      lastErrorRef.current = newest._id;
     }
   }, [pauseOnError, sorted]);
 
-  const visible = useMemo(() => {
-    if (sorted === undefined || !paused) return sorted;
-    const idx = sorted.findIndex((e) => e._id === lastErrorRef.current);
-    return idx < 0 ? sorted : sorted.slice(idx);
-  }, [paused, sorted]);
+  const lineFiltered =
+    search.level !== undefined ||
+    search.category !== undefined ||
+    search.source !== undefined;
+
+  const groups = useMemo(() => {
+    if (sorted === undefined || runs === undefined) return undefined;
+    const frozen = paused ? pausedAtRef.current : null;
+    const visibleEvents = frozen
+      ? sorted.filter((e) => (e.createdAt ?? 0) <= frozen.at)
+      : sorted;
+    const visibleRuns = frozen
+      ? runs.filter((r) => (r.startedAt ?? 0) <= frozen.at)
+      : runs;
+    return groupLogs(visibleRuns, visibleEvents, {
+      correlationId: search.correlationId,
+      lineFiltered,
+    });
+  }, [lineFiltered, paused, runs, search.correlationId, sorted]);
 
   const clearFilters = useCallback(
     () =>
@@ -143,54 +180,52 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
     [setSearchAction],
   );
 
-  // Which of the two empty results this is. All four chips narrow the same
-  // stream, so an empty pane under any of them is a filter outcome, not a
-  // statement about the deployment.
-  const filtered =
-    search.level !== undefined ||
-    search.category !== undefined ||
-    search.source !== undefined ||
-    search.correlationId !== undefined;
-
   return (
     <div
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
       data-testid="observability-logs"
     >
-      <LogFilterBar
+      <LogFacetBar
         search={search}
+        tenantId={tenantId}
+        allowAllTenants={allowAllTenants}
         setSearch={setSearch}
         follow={follow}
         pauseOnError={pauseOnError}
         paused={paused}
         onResume={() => {
           setPaused(false);
-          lastErrorRef.current = null;
+          pausedAtRef.current = null;
         }}
         onClear={clearFilters}
       />
+      <TenantScopeNote />
       <LogStream
-        events={visible}
+        groups={groups}
         follow={follow}
         paused={paused}
-        filtered={filtered}
+        filtered={hasLineFilters(search)}
+        setSearch={setSearch}
         onClear={clearFilters}
       />
     </div>
   );
 }
 
-function LogFilterBar({
+function LogFacetBar({
   search,
+  tenantId,
+  allowAllTenants,
   setSearch,
   follow,
   pauseOnError,
   paused,
   onResume,
   onClear,
-}: {
-  search: ObservabilitySearch;
-  setSearch: (patch: Partial<ObservabilitySearch>) => void;
+}: Pick<
+  ObservabilityTabProps,
+  "search" | "tenantId" | "allowAllTenants" | "setSearch"
+> & {
   follow: boolean;
   pauseOnError: boolean;
   paused: boolean;
@@ -198,25 +233,57 @@ function LogFilterBar({
   onClear: () => void;
 }) {
   return (
-    // Wrap rather than clip: the toolbar's ancestor is `overflow-hidden`, so a
-    // grid whose tracks cannot compress pushes the action cluster out of the
-    // viewport with no scrollbar to recover it.
-    <div
-      className="flex flex-wrap items-center gap-2"
-      data-testid="observability-log-filters"
+    <FacetBar
+      label="Log facets"
+      testid="observability-log-filters"
+      trailing={
+        <>
+          {paused ? (
+            <FacetButton
+              tone="danger"
+              onClick={onResume}
+              testid="observability-log-resume"
+            >
+              paused · resume
+            </FacetButton>
+          ) : null}
+          <FacetToggle
+            id="follow-mode"
+            label="Follow"
+            value={follow}
+            onChange={(v) => setSearch({ follow: v ? true : undefined })}
+            testid="observability-log-follow"
+          />
+          <FacetToggle
+            id="pause-on-error"
+            label="Pause on error"
+            value={pauseOnError}
+            onChange={(v) => setSearch({ pauseOnError: v ? true : undefined })}
+            testid="observability-log-pause-on-error"
+          />
+          <FacetButton onClick={onClear} testid="observability-filter-clear">
+            clear
+          </FacetButton>
+          <SystemLensButton />
+        </>
+      }
     >
-      <FilterSelect
-        id="log-level"
+      <TenantFacet
+        tenantId={tenantId}
+        allowAllTenants={allowAllTenants}
+        setSearch={setSearch}
+      />
+      <Select
         label="Level"
-        value={search.level ?? ""}
+        value={search.level ?? ALL_OPTION}
         options={[
-          { value: "", label: "all levels" },
+          { value: ALL_OPTION, label: "all levels" },
           ...LEVELS.map((l) => ({ value: l, label: l })),
         ]}
-        onChange={(v) => setSearch({ level: v || undefined })}
+        onChange={(v) => setSearch({ level: v === ALL_OPTION ? undefined : v })}
         testid="observability-filter-level"
       />
-      <FilterInput
+      <FacetInput
         id="log-category"
         label="Category"
         value={search.category ?? ""}
@@ -224,7 +291,7 @@ function LogFilterBar({
         onChange={(v) => setSearch({ category: v || undefined })}
         testid="observability-filter-category"
       />
-      <FilterInput
+      <FacetInput
         id="log-source"
         label="Source"
         value={search.source ?? ""}
@@ -232,7 +299,7 @@ function LogFilterBar({
         onChange={(v) => setSearch({ source: v || undefined })}
         testid="observability-filter-source"
       />
-      <FilterInput
+      <FacetInput
         id="log-correlation"
         label="Correlation"
         value={search.correlationId ?? ""}
@@ -240,75 +307,23 @@ function LogFilterBar({
         onChange={(v) => setSearch({ correlationId: v || undefined })}
         testid="observability-filter-correlation"
       />
-      <div className="ml-auto flex items-center gap-2">
-        {paused ? (
-          <button
-            type="button"
-            onClick={onResume}
-            className="rounded border border-danger px-2 py-1 font-mono text-xs uppercase tracking-wide text-danger hover:bg-surface-2"
-            data-testid="observability-log-resume"
-          >
-            paused · resume
-          </button>
-        ) : null}
-        <Toggle
-          id="follow-mode"
-          label="Follow"
-          value={follow}
-          onChange={(v) => setSearch({ follow: v ? true : undefined })}
-          testid="observability-log-follow"
-        />
-        <Toggle
-          id="pause-on-error"
-          label="Pause on error"
-          value={pauseOnError}
-          onChange={(v) => setSearch({ pauseOnError: v ? true : undefined })}
-          testid="observability-log-pause-on-error"
-        />
-        <button
-          type="button"
-          onClick={onClear}
-          className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
-          data-testid="observability-filter-clear"
-        >
-          clear
-        </button>
-      </div>
-    </div>
+    </FacetBar>
   );
 }
 
-function Toggle({
-  id,
-  label,
-  value,
-  onChange,
-  testid,
-}: {
-  id: string;
-  label: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-  testid: string;
-}) {
-  return (
-    <button
-      type="button"
-      id={id}
-      role="switch"
-      aria-checked={value}
-      onClick={() => onChange(!value)}
-      className={cn(
-        "rounded border px-2 py-1 font-mono text-xs uppercase tracking-wide",
-        value
-          ? "border-strong bg-surface text-default"
-          : "border-app text-muted hover:bg-surface hover:text-default",
-      )}
-      data-testid={testid}
-    >
-      {label}
-    </button>
-  );
+type MenuState = {
+  x: number;
+  y: number;
+  runId: string;
+  element: HTMLElement | null;
+};
+
+function groupsVersion(groups: LogGroup[] | undefined): string {
+  if (groups === undefined) return "loading";
+  const first = groups[0];
+  const last = groups.at(-1);
+  const lines = groups.reduce((n, g) => n + g.events.length, 0);
+  return `${groups.length}:${lines}:${first?.id ?? ""}:${first?.events[0]?._id ?? ""}:${last?.id ?? ""}`;
 }
 
 /**
@@ -323,35 +338,29 @@ function Toggle({
  * lands.
  */
 function LogStream({
-  events,
+  groups,
   follow,
   paused,
   filtered,
+  setSearch,
   onClear,
 }: {
-  events: EventDoc[] | undefined;
+  groups: LogGroup[] | undefined;
   follow: boolean;
   paused: boolean;
   filtered: boolean;
+  setSearch: (patch: Partial<ObservabilitySearch>) => void;
   onClear: () => void;
 }) {
+  const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollAnchorRef = useRef<{
     top: number;
     height: number;
     version: string;
   } | null>(null);
-  const [menu, setMenu] = useState<{
-    x: number;
-    y: number;
-    correlationId: string;
-  } | null>(null);
-  const eventVersion = useMemo(() => {
-    if (events === undefined) return "loading";
-    const first = events[0]?._id ?? "";
-    const last = events.at(-1)?._id ?? "";
-    return `${events.length}:${first}:${last}`;
-  }, [events]);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const version = useMemo(() => groupsVersion(groups), [groups]);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -362,12 +371,12 @@ function LogStream({
     }
     const anchor = scrollAnchorRef.current;
     if (!anchor) return;
-    if (anchor.version === eventVersion) return;
+    if (anchor.version === version) return;
     const delta = el.scrollHeight - anchor.height;
     if (delta > 0) {
       el.scrollTop = anchor.top + delta;
     }
-  }, [eventVersion, follow, paused]);
+  }, [version, follow, paused]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -375,42 +384,57 @@ function LogStream({
     scrollAnchorRef.current = {
       top: el.scrollTop,
       height: el.scrollHeight,
-      version: eventVersion,
+      version,
     };
-  }, [eventVersion]);
+  }, [version]);
 
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("scroll", close, true);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [menu]);
-
-  const handleContextMenu = (
-    e: ReactMouseEvent<HTMLElement>,
-    correlationId: string | null | undefined,
-  ) => {
-    if (!correlationId) return;
+  const openMenu = (e: ReactMouseEvent<HTMLElement>, runId: string) => {
     e.preventDefault();
-    setMenu({ x: e.clientX, y: e.clientY, correlationId });
+    setMenu({ x: e.clientX, y: e.clientY, runId, element: e.currentTarget });
   };
+
+  const menuItems: RowMenuItem[] = menu
+    ? [
+        {
+          id: "open-run",
+          label: "Open run",
+          hint: shortId(menu.runId, 8),
+          onSelect: () =>
+            void navigate({
+              to: "/developer/compute/runs/$runId",
+              params: { runId: menu.runId },
+            }),
+        },
+        {
+          id: "only-this-run",
+          label: "Only this run",
+          onSelect: () => setSearch({ correlationId: menu.runId }),
+        },
+        {
+          id: "copy-id",
+          label: "Copy run id",
+          onSelect: () => {
+            void navigator.clipboard
+              .writeText(menu.runId)
+              .then(() => toast("Copied run id", { description: menu.runId }))
+              .catch(() => toast.error("Failed to copy run id"));
+          },
+        },
+      ]
+    : [];
 
   return (
     <div
       ref={containerRef}
-      className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
+      className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel"
       data-testid="observability-log-stream"
     >
-      {events === undefined ? (
+      {groups === undefined ? (
         <LoadingState
-          label="Loading events…"
+          label="Loading runs and log lines…"
           testid="observability-log-loading"
         />
-      ) : events.length === 0 ? (
+      ) : groups.length === 0 ? (
         <LogEmptyState filtered={filtered} onClear={onClear} />
       ) : (
         // Fixed tracks, not per-row intrinsic sizing: a log reader scans down a
@@ -427,7 +451,7 @@ function LogStream({
             <col />
             <col className="w-[112px]" />
           </colgroup>
-          <thead className="sticky top-0 z-10 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+          <thead className="sticky top-0 z-10 bg-bg-raised text-xs font-medium text-text-3">
             <tr className="h-8">
               <Th align="right" className="py-1.5">
                 Time
@@ -438,99 +462,187 @@ function LogStream({
               <Th className="py-1.5">Run</Th>
             </tr>
           </thead>
-          <tbody>
-            {events.map((event) => {
-              const correlationId = event.correlationId ?? undefined;
-              const source = `${event.source ?? "—"}${event.category ? ` · ${event.category}` : ""}`;
-              const message = event.message ?? "(no message)";
-              return (
-                <tr
-                  key={event._id}
-                  onContextMenu={(e) => handleContextMenu(e, correlationId)}
-                  aria-label={`Log entry${correlationId ? `, correlation ${shortId(correlationId, 8)}` : ""}: ${event.message ?? ""}`}
-                  data-testid={`observability-log-row-${event._id}`}
-                  // h-9 pins every row at the dense band's 36px. Cells truncate
-                  // rather than wrap, so the height is exact, not a minimum that
-                  // a long source or message can push past.
-                  className={cn(
-                    "h-9 border-t border-app",
-                    "hover:bg-surface-2",
-                  )}
-                >
-                  <Td align="right" className="whitespace-nowrap py-1.5">
-                    <RelativeTime
-                      epochMs={event.createdAt ?? event._creationTime ?? 0}
-                    />
-                  </Td>
-                  <Td className="py-1.5">
-                    <StateChip state={event.level ?? "info"} />
-                  </Td>
-                  <Td className="py-1.5">
-                    <span
-                      title={source}
-                      className="block truncate font-mono text-xs uppercase tracking-wide text-muted"
-                    >
-                      {source}
-                    </span>
-                  </Td>
-                  <Td className="py-1.5">
-                    <span
-                      title={message}
-                      className="block truncate font-mono text-default"
-                    >
-                      {message}
-                    </span>
-                  </Td>
-                  <Td className="py-1.5">
-                    {correlationId ? (
-                      <CorrelationBadge
-                        correlationId={correlationId}
-                        eventId={event._id}
-                      />
-                    ) : (
-                      <span className="tabular text-muted">—</span>
-                    )}
-                  </Td>
-                </tr>
-              );
-            })}
-          </tbody>
+          {groups.map((group) => (
+            <LogGroupBody key={group.id} group={group} onMenu={openMenu} />
+          ))}
         </table>
       )}
       {menu ? (
-        <div
-          role="menu"
-          aria-label="Log entry actions"
-          style={{ top: menu.y, left: menu.x }}
-          className="fixed z-50 min-w-[160px] rounded-md border border-app bg-surface py-1 font-mono text-xs shadow-lg"
-          data-testid="observability-log-context-menu"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setMenu(null);
-          }}
-        >
-          <Link
-            to="/developer/compute/runs/$runId"
-            params={{ runId: menu.correlationId }}
-            role="menuitem"
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-default hover:bg-surface-2"
-            data-testid="observability-log-open-run"
-            onClick={() => setMenu(null)}
-          >
-            Open run
-            <span className="ml-auto text-muted">
-              {shortId(menu.correlationId, 8)}
-            </span>
-          </Link>
-        </div>
+        <RowContextMenu
+          x={menu.x}
+          y={menu.y}
+          label="Log line actions"
+          items={menuItems}
+          restoreFocus={menu.element}
+          onClose={() => setMenu(null)}
+          testid="observability-log-context-menu"
+        />
       ) : null}
     </div>
   );
 }
 
+// One `<tbody>` per group: the head row names the run, the body rows are
+// its lines. A run with no lines says so, because a bare head reads as a
+// line that failed to render.
+function LogGroupBody({
+  group,
+  onMenu,
+}: {
+  group: LogGroup;
+  onMenu: (e: ReactMouseEvent<HTMLElement>, runId: string) => void;
+}) {
+  const runId = group.kind === "run" ? group.id : undefined;
+  return (
+    <tbody
+      data-testid={`observability-log-group-${group.id}`}
+      data-kind={group.kind}
+      className="border-t border-border-2"
+    >
+      <tr
+        className="h-9 bg-bg-raised/60"
+        data-testid={`observability-log-group-head-${group.id}`}
+      >
+        <td colSpan={5} className="px-3 py-1.5">
+          {group.kind === "run" ? (
+            <RunHead group={group} />
+          ) : (
+            <ServerHead count={group.events.length} />
+          )}
+        </td>
+      </tr>
+      {group.events.length === 0 && group.kind === "run" ? (
+        <tr
+          className="h-9"
+          data-testid={`observability-log-group-empty-${group.id}`}
+        >
+          <td colSpan={5} className="px-3 py-1.5 font-mono text-text-3">
+            No log lines recorded for this run.
+          </td>
+        </tr>
+      ) : null}
+      {group.events.map((event) => (
+        <LogRow
+          key={event._id}
+          event={event}
+          runId={runId}
+          onMenu={runId ? (e) => onMenu(e, runId) : undefined}
+        />
+      ))}
+    </tbody>
+  );
+}
+
+function RunHead({ group }: { group: LogGroup & { kind: "run" } }) {
+  const { run, id, events } = group;
+  const startedAt = run?.startedAt ?? run?._creationTime ?? group.at;
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <StatePill state={run?.status ?? "unknown"} />
+      <span
+        className="min-w-0 truncate font-mono text-text-1"
+        title={run?.functionPath ?? id}
+      >
+        {run?.functionPath ?? shortId(id, 12)}
+      </span>
+      {run?.kind ? <CategoryPill value={run.kind} /> : null}
+      {run ? (
+        <span className="tabular text-text-3">
+          {formatDuration(run.durationMs)}
+        </span>
+      ) : null}
+      <RelativeTime epochMs={startedAt} />
+      <span className="tabular text-text-3">
+        {events.length === 1 ? "1 line" : `${events.length} lines`}
+      </span>
+      <Link
+        to="/developer/compute/runs/$runId"
+        params={{ runId: id }}
+        className="ml-auto shrink-0 rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-raised hover:text-text-1 focus-visible:bg-bg-raised focus-visible:text-text-1"
+        data-testid={`observability-log-group-open-${id}`}
+      >
+        Open run ↗
+      </Link>
+    </div>
+  );
+}
+
+function ServerHead({ count }: { count: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <CategoryPill value="server" />
+      <span className="text-text-3">Lines that belong to no run</span>
+      <span className="tabular text-text-3">
+        {count === 1 ? "1 line" : `${count} lines`}
+      </span>
+    </div>
+  );
+}
+
+function LogRow({
+  event,
+  runId,
+  onMenu,
+}: {
+  event: EventDoc;
+  runId: string | undefined;
+  onMenu?: (e: ReactMouseEvent<HTMLElement>) => void;
+}) {
+  const source = `${event.source ?? "—"}${event.category ? ` · ${event.category}` : ""}`;
+  const message = event.message ?? "(no message)";
+  return (
+    <tr
+      onContextMenu={onMenu}
+      aria-label={`Log entry${runId ? `, run ${shortId(runId, 8)}` : ""}: ${event.message ?? ""}`}
+      data-testid={`observability-log-row-${event._id}`}
+      // h-9 pins every row at the dense band's 36px. Cells truncate rather
+      // than wrap, so the height is exact, not a minimum that a long source
+      // or message can push past.
+      className="h-9 border-t border-border-2 hover:bg-bg-raised"
+    >
+      <Td align="right" className="whitespace-nowrap py-1.5">
+        <RelativeTime epochMs={event.createdAt ?? event._creationTime ?? 0} />
+      </Td>
+      <Td className="py-1.5">
+        <StatePill state={event.level ?? "info"} />
+      </Td>
+      <Td className="py-1.5">
+        <span
+          title={source}
+          className="block truncate text-xs font-medium text-text-3"
+        >
+          {source}
+        </span>
+      </Td>
+      <Td className="py-1.5">
+        <span title={message} className="block truncate font-mono text-text-1">
+          {message}
+        </span>
+      </Td>
+      <Td className="py-1.5">
+        {runId ? (
+          <Link
+            to="/developer/compute/runs/$runId"
+            params={{ runId }}
+            className="inline-flex items-center gap-1 rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-raised hover:text-text-1 focus-visible:bg-bg-raised focus-visible:text-text-1"
+            data-testid={`observability-log-jump-${event._id}`}
+            aria-label={`Jump to run ${runId}`}
+            title={`Jump to run ${runId}`}
+          >
+            <span>↗</span>
+            <span>{shortId(runId, 6)}</span>
+          </Link>
+        ) : (
+          <span className="tabular text-text-3">—</span>
+        )}
+      </Td>
+    </tr>
+  );
+}
+
 /**
- * The two empty results the stream can produce. "No events match the current
- * filters" is only true when filters are set; on a fresh deployment it named a
+ * The two empty results the stream can produce. "Nothing matches the current
+ * filters" is only true when facets are set; on a fresh deployment it named a
  * cause the reader could not act on and pointed at controls they never
  * touched.
  */
@@ -544,8 +656,8 @@ function LogEmptyState({
   if (filtered) {
     return (
       <EmptyState
-        title="No events match the current filters"
-        body="Level, category, source, and correlation narrow the same stream, so an event has to satisfy every one that is set. Clear them to see the full log."
+        title="Nothing matches the current filters"
+        body="Level, category, source, and correlation narrow the same stream, so a line has to satisfy every one that is set. Clear them to see every run."
         cta={{ label: "Clear filters", onClick: onClear }}
         testid="observability-log-empty"
       />
@@ -553,34 +665,10 @@ function LogEmptyState({
   }
   return (
     <EmptyState
-      title="No events recorded yet"
-      body="Server, scheduler, and function activity streams here live. Invoke a function or start a service and the first entries appear without a reload."
+      title="No runs or log lines yet"
+      body="Every query, mutation, and action is a run, and the lines it writes sit under it. Invoke a function and it appears here without a reload."
       cta={{ label: "Open Compute", to: "/developer/compute" }}
       testid="observability-log-empty"
     />
-  );
-}
-
-function CorrelationBadge({
-  correlationId,
-  eventId,
-}: {
-  correlationId: string;
-  eventId: string;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <Link
-        to="/developer/compute/runs/$runId"
-        params={{ runId: correlationId }}
-        className="inline-flex items-center gap-1 rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2 focus-visible:text-default"
-        data-testid={`observability-log-jump-${eventId}`}
-        aria-label={`Jump to run ${correlationId}`}
-        title={`Jump to run ${correlationId}`}
-      >
-        <span>↗</span>
-        <span>{shortId(correlationId, 6)}</span>
-      </Link>
-    </span>
   );
 }

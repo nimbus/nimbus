@@ -1,11 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { system } from "../../../lib/api-mutations";
-import { DialogShell, PageSection } from "./-primitives";
 
+import { ConfirmDialog } from "../../../components/confirm-dialog";
+import { Button } from "../../../components/ui/button";
+import { Input } from "../../../components/ui/input";
+import { system } from "../../../lib/api-mutations";
+import { PageSection } from "./-primitives";
+
+// The phrase the operator types before the server accepts a shutdown from
+// this console. It is the verb, so the dialog reads as the action it takes.
+export const SHUTDOWN_PHRASE = "shutdown";
+
+// Both writes reach past this browser: rotation signs every other session
+// out, and shutdown drops every client. Each runs through ConfirmDialog with
+// a typed proof, and the outcome lands next to the control that drew it, so
+// the operator reads the result on the page instead of in a vanished dialog.
 export function DangerZoneSection() {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
+  const [rotated, setRotated] = useState<{ generation: number } | null>(null);
+  const [shutdownAccepted, setShutdownAccepted] = useState(false);
   return (
     <PageSection
       title="Session lifecycle"
@@ -15,235 +29,200 @@ export function DangerZoneSection() {
       framed
     >
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-error text-error hover:bg-error-tint"
           data-testid="settings-rotate-open"
           onClick={() => setRotateOpen(true)}
-          className="rounded border border-danger bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] text-danger hover:bg-surface-2"
         >
           Rotate admin token
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="border-error text-error hover:bg-error-tint"
           data-testid="settings-shutdown-open"
           onClick={() => setShutdownOpen(true)}
-          className="rounded border border-danger bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] text-danger hover:bg-surface-2"
         >
           Shut down server
-        </button>
-        <p className="text-xs text-muted">
+        </Button>
+        <p className="text-xs text-text-3">
           Token rotation requires pasting the current admin bearer. Shutdown
           uses the active session cookie.
         </p>
       </div>
-      {rotateOpen ? (
-        <RotateTokenDialog onClose={() => setRotateOpen(false)} />
+      {rotated ? (
+        <p className="text-sm text-text-1" data-testid="settings-rotate-result">
+          New token issued (generation{" "}
+          <span className="font-mono">{rotated.generation}</span>). Other
+          sessions are signed out; this browser keeps its session until the next
+          protected request.
+        </p>
       ) : null}
-      {shutdownOpen ? (
-        <ShutdownDialog onClose={() => setShutdownOpen(false)} />
+      {shutdownAccepted ? (
+        <p
+          className="text-sm text-text-1"
+          data-testid="settings-shutdown-accepted"
+        >
+          Shutdown accepted. The connection will drop and the disconnect overlay
+          will take over the console.
+        </p>
       ) : null}
+      <RotateTokenDialog
+        open={rotateOpen}
+        onClose={() => setRotateOpen(false)}
+        onRotated={(generation) => {
+          setRotated({ generation });
+          setRotateOpen(false);
+        }}
+      />
+      <ShutdownDialog
+        open={shutdownOpen}
+        onClose={() => setShutdownOpen(false)}
+        onAccepted={() => {
+          setShutdownAccepted(true);
+          setShutdownOpen(false);
+        }}
+      />
     </PageSection>
   );
 }
 
-function RotateTokenDialog({ onClose }: { onClose: () => void }) {
+// The proof for rotation is the current bearer itself: the server refuses a
+// rotation without it, so the field is the gate and Confirm stays inert
+// until it holds something.
+function RotateTokenDialog({
+  open,
+  onClose,
+  onRotated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onRotated: (generation: number) => void;
+}) {
   const [token, setToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{ generation: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const tokenInputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | undefined>(undefined);
 
-  useEffect(() => {
-    tokenInputRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+  const close = useCallback(() => {
+    setToken("");
+    setError(undefined);
+    onClose();
   }, [onClose]);
 
   const submit = useCallback(async () => {
-    if (!token.trim()) {
-      setError("Paste the current admin bearer token to confirm rotation.");
-      return;
-    }
+    const bearer = token.trim();
+    if (!bearer) return;
     setSubmitting(true);
-    setError(null);
-    const result = await system.rotateToken(token.trim());
+    setError(undefined);
+    const result = await system.rotateToken(bearer);
+    setSubmitting(false);
     if (!result.ok) {
       setError(result.error);
-      setSubmitting(false);
       return;
     }
-    setResult({ generation: result.data.generation ?? 0 });
+    const generation = result.data.generation ?? 0;
     toast.success("Admin token rotated", {
-      description: `New generation ${result.data.generation}. All other sessions invalidated.`,
+      description: `New generation ${generation}. All other sessions invalidated.`,
     });
-    setSubmitting(false);
-  }, [token]);
+    setToken("");
+    onRotated(generation);
+  }, [token, onRotated]);
 
   return (
-    <DialogShell
+    <ConfirmDialog
+      open={open}
       title="Rotate admin token"
-      onClose={onClose}
+      description="Issues a new admin bearer and signs every other session out. Read the new token with nimbus token show."
+      confirmLabel="Rotate token"
+      danger
+      busy={submitting}
+      confirmDisabled={token.trim() === ""}
+      error={error}
+      onConfirm={() => void submit()}
+      onCancel={close}
       testid="settings-rotate-dialog"
     >
-      {result ? (
-        <div className="space-y-3" data-testid="settings-rotate-result">
-          <p className="text-sm text-default">
-            New token issued (generation{" "}
-            <span className="font-mono">{result.generation}</span>). Other
-            sessions have been invalidated; this browser keeps its session until
-            the next protected request.
-          </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-app bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] hover:border-strong"
-          >
-            Close
-          </button>
-        </div>
-      ) : (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void submit();
+      <label
+        htmlFor="settings-rotate-token"
+        className="flex flex-col gap-1 text-xs text-text-3"
+      >
+        <span>Current admin bearer</span>
+        <Input
+          id="settings-rotate-token"
+          type="password"
+          value={token}
+          autoComplete="off"
+          disabled={submitting}
+          onChange={(e) => setToken(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && token.trim() !== "" && !submitting) {
+              e.preventDefault();
+              void submit();
+            }
           }}
-          className="space-y-3"
-        >
-          <label
-            htmlFor="settings-rotate-token"
-            className="flex flex-col gap-1 text-xs text-muted"
-          >
-            <span>Current admin bearer</span>
-            <input
-              ref={tokenInputRef}
-              id="settings-rotate-token"
-              type="password"
-              value={token}
-              autoComplete="off"
-              onChange={(e) => setToken(e.target.value)}
-              data-testid="settings-rotate-token"
-              // No `focus:outline-none`: `--border` -> `--border-strong` is
-              // a 1.35:1 -> 1.74:1 shift on this white field in warm light,
-              // which is not a focus indicator on its own. The tint stays as
-              // emphasis; the console-wide `:focus-visible` outline it used to
-              // cancel is what marks focus.
-              className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus:border-strong"
-              placeholder="Paste the token printed by nimbus token show"
-            />
-          </label>
-          {error ? (
-            <p
-              className="text-xs text-danger"
-              data-testid="settings-rotate-error"
-            >
-              {error}
-            </p>
-          ) : null}
-          <div className="flex items-center gap-2">
-            <button
-              type="submit"
-              data-testid="settings-rotate-submit"
-              disabled={submitting}
-              className="rounded border border-danger bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] text-danger hover:bg-surface-2 disabled:cursor-not-allowed disabled:text-muted"
-            >
-              {submitting ? "Rotating…" : "Rotate"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded border border-app bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] hover:border-strong"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-    </DialogShell>
+          data-testid="settings-rotate-token"
+          className="font-mono"
+          placeholder="Paste the token printed by nimbus token show"
+        />
+      </label>
+    </ConfirmDialog>
   );
 }
 
-function ShutdownDialog({ onClose }: { onClose: () => void }) {
+function ShutdownDialog({
+  open,
+  onClose,
+  onAccepted,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAccepted: () => void;
+}) {
   const [submitting, setSubmitting] = useState(false);
-  const [accepted, setAccepted] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | undefined>(undefined);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+  const close = useCallback(() => {
+    setError(undefined);
+    onClose();
   }, [onClose]);
 
   const submit = useCallback(async () => {
     setSubmitting(true);
-    setError(null);
+    setError(undefined);
     const result = await system.shutdown();
+    setSubmitting(false);
     if (!result.ok) {
       setError(result.error);
-      setSubmitting(false);
       return;
     }
-    setAccepted(true);
     toast("Shutdown requested", {
       description:
         "Server will close listeners. The disconnect overlay will appear shortly.",
     });
-    setSubmitting(false);
-  }, []);
+    onAccepted();
+  }, [onAccepted]);
 
   return (
-    <DialogShell
+    <ConfirmDialog
+      open={open}
       title="Shut down server"
-      onClose={onClose}
+      description={
+        <>
+          Stops the running <code>nimbus start</code> process and disconnects
+          every client. To start again, run <code>nimbus start</code> from a
+          terminal.
+        </>
+      }
+      confirmLabel="Shut down"
+      danger
+      busy={submitting}
+      typedConfirmation={{ phrase: SHUTDOWN_PHRASE }}
+      error={error}
+      onConfirm={() => void submit()}
+      onCancel={close}
       testid="settings-shutdown-dialog"
-    >
-      {accepted ? (
-        <p
-          className="text-sm text-default"
-          data-testid="settings-shutdown-accepted"
-        >
-          Shutdown accepted. The WebSocket will drop and the disconnect overlay
-          will take over the UI.
-        </p>
-      ) : (
-        <div className="space-y-3">
-          <p className="text-sm text-default">
-            This will stop the running <code>nimbus start</code> process. All
-            connected clients will disconnect. To restart, run{" "}
-            <code>nimbus start</code> again from a terminal.
-          </p>
-          {error ? (
-            <p
-              className="text-xs text-danger"
-              data-testid="settings-shutdown-error"
-            >
-              {error}
-            </p>
-          ) : null}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              data-testid="settings-shutdown-submit"
-              onClick={() => void submit()}
-              disabled={submitting}
-              className="rounded border border-danger bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] text-danger hover:bg-surface-2 disabled:cursor-not-allowed disabled:text-muted"
-            >
-              {submitting ? "Stopping…" : "Confirm shutdown"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded border border-app bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] hover:border-strong"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </DialogShell>
+    />
   );
 }

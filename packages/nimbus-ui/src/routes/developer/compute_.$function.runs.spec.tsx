@@ -1,112 +1,111 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { navigateMock, useQueryMock } = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  useQueryMock: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (config: Record<string, unknown>) => config,
-  useNavigate: () => () => undefined,
+  useNavigate: () => navigateMock,
+  useSearch: () => ({}),
+  useRouter: () => ({
+    buildLocation: () => ({ href: "#" }),
+    navigate: navigateMock,
+  }),
   Link: ({
     to,
     children,
     "data-testid": testId,
+    className,
   }: {
     to?: string;
-    children: React.ReactNode;
+    children?: ReactNode;
     "data-testid"?: string;
+    className?: string;
   }) => (
-    <a href={to ?? "#"} data-testid={testId}>
+    <a href={to ?? "#"} data-testid={testId} className={className}>
       {children}
     </a>
   ),
 }));
-
-const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
 vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
-vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: () => undefined,
+vi.mock("../../shell/sub-panel", () => ({
+  useContributeSubPanel: () => undefined,
+  useSubPanelSearch: () => "",
 }));
 
 import { RunsTab } from "./compute_.$function";
 
-const fn = { path: "messages:list" } as Parameters<typeof RunsTab>[0]["fn"];
+const fn = { _id: "functions:1", path: "messages:list" };
 
-describe("RunsTab loading state", () => {
-  it("keeps the table header mounted while runs are in flight", () => {
+const RUNS = [
+  { _id: "runs:1", status: "ok", durationMs: 4, startedAt: 1_700_000_000_000 },
+  {
+    _id: "runs:2",
+    status: "error",
+    durationMs: 1200,
+    startedAt: 1_700_000_001_000,
+  },
+];
+
+beforeEach(() => {
+  navigateMock.mockReset();
+});
+
+describe("RunsTab", () => {
+  it("shows skeleton rows while the runs are in flight", () => {
     useQueryMock.mockReturnValue(undefined);
     render(<RunsTab fn={fn} />);
 
-    // The header is the point: swapping the whole table out is what made the
-    // panel jump twice per load.
-    expect(screen.getByText("Run ID")).toBeTruthy();
-    expect(screen.getByText("Status")).toBeTruthy();
     expect(screen.getAllByTestId("skeleton-row")).toHaveLength(8);
     expect(screen.getByRole("status").textContent).toBe("Loading runs…");
-  });
-
-  it("renders the skeleton as its own table, never nested in one", () => {
-    useQueryMock.mockReturnValue(undefined);
-    const { container } = render(<RunsTab fn={fn} />);
-
-    // `SkeletonRows` carries its own <table>. Nesting it inside another one
-    // is invalid markup the browser silently repairs, so assert on structure.
-    const tables = container.querySelectorAll("table");
-    expect(tables).toHaveLength(1);
-    expect(tables[0].querySelector("table")).toBeNull();
-  });
-
-  it("resolves both states to the same column plan", () => {
-    // The header carries the widths and both states render the header, so the
-    // plan cannot drift; what a test can still catch is one of the two tables
-    // losing `table-fixed`, which silently returns it to content sizing.
-    const plan = (node: HTMLElement) => {
-      const table = node.querySelector("table");
-      return {
-        fixed: table?.className.includes("table-fixed") ?? false,
-        widths: Array.from(node.querySelectorAll("th")).map(
-          (th) => th.style.width,
-        ),
-      };
-    };
-
-    useQueryMock.mockReturnValue(undefined);
-    const loading = plan(render(<RunsTab fn={fn} />).container);
-    cleanup();
-    useQueryMock.mockReturnValue([
-      { _id: "runs:1", status: "ok", durationMs: 4, startedAt: 1 },
-    ]);
-    const loaded = plan(render(<RunsTab fn={fn} />).container);
-
-    expect(loading.widths).toEqual(["29%", "21%", "26%", "24%"]);
-    expect(loaded).toEqual(loading);
-    expect(loaded.fixed).toBe(true);
-  });
-
-  // The pane scrolls up to 50 runs (~2000px at the dense row step) and the
-  // four columns are mono ids, a state glyph and two numbers — unreadable
-  // without their labels. Every other scrolling table in the console pins its
-  // head; this one did not. jsdom does not scroll, so the assertion is on the
-  // constraint: `sticky top-0` plus an opaque fill, since a transparent head
-  // lets the rows scroll visibly through it.
-  it.each([
-    ["loading", undefined],
-    ["loaded", [{ _id: "runs:1", status: "ok", durationMs: 4, startedAt: 1 }]],
-  ])("pins the head while the %s table scrolls", (_state, runs) => {
-    useQueryMock.mockReturnValue(runs);
-    const { container } = render(<RunsTab fn={fn} />);
-
-    const head = container.querySelector("thead");
-    expect(head).not.toBeNull();
-    expect(head?.className).toContain("sticky");
-    expect(head?.className).toContain("top-0");
-    expect(head?.className).toMatch(/\bbg-/);
   });
 
   it("shows the empty state, not skeletons, once an empty result lands", () => {
     useQueryMock.mockReturnValue([]);
     render(<RunsTab fn={fn} />);
 
+    expect(screen.getByTestId("function-tab-runs-empty")).toBeTruthy();
     expect(screen.getByText("No runs yet")).toBeTruthy();
     expect(screen.queryAllByTestId("skeleton-row")).toHaveLength(0);
+  });
+
+  it("renders the runs as a DataTable with a state pill and a mono duration", () => {
+    useQueryMock.mockReturnValue(RUNS);
+    render(<RunsTab fn={fn} />);
+
+    const table = screen.getByTestId("function-tab-runs");
+    expect(table.getAttribute("role")).toBe("table");
+    expect(table.getAttribute("aria-label")).toBe("Runs of messages:list");
+    const rows = within(table).getAllByRole("row");
+    // The header row plus one row per run.
+    expect(rows).toHaveLength(3);
+
+    const first = rows[1];
+    const pill = first.querySelector('[data-slot="pill"]');
+    expect(pill?.getAttribute("data-state")).toBe("ok");
+    expect(first.textContent).toContain("4ms");
+    expect(
+      within(first).getByTestId("function-tab-runs-link-runs:1").className,
+    ).toContain("font-mono");
+  });
+
+  it("opens the run when its row is activated", () => {
+    useQueryMock.mockReturnValue(RUNS);
+    render(<RunsTab fn={fn} />);
+
+    const rows = within(screen.getByTestId("function-tab-runs")).getAllByRole(
+      "row",
+    );
+    fireEvent.click(rows[2]);
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/developer/compute/runs/$runId",
+      params: { runId: "runs:2" },
+    });
   });
 });

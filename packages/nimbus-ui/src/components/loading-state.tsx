@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
-import { cn } from "../lib/cn";
-import { Td } from "./data-table";
+import { cn } from "@/lib/utils";
+import { Td } from "./table-cells";
 
 // Full-panel loading placeholder: a single centered status line that fills its
 // container. The sibling `LoadingCell` handles inline value-cell loading via a
@@ -19,7 +19,7 @@ export function LoadingState({
   return (
     <div
       className={cn(
-        "flex h-full items-center justify-center font-mono text-xs text-muted",
+        "flex h-full items-center justify-center font-mono text-xs text-text-3",
         className,
       )}
       data-testid={testid}
@@ -100,7 +100,7 @@ export function SkeletonRows({
             <tr
               // biome-ignore lint/suspicious/noArrayIndexKey: placeholder rows are positional and never reorder
               key={row}
-              className="border-t border-app"
+              className="border-t border-border-2"
               data-testid="skeleton-row"
             >
               {Array.from({ length: columns }, (_, col) => (
@@ -119,7 +119,7 @@ export function SkeletonRows({
                   >
                     <span
                       className={cn(
-                        "block h-3 rounded bg-surface-2",
+                        "block h-3 rounded-xs bg-bg-raised",
                         BAR_WIDTHS[col % BAR_WIDTHS.length],
                       )}
                     />

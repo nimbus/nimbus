@@ -39,14 +39,19 @@ use super::S3Config;
 /// Resolves a tenant into its byte/metadata planes once per S3 or Convex
 /// storage request, backed by the Engine's object metadata seam and the
 /// native object-storage byte-plane resolver.
+///
+/// The S3 listener and the native object routes on the main listener each
+/// build one of these over the same engine and placement config. Two
+/// resolvers in one process alias safely: the local pack store shares one
+/// live state per tenant root across same-process opens.
 #[derive(Clone)]
-struct EngineS3Resolver {
+pub(crate) struct EngineS3Resolver {
     engine: Arc<Engine>,
     objects: ObjectStorageResolver,
 }
 
 impl EngineS3Resolver {
-    fn new(engine: Arc<Engine>, object_storage: ObjectStorageConfig) -> Self {
+    pub(crate) fn new(engine: Arc<Engine>, object_storage: ObjectStorageConfig) -> Self {
         Self {
             objects: ObjectStorageResolver::with_config(engine.clone(), object_storage),
             engine,

@@ -16,13 +16,13 @@ describe("PageSection", () => {
     // cards. Framing every section is what produced cards inside cards on this
     // page, so the unframed form has to stay the default.
     expect(section.className).not.toContain("border ");
-    expect(section.className).not.toContain("rounded");
+    expect(section.className).not.toContain("rounded-xs");
     expect(section.className).not.toContain("p-4");
 
     const heading = screen.getByRole("heading", { name: "Server" });
     const header = heading.closest("header");
     expect(header?.className).toContain("border-b");
-    expect(header?.className).toContain("border-app");
+    expect(header?.className).toContain("border-border-2");
   });
 
   it("frames only when a section opts in, and tones the rule for danger", () => {
@@ -36,11 +36,11 @@ describe("PageSection", () => {
     // The frame is the hazard boundary, not decoration — it survives the
     // flattening on purpose.
     expect(section.className).toContain("rounded-md");
-    expect(section.className).toContain("border-danger/40");
+    expect(section.className).toContain("border-error/40");
     expect(section.className).toContain("p-4");
     expect(
       screen.getByRole("heading", { name: "Danger zone" }).className,
-    ).toContain("text-danger");
+    ).toContain("text-error");
   });
 
   it("accepts a node description so commands are marked up, not backticked", () => {

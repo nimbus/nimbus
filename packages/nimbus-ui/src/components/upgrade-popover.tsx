@@ -1,7 +1,6 @@
 import { Popover } from "@base-ui/react/popover";
-
+import { cn } from "@/lib/utils";
 import type { VersionInfo } from "../api/system";
-import { cn } from "../lib/cn";
 
 type UpgradePopoverProps = {
   open: boolean;
@@ -12,6 +11,12 @@ type UpgradePopoverProps = {
   onUpdate: () => Promise<void> | void;
   onCopyCommand: () => Promise<void> | void;
   trigger: React.ReactNode;
+  // The trigger button is the caller's row: the sidebar footer and the
+  // Settings page each hand in the classes that make it look like its
+  // neighbours, and a label that names the action when the row shows only
+  // a dot.
+  triggerClassName?: string;
+  triggerLabel?: string;
 };
 
 export function UpgradePopover({
@@ -23,6 +28,8 @@ export function UpgradePopover({
   onUpdate,
   onCopyCommand,
   trigger,
+  triggerClassName = "inline-flex items-center gap-1.5 rounded-xs px-1 font-mono text-xs hover:bg-bg-raised focus-visible:bg-bg-raised",
+  triggerLabel,
 }: UpgradePopoverProps) {
   const remote = !isLocal;
   const canRunHere = isLocal && hasDesktopBridge && !!info.upgrade.command;
@@ -37,9 +44,10 @@ export function UpgradePopover({
         render={
           <button
             type="button"
-            data-testid="status-version-trigger"
+            data-testid="upgrade-popover-trigger"
             aria-haspopup="dialog"
-            className="inline-flex items-center gap-1.5 rounded px-1 font-mono text-xs hover:bg-surface-2 focus-visible:bg-surface-2"
+            aria-label={triggerLabel}
+            className={triggerClassName}
           >
             {trigger}
           </button>
@@ -50,11 +58,11 @@ export function UpgradePopover({
           <Popover.Popup
             data-testid="upgrade-popover"
             className={cn(
-              "z-50 w-[360px] rounded-md border border-app bg-surface p-3 shadow-lg",
-              "font-mono text-xs text-default outline-none",
+              "z-50 w-[360px] rounded-md border border-border-2 bg-bg-panel p-3 shadow-lg",
+              "font-mono text-xs text-text-1 outline-none",
             )}
           >
-            <h2 className="text-sm text-default">{heading}</h2>
+            <h2 className="text-sm text-text-1">{heading}</h2>
             {hasCommand ? (
               <CommandRow
                 command={info.upgrade.command as string}
@@ -69,7 +77,7 @@ export function UpgradePopover({
                   <button
                     type="button"
                     data-testid="upgrade-popover-cancel"
-                    className="rounded px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-default"
+                    className="rounded-xs px-2 py-1 text-xs text-text-3 hover:bg-bg-raised hover:text-text-1"
                   >
                     Cancel
                   </button>
@@ -83,7 +91,7 @@ export function UpgradePopover({
                     onClick={() => {
                       void onUpdate();
                     }}
-                    className="rounded bg-brand px-2 py-1 text-xs text-on-brand"
+                    className="rounded-xs bg-accent px-2 py-1 text-xs text-accent-ink"
                   >
                     Update
                   </button>
@@ -94,7 +102,7 @@ export function UpgradePopover({
                     onClick={() => {
                       void onCopyCommand();
                     }}
-                    className="rounded bg-brand px-2 py-1 text-xs text-on-brand"
+                    className="rounded-xs bg-accent px-2 py-1 text-xs text-accent-ink"
                   >
                     Copy command
                   </button>
@@ -123,13 +131,13 @@ function CommandRow({
   onCopy: () => Promise<void> | void;
 }) {
   return (
-    <div className="mt-3 flex items-center gap-2 rounded border border-app bg-surface-2 px-2 py-1.5">
+    <div className="mt-3 flex items-center gap-2 rounded-xs border border-border-2 bg-bg-raised px-2 py-1.5">
       {/*
         The wrapper already carries the border, fill and padding, so this
         opts out of the global bare-`code` chip rather than nesting a second
         box inside the first.
       */}
-      <code className="flex-1 truncate border-0 bg-transparent p-0 font-mono text-xs text-default">
+      <code className="flex-1 truncate border-0 bg-transparent p-0 font-mono text-xs text-text-1">
         {command}
       </code>
       <button
@@ -137,7 +145,7 @@ function CommandRow({
         data-testid="upgrade-popover-inline-copy"
         onClick={() => void onCopy()}
         aria-label="Copy command"
-        className="rounded px-1 py-px text-xs text-muted hover:bg-surface hover:text-default"
+        className="rounded-xs px-1 py-px text-xs text-text-3 hover:bg-bg-panel hover:text-text-1"
       >
         Copy
       </button>
@@ -147,7 +155,7 @@ function CommandRow({
 
 function FallbackRow({ url }: { url: string }) {
   return (
-    <p className="mt-3 text-xs text-muted">
+    <p className="mt-3 text-xs text-text-3">
       See the{" "}
       <a
         href={url}

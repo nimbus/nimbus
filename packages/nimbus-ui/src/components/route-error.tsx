@@ -1,10 +1,8 @@
 import { useRouter, useRouterState } from "@tanstack/react-router";
 
+import { Button } from "@/components/ui/button";
 import { CopyChip } from "./copy-chip";
 import { EmptyState } from "./empty-state";
-
-const ACTION_CLASS =
-  "rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default";
 
 export type RouteErrorProps = {
   error: unknown;
@@ -35,10 +33,11 @@ export function RouteError({ error, reset }: RouteErrorProps) {
     >
       <EmptyState
         className="h-auto"
+        mascot="error"
         title="This view failed to render"
         body={
           <>
-            <code className="rounded border border-app bg-surface-2 px-1 font-mono text-default">
+            <code className="rounded-xs border border-border-2 bg-bg-raised px-1 font-mono text-text-1">
               {pathname}
             </code>{" "}
             threw while rendering. Navigation still works — every other view is
@@ -51,14 +50,15 @@ export function RouteError({ error, reset }: RouteErrorProps) {
         label="error details"
         value={details}
         testid="route-error-copy"
-        className="max-w-[64ch] border border-app px-2 py-1 text-danger"
+        className="max-w-[64ch] border border-border-2 px-2 py-1 text-error"
       >
         {message}
       </CopyChip>
       <div className="flex gap-2">
-        <button
+        <Button
           type="button"
-          className={ACTION_CLASS}
+          variant="outline"
+          size="sm"
           data-testid="route-error-retry"
           onClick={() => {
             reset?.();
@@ -66,15 +66,16 @@ export function RouteError({ error, reset }: RouteErrorProps) {
           }}
         >
           Retry
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className={ACTION_CLASS}
+          variant="outline"
+          size="sm"
           data-testid="route-error-reload"
           onClick={() => window.location.reload()}
         >
           Reload console
-        </button>
+        </Button>
       </div>
     </section>
   );

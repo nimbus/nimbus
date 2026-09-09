@@ -1,32 +1,34 @@
 import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Search } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { Box } from "lucide-react";
+import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { DataTable, dataColumns } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
-import { cn } from "../../lib/cn";
+import { PageTabs } from "../../components/page-tabs";
+import { CategoryPill, StatePill } from "../../components/pill";
+import { RelativeTime } from "../../components/time";
 import type { FunctionDoc } from "../../lib/types/function";
-import { buildFunctionTree } from "../../shell/function-tree";
-import { FunctionTreeView } from "../../shell/function-tree-view";
+import { FunctionSubPanel } from "../../shell/function-sub-panel";
 import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
+  type SubPanelSpec,
+  useContributeSubPanel,
+} from "../../shell/sub-panel";
 import {
-  COMPUTE_VIEWS,
-  type ComputeView,
-  parseComputeView,
-} from "./-compute-views";
+  COMPUTE_TABS,
+  type ComputeTab,
+  parseComputeTab,
+} from "./-compute-tabs";
 import { GraphView } from "./-graph-view";
 
-type ComputeSearch = { view?: ComputeView };
+type ComputeSearch = { tab?: ComputeTab };
 
 export const Route = createFileRoute("/developer/compute")({
   validateSearch: (search: Record<string, unknown>): ComputeSearch => ({
-    view: parseComputeView(search.view),
+    tab: parseComputeTab(search.tab),
   }),
   component: ComputePage,
 });
@@ -39,9 +41,17 @@ type BundleDoc = {
   _creationTime?: number;
 };
 
+const SUBTITLES: Record<ComputeTab, string> = {
+  functions:
+    "Functions registered to this tenant. Open one for its source, runs, and the runner.",
+  sandboxes:
+    "Isolated execution environments for this tenant, read live from the sandbox runtime.",
+  graph:
+    "Which function calls which, laid out by module. Select a node to open its source.",
+};
+
 function ComputePage() {
-  const view = Route.useSearch().view ?? "functions";
-  const navigate = useNavigate({ from: "/developer/compute" });
+  const tab: ComputeTab = Route.useSearch().tab ?? "functions";
 
   const functions = useQuery(api.functions.list, {
     bundleId: null,
@@ -53,159 +63,151 @@ function ComputePage() {
     limit: 50,
   }) as BundleDoc[] | undefined;
 
-  const setView = useCallback(
-    (next: ComputeView) => {
-      void navigate({
-        search: (prev) => ({ ...prev, view: next }),
-        replace: true,
-      });
-    },
-    [navigate],
-  );
-
-  // The sub-drawer is purely the compute-type selector (Functions / Sandboxes).
-  // Search and filters live in the main section's toolbar, not here.
-  const spec = useMemo<SubDrawerSpec>(
+  // The sub-panel is the function tree, the same one the function page
+  // shows, so the list an operator is scanning does not change shape when
+  // they open an item from it.
+  const spec = useMemo<SubPanelSpec>(
     () => ({
       kind: "dynamic",
-      title: "Compute",
-      railItems: COMPUTE_VIEWS.map((v) => ({
-        id: v.value,
-        label: v.label,
-        icon: v.icon,
-        active: v.value === view,
-        onSelect: () => setView(v.value),
-      })),
-      children: <ComputeDrawer view={view} onViewChange={setView} />,
+      title: "Functions",
+      search: { placeholder: "Filter functions", rows: functions?.length ?? 0 },
+      children: <FunctionSubPanel functions={functions} />,
     }),
-    [view, setView],
+    [functions],
   );
-  useContributeSubDrawer(spec);
+  useContributeSubPanel(spec);
 
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-compute"
     >
-      <PageHeader
-        title="Compute"
-        subtitle={
-          view === "graph"
-            ? "Function call graph for this deployment — api.* / internal.* edges. Click a node to open its source."
-            : view === "sandboxes"
-              ? "Isolated execution environments for this tenant, read live from the sandbox runtime."
-              : "Functions registered to this tenant, by bundle and module. Open one for source, logs, and runs."
-        }
-      />
+      <div className="flex shrink-0 flex-col gap-3">
+        <PageHeader
+          title="Compute"
+          subtitle={SUBTITLES[tab]}
+          trailing={<BundleHint bundles={bundles} />}
+        />
+        <PageTabs
+          label="Compute tabs"
+          tabs={COMPUTE_TABS}
+          active={tab}
+          testid="compute-tabs"
+          itemTestid="compute-tab"
+        />
+      </div>
 
-      {view === "graph" ? (
+      {tab === "graph" ? (
         <GraphView />
-      ) : view === "sandboxes" ? (
+      ) : tab === "sandboxes" ? (
         <SandboxesView />
       ) : (
-        <FunctionsView functions={functions} bundles={bundles} />
+        <FunctionsTable functions={functions} />
       )}
     </section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Sub-drawer: the compute-type selector (Functions / Sandboxes)
-// ---------------------------------------------------------------------------
+// Functions: one row per registered function.
 
-function ComputeDrawer({
-  view,
-  onViewChange,
-}: {
-  view: ComputeView;
-  onViewChange: (view: ComputeView) => void;
-}) {
-  return (
-    <nav aria-label="Compute type" className="flex flex-col gap-px px-2 py-2">
-      {COMPUTE_VIEWS.map((opt) => {
-        const Icon = opt.icon;
-        const active = view === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onViewChange(opt.value)}
-            aria-current={active ? "page" : undefined}
-            data-testid={`compute-drawer-view-${opt.value}`}
-            data-active={active ? "true" : "false"}
-            className={cn(
-              "flex h-9 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",
-              active
-                ? "bg-surface-2 text-default"
-                : "text-muted hover:bg-surface-2 hover:text-default",
-            )}
-            style={
-              active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
-            }
-          >
-            <Icon size={14} aria-hidden className="shrink-0" />
-            <span className="flex-1 text-left">{opt.label}</span>
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
+const fnCol = dataColumns<FunctionDoc>();
+const FUNCTION_COLUMNS = [
+  fnCol.accessor("path", {
+    header: "Function",
+    cell: (ctx) => (
+      <span className="truncate font-mono text-xs text-text-1">
+        {ctx.getValue() ?? "—"}
+      </span>
+    ),
+  }),
+  fnCol.accessor("kind", {
+    header: "Kind",
+    size: 136,
+    cell: (ctx) => <CategoryPill value={ctx.getValue()} />,
+  }),
+  fnCol.accessor("adapter", {
+    header: "Adapter",
+    size: 104,
+    cell: (ctx) => {
+      const adapter = ctx.getValue();
+      return adapter ? (
+        <CategoryPill value={adapter} />
+      ) : (
+        <span className="text-xs text-text-3">—</span>
+      );
+    },
+  }),
+  fnCol.accessor("lastStatus", {
+    header: "Last status",
+    size: 112,
+    cell: (ctx) => {
+      const status = ctx.getValue();
+      return status ? (
+        <StatePill state={status} />
+      ) : (
+        <span className="text-xs text-text-3">never run</span>
+      );
+    },
+  }),
+  fnCol.accessor("lastRunAt", {
+    header: "Last run",
+    size: 120,
+    cell: (ctx) => {
+      const at = ctx.getValue();
+      return (
+        <span className="block text-right text-xs text-text-3">
+          {typeof at === "number" ? <RelativeTime epochMs={at} /> : "—"}
+        </span>
+      );
+    },
+  }),
+];
 
-// ---------------------------------------------------------------------------
-// Functions view — toolbar (search + kind filter) over a bundle/module tree
-// ---------------------------------------------------------------------------
-
-function FunctionsView({
+function FunctionsTable({
   functions,
-  bundles,
 }: {
   functions: FunctionDoc[] | undefined;
-  bundles: BundleDoc[] | undefined;
 }) {
-  const [search, setSearch] = useState("");
-  const [kind, setKind] = useState<string | null>(null);
-  const kinds = useMemo(
-    () => uniqueSorted(functions, (fn) => fn.kind),
+  const navigate = useNavigate();
+  const rows = useMemo(
+    () =>
+      (functions ?? [])
+        .filter((fn) => typeof fn.path === "string")
+        .sort((a, b) => (a.path ?? "").localeCompare(b.path ?? "")),
     [functions],
   );
-  const treeFns = useMemo(() => {
-    const list = functions ?? [];
-    return kind ? list.filter((fn) => fn.kind === kind) : list;
-  }, [functions, kind]);
-  const tree = useMemo(() => buildFunctionTree(treeFns), [treeFns]);
-
+  if (functions === undefined) {
+    return <LoadingState label="Loading functions…" />;
+  }
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={Box}
+        title="No functions deployed"
+        body="Deploy an app to register its functions with this tenant."
+        snippet="nimbus dev --app-dir ."
+        testid="compute-functions-empty"
+      />
+    );
+  }
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <Toolbar
-        search={search}
-        onSearch={setSearch}
-        placeholder="Search functions"
-        testid="compute-functions-toolbar"
-      >
-        <FilterChips
-          ariaLabel="Filter by kind"
-          allLabel="all kinds"
-          options={kinds}
-          active={kind}
-          onChange={setKind}
-          testidPrefix="compute-function-kind"
-        />
-        <span className="ml-auto">
-          <BundleHint bundles={bundles} />
-        </span>
-      </Toolbar>
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface">
-        {functions === undefined ? (
-          <LoadingState label="Loading functions…" />
-        ) : (
-          <FunctionTreeView
-            tree={tree}
-            filter={search}
-            testidPrefix="compute-functions"
-          />
-        )}
-      </div>
+    <div className="min-h-0 flex-1 overflow-hidden">
+      <DataTable
+        columns={FUNCTION_COLUMNS}
+        data={rows}
+        getRowId={(row) => row._id}
+        ariaLabel="Functions"
+        onRowActivate={(row) => {
+          if (!row.path) return;
+          void navigate({
+            to: "/developer/compute/$function",
+            params: { function: row.path },
+          });
+        }}
+        testid="compute-functions"
+        className="h-full"
+      />
     </div>
   );
 }
@@ -214,7 +216,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   if (bundles === undefined) {
     return (
       <span
-        className="font-mono text-xs text-muted"
+        className="font-mono text-xs text-text-3"
         data-testid="compute-bundles-loading"
       >
         bundles: loading…
@@ -224,7 +226,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   const active = bundles.filter((b) => b.status === "active").length;
   return (
     <span
-      className="font-mono text-xs text-muted"
+      className="font-mono text-xs text-text-3"
       data-testid="compute-bundles"
     >
       {bundles.length} bundle{bundles.length === 1 ? "" : "s"}
@@ -234,156 +236,22 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
 }
 
 // ---------------------------------------------------------------------------
-// Sandboxes view — sandboxes are live runtime state, not deployment records,
-// so this reads from the sandbox runtime (not a persisted table). Live wiring
-// is a tracked follow-on; until then this shows an honest empty state rather
-// than any placeholder data.
-// ---------------------------------------------------------------------------
+// Sandboxes are live runtime state, not deployment records. Live wiring is a
+// tracked follow-on; until then this is an honest empty state, never
+// placeholder rows.
 
 function SandboxesView() {
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
       data-testid="compute-sandboxes"
     >
       <EmptyState
+        icon={Box}
         title="No live sandboxes"
-        body="Sandboxes are live runtime state, not deployment records. Live runtime wiring is in progress; running sandboxes for this tenant will appear here once connected. No placeholder data is shown."
+        body="Sandboxes are live runtime state, not deployment records. Running sandboxes for this tenant appear here once the runtime is connected."
         testid="compute-sandboxes-empty"
       />
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Shared bits
-// ---------------------------------------------------------------------------
-
-// Main-section toolbar: search input (left) + filters (children), following the
-// shadcn data-table-toolbar convention of keeping search and filters together.
-function Toolbar({
-  search,
-  onSearch,
-  placeholder,
-  children,
-  testid,
-}: {
-  search: string;
-  onSearch: (value: string) => void;
-  placeholder: string;
-  children?: ReactNode;
-  testid?: string;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-md border border-app bg-surface-2 px-3 py-2"
-      data-testid={testid}
-    >
-      <div className="relative">
-        <Search
-          size={13}
-          aria-hidden
-          className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted"
-        />
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder={placeholder}
-          data-testid={testid ? `${testid}-search` : undefined}
-          // No `focus:outline-none` and no `--brand` ring: on this field's
-          // own `--surface` ground `--brand` measures 2.48:1 in warm light,
-          // under WCAG 2.2 SC 1.4.11's 3:1 non-text floor (2.21:1 on
-          // `--surface-2`, its worst ground). Cancelling the console-wide
-          // outline for it traded a compliant ring for a failing one.
-          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted"
-        />
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// Toggle buttons, not tabs. The set is data-derived and each chip filters the
-// list in place rather than swapping a tabpanel, so a labelled group of
-// `aria-pressed` buttons is the honest contract — and native Tab/Space/Enter is
-// its complete keyboard behavior, with no roving tabindex or arrow keys
-// promised. SegmentedControl (DESIGN.md's canonical exclusive-choice control)
-// does not apply: it is scoped to fixed sets of ≤4 options.
-function FilterChips({
-  ariaLabel,
-  allLabel,
-  options,
-  active,
-  onChange,
-  testidPrefix,
-}: {
-  ariaLabel: string;
-  allLabel: string;
-  options: string[];
-  active: string | null;
-  onChange: (value: string | null) => void;
-  testidPrefix: string;
-}) {
-  return (
-    <fieldset className="flex min-w-0 flex-wrap items-center gap-1">
-      <legend className="sr-only">{ariaLabel}</legend>
-      <Chip
-        label={allLabel}
-        active={active === null}
-        onClick={() => onChange(null)}
-        testid={`${testidPrefix}-all`}
-      />
-      {options.map((opt) => (
-        <Chip
-          key={opt}
-          label={opt}
-          active={active === opt}
-          onClick={() => onChange(opt)}
-          testid={`${testidPrefix}-${opt}`}
-        />
-      ))}
-    </fieldset>
-  );
-}
-
-function Chip({
-  label,
-  active,
-  onClick,
-  testid,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  testid: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      data-testid={testid}
-      className={cn(
-        "rounded border px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
-        active
-          ? "border-strong bg-surface text-default"
-          : "border-app text-muted hover:bg-surface hover:text-default",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-function uniqueSorted<T>(
-  items: T[] | undefined,
-  pick: (item: T) => string | undefined,
-): string[] {
-  const set = new Set<string>();
-  for (const item of items ?? []) {
-    const value = pick(item);
-    if (value) set.add(value);
-  }
-  return Array.from(set).sort();
 }

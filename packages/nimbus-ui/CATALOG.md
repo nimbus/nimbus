@@ -48,11 +48,12 @@ Each reusable component has a `*.stories.tsx` file under `src/stories/`:
 | Select                | `select.stories.tsx`             |
 | SegmentedControl      | `segmented-control.stories.tsx`  |
 | Kbd                   | `kbd.stories.tsx`                |
-| SubDrawer (host)      | `sub-drawer.stories.tsx`         |
+| SubPanel (host)      | `sub-panel.stories.tsx`         |
 
-`SubDrawer` is rendered through a story-only `FakeSubDrawerHost` wrapper
-that re-implements the visual shell without depending on the router
-context.
+The sub-panel stories render a story-only `FakeSubPanelHost` and
+`FakeSubPanelRail` at fixed widths. They repeat the panel's visual contract
+(header, search threshold, rows, rail) without the router or the resizable
+group that `SubPanelLayout` needs in the shell.
 
 ## Adding a story
 

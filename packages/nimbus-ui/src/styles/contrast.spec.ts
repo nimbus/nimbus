@@ -5,335 +5,280 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * Colour-contrast gate for the palette tokens.
+ * Colour-contrast and focus-indicator gates for the token sheet.
  *
- * The tokens are read out of globals.css rather than duplicated here, so this
- * tracks every future edit instead of drifting from it. There is no browser to
- * resolve the cascade — vitest runs on a synthetic DOM with `css: false` — so
- * the resolution below mirrors the source order and specificity of the
- * `@layer base` blocks by hand.
- *
- * There is no colour library in package.json, so OKLCH -> linear sRGB -> WCAG
- * relative luminance is implemented inline (Ottosson's oklab matrices, CSS
- * Color 4, WCAG 2.x). Out-of-gamut components are clipped. Spot-checked
- * against Chrome: every token in all five palette/mode combinations paints the
- * same sRGB value this produces, give or take 1/255 on one gamut-mapped token.
+ * The tokens are read from styles/tokens.css on disk, not imported: vitest
+ * runs with `css: false`, which stubs every CSS module to an empty string.
+ * Every token value is a hex or rgba literal, which is what keeps this file
+ * a parser rather than a colour engine.
  */
 
-/* Read from disk, not imported: `css: false` stubs every CSS module to an
-   empty string, and Vite rewrites `new URL(…, import.meta.url)` into an asset
-   URL rather than a filesystem path. */
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = join(HERE, "..");
-const CSS = readFileSync(join(HERE, "globals.css"), "utf8");
+const STYLES = dirname(fileURLToPath(import.meta.url));
+const SRC = join(STYLES, "..");
+const TOKENS = readFileSync(join(STYLES, "tokens.css"), "utf8");
+const GLOBALS = readFileSync(join(STYLES, "globals.css"), "utf8");
 
 // --- colour maths -----------------------------------------------------------
 
-function oklchToLinearSrgb(value: string): [number, number, number] {
-  const m = /^oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)\s*\)$/i.exec(value);
-  if (!m) throw new Error(`expected an oklch() literal, got: ${value}`);
-  const L = Number(m[1]) / 100;
-  const C = Number(m[2]);
-  const h = (Number(m[3]) * Math.PI) / 180;
-  const a = C * Math.cos(h);
-  const b = C * Math.sin(h);
-  // Long, medium and short cone responses, cubed back out of oklab.
-  const long = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const med = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const short = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  return [
-    4.0767416621 * long - 3.3077115913 * med + 0.2309699292 * short,
-    -1.2684380046 * long + 2.6097574011 * med - 0.3413193965 * short,
-    -0.0041960863 * long - 0.7034186147 * med + 1.707614701 * short,
-  ];
-}
+type Rgb = [number, number, number];
 
-function luminance(value: string): number {
-  const [r, g, b] = oklchToLinearSrgb(value).map((c) =>
-    Math.min(1, Math.max(0, c)),
+function parseColour(value: string): Rgb {
+  const hex = value.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const rgba = value.match(
+    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+\s*)?\)$/,
   );
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  if (rgba) return [Number(rgba[1]), Number(rgba[2]), Number(rgba[3])];
+  throw new Error(`unsupported colour literal: ${value}`);
 }
 
-function contrast(a: string, b: string): number {
-  const [la, lb] = [luminance(a), luminance(b)];
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+function luminance([r, g, b]: Rgb): number {
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
-// --- cascade resolution -----------------------------------------------------
+function contrast(fg: string, bg: string): number {
+  const a = luminance(parseColour(fg));
+  const b = luminance(parseColour(bg));
+  const [hi, lo] = a > b ? [a, b] : [b, a];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// --- token parsing ----------------------------------------------------------
 
 type Tokens = Record<string, string>;
 
+/** The declarations of one top-level `<selector> { ... }` block. */
 function block(selector: string): Tokens {
-  // Each palette block is a flat declaration list inside `@layer base`.
-  const start = CSS.indexOf(`\n  ${selector} {`);
-  if (start === -1) throw new Error(`no rule for selector: ${selector}`);
-  const open = CSS.indexOf("{", start);
-  const close = CSS.indexOf("\n  }", open);
-  const body = CSS.slice(open + 1, close);
-  const tokens: Tokens = {};
-  for (const [, name, value] of body.matchAll(
-    /(--nimbus-[a-z0-9-]+)\s*:\s*([^;]+);/g,
-  )) {
-    tokens[name] = value.trim();
+  const start = TOKENS.indexOf(`\n${selector} {`);
+  if (start < 0) throw new Error(`no block for ${selector}`);
+  const end = TOKENS.indexOf("\n}", start);
+  const body = TOKENS.slice(start, end);
+  const out: Tokens = {};
+  for (const m of body.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) {
+    out[m[1]] = m[2].trim();
   }
-  return tokens;
+  return out;
 }
 
-const ROOT = block(":root");
-const BLUE = block('[data-palette="blue"]');
-const DARK = block('[data-theme="dark"]');
-const MONO = block('[data-palette="mono"]');
-const MONO_DARK = block('[data-palette="mono"][data-theme="dark"]');
-
-/** Flattens a cascade, then substitutes `var(--nimbus-*)` self-references. */
-function resolve(...layers: Tokens[]): Tokens {
-  const merged: Tokens = Object.assign({}, ...layers);
-  for (let pass = 0; pass < 4; pass++) {
-    let changed = false;
-    for (const [name, value] of Object.entries(merged)) {
-      const next = value.replace(/var\((--nimbus-[a-z0-9-]+)\)/g, (all, ref) =>
-        merged[ref] && !merged[ref].includes("var(") ? merged[ref] : all,
-      );
-      if (next !== value) {
-        merged[name] = next;
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  return merged;
-}
-
-// Later layers win: equal-specificity blocks resolve by source order, and the
-// two-attribute mono-dark selector outranks both single-attribute blocks.
-const PALETTES = {
-  "warm light": resolve(ROOT),
-  "blue light": resolve(ROOT, BLUE),
-  "mono light": resolve(ROOT, MONO),
-  "warm dark": resolve(ROOT, DARK),
-  "blue dark": resolve(ROOT, BLUE, DARK),
-  "mono dark": resolve(ROOT, MONO, DARK, MONO_DARK),
+const THEMES = {
+  dark: block(":root"),
+  light: { ...block(":root"), ...block(':root[data-theme="light"]') },
 } satisfies Record<string, Tokens>;
 
-const COMBOS = Object.entries(PALETTES);
-const BACKDROPS = ["--nimbus-bg", "--nimbus-surface", "--nimbus-surface-2"];
+const COMBOS = Object.entries(THEMES);
+const GROUNDS = ["--bg-canvas", "--bg-panel", "--bg-raised", "--bg-hover"];
 
-describe("palette token contrast", () => {
-  // Every link in the console renders at 11-12px, which is normal text under
-  // WCAG, so 4.5:1 is the binding floor on every surface it can land on.
-  it.each(COMBOS)("%s: --link clears AA on all three backdrops", (_, t) => {
-    for (const backdrop of BACKDROPS) {
-      expect(contrast(t["--nimbus-link"], t[backdrop])).toBeGreaterThanOrEqual(
-        4.5,
-      );
-    }
+// Every token that paints text somewhere in the console. Rows, cells, links,
+// and states all land on hovered rows and raised panels as often as on the
+// canvas, so the floor is checked on every ground, not only the darkest or
+// lightest one.
+const TEXT_TOKENS = [
+  "--text-1",
+  "--text-2",
+  "--text-3",
+  "--accent-link",
+  "--success",
+  "--warning",
+  "--error",
+  "--info",
+];
+
+describe("role token contrast", () => {
+  it("declares the same token set in both themes", () => {
+    const light = block(':root[data-theme="light"]');
+    const dark = block(":root");
+    expect(Object.keys(light).sort()).toEqual(Object.keys(dark).sort());
   });
 
-  // Every backdrop, not just --surface. The check used to read "these are
-  // painted on panels, tables and popovers, i.e. on --surface", and --surface
-  // in warm light is pure white, which is the most forgiving ground in the
-  // console. Nothing stops a call site from putting the same token on the
-  // canvas, and /operator/settings does: its unavailable-section text is
-  // --danger on --bg, where a browser measured 4.3:1 while this gate reported
-  // a pass against white. A semantic text token has to clear AA everywhere it
-  // can land, which is what the --link check above already assumed.
-  it.each(COMBOS)("%s: text tokens clear AA on every backdrop", (_, t) => {
-    const short: string[] = [];
-    for (const token of [
-      "--nimbus-muted",
-      "--nimbus-warning",
-      "--nimbus-success",
-      "--nimbus-danger",
-      "--nimbus-link",
-    ]) {
-      for (const backdrop of BACKDROPS) {
-        const ratio = contrast(t[token], t[backdrop]);
+  // Normal text under WCAG: 4.5:1. Links render at 12-13px, so no large-text
+  // relief applies anywhere in the console.
+  it.each(COMBOS)("%s: every text token clears AA on every ground", (_, t) => {
+    const failures: string[] = [];
+    for (const token of TEXT_TOKENS) {
+      for (const ground of GROUNDS) {
+        const ratio = contrast(t[token], t[ground]);
         if (ratio < 4.5) {
-          short.push(`${token} on ${backdrop} — ${ratio.toFixed(2)}:1`);
+          failures.push(`${token} on ${ground}: ${ratio.toFixed(2)}:1`);
         }
       }
     }
-    // Named rather than counted: a failure has to say which token is illegible
-    // on which ground, or the next person re-derives it by hand.
-    expect(short).toEqual([]);
+    // Named rather than counted, so a failure says which pair and by how much.
+    expect(failures).toEqual([]);
   });
 
-  // WCAG 2.2 SC 1.4.11: 3:1 for focus indicators and meaningful graphics.
-  it.each(COMBOS)("%s: --focus and --running clear the 3:1 floor", (_, t) => {
-    for (const token of ["--nimbus-focus", "--nimbus-running"]) {
-      for (const backdrop of BACKDROPS) {
-        expect(contrast(t[token], t[backdrop])).toBeGreaterThanOrEqual(3);
-      }
+  // --accent paints fills and the focus ring, which are non-text UI
+  // components under SC 1.4.11: 3:1 on every ground it can sit on.
+  it.each(COMBOS)("%s: --accent clears the 3:1 non-text floor", (_, t) => {
+    for (const ground of GROUNDS) {
+      expect(contrast(t["--accent"], t[ground])).toBeGreaterThanOrEqual(3);
     }
   });
 
-  // --accent once equalled --muted byte-for-byte in mono light, which made the
-  // focus ring, the selection fill and every accent-bound state the same grey
-  // as secondary text.
-  it.each(COMBOS)("%s: --accent is distinguishable from --muted", (_, t) => {
-    expect(t["--nimbus-accent"]).not.toBe(t["--nimbus-muted"]);
-    expect(contrast(t["--nimbus-accent"], t["--nimbus-muted"])).toBeGreaterThan(
-      1.4,
+  // Text on an accent fill (primary buttons, the selected segment).
+  it.each(COMBOS)("%s: --accent-ink clears AA on --accent", (_, t) => {
+    expect(contrast(t["--accent-ink"], t["--accent"])).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(contrast(t["--error-ink"], t["--error"])).toBeGreaterThanOrEqual(
+      4.5,
     );
   });
 
-  // Running is a state, not an identity colour: it must not collapse into the
-  // "no state" grey, and it must stay separable from the other health states.
-  it.each(COMBOS)("%s: --running stays distinct from other states", (_, t) => {
-    for (const other of ["--nimbus-muted", "--nimbus-success"]) {
-      expect(t["--nimbus-running"]).not.toBe(t[other]);
+  // --text-4 is the one documented non-AA token (disabled only, which WCAG
+  // exempts). What is checked is its place in the scale: the disabled tier
+  // is quieter than the metadata tier, so a disabled control never reads as
+  // live metadata.
+  it.each(COMBOS)("%s: --text-4 sits below --text-3 in the scale", (_, t) => {
+    expect(contrast(t["--text-4"], t["--bg-canvas"])).toBeLessThan(
+      contrast(t["--text-3"], t["--bg-canvas"]),
+    );
+  });
+
+  // Semantic colours never use the accent hue, and a state never collapses
+  // into the "no state" grey: the four state tokens, the accent and text-3
+  // are six distinct literals in both themes.
+  it.each(COMBOS)("%s: states, accent and text-3 are distinct", (_, t) => {
+    const values = [
+      t["--success"],
+      t["--warning"],
+      t["--error"],
+      t["--info"],
+      t["--accent"],
+      t["--text-3"],
+    ];
+    expect(new Set(values).size).toBe(values.length);
+  });
+
+  // The four grounds step monotonically so a raised panel reads as raised.
+  it.each(COMBOS)("%s: the grounds step in one direction", (name, t) => {
+    const l = GROUNDS.map((g) => luminance(parseColour(t[g])));
+    for (let i = 1; i < l.length; i += 1) {
+      if (name === "dark") expect(l[i]).toBeGreaterThan(l[i - 1]);
+      else expect(l[i]).toBeLessThan(l[i - 1]);
     }
   });
 });
 
-// --- focus indicators at the call sites -------------------------------------
+// --- focus indicators -------------------------------------------------------
 
-/* The token table above is only half the contract. It proves `--focus` clears
-   the floor; it cannot stop a component binding its ring to a token that does
-   not. Nothing here used to, and four call sites had drifted onto tokens that
-   fail outright: measured in Chrome, `--accent` is 1.71:1 on `--surface-2` in
-   warm light and 2.24:1 in blue, and `--brand` is 2.21:1 and 3.32:1, against
-   SC 1.4.11's 3:1 non-text floor.
+/* One rule paints every focus ring: the unlayered `:focus-visible` in
+   globals.css. Tailwind emits utilities inside `@layer utilities` and an
+   unlayered declaration beats every layered one, so this rule also recolours
+   the shadcn registry primitives, which keep `focus-visible:ring-ring/50` as
+   written under components/ui.
 
-   They were not sloppy, they were compliant — DESIGN.md's token table gave
-   `--accent` the job "focus ring and selection" in writing, and globals.css
-   disagreed. The document is being corrected; this gate is what keeps the code
-   from drifting back, so it must fail on any NEW binding anywhere in src, not
-   just on the four that are fixed.
+   Two things keep that true. The rule itself must stay unlayered and must
+   name `--accent` (the ring token, DESIGN.md accent job 3). And no Nimbus-owned
+   component may bind a ring or outline colour of its own under a focus
+   variant: that would either duplicate the global ring or, on a token that
+   misses 3:1, paint a worse one. */
 
-   Scope: a ring or outline colour on a `focus:`/`focus-visible:` variant. That
-   is a focus indicator by construction, so the 3:1 floor is unambiguous. A ring
-   with no focus variant is decoration and is out of scope, as is
-   `shadow-[inset_2px_0_0_var(--accent)]` — the sanctioned selection bar, which
-   is identity rather than focus and may sit below 3:1. */
+function unlayeredRules(css: string): string[] {
+  const rules: string[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < css.length; i += 1) {
+    const ch = css[i];
+    if (ch === "{") {
+      if (depth === 0) start = css.lastIndexOf("\n", i) + 1;
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const rule = css.slice(start, i + 1);
+        if (!rule.startsWith("@")) rules.push(rule);
+        start = -1;
+      }
+    }
+  }
+  return rules;
+}
 
-/* Both spellings reach the same token: `ring-[color:var(--nimbus-accent)]` and
-   the `--color-*` utility `ring-accent`. Catching only the first would leave
-   the second as an open door, so the utility map is parsed out of `@theme
-   inline` — a new `--color-*` is then covered the day it is added. */
-const THEME_COLOURS = new Map(
-  [
-    ...CSS.matchAll(/--color-([a-z0-9-]+):\s*var\((--nimbus-[a-z0-9-]+)\)/g),
-  ].map(([, utility, token]) => [utility, token]),
-);
-
-const FOCUS_RING =
-  /\b(?:focus|focus-visible):(?:ring|outline)-(?:\[color:var\((--nimbus-[a-z0-9-]+)\)\]|([a-z0-9-]+))/g;
+/* A ring or outline colour under a focus variant is a second focus ring by
+   construction. A border colour under a focus variant is allowed on one
+   token only: `border-accent`, the accent border a text field shows together
+   with the ring (DESIGN.md inputs). Any other focus border is a private
+   indicator on a token that was never measured for the job. */
+const RING_COLOUR =
+  /\b(?:focus|focus-visible|focus-within):(?:ring|outline)-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent|accent-link|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
+const BORDER_COLOUR =
+  /\b(?:focus|focus-visible|focus-within):border-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent-link|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
 
 function tsxFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...tsxFiles(path));
-    else if (entry.name.endsWith(".tsx")) out.push(path);
+    if (entry.isDirectory()) {
+      if (entry.name === "ui" && dir.endsWith("components")) continue;
+      out.push(...tsxFiles(path));
+    } else if (entry.name.endsWith(".tsx") && !entry.name.includes(".spec.")) {
+      out.push(path);
+    }
   }
   return out;
 }
 
 describe("focus indicators", () => {
-  it("maps the --color-* utilities so both ring spellings are covered", () => {
-    // If this map ever comes back empty the scan below still passes while
-    // checking nothing, which is the one way this gate could fail silently.
-    expect(THEME_COLOURS.get("accent")).toBe("--nimbus-accent");
-    expect(THEME_COLOURS.get("brand")).toBe("--nimbus-brand");
-    expect(THEME_COLOURS.get("focus")).toBe("--nimbus-focus");
+  it("paints the global ring from --accent in one unlayered rule", () => {
+    const rule = unlayeredRules(GLOBALS).find((r) =>
+      r.startsWith(":focus-visible {"),
+    );
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/outline:\s*none;/);
+    expect(rule).toMatch(/box-shadow:[\s\S]*var\(--accent\)/);
+    // Two layers: an inner 2px band and an outer 4px halo.
+    expect(rule).toMatch(/0 0 0 2px/);
+    expect(rule).toMatch(/0 0 0 4px/);
   });
 
-  /* DESIGN.md: "a focus ring names `--focus`, never `--accent` directly."
+  it("names no other focus ring token in the stylesheet", () => {
+    expect(GLOBALS).not.toMatch(/--tw-ring-color/);
+    expect(TOKENS).not.toMatch(/--focus\b/);
+  });
 
-     That is a naming rule, and it has to be checked as one. Measuring the
-     bound colour instead is not equivalent, for two reasons that pull in
-     opposite directions.
-
-     `--focus` is declared `var(--accent)` in the dark palettes and in mono
-     light, so in four of the six combinations the two tokens resolve to the
-     same literal and no measurement can tell them apart. What separates them
-     is warm light and blue light, where `--focus` diverges precisely because
-     `--accent` cannot carry a ring there.
-
-     And a pure value check is too weak in the other direction: `--text` and
-     `--danger` clear 3:1 on every ground, so a ring bound to either would pass
-     a threshold gate while still breaking the contract — verified, both did.
-     So the token is checked by name, and the measured ratio is carried into
-     the message to say why the rule exists rather than merely that it was
-     broken. */
-  it("name --focus, never another token that measures well", () => {
-    const failures: string[] = [];
+  it("binds no private focus ring colour in a Nimbus-owned component", () => {
+    const offenders: string[] = [];
     for (const file of tsxFiles(SRC)) {
-      const name = relative(SRC, file).replaceAll("\\", "/");
-      const lines = readFileSync(file, "utf8").split("\n");
-      lines.forEach((line, i) => {
-        for (const [, arbitrary, utility] of line.matchAll(FOCUS_RING)) {
-          // `ring-1`, `ring-inset`, `outline-offset-2` name no colour.
-          const token = arbitrary ?? THEME_COLOURS.get(utility);
-          if (!token || token === "--nimbus-focus") continue;
-
-          let worst = Number.POSITIVE_INFINITY;
-          let where = "";
-          for (const [combo, t] of COMBOS) {
-            for (const backdrop of BACKDROPS) {
-              const ratio = contrast(t[token], t[backdrop]);
-              if (ratio < worst) {
-                worst = ratio;
-                where = `${combo} on ${backdrop}`;
-              }
-            }
-          }
-          const why =
-            worst < 3
-              ? `${worst.toFixed(2)}:1 (${where}) is under the 3:1 floor`
-              : `${worst.toFixed(2)}:1 (${where}) clears the floor, but a focus ring still names --nimbus-focus`;
-          failures.push(`${name}:${i + 1} — ${token} — ${why}`);
+      const text = readFileSync(file, "utf8");
+      for (const pattern of [RING_COLOUR, BORDER_COLOUR]) {
+        for (const match of text.matchAll(pattern)) {
+          const line = text.slice(0, match.index).split("\n").length;
+          offenders.push(`${relative(SRC, file)}:${line} ${match[0]}`);
         }
-      });
+      }
     }
-    // Named, not counted: a ratio without the file that paints it sends the
-    // next person back to the browser to re-derive which ring is invisible.
-    expect(failures).toEqual([]);
+    expect(offenders).toEqual([]);
   });
 });
 
-describe("palette identity", () => {
-  it("warm and blue resolve to the same Night Blue dark theme", () => {
-    // DESIGN.md: "Dark mode is Night Blue for every palette except mono."
-    // The appearance swatch previews this, so it must stay true.
-    expect(PALETTES["blue dark"]).toEqual(PALETTES["warm dark"]);
-    expect(PALETTES["mono dark"]).not.toEqual(PALETTES["warm dark"]);
-  });
+// --- links ------------------------------------------------------------------
 
-  it("the three light palettes stay visually distinct", () => {
-    const identity = (t: Tokens) =>
-      [t["--nimbus-brand"], t["--nimbus-accent"], t["--nimbus-link"]].join("|");
-    const seen = ["warm light", "blue light", "mono light"].map((k) =>
-      identity(PALETTES[k as keyof typeof PALETTES]),
-    );
-    expect(new Set(seen).size).toBe(3);
-  });
-
-  it("a palette whose --link matches --text carries an underlined link class", () => {
-    // Mono is deliberately chromaless, so its links cannot be identified by
-    // hue (WCAG 1.4.1). The underline has to do that work instead.
-    const chromaless = COMBOS.filter(
-      ([, t]) => t["--nimbus-link"] === t["--nimbus-text"],
-    );
-    const names = chromaless.map(([name]) => name);
-    expect(names).toEqual(["mono light", "mono dark"]);
-
-    const rule = /\.link-inline\s*\{[^}]*\}/.exec(CSS)?.[0] ?? "";
-    expect(rule).toMatch(/text-decoration:\s*underline/);
-    expect(rule).toMatch(/color:\s*var\(--nimbus-link\)/);
+describe("inline links", () => {
+  it("identify themselves by a resting underline, not colour alone", () => {
+    const rule = GLOBALS.match(/\.link-inline \{([\s\S]*?)\n {2}\}/);
+    expect(rule).not.toBeNull();
+    expect(rule?.[1]).toMatch(/color:\s*var\(--accent-link\)/);
+    expect(rule?.[1]).toMatch(/text-decoration:\s*underline/);
   });
 });
+
+// --- motion -----------------------------------------------------------------
 
 const REDUCED_MOTION =
   /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n {2}\}/;
 
-describe("motion", () => {
-  it("guards every animation and transition behind prefers-reduced-motion", () => {
-    const guard = REDUCED_MOTION.exec(CSS)?.[0];
-    expect(guard).toBeTruthy();
-    expect(guard).toMatch(/animation-duration:\s*0\.01ms\s*!important/);
-    expect(guard).toMatch(/transition-duration:\s*0\.01ms\s*!important/);
+describe("reduced motion", () => {
+  it("collapses every animation and transition under the preference", () => {
+    const rule = GLOBALS.match(REDUCED_MOTION)?.[0];
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/animation-duration:\s*0\.01ms !important/);
+    expect(rule).toMatch(/transition-duration:\s*0\.01ms !important/);
   });
 });
