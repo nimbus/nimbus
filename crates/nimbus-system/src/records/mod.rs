@@ -97,6 +97,10 @@ pub(crate) async fn record_system_status_async(
     if let Some(listen_addr) = listen_addr {
         details.insert("listenAddress".to_owned(), json!(listen_addr.to_string()));
     }
+    details.insert(
+        "dataDir".to_owned(),
+        json!(engine.data_dir().display().to_string()),
+    );
     upsert_system_document_async(
         engine,
         SystemTable::SystemStatus,

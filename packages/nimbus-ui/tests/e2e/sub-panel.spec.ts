@@ -2,6 +2,8 @@
 // per-section persistence in a real layout engine. The unit spec covers the
 // same contract with a geometry shim; this spec proves the react-resizable-
 // panels group measures the columns the way the shell expects in Chromium.
+// The operator Settings page is the host: it is the settings page that
+// contributes a menu (the tenant page has no built sub-page and so no menu).
 // Runs only in the chromium project: below the desktop tier the panel is a
 // rail and its list opens as a sheet, which the smoke walk covers.
 
@@ -68,7 +70,7 @@ test.describe("sub-panel resizing", () => {
     await authenticate(page, baseURL, nimbusServer.readToken());
     await page.setViewportSize({ width: 1280, height: 800 });
 
-    await page.goto(`${baseURL}/ui/developer/settings`);
+    await page.goto(`${baseURL}/ui/operator/settings`);
     await expect(page.getByTestId("page-settings")).toBeVisible();
     const panel = page.getByTestId("sub-panel");
     await expect(panel).toHaveAttribute("data-collapsed", "false");
@@ -86,7 +88,7 @@ test.describe("sub-panel resizing", () => {
       .toEqual({ width: DEFAULT_WIDTH + 80, collapsed: false });
     await page.screenshot({ path: "test-results/sub-panel-dragged.png" });
 
-    // The width survives a reload, and is the Settings width only.
+    // The width survives a reload, and is the settings section's width only.
     await page.reload();
     await expect(page.getByTestId("page-settings")).toBeVisible();
     await expect.poll(() => panelWidth(page)).toBe(DEFAULT_WIDTH + 80);
@@ -99,7 +101,7 @@ test.describe("sub-panel resizing", () => {
     // rather than a pixel count. `Home` is not asserted: on a collapsible
     // panel the library treats it as "collapse", the same as a step past
     // the minimum.
-    await page.goto(`${baseURL}/ui/developer/settings`);
+    await page.goto(`${baseURL}/ui/operator/settings`);
     await expect(page.getByTestId("page-settings")).toBeVisible();
     await expect.poll(() => panelWidth(page)).toBe(DEFAULT_WIDTH + 80);
     const handle = page.getByRole("separator", { name: "Resize sub-panel" });

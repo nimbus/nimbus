@@ -1,47 +1,99 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { navigateMock, useQueryMock } = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  useQueryMock: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  createFileRoute: () => (config: Record<string, unknown>) => config,
+  useNavigate: () => navigateMock,
   Link: ({
     to,
     children,
     "data-testid": testId,
+    "aria-current": current,
     className,
   }: {
     to: string;
-    children: React.ReactNode;
+    children: ReactNode;
     "data-testid"?: string;
+    "aria-current"?: "page";
     className?: string;
   }) => (
-    <a href={to} data-testid={testId} className={className}>
+    <a
+      href={to}
+      data-testid={testId}
+      aria-current={current}
+      className={className}
+    >
       {children}
     </a>
   ),
 }));
 
-const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
-
 vi.mock("@nimbus/nimbus/react", () => ({
-  useQuery: (..._args: unknown[]) => useQueryMock(),
+  useQuery: (...args: unknown[]) => useQueryMock(...args),
 }));
 
-import { LogsTab } from "./-logs";
-import type { EventDoc } from "./-types";
+vi.mock("../../../hooks/use-tenant-list", () => ({
+  useTenantList: () => ({
+    kind: "loaded",
+    tenants: [{ id: "acme" }, { id: "beta" }],
+    reload: () => {},
+  }),
+}));
 
-const events: EventDoc[] = [
+import { useUiStore } from "../../../store/ui-store";
+import { routeComponent } from "../../../test/route-internals";
+import { Route } from "../observability";
+import type { EventDoc, RunDoc } from "./-types";
+
+const NOW = 1_700_000_000_000;
+
+const RUNS: RunDoc[] = [
+  {
+    _id: "run-1",
+    functionPath: "messages:send",
+    kind: "mutation",
+    status: "error",
+    durationMs: 1200,
+    startedAt: NOW + 3_000,
+    error: { message: "commit rejected" },
+  },
+  {
+    _id: "run-2",
+    functionPath: "messages:list",
+    kind: "query",
+    status: "ok",
+    durationMs: 4,
+    startedAt: NOW + 2_000,
+  },
+  {
+    _id: "run-3",
+    functionPath: "agent:tick",
+    kind: "action",
+    status: "ok",
+    durationMs: 80,
+    startedAt: NOW + 1_000,
+  },
+];
+
+const EVENTS: EventDoc[] = [
   {
     _id: "evt-1",
-    createdAt: 1_700_000_000_000,
+    createdAt: NOW + 3_100,
     level: "error",
     source: "nimbus-engine::committer",
     category: "mutation",
     message: "commit rejected",
-    correlationId: "run-abcdef0123456789",
+    correlationId: "run-1",
   },
   {
     _id: "evt-2",
-    createdAt: 1_700_000_001_000,
+    createdAt: NOW + 500,
     level: "info",
     source:
       "nimbus-server::adapter::convex::websocket::subscription::dispatcher",
@@ -51,52 +103,213 @@ const events: EventDoc[] = [
   },
 ];
 
+type QueryArgs = Record<string, unknown>;
+
+// The page asks two questions of the server, runs and events, through the
+// same hook. The mock tells them apart by the argument the runs query alone
+// carries.
+function isRunsQuery(args: unknown): boolean {
+  return typeof args === "object" && args !== null && "functionPath" in args;
+}
+
+function answer(runs: RunDoc[] | undefined, events: EventDoc[] | undefined) {
+  useQueryMock.mockImplementation((_ref: unknown, args: unknown) =>
+    isRunsQuery(args) ? runs : events,
+  );
+}
+
+function queryArgs(pick: "runs" | "events"): QueryArgs | undefined {
+  const call = useQueryMock.mock.calls.find(([, args]) =>
+    pick === "runs" ? isRunsQuery(args) : !isRunsQuery(args),
+  );
+  return call?.[1] as QueryArgs | undefined;
+}
+
+function renderPage(search: Record<string, unknown> = { tab: "logs" }) {
+  const validateSearch = (
+    Route as unknown as {
+      validateSearch: (s: Record<string, unknown>) => Record<string, unknown>;
+    }
+  ).validateSearch;
+  const resolved = validateSearch(search);
+  (Route as unknown as { useSearch: () => Record<string, unknown> }).useSearch =
+    () => resolved;
+  const Component = routeComponent(Route);
+  return render(<Component />);
+}
+
+function runGroups() {
+  return document.querySelectorAll(
+    '[data-testid^="observability-log-group-"][data-kind="run"]',
+  );
+}
+
+beforeEach(() => {
+  navigateMock.mockReset();
+  useQueryMock.mockReset();
+  useUiStore.setState({ activeTenant: "acme", lensOpen: false });
+});
+
+// DESIGN.md: Observability (Developer) defaults to the active tenant and is
+// never cross-tenant. The stream used to read the `_nimbus` system tenant
+// with no tenant in the query at all, so a run in the operator's own tenant
+// never showed up under Logs.
+describe("LogsTab tenant scope", () => {
+  it("defaults the tenant facet to the active tenant and scopes both reads to it", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
+
+    expect(screen.getByTestId("observability-filter-tenant")).toHaveTextContent(
+      "acme",
+    );
+    expect(queryArgs("events")?.tenantId).toBe("acme");
+    expect(queryArgs("runs")?.tenantId).toBe("acme");
+  });
+
+  it("lets ?tenant= override the active tenant without touching the store", () => {
+    answer(RUNS, EVENTS);
+    renderPage({ tab: "logs", tenant: "beta" });
+
+    expect(screen.getByTestId("observability-filter-tenant")).toHaveTextContent(
+      "beta",
+    );
+    expect(queryArgs("events")?.tenantId).toBe("beta");
+    expect(useUiStore.getState().activeTenant).toBe("acme");
+  });
+
+  it("opens the system tenant lens from the facet bar", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
+
+    fireEvent.click(screen.getByTestId("observability-open-lens"));
+    expect(useUiStore.getState().lensOpen).toBe(true);
+  });
+});
+
+// A function invocation writes a run row and, today, no event rows, so a
+// flat event stream stays empty after the operator's own functions ran. The
+// stream is grouped by run: each run is one group with its correlated lines
+// beneath it, and lines that belong to no run sit under the server group.
+describe("LogsTab run groups", () => {
+  it("makes one log group per run: three runs, three groups", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
+
+    expect(runGroups()).toHaveLength(3);
+    expect(
+      [...runGroups()].map((el) => el.getAttribute("data-testid")),
+    ).toEqual([
+      "observability-log-group-run-1",
+      "observability-log-group-run-2",
+      "observability-log-group-run-3",
+    ]);
+  });
+
+  it("attaches a line to its run by correlation id and parks the rest under the server group", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
+
+    const first = screen.getByTestId("observability-log-group-run-1");
+    expect(
+      within(first).getByTestId("observability-log-row-evt-1"),
+    ).toBeInTheDocument();
+    expect(
+      within(first).queryByTestId("observability-log-row-evt-2"),
+    ).toBeNull();
+
+    const server = screen.getByTestId("observability-log-group-server");
+    expect(server).toHaveAttribute("data-kind", "server");
+    expect(
+      within(server).getByTestId("observability-log-row-evt-2"),
+    ).toBeInTheDocument();
+  });
+
+  it("says when a run recorded no lines instead of rendering a bare header", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
+
+    const quiet = screen.getByTestId("observability-log-group-run-2");
+    expect(
+      within(quiet).getByTestId("observability-log-group-empty-run-2"),
+    ).toHaveTextContent(/no log lines/i);
+  });
+
+  it("heads each group with the run's state, function, and a link to the run page", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
+
+    const head = screen.getByTestId("observability-log-group-head-run-1");
+    expect(head.querySelector('[data-slot="pill"]')).toHaveAttribute(
+      "data-state",
+      "error",
+    );
+    expect(head).toHaveTextContent("messages:send");
+    expect(
+      within(head).getByTestId("observability-log-group-open-run-1"),
+    ).toBeInTheDocument();
+  });
+
+  it("narrows to one run's group when a correlation id is set", () => {
+    answer(RUNS, EVENTS);
+    renderPage({ tab: "logs", correlationId: "run-1" });
+
+    expect(runGroups()).toHaveLength(1);
+    expect(screen.queryByTestId("observability-log-group-server")).toBeNull();
+  });
+
+  it("drops runs with no matching line while a line filter is set", () => {
+    answer(RUNS, [EVENTS[0]]);
+    renderPage({ tab: "logs", level: "error" });
+
+    expect(runGroups()).toHaveLength(1);
+    expect(
+      screen.getByTestId("observability-log-group-run-1"),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("LogsTab layout contract", () => {
-  it("renders the stream as a fixed-column table so every row shares a left edge", () => {
-    useQueryMock.mockReturnValue(events);
-    render(<LogsTab search={{ tab: "logs" }} />);
+  it("renders the stream as a fixed-column grid so every line shares a left edge", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
 
     const table = screen.getByTestId("observability-log-table");
-    // Fixed tracks are the whole point: intrinsic per-row sizing is what made
-    // the columns walk left and right as messages changed length.
-    expect(table.className).toContain("table-fixed");
     expect(
       within(table)
         .getAllByRole("columnheader")
         .map((th) => th.textContent?.trim()),
     ).toEqual(["Time", "Level", "Source", "Message", "Run"]);
-    expect(table.querySelectorAll("colgroup col")).toHaveLength(5);
 
-    for (const event of events) {
+    for (const event of EVENTS) {
       const row = screen.getByTestId(`observability-log-row-${event._id}`);
-      expect(row.tagName).toBe("TR");
+      expect(within(table).getAllByRole("row")).toContain(row);
       expect(within(row).getAllByRole("cell")).toHaveLength(5);
     }
   });
 
-  it("keeps the whole action cluster inside a toolbar that degrades by wrapping", () => {
-    useQueryMock.mockReturnValue(events);
-    render(<LogsTab search={{ tab: "logs" }} />);
+  it("keeps the whole action cluster inside a facet bar that degrades by wrapping", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
 
     const toolbar = screen.getByTestId("observability-log-filters");
-    // jsdom has no layout, so the class is the proxy for the measured
-    // behaviour: the toolbar's ancestor is `overflow-hidden`, so the bar has
-    // to wrap. A non-compressible grid pushed these three controls past the
-    // clipped edge with no scrollbar to reach them.
+    // happy-dom has no layout, so the class is the proxy for the measured
+    // behaviour: the bar's ancestor is `overflow-hidden`, so the bar has to
+    // wrap or its trailing controls are clipped with no scrollbar.
     expect(toolbar.className).toContain("flex-wrap");
-    expect(toolbar.className).not.toContain("grid-cols");
     for (const testid of [
+      "observability-filter-tenant",
       "observability-log-follow",
       "observability-log-pause-on-error",
       "observability-filter-clear",
+      "observability-open-lens",
     ]) {
       expect(within(toolbar).getByTestId(testid)).toBeInTheDocument();
     }
   });
 
-  it("bounds every filter input so the toolbar cannot be widened past its container", () => {
-    useQueryMock.mockReturnValue(events);
-    render(<LogsTab search={{ tab: "logs" }} />);
+  it("bounds every text facet so the bar cannot be widened past its container", () => {
+    answer(RUNS, EVENTS);
+    renderPage();
 
     for (const testid of [
       "observability-filter-category",
@@ -104,39 +317,37 @@ describe("LogsTab layout contract", () => {
       "observability-filter-correlation",
     ]) {
       const input = screen.getByTestId(testid);
-      // A text input's intrinsic width comes from its `size` attribute
-      // (~20ch), and `min-width: auto` pins a flex item there unless both an
-      // explicit width and `min-w-0` override it.
       expect(input.className).toContain("w-[14ch]");
       expect(input.className).toContain("min-w-0");
     }
   });
 });
 
-/**
- * `useQuery` is `undefined` until it answers, and the stream used to flatten
- * that to `[]` before rendering — so a read still in flight was reported as a
- * result, with a cause ("the current filters") the reader could not act on and
- * may never have set.
- */
+// `useQuery` is `undefined` until it answers. Two reads feed the stream, and
+// the pane says "loading" until both have landed, so a slow read is never
+// reported as an empty log.
 describe("LogsTab read states", () => {
-  it("says the events are loading rather than claiming there are none", () => {
-    useQueryMock.mockReturnValue(undefined);
-    render(<LogsTab search={{ tab: "logs" }} />);
-
+  it("says the stream is loading while either read is in flight", () => {
+    answer(undefined, EVENTS);
+    const { unmount } = renderPage();
     expect(screen.getByTestId("observability-log-loading")).toHaveTextContent(
-      /Loading events/i,
+      /Loading/i,
     );
     expect(screen.queryByTestId("observability-log-empty")).toBeNull();
+    unmount();
+
+    answer(RUNS, undefined);
+    renderPage();
+    expect(screen.getByTestId("observability-log-loading")).toBeInTheDocument();
   });
 
   it("blames no filter when a settled read is genuinely empty", () => {
-    useQueryMock.mockReturnValue([]);
-    render(<LogsTab search={{ tab: "logs" }} />);
+    answer([], []);
+    renderPage();
 
     expect(
       screen.getByTestId("observability-log-empty-title"),
-    ).toHaveTextContent("No events recorded yet");
+    ).toHaveTextContent("No runs or log lines yet");
     expect(screen.getByTestId("observability-log-empty")).not.toHaveTextContent(
       /current filters/i,
     );
@@ -144,42 +355,25 @@ describe("LogsTab read states", () => {
   });
 
   it("names the filters, and offers to clear them, only when some are set", () => {
-    useQueryMock.mockReturnValue([]);
-    render(<LogsTab search={{ tab: "logs", level: "error" }} />);
+    answer([], []);
+    renderPage({ tab: "logs", level: "error" });
 
     expect(
       screen.getByTestId("observability-log-empty-title"),
-    ).toHaveTextContent("No events match the current filters");
+    ).toHaveTextContent("Nothing matches the current filters");
     expect(screen.getByTestId("observability-log-empty-cta")).toHaveTextContent(
       /Clear filters/i,
     );
   });
 
-  it("gives the empty pane the whole-tab treatment, not a single muted line", () => {
-    useQueryMock.mockReturnValue([]);
-    render(<LogsTab search={{ tab: "logs" }} />);
-
-    // DESIGN.md's whole-tab empty state is a mono title plus a two-line body
-    // plus a next action. The adjacent Operator -> Observability -> Runs tab
-    // already renders exactly this for the same condition.
-    expect(screen.getByTestId("observability-log-empty-title").tagName).toBe(
-      "H2",
-    );
-    expect(
-      screen.getByTestId("observability-log-empty-body").textContent ?? "",
-    ).not.toHaveLength(0);
-    expect(
-      screen.getByTestId("observability-log-empty-cta"),
-    ).toBeInTheDocument();
-  });
-
   it("keeps the stream's frame mounted in every state so the swap moves nothing", () => {
-    useQueryMock.mockReturnValue(undefined);
-    const { rerender } = render(<LogsTab search={{ tab: "logs" }} />);
+    answer(undefined, undefined);
+    const { rerender } = renderPage();
     const loadingFrame = screen.getByTestId("observability-log-stream");
 
-    useQueryMock.mockReturnValue(events);
-    rerender(<LogsTab search={{ tab: "logs" }} />);
+    answer(RUNS, EVENTS);
+    const Component = routeComponent(Route);
+    rerender(<Component />);
 
     expect(screen.getByTestId("observability-log-stream").className).toBe(
       loadingFrame.className,

@@ -109,10 +109,10 @@ view.
 | Compute | Request-scoped execution | Functions list, function detail, function runner, runs |
 | Services | Long-running placement (this tenant's view) | Compose-declared services in the active tenant, lifecycle state, endpoints, restart policy |
 | Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
-| Storage | Schema-aware data | Tables, document browser, schema panel, indexes, query builder |
-| Files | Opaque bytes / blob storage | Buckets, object browser, presigned URLs (placeholder in this baseline) |
+| Storage | Schema-aware data | Tables, document browser, schema tab, indexes tab, query builder |
+| Files | Opaque bytes / blob storage | Buckets, object browser, upload, preview, download over the console session |
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
-| Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding |
+| Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding (all planned; the page is one empty state until the first tenant-scoped setting has an API) |
 
 8 sections. Every section is tenant-scoped — the active tenant comes from
 the sidebar tenant selector, not the URL. Services is **dual-persona** (it also
@@ -131,8 +131,8 @@ IA decision rationale.
 | Machines | Outer dev-VM lifecycle (macOS/Windows) | Machine list, detail (boot image, upgrade state, services placed on it), start/stop/restart/SSH/OS apply/remove. A machine is a guest VM that hosts sandboxes — **not** a cluster node. Absent on pure-Linux nodes. |
 | Network | Reachability | HTTP routes, WebSocket subscriptions, published ports, machine API forwarding, listener status, origin allowlist |
 | Services | Long-running placement (cross-tenant) | Compose-declared services across every tenant, service catalog, lifecycle state, endpoints, restart policy. **Dual-persona** with the Developer IA above; both sides share `ServicesTable`/`ServiceDoc` with a `showTenantColumn` toggle |
-| Observability | Cross-tenant debugging and audit | Logs, events, traces, error groups — default cross-tenant; optional `?tenant=<id>` filter |
-| Settings (server) | Server administration | General, endpoints, deploys, token/session, environment, integrations (adapter capability matrices), shutdown |
+| Observability | Cross-tenant debugging and audit | Logs, runs, and later events, traces, error groups — default cross-tenant; the tenant facet narrows through `?tenant=<id>` |
+| Settings (server) | Server administration | General, system, deploys, integrations (adapter capability matrices), shutdown; endpoints, token/session, and environment are planned |
 
 7 sections. Server-wide by default. Tenant selector appears only on
 `/operator/observability`.
@@ -167,16 +167,32 @@ remain authoritative for the Developer side.
 
 ### Overview (Developer)
 
-The Overview screen is a dense control panel:
+The Overview answers one question first, then the three things a developer
+comes here for. Top to bottom:
 
-- Health: server status, uptime, version, storage backend, adapter listeners.
-- Compute: active functions, recent runs, failed runs, scheduler lag.
-- Storage: tenant count, table/collection count, write activity, index health.
-- Network: HTTP, WebSocket, MongoDB, Firebase, machine API listener state.
-- Machines and services: state counts with direct links to details.
-- Recent activity: unified event feed with level, source, request ID, time.
+- Headline: the mascot in the state the server is in (idle, working, error,
+  empty) and one sentence that says why, for example "The server is up. 2
+  runs failed in the last 24 hours." Under it, one mono fact line: tenant,
+  server URL, version. A fact the server did not report is left out.
+- Connect: the server URL and one snippet per client, as tabs: curl against
+  the native HTTP API, the TypeScript SDK, the Convex client. Each snippet
+  is addressed to the active tenant and names a function and a table the
+  server actually has, so it runs as pasted.
+- Stats: one row of at most four tiles — functions, tables, runs in the last
+  24 hours, errors in the last 24 hours — each a link to the page that owns
+  it. Runs and errors carry an hourly sparkline from the chart seam. A tile
+  with nothing behind it is not shown.
+- Recent runs: the five newest runs as a table, with a link to the Runs tab
+  of Observability.
 
-No large greeting, hero illustration, or marketing copy.
+A server with no functions, no tables in the active tenant, and no runs shows
+the first-run panel in place of the stats and the runs table: the empty
+mascot, three steps (install the CLI, run `nimbus dev` in an app, call a
+function) with the command for each, and live completion from the same
+queries that fill the stats. The connect panel stays.
+
+No greeting, no marketing copy, and no tile for a number the server has not
+reported.
 
 ### Compute (Developer)
 
@@ -184,25 +200,33 @@ Compute owns request-scoped function execution for the active tenant.
 Service lifecycle lives in `Services` — a dual-persona surface present
 in both consoles. Compute and Services are siblings, not parent/child.
 
-- Compute has two **compute types**, Functions and Sandboxes, selected in the
-  secondary nav (the sub-panel); Services and Sessions stay top-level. Search
-  and filters live in the main section's toolbar (shadcn data-table convention).
-- Functions: a bundle → module → function **tree** with folder/file/kind icons,
-  built from the deployed functions. Open one for its detail (Statistics,
-  Source, Logs, Runs).
+- The sub-panel is the **function tree**: bundle → module → function, built
+  from the deployed functions, with a filter box at the top. The same tree
+  backs the Compute page and every function page, so the list an operator is
+  scanning keeps its shape when they open an item from it.
+- The Compute page has three **page tabs**: Functions (a DataTable of path,
+  kind, adapter, last status, last run), Sandboxes (live runtime state, no
+  placeholder data), and Graph (the call graph of the deployed bundle). Search
+  and filters stay in the sub-panel; the table has no second toolbar.
+- A function page has four tabs: **Overview** (kind, adapter, bundle, last
+  status, last run, and the argument list read from the validator), **Source**,
+  **Runs**, and **Graph** (the call graph focused on this function). Logs are
+  not a function tab; Observability owns logs and the run page links there.
 - Source tab: the deployed module source, served from the **content-addressed
   source-package store** (`GET /api/console/source`), hash-verified, syntax-
   highlighted, with the source-package digest shown as provenance. Source is the
   read-artifact (original TS), distinct from the runtime bundle; it is captured
   at `nimbus deploy` and deduplicated by content digest. A navigable
-  **DEFINES / CALLS** symbols strip (oxc structural index — exports + `api.*` /
-  `internal.*` references) links across functions.
-- Function runner: schema-aware argument editor, identity/mock identity
-  controls where supported, query result panel, logs/result correlation,
-  and clear execution mode for queries, mutations, actions, HTTP
-  handlers, and scheduled functions.
-- Runs: status, function/action/route, request ID, duration, error,
-  logs, trace waterfall. Filtered to the active tenant.
+  **DEFINES / CALLS / CALLED BY** symbols strip (oxc structural index — exports
+  + `api.*` / `internal.*` references) links across functions. When no source
+  was captured the tab is an empty state that shows the exact
+  `nimbus dev --app-dir <dir>` command with a copy control.
+- Function runner: the bottom drawer of every function page. See
+  [Function Runner](#function-runner) for the contract.
+- Runs: a DataTable of status, run id, duration, and start time. A row opens
+  the run page, whose breadcrumb is Compute › Runs › id and whose kind is a
+  category pill and whose timings are monospaced. Filtered to the active
+  tenant.
 - Sandboxes: live runtime state (not a deployment record); the view reads from
   the sandbox runtime (wiring in progress) — no placeholder data.
 
@@ -219,31 +243,56 @@ play (query / mutation / action / HTTP route / scheduled job).
 
 Services owns long-running placement for the active tenant. Same surface
 as the Operator-side `/operator/services` (see §Services below); the
-Developer side filters `ServicesTable` to the active tenant and hides
+Developer side renders `ServicesTable` for the active tenant and hides
 the cross-tenant column.
 
-- Service list: name, kind, lifecycle state, placement (machine),
-  health, endpoints, restart policy. Scoped to the active tenant.
-- Service detail: backing image, environment, ports, dependencies,
-  lifecycle history. Cross-links to **Operator → Machines** for the
-  underlying machine record.
-- Actions: start, stop, restart, drain, remove — gated by tenant
-  permissions, not visible if the active tenant lacks placement rights.
+- Service list on `DataTable`: name, lifecycle state as a `StatePill`,
+  kind, placement (machine), endpoint count, updated. Scoped to the
+  active tenant. Row activation opens the detail; right-click or the
+  trailing actions button opens a `RowContextMenu` with `Open service`,
+  the lifecycle actions the state allows, and `Show logs` (the
+  Observability Logs tab narrowed to `source=service`).
+- Lifecycle actions: `start`, `stop`, `restart`. A live service offers
+  stop and restart, a stopped one offers start, a failed one offers
+  start and restart, and a service in flight offers none. The row shows
+  the optimistic state (`starting`, `stopping`, `restarting`) while the
+  request is out, returns to the real state when it settles, and keeps
+  the real state plus the refusal text under the pill when the route
+  says no. `restart` sends the row's `sourceGeneration` and a fresh
+  request id.
+- Service detail: header with kind, state pill, bundle chip, and the
+  same lifecycle buttons; tabs `Overview` (stats, endpoints, health),
+  `Logs` (the live `source=service` event stream for the tenant, with a
+  link to Observability), `Config` (bundle and endpoints). Cross-links
+  to **Operator → Machines** for the underlying machine record.
 
 The Services sub-panel (Developer) is a **dynamic list** of services
-declared in the active tenant's `compose.yaml`. The Developer side
-never lists system services from `_nimbus`; the System Tenant Lens
-(⌘\\) is the only Developer-side path to system service state.
+declared in the active tenant's `compose.yaml`, each with a `StateDot`.
+The Developer side never lists system services from `_nimbus`; the
+System Tenant Lens (⌘\\) is the only Developer-side path to system
+service state.
 
 ### Schedules (Developer)
 
 Schedules owns periodic and future-dated work for the active tenant.
 
-- Scheduled jobs list: function path, next run, last run, status,
-  cancel / retry where supported.
-- Cron jobs list: name, cron expression, next run, last run, history
-  link to a run-level detail page.
-- Schedule detail: queued runs, recent runs, error history, retry policy.
+- Scheduled jobs on `DataTable`: function path, status pill, scheduled
+  time, finished time, outcome (with the error text when the job
+  failed). Row activation opens the job sheet through `?job=`; the row
+  menu offers `Open job`, `Run now`, and `Cancel job` on a pending job.
+- Cron jobs on `DataTable`: name, function path, schedule as an
+  operator would say it (`every 30s`), status pill, next run, last run.
+  Row activation opens the cron sheet through `?cron=`; the row menu
+  offers `Open cron`, `Run now`, and `Delete cron` behind a
+  `ConfirmDialog`.
+- Schedule sheet: facts, the recorded mutation, the error when there
+  is one, and the footer actions. `Run now` re-enqueues the job's
+  mutation as a new one-shot job with no delay; for a cron it reads the
+  cron's mutation from the crons route first, because the system record
+  does not hold it. The scheduler writes a job's outcome into its
+  system record when the job history route is read, so a row can sit on
+  `pending` after it ran; recording outcomes as they happen belongs to
+  the scheduler, not the console.
 
 The Schedules sub-panel is a **static menu** with two items
 (`Scheduled` / `Cron`).
@@ -261,11 +310,14 @@ view assumes a tenant is selected.
 - Document actions: insert new document, edit in a drawer with schema
   validation preview, delete with confirmation, and bulk delete only after
   explicit selection.
-- Schema panel for optional Nimbus schemas and adapter-derived schema views,
-  including create, edit, delete, and validation error display.
-- Indexes panel with name, fields, status, usage when available, create/drop
+- Schema tab for optional Nimbus schemas and adapter-derived schema views,
+  including create, edit, delete, and validation error display. The tab is
+  a full-width view of the table page, addressed by `?tab=schema`, not a
+  side inspector beside the grid.
+- Indexes tab with name, fields, status, usage when available, create/drop
   actions where implemented, and warnings about write cost or unsupported
-  index types.
+  index types. Addressed by `?tab=indexes`; read-only until the index API
+  exists.
 - Query builder that makes index use visible and refuses unbounded scans where
   the backend would be unsafe.
 
@@ -279,19 +331,35 @@ Nimbus document browser with adapter-specific labels and type renderers.
 
 ### Files (Developer)
 
-Files owns opaque-byte / S3-compatible blob storage for the active
-tenant. Ships as a placeholder surface in this baseline; the routes and
-sub-panel are real, the underlying feature is not implemented yet.
+Files owns opaque-byte / S3-compatible object storage for the active
+tenant. It reads and writes through the console's own object route
+family on `/api/tenants/{tenant}/objects`, which rides the console
+session like every other console write; the S3 listener is a separate
+front door with its own credentials, which the console never holds.
 
-- Buckets / namespaces list with object count and total bytes.
-- Object browser with prefix navigation, last-modified / size columns,
-  upload, download, copy presigned URL.
-- Object detail drawer: metadata, content type, lifecycle policy if any.
-
-The Files sub-panel is a **dynamic list** of buckets.
-
-The placeholder state honors the token system and renders an honest
-"Not yet implemented" line — no fake bucket data, no synthesized objects.
+- The sub-panel is a **dynamic list** of buckets with object count and
+  total bytes. A bucket exists once it holds an object; **New bucket**
+  names one and opens its (empty) listing so the first upload lands
+  there.
+- The page lists one prefix level on the shared `DataTable`: Name,
+  Size, Type, Modified, and a row menu. Keys that continue past the next
+  slash fold into a folder row. The bucket, the prefix, and the open
+  object all live in the address (`?bucket=&prefix=&object=`). A
+  breadcrumb above the table walks the prefix.
+- Upload is a drop anywhere on the listing or the Upload chooser. Each
+  file becomes one whole object keyed by its name under the current
+  prefix; an upload strip shows progress, the result, or the server's
+  reason for a refusal. The route takes whole objects up to 16 MiB and
+  never creates a tenant.
+- The object sheet holds the facts (size, type, modified, etag), a
+  preview for images and text under 256 KiB, Download, Copy link, and
+  Delete. The link is the console's object route, so it answers for a
+  signed-in console session only. There are no presigned URLs.
+- Downloads and previews come back with `content-security-policy:
+  sandbox` and `nosniff`, so a stored page cannot script the console.
+- The listing is read on demand (there is no live query over objects)
+  and again after every write the console makes. A listing carries up
+  to 1000 keys under the prefix and says when it stopped short.
 
 ### Observability (Developer)
 
@@ -299,10 +367,16 @@ Observability is the Developer-side debugging surface. Defaults to the
 active tenant; never cross-tenant in this view. (The Operator console
 owns the cross-tenant feed under `/operator/observability`.)
 
-- Logs: structured records with level, timestamp, request ID, function
-  path, tenant, search and filters.
-- Runs: recent function runs with status, duration, and the correlated
-  log lines.
+- Logs: one stream of runs and the log lines that belong to them. Each
+  run is a group with its status, function path, kind, duration, and line
+  count; a line that names no run sits in the `server` group. The facet
+  bar holds tenant, level, category, source, and correlation. `Follow`
+  keeps the newest line in view; `Pause on error` freezes the stream at
+  the first line at `error` level or above.
+- Runs: recent function runs on `DataTable` with status pills. A row
+  opens a right-side sheet that shows the run summary, the error, and
+  the correlated lines; `Show in logs` narrows the Logs tab to that run
+  and `Open run` goes to the full run page.
 - Events (UIR20): ordered domain events (mutation applied, scheduler
   fired, service restarted) for the active tenant.
 - Errors (UIR20): grouped failures with last seen, count, sample traces.
@@ -310,6 +384,12 @@ owns the cross-tenant feed under `/operator/observability`.)
 Observability has no sub-panel. Its views are page-header tabs
 (`Logs` / `Runs`, driven by `?tab=`), and a tab appears only once its
 page exists: the strip never names a view the operator cannot open.
+
+Every filter lives in the address (`?tenant=`, `?level=`, `?category=`,
+`?source=`, `?correlationId=`, `?status=`, `?functionPath=`, `?run=`), so
+a view is a link. Run and event rows carry no tenant column yet; the
+tenant facet is honest about that with a note under the bar and the
+query applies the scope to rows that name a tenant.
 
 ### Settings (tenant)
 
@@ -326,6 +406,11 @@ permissions.
 
 The Settings (tenant) sub-panel is a **static menu** of sub-pages
 (`Environment`, `Secrets`, `Schema`, `Integrations`, `Adapter binding`).
+None of the five is built: no tenant-scoped setting has a write API in
+this build. A static menu lists only pages that exist, so the page
+contributes no sub-panel and shows one empty state that names the five
+planned sub-pages and links to the operator settings. The menu and the
+`?section=` search arrive with the first built sub-page.
 
 ## Core Screens — Operator console
 
@@ -338,34 +423,64 @@ local host, sourced from system status. The screen is shaped as a node
 list so it scales to a real cluster without a redesign. A node is
 distinct from a **machine** (the outer dev VM under Machines).
 
-- Node identity and health: listen address, health, role (standalone
-  today), Nimbus version, build info, uptime, embed integrity hash.
-- Hosted on this node: live counts of tenants, machines, services, and
-  per-adapter listeners (Convex HTTP/WS, MongoDB wire, Firebase
-  REST/Listen, native WebSocket, machine API).
-- Upgrades: pending release / upgrade state, last upgrade, current
-  channel.
-- Recent admin actions: token rotation, tenant create, machine restart.
+The page reads top to bottom the way the Developer overview does:
 
-No sub-panel. When clustering lands this becomes a multi-row node list
-with a per-node detail page (Raft role, peer reachability, placement).
+- Headline: the mascot beside one sentence that says what the node is
+  doing. Priority order: connection dropped, status read failed,
+  inventory read failed, reading, unhealthy, failing services, no
+  services placed, every service running, or "R of N services running".
+  The face state follows the sentence (error, working, empty, idle).
+- Facts line under the headline: listen address, version, uptime, and
+  data directory as copy chips separated by `·`. Identity lives here
+  once; the node card does not repeat it.
+- Node card: name (`local node`), role subline ("standalone ·
+  clustering is not active"), a health pill, and three cells for
+  started, last update, and the build hash. Loading, offline, and error
+  render inside the cells through `LoadingCell`.
+- Hosted on this node: four tiles that link to Tenants, Machines,
+  Services, and Network. Each tile shows a large count and a subline
+  that says what the count is made of: machines and services carry a
+  state summary ("2 running · 1 stopped"), listeners carry the adapter
+  list ("http, ws"). A count never stands alone.
+- Recent events: the five newest events as a `DataTable` (level dot and
+  word, source, message, relative time) with a "View all logs" link.
+  Activating a row opens Observability on the Logs tab narrowed to the
+  event's correlation id when it has one.
+
+No sub-panel. When clustering lands the node card becomes one row per
+node with a per-node detail page (Raft role, peer reachability,
+placement). Upgrade state and recent admin actions are not shown yet;
+Settings owns upgrades.
 
 ### Tenants (Operator)
 
 Tenants owns the tenant lifecycle (the Developer console can't create
 tenants — that's an admin concern).
 
-- Tenant list: name, backend, table count, quota, last write, current
-  adapter binding.
-- Create tenant: backend selector, adapter binding, optional schema
-  bootstrap.
-- Archive tenant: confirmation with resource-count warning.
-- Per-tenant adapter binding override.
-- Empty state on fresh install: prominent "Create your first tenant"
-  CTA; matches the inline Developer-side fallback.
+- Tenant list: a `DataTable` with id (as a copy chip), table count, and
+  a row menu. Clicking a row opens the tenant in the Developer storage
+  view (`/developer/storage?as=<id>`). Right-click or the `⋯` button
+  opens the row menu: open, copy id, delete.
+- Create tenant: `Create` is the one primary action in the header. It
+  opens a dialog with a single id input; the server owns the id rule
+  and a refusal (for example "tenant already exists") stays in the
+  dialog beside the input. While the request is in flight the submit
+  reads "Creating…". Success closes the dialog, toasts "Created tenant
+  <id>", and the row appears through a loader invalidation. The
+  Developer console hands off with `?create=1`, which opens the dialog
+  on arrival and clears itself on close.
+- Delete tenant: lives in the row menu only, never inline, and runs
+  through `ConfirmDialog`. The description says how many tables go with
+  the tenant; when the count is above zero the operator types the
+  tenant id before `Delete` enables. A server refusal stays in the
+  dialog.
+- Empty state on fresh install: "Create your first tenant" CTA that
+  opens the same dialog; matches the inline Developer-side fallback.
+- Backend selector, adapter binding, quotas, and last write are not
+  wired; the server exposes ids and table counts only.
 
 The Tenants sub-panel is a **dynamic list** of tenants. Selecting a
-tenant opens its admin detail page.
+tenant opens it in the Developer storage view.
 
 ### Machines (Operator)
 
@@ -375,17 +490,32 @@ supplies the kernel sandboxes need; it is **not** a cluster node (see
 Nodes), and pure-Linux nodes have none. Do not frame this screen as
 "host" lifecycle — the host is the node.
 
-- Machine list: name, provider, architecture, OS image reference, digest,
-  state, resource allocation, last boot, last upgrade.
-- Machine detail: boot image, desired image, actual image, guest Nimbus
-  version/hash, forwarded API, services placed on it, ports, logs,
-  upgrade/rollback state.
-- Actions: start, stop, restart, SSH, OS apply, OS upgrade, remove.
+- Header summary: the trailing slot says what the fleet is, not a bare
+  total: "3 machines · 2 running · 1 stopped" on the first line and the
+  summed allocation ("6 vCPU · 12 GiB memory · 120 GiB disk") on the
+  second. Zero capacity leaves the second line out; an in-flight read
+  says "loading…".
+- Machine list: name, state as a `StateDot` with the state word beside
+  it (an in-flight action shows its optimistic state and the row error
+  under it), provider, kind, CPU, memory, disk, updated, and a pinned
+  actions column. The table keeps its nine columns through the skeleton
+  so the swap from loading to loaded moves nothing.
+- Machine detail: the inspector beside the table opens from a row or
+  from the sub-panel; it shows the identity, resources, and metadata
+  the server records. Boot image, desired versus actual image, guest
+  Nimbus hash, forwarded API, and placed services arrive with the
+  provider work that records them.
+- Actions: start, stop, restart, delete (behind `ConfirmDialog`). SSH,
+  OS apply, and OS upgrade are not wired.
 - macOS copy must be clear that services run as containers inside the
   Linux guest and that machine actions converge the guest VM's state. Do
   not imply per-service nested microVMs on macOS.
 
-The Machines sub-panel is a **dynamic list** of machines.
+The Machines sub-panel is a **dynamic list** of machines. Each item is a
+button with a `StateDot`, the name, and the state word; it selects the
+machine in place (the inspector opens beside the table) and carries
+`aria-current` while selected, so the panel and the table agree on
+which machine is open.
 
 ### Network (Operator)
 
@@ -403,6 +533,10 @@ Network makes the active local topology inspectable.
 - Security: origin allowlist, session state, token rotation, denied
   requests.
 
+Every count on Network is labelled with what it counts (listeners by
+adapter, active subscriptions, published ports); a number never stands
+alone next to a heading.
+
 The Network sub-panel is a **static menu** (`Routes` / `WS` / `Ports`
 / `Listeners` / `Security`).
 
@@ -413,14 +547,16 @@ described under **Services (Developer)** above. The same
 `ServicesTable` component backs both routes; only the query and the
 visible columns differ.
 
-- Service list: cross-tenant, grouped by tenant. Adds a `Tenant` column
-  not present on the Developer side. Includes system services
-  (`_nimbus`-owned) that the Developer console hides.
-- Service detail: identical schema to the Developer side — backing
-  image, environment, ports, dependencies, lifecycle history. The
-  difference is permissions: Operator actions are not tenant-gated.
-- Actions: start, stop, restart, drain, remove. Operator can act on
-  any tenant's services and on system services.
+- Service list: cross-tenant, with a `Tenant` column not present on
+  the Developer side, the same row menu and optimistic lifecycle
+  states. Includes system services (`_nimbus`-owned) that the Developer
+  console hides.
+- Service detail: the same header, state pill, and lifecycle buttons;
+  tabs `Placement` (machine, attachment, provider) and `Logs` (the same
+  live service stream). The difference is permissions: Operator actions
+  are not tenant-gated.
+- Actions: start, stop, restart. Operator can act on any tenant's
+  services and on system services.
 
 A service has both a service identity (here) and a machine placement
 (under **Operator → Machines**). Cross-link both ways; do not duplicate
@@ -434,36 +570,49 @@ and the tenant scope of the query differ.
 ### Observability (Operator)
 
 The Operator-side cross-tenant feed of the same data store. Defaults to
-all tenants. An optional `?tenant=<id>` filter (set from the page's own
-filter bar once the Observability tabs land) narrows to one tenant
-without leaving the Operator console.
+all tenants. The tenant facet in the bar adds an `all tenants` option
+ahead of the tenant list; picking one narrows the view through
+`?tenant=<id>` without leaving the Operator console.
 
-- Logs: cross-tenant log stream with the same filter set as Developer.
-- Runs: cross-tenant recent function runs.
+- Logs: the same run-grouped stream and facet bar as Developer, across
+  every tenant.
+- Runs: the same `DataTable` and run sheet as Developer, across every
+  tenant.
 - Events (UIR20): cross-tenant ordered domain events.
 - Errors (UIR20): cross-tenant grouped failures.
 
 The Operator page uses the same page-header tab strip as the Developer
 page (`Logs` / `Runs`, driven by `?tab=`) through the shared `PageTabs`
-component; only the query input differs.
+component; only the default tenant scope differs.
 
 ### Settings (server)
 
 Server administration. Distinct from the Developer-side **Settings
 (tenant)**.
 
-- General: server name, build info.
-- Endpoints: bind addresses, TLS posture, advertised URLs.
-- Deploys: release channel, current release, rollout history.
-- Token / session: admin token rotation, session policy.
-- Environment: process-level env vars.
+- General: appearance (mode only: light, dark, system), license and
+  usage, effective configuration.
+- System: server identity. Version and update posture, health, uptime,
+  listen address, local origin, data directory, storage backend,
+  encryption at rest. General is what the operator sets; System is what
+  the server reports.
+- Endpoints (planned): bind addresses, TLS posture, advertised URLs.
+- Deploys: release channel, current release, rollout history. Moves to
+  its own Deploys page in UIR23.
+- Token / session (planned): admin token rotation, session policy.
+  Rotation itself lives under Shutdown until this sub-page exists.
+- Environment (planned): process-level env vars.
 - Integrations: adapter capability matrices (Convex / MongoDB / Firebase
   / Cloud Functions / Native HTTP/WS).
-- Shutdown: graceful shutdown with running-machine warning.
+- Shutdown: admin-token rotation and graceful shutdown. Both writes go
+  through `ConfirmDialog`: rotation asks for the current bearer and
+  keeps Confirm inert until one is typed; shutdown asks the operator to
+  type `shutdown`, because the write reaches past this browser.
 
-The Settings (server) sub-panel is a **static menu** of sub-pages
-(`General`, `Endpoints`, `Deploys`, `Token`, `Environment`,
-`Integrations`, `Shutdown`).
+The Settings (server) sub-panel is a **static menu** of the built
+sub-pages (`General`, `System`, `Deploys`, `Integrations`, `Shutdown`).
+`Endpoints`, `Token`, and `Environment` join the menu when their panes
+land; the route rejects their ids until then.
 
 ### Operator → Settings (server) → Integrations (Adapters)
 
@@ -552,7 +701,7 @@ rail is the default and an expand is held in memory for that tier.
 | View | Selector visible? | Default | Notes |
 | --- | --- | --- | --- |
 | Developer | always | last-active tenant (or first tenant alphabetically on fresh install) | when zero tenants exist, the trigger is replaced by a compact "Create tenant" CTA that deep-links to `/operator/tenants?new=1` |
-| Operator | hidden | n/a | the sidebar shows the server identity line instead; `/operator/observability` gets an optional cross-tenant filter (default "All tenants", encoded as `?tenant=<id>`) in its own filter bar when the Observability tabs land |
+| Operator | hidden | n/a | the sidebar shows the server identity line instead; `/operator/observability` narrows through the tenant facet in its own bar (default `all tenants`, encoded as `?tenant=<id>`) |
 
 The selector is one component with two modes: the developer mode sets the
 active tenant, the `operator-filter` mode writes `?tenant=`.
@@ -605,8 +754,8 @@ resolves it at the root. Routes without a sub-panel reserve no space.
   above.
 - **Resource detail**: header summary, tabs, split panes for logs/JSON.
 - **Data browser** (Storage): table plus right-side document drawer.
-- **Logs / runs** (Observability): timeline table plus correlated
-  detail drawer.
+- **Logs / runs** (Observability): run-grouped log stream; runs table
+  plus right-side run sheet.
 
 ### Page tabs
 
@@ -968,7 +1117,16 @@ Tables are the default shape for resources:
 - Row click opens detail; row checkbox selects for bulk actions.
 - Inline actions appear on hover and are also reachable by keyboard.
 - Empty state stays compact and includes the next useful action.
-- Loading state preserves table geometry with skeleton rows.
+- Loading state preserves table geometry with skeleton rows. `DataTable`
+  draws them itself (`loading`, `skeletonRows`) under the real header, so a
+  page never swaps a centered label for the table.
+- Past 100 rows `DataTable` virtualizes: only the rows in and around the
+  viewport are in the DOM (`data-virtual="true"`, `aria-rowcount` for the
+  full count). A 200-row page costs the same as a short one.
+- Right-click on a row is a peer of click. `DataTable` reports the row and
+  an anchor (`onRowContextMenu`); Shift+F10 and the ContextMenu key raise
+  the same menu from the keyboard. Arrow keys move focus between rows, one
+  row at a time in the tab order, and Enter or Space activates.
 
 ### Forms And Editors
 
@@ -1029,16 +1187,27 @@ Do not place more than two categorical badges on the same row.
 
 ### Logs And Events
 
-- Logs are a virtualized table by default.
-- Required columns: time, level, source, request/run ID, message.
-- Detail drawer shows structured fields and correlated entries.
-- Search by request ID, execution ID, run ID, function path, source, and text.
-- Preserve scroll position while new logs arrive.
-- Provide pause/resume follow mode.
+- Logs are one table whose rows group under the run that wrote them. A
+  group head carries the run status pill, function path, kind, duration,
+  relative time, and line count; lines that belong to no run sit under
+  the `server` head.
+- Required columns: time, level, source, message, run.
+- The run sheet shows the run summary, the error, and the correlated
+  lines. A log line jumps to its run page; a run row opens the sheet.
+- Filters are a facet bar: tenant, level, category, source, and
+  correlation on Logs; tenant, status, and function on Runs. Every facet
+  lives in the address.
+- `Follow` keeps the newest line in view. `Pause on error` freezes the
+  stream at the first line at `error` level or above and `Resume` picks
+  the stream back up.
+- Preserve scroll position while new lines arrive when follow is off.
 
 ### Data Browser
 
-- Use cursor pagination, not unbounded fetches.
+- Use cursor pagination, not unbounded fetches. One page is 200 documents,
+  drawn by the virtualized `DataTable`; sorting stays server-side
+  (`manualSorting`) and every click on the active column flips its
+  direction.
 - Show active filters and sort order as editable chips.
 - Document values open in a drawer with JSON/BSON/Firestore type fidelity.
 - Inline editing is allowed only when the backend supports the exact mutation
@@ -1047,10 +1216,24 @@ Do not place more than two categorical badges on the same row.
 
 ### Function Runner
 
-- Argument editor must be schema-aware when `argsSchema` is available.
+- The runner is a bottom drawer on the function page. Its toggle bar shows the
+  kind and adapter as category pills, the active tenant as read-only text, and
+  the state of the last run as a pill (running, ok with duration, error).
+- The argument editor is schema-aware when `argsSchema` is available. Both the
+  SDK validator shape (`{kind, fields}`) and the Convex JSON shape
+  (`{type, value}`) produce **Form** mode: one field per argument, text for
+  string and id, number for number, a checkbox for boolean, a JSON textarea for
+  everything else, with the optional marker on the type. **JSON** mode is
+  always available and the two modes carry values across the switch. Without a
+  validator the editor is JSON only.
+- Submit is the **Run function** button or ⌘⏎ (Ctrl+⏎ elsewhere). Plain Enter
+  in a text field does not submit, so a mutation never runs by accident.
+- Tenant is implicit from the sidebar tenant selector. The runner shows it and
+  never offers a second chooser.
 - Query runs can auto-refresh/react when backed by subscriptions.
 - Mutations and actions run only on explicit submit.
-- Results and logs share the same request/run correlation ID.
+- Results and logs share the same request/run correlation ID; the result panel
+  shows it as a copy chip for both success and error envelopes.
 - Identity controls are labeled as simulated/admin-local identity unless a
   real auth provider is active.
 
@@ -1299,8 +1482,8 @@ Native UI expectations:
 
 Settings owns server administration and deployment management:
 
-- Server info: version, uptime, listen address, storage backend, and active
-  local server origin.
+- Server info: version, uptime, listen address, data directory, storage
+  backend, and active local server origin. This is the System sub-page.
 - Configuration display: runtime limits, license status and usage, auth
   provider config, adapter enablement, and storage topology. Configuration is
   read-only in Phase 1 unless a dedicated write API exists.
@@ -1308,8 +1491,11 @@ Settings owns server administration and deployment management:
   inventory, deploy history, and deploy trigger when the local-admin deploy
   endpoint can accept the selected artifact.
 - Token and session: current session state, token rotation with confirmation,
-  and forced re-auth after rotation.
-- Shutdown: graceful shutdown with confirmation and clear disconnect state.
+  and forced re-auth after rotation. Rotation lives on the Shutdown sub-page
+  until the Token sub-page exists.
+- Shutdown: graceful shutdown with typed confirmation and clear disconnect
+  state. Both writes use the shared `ConfirmDialog`; nothing on the page
+  hand-rolls a modal.
 
 ## Copy And Terminology
 

@@ -222,7 +222,6 @@ describe("document page query", () => {
   // shareable, and each write must keep the other params intact.
   it("writes a sort into the URL without dropping the other search params", async () => {
     const user = userEvent.setup();
-    searchState.value = { panel: "schema" };
     await renderPage();
 
     await user.click(screen.getByTestId("documents-sort-author"));
@@ -230,8 +229,8 @@ describe("document page query", () => {
     const arg = navigateMock.mock.calls[0][0] as {
       search: (prev: Record<string, unknown>) => Record<string, unknown>;
     };
-    expect(arg.search({ panel: "schema" })).toEqual({
-      panel: "schema",
+    expect(arg.search({ filters: ["a=1"] })).toEqual({
+      filters: ["a=1"],
       sort: "author",
       dir: "asc",
     });
@@ -351,12 +350,12 @@ describe("document page pagination", () => {
   it("writes the next page's cursor into the URL", async () => {
     const user = userEvent.setup();
     servePages();
-    searchState.value = { panel: "schema" };
     await renderPage();
 
     await user.click(screen.getByTestId("documents-next-page"));
-    expect(lastSearch({ panel: "schema" })).toEqual({
-      panel: "schema",
+    // The updater spreads the previous search, so peer params survive.
+    expect(lastSearch({ dir: "asc" })).toEqual({
+      dir: "asc",
       cursors: ["c1"],
     });
   });
@@ -441,7 +440,7 @@ describe("document page pagination", () => {
     expect(screen.queryByText("first")).not.toBeInTheDocument();
     // The table keeps its geometry rather than collapsing to a spinner.
     expect(
-      screen.getAllByTestId("documents-skeleton-row").length,
+      screen.getAllByTestId("documents-table-skeleton-row").length,
     ).toBeGreaterThan(0);
     expect(screen.getByTestId("documents-sort-author")).toBeInTheDocument();
 

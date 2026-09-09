@@ -3,7 +3,6 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { AppearanceSection } from "../../components/appearance-section";
-import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
 import { useContributeSubPanel } from "../../shell/sub-panel";
 import { ConfigurationSection } from "./settings/-configuration";
@@ -24,15 +23,15 @@ import type {
   SystemStatusDoc,
 } from "./settings/-types";
 
-// The sub-panel's seven sub-pages are the section space: the route validates
+// The sub-panel's five sub-pages are the section space: the route validates
 // exactly the ids the menu can produce. `settings.spec.tsx` asserts the two
-// stay in step at compile time.
+// stay in step at compile time. Every section has a built pane; a planned
+// sub-page joins the list when its pane lands (DESIGN.md: a static menu
+// lists only pages that exist).
 const SECTIONS = [
   "general",
-  "endpoints",
+  "system",
   "deploys",
-  "token",
-  "environment",
   "integrations",
   "shutdown",
 ] as const;
@@ -73,37 +72,15 @@ export const Route = createFileRoute("/operator/settings")({
 });
 
 const SECTION_SUBTITLES: Record<SettingsSection, string> = {
-  general:
-    "Appearance, server build and runtime info, and effective configuration.",
-  endpoints: "Adapter base URLs and published listener endpoints.",
+  general: "Appearance, license and usage, and effective configuration.",
+  system:
+    "Server identity: version, health, uptime, listen address, data directory, encryption.",
   deploys:
     "Bundle history, active release, and the functions each bundle ships.",
-  token: "Admin token lifetime and rotation.",
-  environment: "Process-level environment variables visible to the server.",
   integrations:
     "Adapter capability matrices — what each protocol surface implements today.",
   shutdown:
     "Session lifecycle: admin-token rotation and graceful server shutdown.",
-};
-
-// Sections the console does not implement yet. They stay in the menu because
-// DESIGN.md specifies the sub-page list, but the pane says so directly instead
-// of rendering an empty frame (DESIGN.md: Adapter Honesty).
-const UNBUILT: Partial<
-  Record<SettingsSection, { title: string; body: string }>
-> = {
-  endpoints: {
-    title: "Endpoints",
-    body: "Endpoint inventory is not available in this build. Registered HTTP routes and listeners are visible under Operator → Network.",
-  },
-  token: {
-    title: "Token",
-    body: "Token policy is not available in this build. Admin-token rotation currently lives under Settings → Shutdown.",
-  },
-  environment: {
-    title: "Environment",
-    body: "Environment inspection is not available in this build. Effective configuration values are listed under Settings → General.",
-  },
 };
 
 function SettingsPage() {
@@ -129,8 +106,6 @@ function SettingsPage() {
   const encryption = useEncryptionStatus();
   const diagnostics = useRuntimeDiagnostics();
 
-  const unbuilt = UNBUILT[section];
-
   return (
     <section
       className="flex h-full flex-col gap-5 overflow-y-auto px-6 py-5"
@@ -139,25 +114,18 @@ function SettingsPage() {
     >
       <PageHeader title="Settings" subtitle={SECTION_SUBTITLES[section]} />
 
-      {unbuilt ? (
-        <div className="flex min-h-0 flex-1 rounded-md border border-border-2 bg-bg-panel">
-          <EmptyState
-            title={unbuilt.title}
-            body={unbuilt.body}
-            testid={`settings-${section}-unavailable`}
-          />
-        </div>
-      ) : section === "deploys" ? (
+      {section === "deploys" ? (
         <DeploysSection bundles={bundles} functions={functions} />
       ) : section === "integrations" ? (
         <IntegrationsSection capabilities={capabilities} />
       ) : section === "shutdown" ? (
         <DangerZoneSection />
+      ) : section === "system" ? (
+        <ServerInfoSection status={status} encryption={encryption} />
       ) : (
         <>
           <AppearanceSection />
           <TenantHeaderStrip status={status} license={license} />
-          <ServerInfoSection status={status} encryption={encryption} />
           <ConfigurationSection
             diagnostics={diagnostics}
             license={license}

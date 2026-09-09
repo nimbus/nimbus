@@ -38,10 +38,21 @@ where
     }
 }
 
+/// The object byte-plane placement policy for this boot, from the
+/// `NIMBUS_OBJECT_STORAGE_*` environment. The S3 listener and the native
+/// object routes on the main listener both take this one value, so a
+/// process that serves both writes one object space per tenant.
+pub(super) fn resolve_object_storage(
+    env_lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<ObjectStorageConfig, Error> {
+    ObjectStorageConfig::from_sources(None, &AdapterObjectStorageEnv { lookup: env_lookup })
+}
+
 pub(super) fn resolve_s3(
     command: &StartCommand,
     env_lookup: &impl Fn(&str) -> Option<String>,
     store: &mut CredentialStore<'_>,
+    object_storage: ObjectStorageConfig,
 ) -> Result<Option<S3Config>, Error> {
     if !command.s3 {
         if command.s3_port.is_some() || !command.s3_access_key.is_empty() {
@@ -85,8 +96,6 @@ pub(super) fn resolve_s3(
         S3AccessKeyRegistry::from_operator_spec(&raw_bindings.join(","))
             .map_err(|error| Error::InvalidInput(error.to_string()))?
     };
-    let object_storage =
-        ObjectStorageConfig::from_sources(None, &AdapterObjectStorageEnv { lookup: env_lookup })?;
     let mut config = S3Config::new(port)
         .with_bind_addr(adapter_bind_addr(&command.s3_host, port, "--s3-host")?)
         .with_access_keys(access_keys)

@@ -235,6 +235,7 @@ mod tests {
             node_services: NodeServicesConfig::default(),
             transport: TransportConfig::default(),
             runtime: RuntimeGovernorConfig::default(),
+            object_storage: nimbus_object_storage::ObjectStorageConfig::default(),
         }));
         (state, fixture)
     }

@@ -1,0 +1,165 @@
+
+ RUN  v4.1.11 /Users/jack/src/github.com/nimbus/nimbus-worktrees/nimbus-ui-rebuild/packages/nimbus-ui
+
+ ❯ src/routes/developer/schedules-run-now.spec.tsx (1 test | 1 failed) 22ms
+     × re-enqueues the job mutation from the row menu and toasts 21ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/routes/developer/schedules-run-now.spec.tsx > SchedulesPage Run now > re-enqueues the job mutation from the row menu and toasts
+TestingLibraryElementError: Unable to find an element by: [data-testid="schedules-row-menu"]
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<section[39m
+      [33mclass[39m=[32m"flex h-full flex-col gap-4 overflow-hidden px-6 py-5"[39m
+      [33mdata-testid[39m=[32m"page-schedules"[39m
+    [36m>[39m
+      [36m<header[39m
+        [33mclass[39m=[32m"flex items-baseline justify-between gap-4"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"min-w-0"[39m
+        [36m>[39m
+          [36m<h1[39m
+            [33mclass[39m=[32m"text-xl text-text-1"[39m
+            [33mstyle[39m=[32m"font-size: var(--text-xl);"[39m
+          [36m>[39m
+            [0mSchedules[0m
+          [36m</h1>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"max-w-[110ch] text-sm text-text-3"[39m
+            [33mdata-slot[39m=[32m"page-subtitle"[39m
+          [36m>[39m
+            [0mInvocations for this tenant: one-shot scheduled jobs and recurring cron entries.[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</header>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"Scheduled jobs"[39m
+          [33mclass[39m=[32m"overflow-auto h-full"[39m
+          [33mtabindex[39m=[32m"0"[39m
+        [36m>[39m
+          [36m<table[39m
+            [33mclass[39m=[32m"w-full border-collapse text-sm"[39m
+            [33mdata-testid[39m=[32m"schedules-scheduled-table"[39m
+          [36m>[39m
+            [36m<thead[39m
+              [33mclass[39m=[32m"sticky top-0 bg-bg-raised text-xs font-medium text-text-3"[39m
+            [36m>[39m
+              [36m<tr>[39m
+                [36m<th[39m
+                  [33mclass[39m=[32m"border-b border-border-2 px-3 py-2 font-normal text-left"[39m
+                [36m>[39m
+                  [0mFunction[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mclass[39m=[32m"border-b border-border-2 px-3 py-2 font-normal text-left"[39m
+                [36m>[39m
+                  [0mStatus[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mclass[39m=[32m"border-b border-border-2 px-3 py-2 font-normal text-left"[39m
+                [36m>[39m
+                  [0mTenant[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mclass[39m=[32m"border-b border-border-2 px-3 py-2 font-normal text-left"[39m
+                [36m>[39m
+                  [0mScheduled[0m
+                [36m</th>[39m
+                [36m<th[39m
+                  [33mclass[39m=[32m"border-b border-border-2 px-3 py-2 font-normal text-left"[39m
+                [36m>[39m
+                  [0mDuration[0m
+                [36m</th>[39m
+              [36m</tr>[39m
+            [36m</thead>[39m
+            [36m<tbody>[39m
+              [36m<tr[39m
+                [33mclass[39m=[32m"border-t border-border-2 hover:bg-bg-raised"[39m
+                [33mdata-testid[39m=[32m"schedules-scheduled-scheduled-job:acme:job~2d1"[39m
+              [36m>[39m
+                [36m<td[39m
+                  [33mclass[39m=[32m"h-10 whitespace-nowrap px-3 py-2 align-middle"[39m
+                [36m>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"font-mono text-text-1"[39m
+                  [36m>[39m
+                    [0mdocuments.pings.insert[0m
+                  [36m</span>[39m
+                [36m</td>[39m
+                [36m<td[39m
+                  [33mclass[39m=[32m"h-10 whitespace-nowrap px-3 py-2 align-middle"[39m
+                [36m>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"inline-flex h-5 items-center whitespace-nowrap rounded-full px-2 text-xs font-medium bg-bg-raised text-text-3 tabular"[39m
+                    [33mdata-glyph[39m=[32m"outline"[39m
+                    [33mdata-slot[39m=[32m"pill"[39m
+                    [33mdata-state[39m=[32m"pending"[39m
+                    [33mdata-tone[39m=[32m"neutral"[39m
+                  [36m>[39m
+                    [0mpending[0m
+                  [36m</span>[39m
+                [36m</td>[39m
+                [36m<td[39m
+                  [33mclass[39m=[32m"h-10 whitespace-nowrap px-3 py-2 align-middle"[39m
+                [36m>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"font-mono text-xs text-text-1"[39m
+                  [36m>[39m
+                    [0macme[0m
+                  [36m</span>[39m
+                [36m</td>[39m
+                [36m<td[39m
+                  [33mclass[39m=[32m"h-10 whitespace-nowrap px-3 py-2 align-middle"[39m
+                [36m>[39m
+                  [36m<time[39m
+                    [33mclass[39m=[32m"whitespace-nowrap tabular text-text-3"[39m
+                    [33mdatetime[39m=[32m"2026-09-08T15:24:44.086Z"[39m
+                    [33mtitle[39m=[32m"2026-09-08 15:24:44.086"[39m
+                  [36m>[39m
+                    [0mjust now[0m
+                  [36m</time>[39m
+                [36m</td>[39m
+                [36m<td[39m
+                  [33mclass[39m=[32m"h-10 whitespace-nowrap px-3 py-2 align-middle"[39m
+                [36m>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"tabular text-text-3"[39m
+                  [36m>[39m
+                    [0m—[0m
+                  [36m</span>[39m
+                [36m</td>[39m
+              [36m</tr>[39m
+            [36m</tbody>[39m
+          [36m</table>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</section>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/routes/developer/schedules-run-now.spec.tsx:72:25
+     70|
+     71|     fireEvent.contextMenu(screen.getByTestId(`schedules-scheduled-${PE…
+     72|     const menu = screen.getByTestId("schedules-row-menu");
+       |                         ^
+     73|     fireEvent.click(within(menu).getByTestId("schedules-row-menu-run")…
+     74|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  10:23:43
+   Duration  660ms (transform 102ms, setup 96ms, import 280ms, tests 22ms, environment 171ms)
+

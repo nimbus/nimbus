@@ -51,6 +51,7 @@ export const api = {
   "level": string | null;
   "category": string | null;
   "correlationId": string | null;
+  "tenantId": string | null;
   "limit": number | null;
 }, Doc<"events">[]>("events:recent", "public")
   },
@@ -97,6 +98,7 @@ export const api = {
   "bundleId": string | null;
   "functionPath": string | null;
   "status": string | null;
+  "tenantId": string | null;
   "limit": number | null;
 }, Doc<"runs">[]>("runs:recent", "public"),
     byId: makeQueryReference<{

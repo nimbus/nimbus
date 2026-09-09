@@ -46,7 +46,7 @@ describe("ColumnChooser", () => {
   it("reports how many columns are shown out of how many exist", () => {
     renderChooser();
     expect(screen.getByTestId("documents-column-chooser")).toHaveTextContent(
-      "columns 3/3",
+      "Columns 3/3",
     );
     expect(
       screen.queryByTestId("documents-columns-hidden"),

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatAbsoluteTime,
+  formatBytes,
   formatDuration,
   formatMemory,
   formatRelativeTime,
@@ -176,5 +177,27 @@ describe("formatMemory", () => {
 
   it("renders one fractional digit for partial GiB", () => {
     expect(formatMemory(1536)).toBe("1.5 GiB");
+  });
+});
+
+describe("formatBytes", () => {
+  it("renders an em dash for missing values", () => {
+    expect(formatBytes(undefined)).toBe("—");
+    expect(formatBytes(null)).toBe("—");
+  });
+
+  it("keeps bytes whole below one KiB", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(999)).toBe("999 B");
+  });
+
+  it("shows one fractional digit under ten units", () => {
+    expect(formatBytes(1536)).toBe("1.5 KiB");
+    expect(formatBytes(1024)).toBe("1 KiB");
+  });
+
+  it("drops the fraction from ten units up", () => {
+    expect(formatBytes(15 * 1024 * 1024 + 300_000)).toBe("15 MiB");
+    expect(formatBytes(3 * 1024 ** 3)).toBe("3 GiB");
   });
 });

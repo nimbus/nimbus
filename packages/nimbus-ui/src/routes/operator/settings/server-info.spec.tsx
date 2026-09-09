@@ -11,7 +11,7 @@ vi.mock("../../../hooks/use-staleness", () => ({
   }),
 }));
 
-import { ServerInfoSection } from "./-server-info";
+import { ServerInfoSection, TenantHeaderStrip } from "./-server-info";
 
 const status = { details: { listenAddress: "127.0.0.1:3210" } };
 
@@ -81,5 +81,76 @@ describe("ServerInfoSection state vocabulary", () => {
     expect(updates.querySelector("[data-state]")).toBeNull();
     expect(updates.className).toContain("text-text-1");
     expect(updates).toHaveTextContent("up to date");
+  });
+});
+
+describe("ServerInfoSection data directory", () => {
+  it("shows the directory the engine opened as a copyable path", () => {
+    render(
+      <ServerInfoSection
+        status={{
+          details: {
+            listenAddress: "127.0.0.1:3210",
+            dataDir: "/srv/nimbus/data",
+          },
+        }}
+        encryption={{ kind: "ok", value: { enabled: false } }}
+      />,
+    );
+    expect(screen.getByTestId("settings-server-data-dir")).toHaveTextContent(
+      "/srv/nimbus/data",
+    );
+    expect(screen.queryByTestId("settings-server-data-dir-missing")).toBeNull();
+  });
+
+  it("says the directory is not reported when the status row lacks it", () => {
+    render(
+      <ServerInfoSection
+        status={status}
+        encryption={{ kind: "ok", value: { enabled: false } }}
+      />,
+    );
+    expect(
+      screen.getByTestId("settings-server-data-dir-missing"),
+    ).toHaveTextContent("not reported");
+  });
+});
+
+describe("TenantHeaderStrip", () => {
+  // The General page column is a flex column. The strip clips its overflow
+  // for the rounded corners, and a clipping flex child may shrink below its
+  // content: the first proof screenshot showed the values cut off.
+  it("declines to shrink inside the page column", () => {
+    render(<TenantHeaderStrip status={status} license={{ kind: "loading" }} />);
+    expect(screen.getByTestId("settings-tenant-header").className).toContain(
+      "shrink-0",
+    );
+  });
+
+  it("repeats the license status only when it adds to the kind", () => {
+    const { unmount } = render(
+      <TenantHeaderStrip
+        status={status}
+        license={{
+          kind: "ok",
+          value: { kind: "community", status: "community" },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("settings-license-kind")).toHaveTextContent(
+      /^community$/,
+    );
+    unmount();
+    render(
+      <TenantHeaderStrip
+        status={status}
+        license={{ kind: "ok", value: { kind: "commercial", status: "trial" } }}
+      />,
+    );
+    // The separator sits in its own span with a margin, so the text nodes
+    // touch; the assertion reads the words, not the gap.
+    expect(screen.getByTestId("settings-license-kind")).toHaveTextContent(
+      /commercial\s*· trial/,
+    );
   });
 });

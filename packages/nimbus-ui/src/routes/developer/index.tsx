@@ -1,13 +1,28 @@
-import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  useNimbus,
+  useNimbusConnectionState,
+  useQuery,
+} from "@nimbus/nimbus/react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
+import { CopyButton } from "../../components/copy-button";
 import { CopyChip } from "../../components/copy-chip";
+import { DataTable, dataColumns } from "../../components/data-table";
 import { LoadingCell } from "../../components/loading-cell";
-import { PageHeader } from "../../components/page-header";
-import { CategoryPill, StatePill } from "../../components/pill";
-import { RelativeTime, Uptime } from "../../components/time";
-import { formatDuration, shortId } from "../../lib/format";
+import { Mascot, type MascotState } from "../../components/mascot";
+import {
+  FirstRun,
+  firstRunComplete,
+} from "../../components/onboarding/first-run";
+import { StatePill } from "../../components/pill";
+import { resolveStateKind } from "../../components/state-dot";
+import { RelativeTime } from "../../components/time";
+import { CHART, type ChartPoint, Sparkline } from "../../components/ui/chart";
+import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { formatCount, formatDuration } from "../../lib/format";
+import { cn } from "../../lib/utils";
 import {
   type ConnectionSnapshot,
   type LoadingValue,
@@ -31,95 +46,92 @@ type SystemStatusDoc = {
 
 type AnyDoc = Record<string, unknown> & { _id?: string };
 
+export type RunRow = {
+  id: string;
+  status: string;
+  functionPath: string;
+  durationMs: number | undefined;
+  startedAt: number | null;
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const RECENT_RUN_ROWS = 5;
+
+// The page answers one question first, "is my server fine", then the three
+// things a developer comes here for: how to talk to it, what is on it, and
+// what it did last. Anything without a value at that moment is not shown;
+// a stat only gets a tile when the server has reported it.
 function OverviewPage() {
   const conn = useConnSnapshot();
+  const activeTenant = useUiStore((s) => s.activeTenant);
+  const serverUrl = useServerUrl();
   const status = useQuery(api.system.status, {}) as SystemStatusDoc | undefined;
-  const machines = useQuery(api.machines.list, {
-    state: null,
-    provider: null,
-    limit: 200,
-  }) as AnyDoc[] | undefined;
-  const services = useQuery(api.services.list, {
-    tenantId: null,
-    machineId: null,
-    state: null,
-    limit: 200,
-  }) as AnyDoc[] | undefined;
-  const tables = useQuery(api.tables.list, {
-    tenantId: null,
-    limit: 200,
-  }) as AnyDoc[] | undefined;
   const functions = useQuery(api.functions.list, {
     bundleId: null,
     kind: null,
+    limit: 200,
+  }) as AnyDoc[] | undefined;
+  const tables = useQuery(api.tables.list, {
+    tenantId: activeTenant ?? null,
     limit: 200,
   }) as AnyDoc[] | undefined;
   const runs = useQuery(api.runs.recent, {
     bundleId: null,
     functionPath: null,
     status: null,
-    limit: 20,
-  }) as AnyDoc[] | undefined;
-  const events = useQuery(api.events.recent, {
-    source: null,
-    level: null,
-    category: null,
-    correlationId: null,
-    limit: 20,
+    tenantId: null,
+    limit: 200,
   }) as AnyDoc[] | undefined;
 
-  const serviceTenantIds = distinctTenantIds(services);
-  const tableTenantIds = distinctTenantIds(tables);
-  const tenantIdSet = new Set([...serviceTenantIds, ...tableTenantIds]);
+  const statusValue = toStatusValue(status, conn);
+  const inventory = toInventory(functions, tables, runs, conn);
+  const firstRun =
+    inventory.kind === "ok" &&
+    inventory.value.tables.length === 0 &&
+    !firstRunComplete({
+      functions: inventory.value.functions.length,
+      runs: inventory.value.runs.length,
+    });
 
   return (
     <section
-      className="flex h-full flex-col gap-4 overflow-y-auto px-6 py-5"
+      className="flex h-full flex-col gap-6 overflow-y-auto px-6 py-5"
       data-testid="page-overview"
     >
-      <PageHeader
-        title="Overview"
-        subtitle="Deployment health, recent activity, and live resource counts."
+      <Headline
+        status={statusValue}
+        inventory={inventory}
+        firstRun={firstRun}
+        tenant={activeTenant}
+        serverUrl={serverUrl}
       />
 
-      <TopStrip status={toStatusValue(status, conn)} />
+      {inventory.kind === "ok" && firstRun ? (
+        <FirstRun
+          progress={{
+            functions: inventory.value.functions.length,
+            runs: inventory.value.runs.length,
+          }}
+          testid="overview-onboarding"
+        />
+      ) : null}
 
-      <ResourceCountsGrid
-        machines={toLoadingValue(machines, conn)}
-        services={toLoadingValue(services, conn)}
-        functions={toLoadingValue(functions, conn)}
-        tables={toLoadingValue(tables, conn)}
-        runs={toLoadingValue(runs, conn)}
-        tenantCount={tenantIdSet.size}
-        tenantSubline={
-          services === undefined
-            ? undefined
-            : `${serviceTenantIds.size} with services`
-        }
-        tableSubline={
-          tables === undefined
-            ? undefined
-            : `across ${tableTenantIds.size} ${tableTenantIds.size === 1 ? "tenant" : "tenants"}`
-        }
+      <ConnectPanel
+        serverUrl={serverUrl}
+        tenant={activeTenant}
+        functionPath={firstFunctionPath(functions)}
+        table={firstTableName(tables)}
       />
 
-      <div
-        className="grid grid-cols-1 gap-3 lg:grid-cols-2"
-        data-testid="overview-activity"
-      >
-        <EventsFeed events={toLoadingValue(events, conn)} />
-        <RecentRuns runs={toLoadingValue(runs, conn)} />
-      </div>
+      {!firstRun ? (
+        <>
+          <StatsRow inventory={inventory} tenant={activeTenant} />
+          <RecentRuns runs={inventory} />
+        </>
+      ) : null}
     </section>
   );
-}
-
-function distinctTenantIds(docs: AnyDoc[] | undefined): Set<string> {
-  const ids = new Set<string>();
-  for (const doc of docs ?? []) {
-    if (typeof doc.tenantId === "string") ids.add(doc.tenantId);
-  }
-  return ids;
 }
 
 function useConnSnapshot(): ConnectionSnapshot {
@@ -130,13 +142,27 @@ function useConnSnapshot(): ConnectionSnapshot {
   };
 }
 
+// The client's own URL is the console's Convex endpoint on the server
+// (`<origin>/convex/_nimbus`). Every route a developer connects to hangs
+// off the origin, so that is the server URL the page shows and pastes.
+function useServerUrl(): string {
+  const client = useNimbus();
+  const url =
+    client.url || (typeof window === "undefined" ? "" : window.location.origin);
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
 type SystemStatus = NonNullable<SystemStatusDoc>;
 
 /**
  * `useQuery` resolves to `null` when the server has no status row. That is an
  * answer, so it must not go through `toLoadingValue`, whose null-or-undefined
- * branch means "loading" — the strip would then sit on the loading marker for
- * the life of the page on a deployment that simply has no status document.
+ * branch means "loading" — the headline would then sit on the working face
+ * for the life of the page on a deployment that simply has no status document.
  */
 function toStatusValue(
   status: SystemStatusDoc | undefined,
@@ -146,576 +172,631 @@ function toStatusValue(
   return toLoadingValue(status, conn);
 }
 
-// A field the server did not report is not a value. Both of these used to fall
-// through to a literal — `license` to the string "developer" — so a pending
-// read and a server that omits the field rendered the same confident answer as
-// a real reading, in the same face and colour.
-function detailString(status: SystemStatus, ...keys: string[]): string | null {
-  const details = (status.details ?? {}) as Record<string, unknown>;
-  for (const key of keys) {
-    const value = details[key];
-    if (typeof value === "string") return value;
+type Inventory = {
+  functions: ReadonlyArray<AnyDoc>;
+  tables: ReadonlyArray<AnyDoc>;
+  runs: ReadonlyArray<RunRow>;
+};
+
+// The three lists load as one value so the page changes shape once, not
+// three times: the onboarding decision needs all of them, and a stats row
+// that appears tile by tile reads as broken rather than loading.
+function toInventory(
+  functions: AnyDoc[] | undefined,
+  tables: AnyDoc[] | undefined,
+  runs: AnyDoc[] | undefined,
+  conn: ConnectionSnapshot,
+): LoadingValue<Inventory> {
+  const f = toLoadingValue(functions, conn);
+  const t = toLoadingValue(tables, conn);
+  const r = toLoadingValue(runs, conn);
+  for (const v of [f, t, r]) {
+    if (v.kind !== "ok") return v as LoadingValue<Inventory>;
+  }
+  if (f.kind !== "ok" || t.kind !== "ok" || r.kind !== "ok") {
+    return { kind: "loading" };
+  }
+  return {
+    kind: "ok",
+    value: {
+      functions: f.value,
+      tables: t.value,
+      runs: r.value.map(toRunRow),
+    },
+  };
+}
+
+function toRunRow(run: AnyDoc, index: number): RunRow {
+  return {
+    id: typeof run._id === "string" ? run._id : `run-${index}`,
+    status: typeof run.status === "string" ? run.status : "unknown",
+    functionPath: typeof run.functionPath === "string" ? run.functionPath : "—",
+    durationMs: typeof run.durationMs === "number" ? run.durationMs : undefined,
+    startedAt: typeof run.startedAt === "number" ? run.startedAt : null,
+  };
+}
+
+function isFailedRun(run: RunRow): boolean {
+  const kind = resolveStateKind(run.status);
+  return kind === "error" || kind === "failed";
+}
+
+function firstFunctionPath(functions: AnyDoc[] | undefined): string | null {
+  for (const fn of functions ?? []) {
+    if (typeof fn.path === "string" && fn.path.length > 0) return fn.path;
   }
   return null;
 }
 
-/**
- * Every cell here reads one query, so the strip reports that query's state
- * through `LoadingCell` exactly as the rest of the page does: the loading
- * marker while it is in flight, "offline" once the socket has dropped, the
- * message on failure. It used to render its fallbacks unconditionally and so
- * looked fully loaded, and slightly broken, before it had been told anything.
- */
-function TopStrip({ status }: { status: LoadingValue<SystemStatus> }) {
-  const activeTenant = useUiStore((s) => s.activeTenant);
-  // `shrink-0` below is load-bearing. This grid is a flex child of a column
-  // that overflows once the activity feeds fill up, and `overflow-hidden`
-  // means flexbox can shrink it to a hairline without leaving any visual cue
-  // that the health header was removed. The page container already scrolls
-  // (`overflow-y-auto`); let it, rather than eating the strip.
+function firstTableName(tables: AnyDoc[] | undefined): string | null {
+  for (const table of tables ?? []) {
+    if (typeof table.name === "string" && table.name.length > 0) {
+      return table.name;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Headline
+
+type HeadlineReading = {
+  mascot: MascotState;
+  sentence: string;
+};
+
+// readHeadline turns the status document and the run history into the one
+// sentence at the top of the page. The order matters: a lost connection
+// beats a healthy status document, because the document is stale.
+export function readHeadline(
+  status: LoadingValue<SystemStatus>,
+  inventory: LoadingValue<Inventory>,
+  firstRun: boolean,
+  now = Date.now(),
+): HeadlineReading {
+  if (status.kind === "offline" || inventory.kind === "offline") {
+    return {
+      mascot: "error",
+      sentence: "The connection to the server dropped. Stale data is shown.",
+    };
+  }
+  if (status.kind === "error") {
+    return { mascot: "error", sentence: status.message };
+  }
+  if (inventory.kind === "error") {
+    return { mascot: "error", sentence: inventory.message };
+  }
+  if (status.kind === "loading" || inventory.kind === "loading") {
+    return { mascot: "working", sentence: "Reading the server status." };
+  }
+  const health = status.value.health;
+  const healthKind = resolveStateKind(health);
+  if (
+    health &&
+    healthKind !== "ok" &&
+    healthKind !== "healthy" &&
+    healthKind !== "ready" &&
+    healthKind !== "running"
+  ) {
+    return {
+      mascot: "error",
+      sentence: `The server reports its health as ${health}.`,
+    };
+  }
+  if (firstRun) {
+    return {
+      mascot: "empty",
+      sentence: "The server is up and waiting for its first app.",
+    };
+  }
+  const failed = inventory.value.runs.filter(
+    (run) =>
+      isFailedRun(run) &&
+      run.startedAt !== null &&
+      now - run.startedAt <= DAY_MS,
+  ).length;
+  if (failed > 0) {
+    return {
+      mascot: "error",
+      sentence: `The server is up. ${formatCount(failed)} ${failed === 1 ? "run" : "runs"} failed in the last 24 hours.`,
+    };
+  }
+  return {
+    mascot: "idle",
+    sentence: "The server is up and every recent run succeeded.",
+  };
+}
+
+function Headline({
+  status,
+  inventory,
+  firstRun,
+  tenant,
+  serverUrl,
+}: {
+  status: LoadingValue<SystemStatus>;
+  inventory: LoadingValue<Inventory>;
+  firstRun: boolean;
+  tenant: string | null;
+  serverUrl: string;
+}) {
+  const reading = readHeadline(status, inventory, firstRun);
+  const version = status.kind === "ok" ? status.value.version : undefined;
   return (
-    <div
-      data-testid="overview-top-strip"
-      className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-border-2 bg-bg-raised md:grid-cols-4"
-    >
-      <Cell label="Server">
-        <LoadingCell value={status} testid="overview-server">
-          {(s) => <StatePill state={s.health ?? "unknown"} />}
-        </LoadingCell>
-      </Cell>
-      <Cell label="Version">
-        <LoadingCell value={status} testid="overview-version">
-          {(s) => (
-            <CopyChip
-              label="version"
-              value={s.version ?? "—"}
-              testid="overview-version"
-            />
-          )}
-        </LoadingCell>
-      </Cell>
-      <Cell label="Uptime">
-        <LoadingCell value={status} testid="overview-uptime">
-          {(s) =>
-            typeof s.startedAt === "number" ? (
-              <Uptime startedAtMs={s.startedAt} />
-            ) : (
-              <StripDash />
-            )
-          }
-        </LoadingCell>
-      </Cell>
-      <Cell label="Storage">
-        <LoadingCell value={status} testid="overview-storage">
-          {(s) => (
-            <StripValue value={detailString(s, "storageBackend", "storage")} />
-          )}
-        </LoadingCell>
-      </Cell>
-      <Cell label="License">
-        <LoadingCell value={status} testid="overview-license">
-          {(s) => (
-            <StripValue value={detailString(s, "license", "licensePosture")} />
-          )}
-        </LoadingCell>
-      </Cell>
-      <Cell label="Started">
-        <LoadingCell value={status} testid="overview-started">
-          {(s) =>
-            typeof s.startedAt === "number" ? (
-              <RelativeTime epochMs={s.startedAt} />
-            ) : (
-              <StripDash />
-            )
-          }
-        </LoadingCell>
-      </Cell>
-      <Cell label="Updated">
-        <LoadingCell value={status} testid="overview-updated">
-          {(s) =>
-            typeof s.updatedAt === "number" ? (
-              <RelativeTime epochMs={s.updatedAt} />
-            ) : (
-              <StripDash />
-            )
-          }
-        </LoadingCell>
-      </Cell>
-      <Cell label="Tenant">
-        <CopyChip
-          label="active tenant"
-          value={activeTenant ?? "—"}
-          testid="overview-tenant"
+    <header className="flex flex-col gap-2" data-testid="overview-headline">
+      <div className="flex items-center gap-3">
+        <Mascot
+          size={40}
+          state={reading.mascot}
+          variant="outline"
+          decorative
+          className="shrink-0 text-text-1"
+          data-testid="overview-mascot"
+          data-state={reading.mascot}
         />
-      </Cell>
-    </div>
-  );
-}
-
-function StripValue({ value }: { value: string | null }) {
-  if (value === null) return <StripDash />;
-  return <span className="font-mono text-xs text-text-1">{value}</span>;
-}
-
-function StripDash() {
-  return <span className="tabular text-text-3">—</span>;
-}
-
-function Cell({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1 bg-bg-panel px-3 py-2">
-      <span className="text-xs font-medium text-text-3">{label}</span>
-      {/* The value line is reserved at 20px whatever occupies it. The loading
-          marker is a bare `·` at text-sm and the loaded cells are text-xs
-          chips, so without a floor the whole eight-cell strip resized under
-          itself the moment the status query landed. */}
-      <span className="flex min-h-5 items-center text-sm">{children}</span>
-    </div>
-  );
-}
-
-function ResourceCountsGrid({
-  machines,
-  services,
-  functions,
-  tables,
-  runs,
-  tenantCount,
-  tenantSubline,
-  tableSubline,
-}: {
-  machines: LoadingValue<AnyDoc[]>;
-  services: LoadingValue<AnyDoc[]>;
-  functions: LoadingValue<AnyDoc[]>;
-  tables: LoadingValue<AnyDoc[]>;
-  runs: LoadingValue<AnyDoc[]>;
-  tenantCount: number;
-  tenantSubline?: React.ReactNode;
-  tableSubline?: React.ReactNode;
-}) {
-  return (
-    <div
-      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
-      data-testid="overview-counts"
-    >
-      <CountPanel
-        title="Machines"
-        testid="overview-count-machines"
-        docs={machines}
-        groupBy="state"
-        to="/operator/machines"
-      />
-      <CountPanel
-        title="Services"
-        testid="overview-count-services"
-        docs={services}
-        groupBy="state"
-        to="/developer/services"
-      />
-      <CountPanel
-        title="Tenants"
-        testid="overview-count-tenants"
-        docs={{ kind: "ok", value: [] }}
-        explicitTotal={tenantCount}
-        subline={tenantSubline}
-        to="/developer/storage"
-      />
-      <CountPanel
-        title="Tables"
-        testid="overview-count-tables"
-        docs={tables}
-        subline={tableSubline}
-        to="/developer/storage"
-      />
-      <CountPanel
-        title="Functions"
-        testid="overview-count-functions"
-        docs={functions}
-        groupBy="kind"
-        groupKind="category"
-        to="/developer/compute"
-      />
-      <CountPanel
-        title="Recent runs"
-        testid="overview-count-runs"
-        docs={runs}
-        groupBy="status"
-        to="/developer/observability"
-      />
-    </div>
-  );
-}
-
-/**
- * One count tile. The second line is either a breakdown of the counted
- * documents (`groupBy`) or a caller-supplied fact (`subline`) — never a
- * sentence apologising for the absence of a breakdown a tile was never
- * built to have. Tenants and tables have no lifecycle state, so "No state
- * breakdown" was reporting the absence of something that cannot exist.
- *
- * `groupKind` decides the badge. A state gets a labeled dot from the
- * DESIGN.md token table; a category (function kind, adapter, backend) gets
- * a filled pill. Routing a category through `StatePill` is what made the
- * landing page read "? QUERY 3   ? MUTATION 3".
- */
-function CountPanel({
-  title,
-  testid,
-  docs,
-  groupBy,
-  groupKind = "state",
-  subline,
-  to,
-  explicitTotal,
-}: {
-  title: string;
-  testid: string;
-  docs: LoadingValue<AnyDoc[]>;
-  groupBy?: string;
-  groupKind?: "state" | "category";
-  subline?: React.ReactNode;
-  to:
-    | "/operator/machines"
-    | "/developer/compute"
-    | "/developer/services"
-    | "/developer/storage"
-    | "/developer/observability";
-  explicitTotal?: number;
-}) {
-  return (
-    <Link
-      to={to}
-      data-testid={testid}
-      className="group flex flex-col gap-2 rounded-md border border-border-2 bg-bg-panel p-3 hover:border-border-3"
-    >
-      <div className="flex items-baseline justify-between">
-        <span className="text-xs font-medium text-text-3">{title}</span>
-        <span
-          className="tabular font-mono text-md text-text-1"
-          data-testid={`${testid}-total`}
+        <h1
+          className="text-xl text-text-1"
+          style={{ fontSize: "var(--text-xl)" }}
+          data-testid="overview-sentence"
         >
-          {explicitTotal !== undefined ? (
-            explicitTotal
-          ) : (
-            <LoadingCell value={docs} testid={`${testid}-total`}>
-              {(items) => items.length}
-            </LoadingCell>
-          )}
-        </span>
+          {reading.sentence}
+        </h1>
       </div>
-      {/* The slot keeps its line whatever it holds — dash, sentence, dots,
-          or the slightly taller category pills — so all six tiles and both
-          grid rows stay the same height. */}
-      <div
-        className="flex min-h-5 items-center"
-        data-testid={`${testid}-subline`}
+      {/* One mono line of facts. A fact the server has not reported is left
+          out rather than shown as a dash, so the line never lists what it
+          does not know. */}
+      <p
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-text-3"
+        data-testid="overview-facts"
       >
-        <CountPanelSubline
-          docs={docs}
-          groupBy={groupBy}
-          groupKind={groupKind}
-          subline={subline}
-        />
-      </div>
-    </Link>
+        {tenant ? (
+          <span data-testid="overview-fact-tenant">
+            tenant <span className="text-text-2">{tenant}</span>
+          </span>
+        ) : null}
+        {tenant && serverUrl ? <Separator /> : null}
+        {serverUrl ? (
+          <CopyChip
+            label="server URL"
+            value={serverUrl}
+            testid="overview-fact-endpoint"
+            className="text-text-2"
+          />
+        ) : null}
+        <LoadingCell value={status} testid="overview-fact-version">
+          {() =>
+            version ? (
+              <>
+                <Separator />
+                <CopyChip
+                  label="version"
+                  value={version}
+                  testid="overview-fact-version"
+                  className="text-text-2"
+                >
+                  v{version}
+                </CopyChip>
+              </>
+            ) : null
+          }
+        </LoadingCell>
+      </p>
+    </header>
   );
 }
 
-function CountPanelSubline({
-  docs,
-  groupBy,
-  groupKind,
-  subline,
-}: {
-  docs: LoadingValue<AnyDoc[]>;
-  groupBy?: string;
-  groupKind: "state" | "category";
-  subline?: React.ReactNode;
-}) {
-  // Connection state outranks both paths: a tile whose query has not landed
-  // must not present a stale breakdown or a confident subline.
-  if (docs.kind === "loading") {
-    return <span className="text-xs text-text-3">Loading…</span>;
-  }
-  if (docs.kind === "offline") {
-    return (
-      <span className="text-xs text-text-3" title="Disconnected">
-        offline · last value shown elsewhere
-      </span>
-    );
-  }
-  if (docs.kind === "error") {
-    return (
-      <span className="text-xs text-error" title={docs.message}>
-        {docs.message}
-      </span>
-    );
-  }
-  if (groupBy === undefined) {
-    if (subline === undefined) return <Dash />;
-    return <span className="text-xs text-text-3">{subline}</span>;
-  }
-  const breakdown = groupCount(docs.value, groupBy);
-  // Groupable but genuinely empty. The count already says zero; DESIGN.md
-  // allows the em dash at row scope, and it costs no reading.
-  if (breakdown.length === 0) return <Dash />;
+function Separator() {
   return (
-    <ul className="flex flex-wrap gap-1.5">
-      {breakdown.map(([key, count]) => (
-        <li key={key} className="inline-flex items-center gap-1">
-          {groupKind === "category" ? (
-            <CategoryPill value={key} />
-          ) : (
-            <StatePill state={key} />
-          )}
-          <span className="tabular font-mono text-xs text-text-1">{count}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function Dash() {
-  return (
-    <span className="text-xs text-text-3" aria-hidden="true">
-      —
+    <span aria-hidden className="text-border-2">
+      ·
     </span>
   );
 }
 
-function groupCount(docs: AnyDoc[], field: string): Array<[string, number]> {
-  const map = new Map<string, number>();
-  for (const doc of docs) {
-    const raw = doc[field];
-    const key = typeof raw === "string" && raw.length > 0 ? raw : "unknown";
-    map.set(key, (map.get(key) ?? 0) + 1);
-  }
-  return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+// ---------------------------------------------------------------------------
+// Connect
+
+type SnippetId = "curl" | "sdk" | "convex";
+
+const SNIPPET_TABS: ReadonlyArray<{ id: SnippetId; label: string }> = [
+  { id: "curl", label: "curl" },
+  { id: "sdk", label: "TypeScript SDK" },
+  { id: "convex", label: "Convex client" },
+];
+
+// connectSnippets writes the three ways into this server, addressed to this
+// tenant, and using the first function and table the server actually has
+// so the snippet runs as pasted. Without either it falls back to the names
+// from the quick start.
+export function connectSnippets({
+  serverUrl,
+  tenant,
+  functionPath,
+  table,
+}: {
+  serverUrl: string;
+  tenant: string | null;
+  functionPath: string | null;
+  table: string | null;
+}): Record<SnippetId, string> {
+  const t = tenant ?? "demo";
+  const url = serverUrl || "http://localhost:3210";
+  const tableName = table ?? "messages";
+  const apiRef = (functionPath ?? "messages:list").replace(/[:/]/g, ".");
+  return {
+    curl: [
+      `curl -s -X POST ${url}/api/tenants/${t}/query \\`,
+      `  -H "Authorization: Bearer $NIMBUS_TOKEN" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -d '{"table": "${tableName}", "filters": []}'`,
+    ].join("\n"),
+    sdk: [
+      `import { NimbusClient } from "@nimbus/nimbus/browser";`,
+      `import { api } from "./nimbus/_generated/api";`,
+      ``,
+      `const client = new NimbusClient("${url}/convex/${t}");`,
+      `const rows = await client.query(api.${apiRef}, {});`,
+    ].join("\n"),
+    convex: [
+      `import { ConvexReactClient } from "convex/react";`,
+      ``,
+      `const convex = new ConvexReactClient("${url}/convex/${t}");`,
+      `// <ConvexProvider client={convex}>…</ConvexProvider>`,
+    ].join("\n"),
+  };
 }
 
-function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
+function ConnectPanel({
+  serverUrl,
+  tenant,
+  functionPath,
+  table,
+}: {
+  serverUrl: string;
+  tenant: string | null;
+  functionPath: string | null;
+  table: string | null;
+}) {
+  const [active, setActive] = useState<SnippetId>("curl");
+  const snippets = useMemo(
+    () => connectSnippets({ serverUrl, tenant, functionPath, table }),
+    [serverUrl, tenant, functionPath, table],
+  );
+  const snippet = snippets[active];
   return (
     <section
-      data-testid="overview-events"
-      className="flex min-h-[200px] flex-col rounded-md border border-border-2 bg-bg-panel"
+      aria-labelledby="overview-connect-title"
+      className="flex flex-col gap-3"
+      data-testid="overview-connect"
     >
-      <header className="flex items-baseline justify-between border-b border-border-2 px-3 py-2">
-        <h2 className="text-xs font-medium text-text-3">Recent events</h2>
-        <Link to="/developer/observability" className="text-xs link-inline">
-          View all
-        </Link>
-      </header>
-      <FeedBody
-        value={events}
-        testid="overview-events"
-        empty={{
-          title: "No events recorded yet",
-          body: "Server, scheduler, and function activity streams here live.",
-          action: { label: "Open Compute", to: "/developer/compute" },
-        }}
-        renderItems={(items) => (
-          <ul className="divide-y divide-border-2">
-            {items.slice(0, 20).map((event) => (
-              <EventRow key={String(event._id)} event={event} />
+      <PanelHeading id="overview-connect-title" title="Connect">
+        {serverUrl ? (
+          <CopyChip
+            label="server URL"
+            value={serverUrl}
+            testid="overview-connect-url"
+            className="font-mono text-xs text-text-2"
+          />
+        ) : null}
+      </PanelHeading>
+      <Tabs
+        value={active}
+        onValueChange={(value) => setActive(value as SnippetId)}
+        className="gap-2"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <TabsList variant="line" data-testid="overview-connect-tabs">
+            {SNIPPET_TABS.map((tab) => (
+              <TabsTrigger
+                key={tab.id}
+                value={tab.id}
+                data-testid={`overview-connect-tab-${tab.id}`}
+              >
+                {tab.label}
+              </TabsTrigger>
             ))}
-          </ul>
-        )}
-      />
+          </TabsList>
+          <CopyButton
+            text={snippet}
+            label="snippet"
+            testid="overview-connect-copy"
+          />
+        </div>
+        {/* The copy control sits beside the tabs, not over the snippet:
+            an overlay would cover the end of a long line once the block
+            scrolls sideways on a narrow viewport. */}
+        <pre
+          className="overflow-x-auto rounded-md border border-border-2 bg-bg-panel px-4 py-3 font-mono text-xs leading-relaxed text-text-1"
+          data-testid="overview-connect-snippet"
+          data-snippet={active}
+        >
+          <code>{snippet}</code>
+        </pre>
+      </Tabs>
     </section>
   );
 }
 
-type FeedEmpty = {
+function PanelHeading({
+  id,
+  title,
+  children,
+}: {
+  id: string;
   title: string;
-  body: string;
-  action: { label: string; to: "/developer/compute" };
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <h2 id={id} className="text-sm font-medium text-text-1">
+        {title}
+      </h2>
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stats
+
+type Stat = {
+  id: "functions" | "tables" | "runs" | "errors";
+  label: string;
+  value: number;
+  subline: string | null;
+  series: ReadonlyArray<ChartPoint> | null;
+  color: string;
+  to: string;
+  search?: Record<string, string>;
 };
 
-/**
- * The two feeds sit in a stretched two-column grid, so the shorter card is
- * handed the taller one's height whether it has content or not. Rather than
- * un-stretching the grid — which only moves the ragged edge, since the events
- * feed shows 20 rows and the runs feed 10 — the non-list branches fill the
- * frame they are given and centre in it. A centred two-line message with a
- * next action reads as a deliberate empty state; the same words pinned to the
- * top-left of a tall empty box read as a list that failed to load.
- */
-function FeedBody({
-  value,
-  empty,
-  testid,
-  renderItems,
-}: {
-  value: LoadingValue<AnyDoc[]>;
-  empty: FeedEmpty;
-  testid: string;
-  renderItems: (items: AnyDoc[]) => React.ReactNode;
-}) {
-  if (value.kind === "loading") {
-    return <FeedNotice>Loading…</FeedNotice>;
+// hourlyBuckets counts runs per hour over the last day, oldest first, so a
+// sparkline reads left to right in time. Every hour is present, including
+// empty ones, so a quiet hour is a dip and not a missing point.
+export function hourlyBuckets(
+  runs: ReadonlyArray<RunRow>,
+  predicate: (run: RunRow) => boolean,
+  now = Date.now(),
+): ChartPoint[] {
+  const points: ChartPoint[] = [];
+  const start = now - DAY_MS;
+  for (let i = 0; i < 24; i += 1) {
+    points.push({ label: String(i), value: 0 });
   }
-  if (value.kind === "offline") {
-    return (
-      <FeedNotice title="Disconnected — stream resumes on reconnect">
-        offline · live feed paused
-      </FeedNotice>
-    );
+  for (const run of runs) {
+    if (run.startedAt === null || !predicate(run)) continue;
+    const age = run.startedAt - start;
+    if (age < 0 || age > DAY_MS) continue;
+    const index = Math.min(23, Math.floor(age / HOUR_MS));
+    points[index].value += 1;
   }
-  if (value.kind === "error") {
-    return (
-      <FeedNotice title={value.message} tone="danger">
-        {value.message}
-      </FeedNotice>
-    );
-  }
-  if (value.value.length === 0) {
-    return (
-      <div
-        className="flex flex-1 flex-col items-center justify-center gap-1 px-3 py-6 text-center"
-        data-testid={`${testid}-empty`}
-      >
-        <p className="text-xs text-text-1">{empty.title}</p>
-        <p className="max-w-[40ch] text-xs text-text-3">{empty.body}</p>
-        <Link
-          to={empty.action.to}
-          className="mt-2 rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-raised hover:text-text-1"
-          data-testid={`${testid}-empty-cta`}
-        >
-          {empty.action.label}
-        </Link>
-      </div>
-    );
-  }
-  return <>{renderItems(value.value)}</>;
+  return points;
 }
 
-function FeedNotice({
-  children,
-  title,
-  tone = "muted",
-}: {
-  children: React.ReactNode;
-  title?: string;
-  tone?: "muted" | "danger";
-}) {
-  return (
-    <p
-      className={`flex flex-1 items-center justify-center px-3 py-6 text-center text-xs ${
-        tone === "danger" ? "text-error" : "text-text-3"
-      }`}
-      title={title}
-    >
-      {children}
-    </p>
+export function readStats(
+  inventory: Inventory,
+  tenant: string | null,
+  now = Date.now(),
+): Stat[] {
+  const recent = inventory.runs.filter(
+    (run) => run.startedAt !== null && now - run.startedAt <= DAY_MS,
   );
+  const failed = recent.filter(isFailedRun);
+  const kinds = new Map<string, number>();
+  for (const fn of inventory.functions) {
+    const kind = typeof fn.kind === "string" ? fn.kind : "other";
+    kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+  }
+  const kindSummary = [...kinds.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([kind, count]) => `${count} ${kind}`)
+    .join(" · ");
+  const stats: Stat[] = [
+    {
+      id: "functions",
+      label: "Functions",
+      value: inventory.functions.length,
+      subline: kindSummary || null,
+      series: null,
+      color: CHART.neutral,
+      to: "/developer/compute",
+    },
+    {
+      id: "tables",
+      label: "Tables",
+      value: inventory.tables.length,
+      subline: tenant ? `in ${tenant}` : null,
+      series: null,
+      color: CHART.neutral,
+      to: "/developer/storage",
+    },
+    {
+      id: "runs",
+      label: "Runs, 24h",
+      value: recent.length,
+      subline: null,
+      series: hourlyBuckets(inventory.runs, () => true, now),
+      color: CHART.neutral,
+      to: "/developer/observability",
+      search: { tab: "runs" },
+    },
+    {
+      id: "errors",
+      label: "Errors, 24h",
+      value: failed.length,
+      subline: null,
+      series: hourlyBuckets(inventory.runs, isFailedRun, now),
+      color: failed.length > 0 ? CHART.error : CHART.neutral,
+      to: "/developer/observability",
+      search: { tab: "runs", status: "error" },
+    },
+  ];
+  // A stat with nothing behind it is not shown. Runs and errors stay once
+  // the server has ever run something, because zero in the last day is then
+  // a reading; before that, the onboarding panel owns the page.
+  return stats.filter((stat) => {
+    if (stat.id === "runs" || stat.id === "errors") {
+      return inventory.runs.length > 0;
+    }
+    return stat.value > 0;
+  });
 }
 
-function EventRow({ event }: { event: AnyDoc }) {
-  const level = typeof event.level === "string" ? event.level : "info";
-  const source = typeof event.source === "string" ? event.source : "—";
-  const message = typeof event.message === "string" ? event.message : "";
-  const createdAt =
-    typeof event.createdAt === "number" ? event.createdAt : null;
-  const correlationId =
-    typeof event.correlationId === "string"
-      ? event.correlationId
-      : typeof event._id === "string"
-        ? event._id
-        : null;
-  return (
-    <li className="group flex flex-col gap-1 px-3 py-2 hover:bg-bg-raised">
-      <div className="flex items-center gap-2">
-        <StatePill state={level} />
-        <span className="font-mono text-xs text-text-3">{source}</span>
-        {correlationId ? (
-          <CopyChip
-            label="event id"
-            value={correlationId}
-            hideUntilHover
-            className="text-text-3"
-            testid="event-id"
-          >
-            {shortId(correlationId)}
-          </CopyChip>
-        ) : null}
-        <span className="ml-auto text-xs">
-          {createdAt ? <RelativeTime epochMs={createdAt} /> : null}
-        </span>
-      </div>
-      <p className="truncate text-xs text-text-1">{message}</p>
-    </li>
-  );
-}
-
-function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
+function StatsRow({
+  inventory,
+  tenant,
+}: {
+  inventory: LoadingValue<Inventory>;
+  tenant: string | null;
+}) {
+  const stats =
+    inventory.kind === "ok" ? readStats(inventory.value, tenant) : [];
+  if (inventory.kind === "ok" && stats.length === 0) return null;
   return (
     <section
-      data-testid="overview-runs"
-      className="flex min-h-[200px] flex-col rounded-md border border-border-2 bg-bg-panel"
+      aria-label="Stats"
+      className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-4"
+      data-testid="overview-stats"
     >
-      <header className="flex items-baseline justify-between border-b border-border-2 px-3 py-2">
-        <h2 className="text-xs font-medium text-text-3">Recent runs</h2>
-        <Link to="/developer/observability" className="text-xs link-inline">
-          View all
-        </Link>
-      </header>
-      <FeedBody
-        value={runs}
-        testid="overview-runs"
-        empty={{
-          title: "No runs yet",
-          body: "A run is recorded each time a query, mutation, or action executes.",
-          action: { label: "Open Compute", to: "/developer/compute" },
-        }}
-        renderItems={(items) => (
-          <ul className="divide-y divide-border-2">
-            {items.slice(0, 10).map((run) => (
-              <RunRow key={String(run._id)} run={run} />
-            ))}
-          </ul>
-        )}
-      />
+      {inventory.kind === "ok" ? (
+        stats.map((stat) => <StatTile key={stat.id} stat={stat} />)
+      ) : (
+        <div
+          className="col-span-full rounded-md border border-border-2 bg-bg-panel px-4 py-3 text-xs text-text-3"
+          data-testid="overview-stats-pending"
+        >
+          <LoadingCell value={inventory} testid="overview-stats">
+            {() => null}
+          </LoadingCell>
+        </div>
+      )}
     </section>
   );
 }
 
-function RunRow({ run }: { run: AnyDoc }) {
-  const status = typeof run.status === "string" ? run.status : "unknown";
-  const functionPath =
-    typeof run.functionPath === "string" ? run.functionPath : "—";
-  const durationMs =
-    typeof run.durationMs === "number" ? run.durationMs : undefined;
-  const startedAt = typeof run.startedAt === "number" ? run.startedAt : null;
-  const runId = typeof run._id === "string" ? run._id : null;
+function StatTile({ stat }: { stat: Stat }) {
   return (
-    <li className="group flex items-center gap-2 px-3 py-2 hover:bg-bg-raised">
-      <StatePill state={status} />
-      <span className="truncate font-mono text-xs text-text-1">
-        {functionPath}
+    <Link
+      to={stat.to}
+      search={stat.search}
+      className="group flex min-w-0 flex-col gap-2 rounded-md border border-border-2 bg-bg-panel px-4 py-3 transition-colors hover:border-border-3"
+      data-testid={`overview-stat-${stat.id}`}
+    >
+      <span className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-medium text-text-3">{stat.label}</span>
+        {stat.subline ? (
+          <span className="truncate text-xs text-text-3">{stat.subline}</span>
+        ) : null}
       </span>
-      {runId ? (
-        <CopyChip
-          label="run id"
-          value={runId}
-          hideUntilHover
-          className="text-text-3"
-          testid="run-id"
+      <span className="flex items-end justify-between gap-3">
+        <span
+          className={cn(
+            "tabular text-2xl leading-none text-text-1",
+            stat.id === "errors" && stat.value > 0 && "text-error",
+          )}
+          data-testid={`overview-stat-${stat.id}-value`}
         >
-          {shortId(runId)}
-        </CopyChip>
-      ) : null}
-      <span className="ml-auto tabular font-mono text-xs text-text-3">
-        {formatDuration(durationMs)}
+          {formatCount(stat.value)}
+        </span>
+        {stat.series ? (
+          <Sparkline
+            data={stat.series}
+            color={stat.color}
+            height={28}
+            ariaLabel={`${stat.label} by hour`}
+            className="max-w-32"
+          />
+        ) : null}
       </span>
-      <span className="text-xs">
-        {startedAt ? <RelativeTime epochMs={startedAt} /> : null}
+    </Link>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Recent runs
+
+const runCol = dataColumns<RunRow>();
+const RUN_COLUMNS = [
+  runCol.accessor("status", {
+    header: "Status",
+    size: 96,
+    cell: (ctx) => <StatePill state={ctx.getValue()} />,
+  }),
+  runCol.accessor("functionPath", {
+    header: "Function",
+    cell: (ctx) => (
+      <span className="truncate font-mono text-xs text-text-1">
+        {ctx.getValue()}
       </span>
-    </li>
+    ),
+  }),
+  runCol.accessor("durationMs", {
+    header: "Duration",
+    size: 96,
+    cell: (ctx) => (
+      <span className="block text-right font-mono text-xs tabular text-text-3">
+        {formatDuration(ctx.getValue())}
+      </span>
+    ),
+  }),
+  runCol.accessor("startedAt", {
+    header: "Started",
+    size: 120,
+    cell: (ctx) => {
+      const startedAt = ctx.getValue();
+      return (
+        <span className="block text-right text-xs">
+          {startedAt ? <RelativeTime epochMs={startedAt} /> : null}
+        </span>
+      );
+    },
+  }),
+];
+
+function RecentRuns({ runs }: { runs: LoadingValue<Inventory> }) {
+  const navigate = useNavigate();
+  const rows =
+    runs.kind === "ok" ? runs.value.runs.slice(0, RECENT_RUN_ROWS) : [];
+  if (runs.kind === "ok" && runs.value.runs.length === 0) return null;
+  return (
+    <section
+      aria-labelledby="overview-runs-title"
+      className="flex flex-col gap-3"
+      data-testid="overview-runs"
+    >
+      <PanelHeading id="overview-runs-title" title="Recent runs">
+        <Link
+          to="/developer/observability"
+          search={{ tab: "runs" }}
+          className="text-xs text-text-3 hover:text-text-1"
+          data-testid="overview-runs-all"
+        >
+          View all runs
+        </Link>
+      </PanelHeading>
+      {runs.kind === "ok" ? (
+        <DataTable
+          columns={RUN_COLUMNS}
+          data={rows}
+          getRowId={(row) => row.id}
+          ariaLabel="Recent runs"
+          virtual={false}
+          onRowActivate={(row) =>
+            navigate({
+              to: "/developer/compute/runs/$runId",
+              params: { runId: row.id },
+            })
+          }
+          testid="overview-runs-table"
+        />
+      ) : (
+        <div className="rounded-md border border-border-2 bg-bg-panel px-4 py-3 text-xs text-text-3">
+          <LoadingCell value={runs} testid="overview-runs">
+            {() => null}
+          </LoadingCell>
+        </div>
+      )}
+    </section>
   );
 }

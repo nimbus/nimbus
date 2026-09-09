@@ -1,62 +1,180 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import type { TableDoc } from "../../lib/types/table";
 import { CopyChip } from "../copy-chip";
-import { Td, Th } from "../table-cells";
+import {
+  type DataColumn,
+  DataTable,
+  dataColumns,
+  type RowAnchor,
+} from "../data-table";
 import { RelativeTime } from "../time";
 import { RowContextMenu, type RowMenuItem } from "./row-context-menu";
 
-const INTERACTIVE = "button, a, input, label, [role='menuitem']";
+type TableTab = "schema" | "indexes";
+type MenuState = RowAnchor & { name: string };
 
-type MenuState = {
-  x: number;
-  y: number;
-  name: string;
-  anchor: HTMLElement | null;
-};
+const NO_TABLES: TableDoc[] = [];
+const column = dataColumns<TableDoc>();
+
+function tableName(table: TableDoc): string {
+  return table.name ?? table._id;
+}
 
 /**
  * The Storage index table.
  *
  * The Tables sub-panel beside it is the section's navigator; this pane earns
- * its space by carrying what the drawer cannot — schema state, row counts, last
- * write time, copy affordances, and the row's own action set. Rows behave like
- * every other resource row in the console: click opens, right-click opens the
- * peer menu (DESIGN.md:1117).
+ * its space by carrying what the sub-panel cannot — schema state, row counts,
+ * last write time, copy affordances, and the row's own action set. Rows
+ * behave like every other resource row in the console: click opens,
+ * right-click opens the peer menu. Undefined tables paint skeleton rows
+ * under the same header, so the list arrives without moving anything.
  */
-export function TablesListTable({ tables }: { tables: TableDoc[] }) {
+export function TablesListTable({
+  tables,
+}: {
+  tables: TableDoc[] | undefined;
+}) {
   const navigate = useNavigate();
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [focusRow, setFocusRow] = useState(0);
-  const rowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
 
   const sorted = useMemo(
     () =>
-      tables.slice().sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")),
+      (tables ?? NO_TABLES)
+        .slice()
+        .sort((a, b) => tableName(a).localeCompare(tableName(b))),
     [tables],
   );
 
-  const open = (name: string, panel?: "schema" | "indexes") => {
-    void navigate({
-      to: "/developer/storage/$table",
-      params: { table: name },
-      search: panel ? { panel } : {},
-    });
-  };
+  const open = useCallback(
+    (name: string, tab?: TableTab) => {
+      void navigate({
+        to: "/developer/storage/$table",
+        params: { table: name },
+        search: tab ? { tab } : {},
+      });
+    },
+    [navigate],
+  );
+
+  const columns = useMemo<DataColumn<TableDoc>[]>(
+    () => [
+      column.accessor(tableName, {
+        id: "name",
+        header: "Table",
+        size: 240,
+        cell: ({ getValue }) => {
+          const name = getValue();
+          return (
+            <span className="inline-flex min-w-0 items-center">
+              <Link
+                to="/developer/storage/$table"
+                params={{ table: name }}
+                className="truncate font-mono text-xs text-text-1 hover:underline"
+                data-testid={`tenant-table-link-${name}`}
+              >
+                {name}
+              </Link>
+              <span className="ml-2">
+                <CopyChip
+                  label="table name"
+                  value={name}
+                  hideUntilHover
+                  testid={`tenant-table-copy-${name}`}
+                >
+                  copy
+                </CopyChip>
+              </span>
+            </span>
+          );
+        },
+      }),
+      column.accessor((table) => (table.schema ? "defined" : "any"), {
+        id: "schema",
+        header: "Schema",
+        size: 110,
+        cell: ({ getValue }) => (
+          <span className="font-mono text-xs">{getValue()}</span>
+        ),
+      }),
+      column.accessor((table) => table.rowCount ?? 0, {
+        id: "rows",
+        header: "Rows",
+        size: 90,
+        sortFn: "basic",
+        cell: ({ getValue }) => (
+          <span className="block text-right font-mono text-xs tabular">
+            {getValue()}
+          </span>
+        ),
+      }),
+      column.accessor((table) => table.lastWriteAt ?? 0, {
+        id: "lastWrite",
+        header: "Last write",
+        size: 150,
+        sortFn: "basic",
+        cell: ({ row }) =>
+          row.original.lastWriteAt ? (
+            <RelativeTime epochMs={row.original.lastWriteAt} />
+          ) : (
+            <span className="text-text-3">never</span>
+          ),
+      }),
+      {
+        id: "actions",
+        size: 150,
+        minSize: 150,
+        maxSize: 150,
+        enableSorting: false,
+        enableResizing: false,
+        header: () => <span className="sr-only">Actions</span>,
+        // Inline actions appear on hover and stay keyboard reachable:
+        // opacity keeps them in the tab order, and focus-within reveals
+        // them when tabbed to.
+        cell: ({ row }) => {
+          const name = tableName(row.original);
+          return (
+            <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => open(name, "schema")}
+                data-testid={`tenant-table-schema-${name}`}
+              >
+                Schema
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => open(name)}
+                data-testid={`tenant-table-open-${name}`}
+              >
+                Open
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [open],
+  );
 
   const items = (name: string): RowMenuItem[] => [
     { id: "open", label: "Open table", onSelect: () => open(name) },
     {
       id: "schema",
-      label: "Open schema panel",
+      label: "Open schema",
       onSelect: () => open(name, "schema"),
     },
     {
       id: "indexes",
-      label: "Open indexes panel",
+      label: "Open indexes",
       onSelect: () => open(name, "indexes"),
     },
     {
@@ -66,172 +184,40 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
       onSelect: () => {
         void navigator.clipboard
           .writeText(name)
-          .then(() => toast(`Copied table name`))
+          .then(() => toast("Copied table name"))
           .catch(() => toast.error("Failed to copy table name"));
       },
     },
   ];
 
-  const moveFocus = (from: number, delta: number) => {
-    const next = Math.min(Math.max(from + delta, 0), sorted.length - 1);
-    setFocusRow(next);
-    rowRefs.current[next]?.focus();
-  };
-
   return (
-    <div className="h-full overflow-auto">
-      <table
-        className="w-full border-collapse text-sm"
-        data-testid="tenant-tables-table"
-      >
-        <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
-          <tr>
-            <Th>Table</Th>
-            <Th>Schema</Th>
-            <Th align="right">Rows</Th>
-            <Th>Last write</Th>
-            <Th align="right" className="w-px">
-              actions
-            </Th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((table, index) => {
-            const name = table.name ?? table._id;
-            return (
-              <tr
-                key={table._id}
-                ref={(el) => {
-                  rowRefs.current[index] = el;
-                }}
-                tabIndex={index === focusRow ? 0 : -1}
-                // No `outline-none`: the row keeps the console-wide
-                // `:focus-visible` outline — 2px of `--focus` at offset 2px —
-                // which is the only ring in the system tuned to clear WCAG 2.2
-                // SC 1.4.11's 3:1 non-text floor on every ground (3.42:1 warm
-                // light on `--surface-2`, its worst case). The inset `--accent`
-                // hairline it replaces measured 1.71:1 there.
-                //
-                // No `focus-visible:z-*` counterpart to documents-table.tsx:
-                // this table has no pinned cells to occlude the outline, and
-                // its sticky `thead` carries no z-index, so a positioned row
-                // would paint over the header instead of scrolling under it.
-                className={cn(
-                  "group h-9 cursor-pointer border-t border-border-2 hover:bg-bg-raised",
-                )}
-                data-testid={`tenant-table-row-${name}`}
-                onFocus={() => setFocusRow(index)}
-                onClick={(event) => {
-                  if ((event.target as HTMLElement).closest(INTERACTIVE))
-                    return;
-                  open(name);
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setMenu({
-                    x: event.clientX,
-                    y: event.clientY,
-                    name,
-                    anchor: rowRefs.current[index],
-                  });
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    moveFocus(index, 1);
-                  } else if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    moveFocus(index, -1);
-                  } else if (
-                    (event.key === "Enter" || event.key === " ") &&
-                    event.target === event.currentTarget
-                  ) {
-                    event.preventDefault();
-                    open(name);
-                  } else if (
-                    event.key === "ContextMenu" ||
-                    (event.key === "F10" && event.shiftKey)
-                  ) {
-                    event.preventDefault();
-                    const rect =
-                      rowRefs.current[index]?.getBoundingClientRect();
-                    setMenu({
-                      x: rect ? rect.left + 24 : 0,
-                      y: rect ? rect.bottom : 0,
-                      name,
-                      anchor: rowRefs.current[index],
-                    });
-                  }
-                }}
-              >
-                <Td>
-                  <Link
-                    to="/developer/storage/$table"
-                    params={{ table: name }}
-                    className="font-mono text-text-1 hover:underline"
-                    data-testid={`tenant-table-link-${name}`}
-                  >
-                    {name}
-                  </Link>
-                  <span className="ml-2 align-middle">
-                    <CopyChip
-                      label="table name"
-                      value={name}
-                      hideUntilHover
-                      testid={`tenant-table-copy-${name}`}
-                    >
-                      copy
-                    </CopyChip>
-                  </span>
-                </Td>
-                <Td mono>{table.schema ? "defined" : "any"}</Td>
-                <Td align="right" mono>
-                  {table.rowCount ?? 0}
-                </Td>
-                <Td>
-                  {table.lastWriteAt ? (
-                    <RelativeTime epochMs={table.lastWriteAt} />
-                  ) : (
-                    <span className="text-text-3">never</span>
-                  )}
-                </Td>
-                <Td
-                  align="right"
-                  className="w-px whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
-                >
-                  <button
-                    type="button"
-                    onClick={() => open(name, "schema")}
-                    className="mr-2 rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
-                    data-testid={`tenant-table-schema-${name}`}
-                  >
-                    schema
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => open(name)}
-                    className="rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-1 hover:bg-bg-panel"
-                    data-testid={`tenant-table-open-${name}`}
-                  >
-                    open
-                  </button>
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <>
+      <DataTable
+        columns={columns}
+        data={sorted}
+        getRowId={(table) => table._id}
+        ariaLabel="Tables"
+        testid="tenant-tables-table"
+        rowTestid={(table) => `tenant-table-row-${tableName(table)}`}
+        rowClassName={() => "group"}
+        loading={tables === undefined}
+        onRowActivate={(table) => open(tableName(table))}
+        onRowContextMenu={(table, anchor) =>
+          setMenu({ ...anchor, name: tableName(table) })
+        }
+        className="h-full"
+      />
       {menu ? (
         <RowContextMenu
           x={menu.x}
           y={menu.y}
           label={`Table ${menu.name} actions`}
           items={items(menu.name)}
-          restoreFocus={menu.anchor}
+          restoreFocus={menu.element}
           onClose={() => setMenu(null)}
           testid="tenant-table-row-menu"
         />
       ) : null}
-    </div>
+    </>
   );
 }

@@ -2,7 +2,6 @@ import {
   createFileRoute,
   Link,
   notFound,
-  useNavigate,
   useSearch,
 } from "@tanstack/react-router";
 import { useMemo } from "react";
@@ -11,8 +10,10 @@ import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
-import { StatePill } from "../../components/pill";
+import { PageTabs } from "../../components/page-tabs";
+import { CategoryPill, StatePill } from "../../components/pill";
 import { AdminServiceDetailLoaderError } from "../../components/service-loader-errors";
+import { StateDot } from "../../components/state-dot";
 import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -21,12 +22,19 @@ import {
   useContributeSubPanel,
   useSubPanelSearch,
 } from "../../shell/sub-panel";
+import {
+  LifecycleButtons,
+  shownStateOf,
+} from "../developer/services/-lifecycle-buttons";
+import { useServiceActions } from "../developer/services/-service-lifecycle";
+import { ServiceLogs } from "../developer/services/-service-logs";
 import { groupByTenant } from "./services";
 
-export type DetailTab = "placement";
+export type DetailTab = "placement" | "logs";
 
 export const TABS: ReadonlyArray<{ id: DetailTab; label: string }> = [
   { id: "placement", label: "Placement" },
+  { id: "logs", label: "Logs" },
 ];
 
 type DetailSearch = {
@@ -65,15 +73,15 @@ export const Route = createFileRoute("/operator/services_/$service")({
 });
 
 export function isTab(value: unknown): value is DetailTab {
-  return value === "placement";
+  return value === "placement" || value === "logs";
 }
 
 function AdminServiceDetailPage() {
   const { service: serviceId } = Route.useParams();
   const { service, services, bundles, machines } = Route.useLoaderData();
   const search = useSearch({ from: "/operator/services_/$service" });
-  const navigate = useNavigate();
   const tab: DetailTab = search.tab ?? "placement";
+  const actions = useServiceActions();
 
   const bundle = useMemo<Doc<"bundles"> | null>(() => {
     if (!service.bundleId) return null;
@@ -93,14 +101,6 @@ function AdminServiceDetailPage() {
   );
   useContributeSubPanel(spec);
 
-  const setTab = (next: DetailTab) =>
-    navigate({
-      to: "/operator/services/$service",
-      params: { service: serviceId },
-      search: { tab: next },
-      replace: true,
-    });
-
   const displayName = service.name ?? shortId(serviceId, 12);
 
   return (
@@ -108,72 +108,66 @@ function AdminServiceDetailPage() {
       className="flex h-full flex-col overflow-hidden"
       data-testid="page-admin-service-detail"
     >
-      <div className="flex shrink-0 flex-col gap-2 border-b border-border-2 px-6 pb-3 pt-4">
+      <div className="flex shrink-0 flex-col gap-3 border-b border-border-2 px-6 pb-3 pt-4">
         <Breadcrumb
           segments={[
             { label: "Services", href: "/operator/services" },
             { label: displayName, active: true },
           ]}
         />
-        <header className="flex flex-wrap items-baseline gap-3">
-          <h1
-            className="font-mono text-text-1"
-            style={{ fontSize: "var(--text-lg)" }}
-          >
-            {displayName}
-          </h1>
-          {service.kind ? (
-            <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3">
-              {service.kind}
-            </span>
-          ) : null}
-          {service.state ? <StatePill state={service.state} /> : null}
-          {service.tenantId ? (
-            <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3">
-              {service.tenantId}
-            </span>
-          ) : null}
-          {bundle?.sha256 ? (
-            <CopyChip
-              label="bundle sha256"
-              value={bundle.sha256}
-              testid="admin-service-detail-bundle"
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h1
+              className="font-mono text-text-1"
+              style={{ fontSize: "var(--text-lg)" }}
             >
-              {shortHash(bundle.sha256, 12)}
-            </CopyChip>
-          ) : null}
+              {displayName}
+            </h1>
+            {service.kind ? <CategoryPill value={service.kind} /> : null}
+            <StatePill
+              state={shownStateOf(service, actions)}
+              data-testid="admin-service-detail-state"
+            />
+            {service.tenantId ? (
+              <span className="rounded-xs border border-border-2 px-1.5 py-0.5 font-mono text-xs text-text-3">
+                {service.tenantId}
+              </span>
+            ) : null}
+            {bundle?.sha256 ? (
+              <CopyChip
+                label="bundle sha256"
+                value={bundle.sha256}
+                testid="admin-service-detail-bundle"
+              >
+                {shortHash(bundle.sha256, 12)}
+              </CopyChip>
+            ) : null}
+          </div>
+          <LifecycleButtons
+            service={service}
+            actions={actions}
+            testid="admin-service-detail-action"
+          />
         </header>
+        <PageTabs
+          label="Admin service detail sections"
+          tabs={TABS}
+          active={tab}
+          testid="admin-service-detail-tabs"
+          itemTestid="admin-service-detail-tab"
+        />
       </div>
 
-      <nav
-        aria-label="Admin service detail sections"
-        className="flex shrink-0 gap-px border-b border-border-2 bg-bg-raised px-6"
-        data-testid="admin-service-detail-tabs"
-      >
-        {TABS.map((t) => {
-          const isActive = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              aria-current={isActive ? "page" : undefined}
-              data-testid={`admin-service-detail-tab-${t.id}`}
-              className={cn(
-                "flex items-center px-3 py-2 font-mono text-xs",
-                isActive
-                  ? "border-b-2 border-[color:var(--accent)] text-text-1"
-                  : "text-text-3 hover:text-text-1",
-              )}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </nav>
-
       <div className="min-h-0 flex-1 overflow-hidden">
-        <PlacementTab service={service} machines={machines} />
+        {tab === "logs" ? (
+          <ServiceLogs
+            tenantId={service.tenantId}
+            serviceName={service.name ?? service._id}
+            testid="admin-service-tab-logs"
+          />
+        ) : (
+          <PlacementTab service={service} machines={machines} />
+        )}
       </div>
     </section>
   );
@@ -283,6 +277,7 @@ function AdminDetailSubPanel({
                     : "text-text-3 hover:bg-bg-raised hover:text-text-1",
                 )}
               >
+                <StateDot state={svc.state} />
                 <span className="flex-1 truncate font-mono text-xs">
                   {svc.name ?? shortId(svc._id, 12)}
                 </span>

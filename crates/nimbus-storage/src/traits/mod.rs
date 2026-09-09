@@ -26,8 +26,8 @@ pub use kv::{
     KvSweepOutcome, TenantKvStore,
 };
 pub use object_metadata::{
-    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,
-    ObjectChunkRef, ObjectConditionOutcome, ObjectDeleteConditionOutcome,
+    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectBucketSummary,
+    ObjectChecksums, ObjectChunkRef, ObjectConditionOutcome, ObjectDeleteConditionOutcome,
     ObjectDeleteExpectedState, ObjectExpectedState, ObjectManifest, ObjectManifestAttributes,
     ObjectMetaRead, ObjectMultipartPart, ObjectMultipartUpload, ObjectUploadConditionOutcome,
     ObjectUploadExpectedState, multipart_upload_document_id, object_manifest_document_id,

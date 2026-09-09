@@ -6,6 +6,9 @@ import { CopyChip } from "./copy-chip";
 export type BreadcrumbSegment = {
   label: string;
   href?: string;
+  // search is the query the link carries, for a page whose views live on
+  // `?tab=`; it is the route's own search type by contract.
+  search?: Record<string, unknown>;
   copyValue?: string;
   copyLabel?: string;
   active?: boolean;
@@ -41,6 +44,7 @@ export function Breadcrumb({
             {segment.href && !segment.active ? (
               <Link
                 to={segment.href}
+                search={segment.search as never}
                 className="text-text-3 hover:text-text-1 focus-visible:text-text-1"
                 data-testid={`breadcrumb-link-${idx}`}
               >

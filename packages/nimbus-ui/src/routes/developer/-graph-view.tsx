@@ -18,7 +18,9 @@ const HEADER_H = 26;
 const PAD = 28;
 const COL_W = NODE_W + COL_GAP_X;
 
-export function GraphView() {
+// `focus` names the function a page is about; its node is drawn with the
+// accent border so the reader finds it among the columns.
+export function GraphView({ focus }: { focus?: string } = {}) {
   const state = useApiRead<GraphData>("/api/console/graph");
 
   return (
@@ -32,7 +34,7 @@ export function GraphView() {
             No functions deployed yet. Deploy an app to see its call graph.
           </Centered>
         ) : (
-          <GraphCanvas graph={state.value} />
+          <GraphCanvas graph={state.value} focus={focus} />
         )
       ) : state.kind === "loading" ? (
         <Centered>Loading call graph…</Centered>
@@ -46,7 +48,7 @@ export function GraphView() {
   );
 }
 
-function GraphCanvas({ graph }: { graph: GraphData }) {
+function GraphCanvas({ graph, focus }: { graph: GraphData; focus?: string }) {
   const router = useRouter();
 
   const layout = useMemo(() => {
@@ -158,8 +160,13 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
       {graph.nodes.map((node) => {
         const p = layout.pos.get(node.id);
         if (!p) return null;
+        const focused = focus !== undefined && node.id === focus;
         return (
-          <g key={node.id} transform={`translate(${p.x}, ${p.y})`}>
+          <g
+            key={node.id}
+            transform={`translate(${p.x}, ${p.y})`}
+            data-focused={focused ? "true" : undefined}
+          >
             <a
               href={functionLocation(node.id).href}
               data-testid={`graph-node-${node.id}`}
@@ -184,7 +191,8 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
                 height={NODE_H}
                 rx="6"
                 fill="var(--bg-raised)"
-                stroke="var(--border-3)"
+                stroke={focused ? "var(--accent)" : "var(--border-3)"}
+                strokeWidth={focused ? 2 : 1}
               />
               <text
                 x={10}

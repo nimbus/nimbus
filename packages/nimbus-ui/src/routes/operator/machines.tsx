@@ -8,10 +8,15 @@ import { ConfirmDialog } from "../../components/confirm-dialog";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
-import { StatePill } from "../../components/pill";
+import { StateDot } from "../../components/state-dot";
 import { PIN_R, Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
-import { formatMemory } from "../../lib/format";
+import { formatCount, formatMemory } from "../../lib/format";
+import {
+  capacityOf,
+  capacitySummary,
+  stateSummary,
+} from "../../lib/inventory-summary";
 import {
   type SubPanelSpec,
   useContributeSubPanel,
@@ -55,6 +60,11 @@ function MachinesPage() {
     limit: 200,
   }) as MachineDoc[] | undefined;
 
+  const [selected, setSelected] = useState<string | null>(null);
+
+  // The sub-panel item selects the machine in place: the inspector opens
+  // beside the table, and the item is marked current so the panel and the
+  // table agree on which machine is open.
   const subPanelSpec = useMemo<SubPanelSpec>(() => {
     const list = machines ?? [];
     return {
@@ -73,27 +83,34 @@ function MachinesPage() {
           </div>
         ) : (
           <ul className="flex flex-col gap-px px-2 py-2">
-            {list.map((machine) => (
-              <li key={machine._id}>
-                <a
-                  href={`/operator/machines?selected=${machine._id}`}
-                  data-testid={`sub-panel-item-op-${machine._id}`}
-                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
-                >
-                  <span className="flex-1 truncate">{machine.name}</span>
-                  <span className="tabular text-xs font-medium text-text-3">
-                    {machine.state}
-                  </span>
-                </a>
-              </li>
-            ))}
+            {list.map((machine) => {
+              const current = selected === machine._id;
+              return (
+                <li key={machine._id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(current ? null : machine._id)}
+                    aria-current={current ? "true" : undefined}
+                    data-testid={`sub-panel-item-op-${machine._id}`}
+                    className={cn(
+                      "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-bg-raised hover:text-text-1",
+                      current ? "bg-bg-raised text-text-1" : "text-text-3",
+                    )}
+                  >
+                    <StateDot state={machine.state} />
+                    <span className="flex-1 truncate">{machine.name}</span>
+                    <span className="tabular text-xs font-medium text-text-3">
+                      {machine.state}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         ),
     };
-  }, [machines]);
+  }, [machines, selected]);
   useContributeSubPanel(subPanelSpec);
-
-  const [selected, setSelected] = useState<string | null>(null);
   const {
     pending,
     errors,
@@ -116,14 +133,7 @@ function MachinesPage() {
       <PageHeader
         title="Machines"
         subtitle="Outer Linux VMs hosting sandboxes on macOS/Windows dev hosts (krunkit / WSL2). Not cluster Nodes."
-        trailing={
-          <span
-            className="font-mono text-xs text-text-3"
-            data-testid="machines-total"
-          >
-            {machines === undefined ? "loading…" : `${machines.length} total`}
-          </span>
-        }
+        trailing={<MachinesSummary machines={machines} />}
       />
       <div className="flex min-h-0 flex-1 gap-4">
         <div
@@ -268,7 +278,10 @@ function MachineTable({
                     className="flex flex-col gap-1"
                     data-testid={`machines-state-${machine.name}`}
                   >
-                    <StatePill state={optimisticState} />
+                    <span className="flex items-center gap-2 font-mono text-xs text-text-1">
+                      <StateDot state={optimisticState} />
+                      {optimisticState}
+                    </span>
                     {error ? (
                       <span
                         className="font-mono text-xs text-error"
@@ -338,6 +351,36 @@ function MachineTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+// The header says what the count is made of and what it adds up to: the
+// machine states, then the allocation across them. A bare "3 total" told an
+// operator nothing they could act on.
+function MachinesSummary({ machines }: { machines: MachineDoc[] | undefined }) {
+  if (machines === undefined) {
+    return (
+      <span
+        className="font-mono text-xs text-text-3"
+        data-testid="machines-total"
+      >
+        loading…
+      </span>
+    );
+  }
+  const states = stateSummary(machines);
+  const capacity = capacitySummary(capacityOf(machines));
+  return (
+    <span className="flex flex-col items-end gap-0.5 font-mono text-xs text-text-3">
+      <span data-testid="machines-total">
+        {formatCount(machines.length)}{" "}
+        {machines.length === 1 ? "machine" : "machines"}
+        {states ? ` · ${states}` : ""}
+      </span>
+      {capacity ? (
+        <span data-testid="machines-capacity">{capacity}</span>
+      ) : null}
+    </span>
   );
 }
 

@@ -30,6 +30,7 @@ mod graph;
 mod local_admin;
 mod machines;
 mod metadata;
+mod objects;
 mod queries;
 mod resource_control;
 mod sandboxes;
@@ -56,6 +57,10 @@ pub(crate) use metadata::{
     clear_tenant_consistency_session, encryption_status, examples_redirect, health, license_status,
     run_tenant_metadata_retention, runtime_diagnostics, tenant_consistency_report,
     tenant_engine_diagnostics,
+};
+pub(crate) use objects::{
+    MAX_OBJECT_UPLOAD_BYTES, delete_object, get_object, list_object_buckets, list_objects,
+    put_object,
 };
 pub(crate) use queries::{
     bootstrap_journal, query_documents, query_documents_paginated, read_journal,

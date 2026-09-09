@@ -6,7 +6,9 @@
 // same helpers open it first.
 //
 // What this covers, in order:
-//   1. /ui/developer/        — Developer Overview tile envelopes
+//   1. /ui/developer/        — Developer Overview headline, connect
+//                               panel, and the first-run panel on a
+//                               server with no functions or runs
 //   2. /ui/operator/      — Operator Nodes tile envelopes
 //   3. /ui/developer/services       — ScopeChip reads `TENANT <tenant>` and
 //                               the services table renders
@@ -184,10 +186,15 @@ test.describe("console smoke walk", () => {
     // 1. Developer Overview
     await page.goto(`${baseURL}/ui/developer/`);
     await expect(page.getByTestId("page-overview")).toBeVisible();
-    await expect(page.getByTestId("overview-top-strip")).toBeVisible();
-    await expect(page.getByTestId("overview-counts")).toBeVisible();
-    await expect(page.getByTestId("overview-events")).toBeVisible();
-    await expect(page.getByTestId("overview-runs")).toBeVisible();
+    await expect(page.getByTestId("overview-headline")).toBeVisible();
+    await expect(page.getByTestId("overview-connect")).toBeVisible();
+    await expect(page.getByTestId("overview-connect-snippet")).toContainText(
+      `${baseURL}/api/tenants/`,
+    );
+    // A fresh server has no functions and no runs, so the Overview shows
+    // the first-run panel and not empty stat tiles.
+    await expect(page.getByTestId("overview-onboarding")).toBeVisible();
+    await expect(page.getByTestId("overview-stats")).toHaveCount(0);
 
     // 2. Operator Nodes, through the view switcher
     await switchView(page, "operator");
@@ -244,13 +251,13 @@ test.describe("console smoke walk", () => {
 
     // 6. Operator Tenants — diagnostic envelope is reachable
     await navigateTo(page, "tenants");
-    await expect(page.getByTestId("page-storage")).toBeVisible();
+    await expect(page.getByTestId("page-tenants")).toBeVisible();
     // Either the table or the empty/server-error envelope renders; the
     // route is wired if any of these are visible.
     await expect(
-      page.getByTestId("storage-tenants-table").or(
-        page.getByTestId("storage-empty").or(
-          page.getByTestId("storage-server-error-envelope"),
+      page.getByTestId("tenants-table").or(
+        page.getByTestId("tenants-empty").or(
+          page.getByTestId("tenants-error-envelope"),
         ),
       ),
     ).toBeVisible();

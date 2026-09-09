@@ -109,7 +109,21 @@ describe("parseSettingsSection", () => {
   });
 
   it("rejects unknown and non-string values", () => {
-    for (const value of ["", "Deploys", "danger", 3, null, undefined, {}]) {
+    // `endpoints`, `token`, and `environment` are planned sub-pages with no
+    // pane, so the route does not accept them either: a section space that
+    // outruns the menu is how a URL reaches an empty frame.
+    for (const value of [
+      "",
+      "Deploys",
+      "danger",
+      "endpoints",
+      "token",
+      "environment",
+      3,
+      null,
+      undefined,
+      {},
+    ]) {
       expect(parseSettingsSection(value)).toBeUndefined();
     }
   });
@@ -182,12 +196,15 @@ describe("section rendering", () => {
     renderSection("general");
     expect(screen.getByTestId("page-settings").dataset.section).toBe("general");
     expect(screen.getByTestId("stub-appearance")).toBeTruthy();
-    expect(screen.getByTestId("stub-server-info")).toBeTruthy();
+    expect(screen.getByTestId("stub-tenant-header")).toBeTruthy();
     expect(screen.getByTestId("stub-configuration")).toBeTruthy();
+    // Server identity has its own section, so General does not repeat it.
+    expect(screen.queryByTestId("stub-server-info")).toBeNull();
     expect(screen.queryByTestId("stub-deploys")).toBeNull();
   });
 
   it.each([
+    ["system", "stub-server-info"],
     ["deploys", "stub-deploys"],
     ["integrations", "stub-integrations"],
     ["shutdown", "stub-danger-zone"],
@@ -198,21 +215,17 @@ describe("section rendering", () => {
     expect(screen.queryByTestId("stub-appearance")).toBeNull();
   });
 
-  // Menu entries DESIGN.md specifies but this build does not implement. They
-  // say so rather than rendering an empty frame.
-  it.each([
-    "endpoints",
-    "token",
-    "environment",
-  ] as const)("says the %s section is unavailable instead of rendering an empty frame", (section) => {
-    renderSection(section);
-    const empty = screen.getByTestId(`settings-${section}-unavailable`);
-    expect(empty).toBeTruthy();
-    expect(
-      screen.getByTestId(`settings-${section}-unavailable-body`).textContent,
-    ).toContain("not available in this build");
-    expect(screen.queryByTestId("stub-appearance")).toBeNull();
-    expect(screen.queryByTestId("stub-deploys")).toBeNull();
+  // A static menu lists only pages that exist, so every entry the menu can
+  // produce lands on a built pane and never on an "unavailable" frame.
+  it("renders a built pane for every menu entry", () => {
+    for (const item of ADMIN_SETTINGS_SUB_PANEL.items) {
+      const { container, unmount } = renderSection(item.search.section);
+      expect(container.querySelector('[data-testid^="stub-"]')).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid$="-unavailable"]'),
+      ).toBeNull();
+      unmount();
+    }
   });
 
   it("gives every section its own subtitle", () => {

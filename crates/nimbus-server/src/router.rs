@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{any, delete, get, post};
 use axum::{Extension, Router};
@@ -9,6 +10,7 @@ use nimbus_compute::config::deployment::DeploymentConfig;
 use nimbus_compute::config::node_services::NodeServicesConfig;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 use nimbus_engine::Engine;
+use nimbus_object_storage::ObjectStorageConfig;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource,
     RuntimeHostResourceBudget, RuntimeLimits, RuntimeScalingPlanSet,
@@ -59,6 +61,7 @@ pub struct RouterOptions {
     node_services: NodeServicesConfig,
     transport: TransportConfig,
     runtime: RuntimeGovernorConfig,
+    object_storage: ObjectStorageConfig,
 }
 
 impl RouterOptions {
@@ -73,6 +76,7 @@ impl RouterOptions {
             node_services: NodeServicesConfig::default().with_service_manager(service_manager),
             transport: TransportConfig::default(),
             runtime: RuntimeGovernorConfig::default(),
+            object_storage: ObjectStorageConfig::default(),
         }
     }
 
@@ -88,11 +92,21 @@ impl RouterOptions {
             node_services: NodeServicesConfig::default(),
             transport: TransportConfig::default(),
             runtime: RuntimeGovernorConfig::default(),
+            object_storage: ObjectStorageConfig::default(),
         }
     }
 
     pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
         self.deployment = self.deployment.with_convex(convex_registry);
+        self
+    }
+
+    /// Placement policy for the per-tenant object byte plane behind the
+    /// native object routes. The S3 listener takes the same config through
+    /// [`S3Config::with_object_storage_config`](crate::S3Config::with_object_storage_config);
+    /// a process that serves both must pass one config to both.
+    pub fn with_object_storage_config(mut self, object_storage: ObjectStorageConfig) -> Self {
+        self.object_storage = object_storage;
         self
     }
 
@@ -284,6 +298,7 @@ impl RouterOptions {
         config.node_services = self.node_services;
         config.transport = self.transport;
         config.runtime = self.runtime;
+        config.object_storage = self.object_storage;
         config
     }
 
@@ -304,6 +319,7 @@ pub(crate) struct RouterBuildConfig {
     node_services: NodeServicesConfig,
     transport: TransportConfig,
     runtime: RuntimeGovernorConfig,
+    object_storage: ObjectStorageConfig,
 }
 
 pub(crate) struct PreparedRouterState {
@@ -328,6 +344,7 @@ impl RouterBuildConfig {
             node_services: NodeServicesConfig::default(),
             transport: TransportConfig::default(),
             runtime: RuntimeGovernorConfig::default(),
+            object_storage: ObjectStorageConfig::default(),
         }
     }
 
@@ -527,6 +544,7 @@ impl RouterBuildConfig {
             node_services,
             transport,
             runtime,
+            object_storage,
         } = self;
         let engine = workload.engine();
         nimbus_system::install_table_projection_observer(&engine);
@@ -565,6 +583,7 @@ impl RouterBuildConfig {
             node_services,
             transport: transport.ensure_version_check(),
             runtime,
+            object_storage,
         }));
         PreparedRouterState {
             state,
@@ -824,7 +843,31 @@ fn build_local_admin_router() -> Router<Arc<AppState>> {
             "/api/tenants/{tenant_id}/query/paginated",
             post(http::query_documents_paginated),
         )
+        .merge(build_object_router())
         .route("/ws", get(ws::ws_handler))
+}
+
+/// Native, session-authenticated object routes over the per-tenant object
+/// planes. Mounted inside the local admin family so the operator console
+/// reaches object storage through the same policy gate as documents, with
+/// no SigV4 credentials in the browser.
+fn build_object_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/tenants/{tenant_id}/objects",
+            get(http::list_object_buckets),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/objects/{bucket}",
+            get(http::list_objects),
+        )
+        .route(
+            "/api/tenants/{tenant_id}/objects/{bucket}/{*key}",
+            get(http::get_object)
+                .put(http::put_object)
+                .delete(http::delete_object),
+        )
+        .layer(DefaultBodyLimit::max(http::MAX_OBJECT_UPLOAD_BYTES))
 }
 
 fn build_service_control_router() -> Router<Arc<AppState>> {
@@ -1049,6 +1092,7 @@ mod network_manager_tests {
                 node_services: NodeServicesConfig::default().with_service_manager(service_manager),
                 transport: TransportConfig::default(),
                 runtime: RuntimeGovernorConfig::default(),
+                object_storage: nimbus_object_storage::ObjectStorageConfig::default(),
             });
         }));
         assert!(
@@ -1075,6 +1119,7 @@ mod network_manager_tests {
                     .with_machine_lifecycle_manager(machine_manager),
                 transport: TransportConfig::default(),
                 runtime: RuntimeGovernorConfig::default(),
+                object_storage: nimbus_object_storage::ObjectStorageConfig::default(),
             });
         }));
         assert!(

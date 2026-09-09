@@ -2,21 +2,23 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { EmptyState } from "../../components/empty-state";
+import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
+import { PageTabs } from "../../components/page-tabs";
 import { BulkToolbar } from "../../components/storage/bulk-toolbar";
 import { ColumnChooser } from "../../components/storage/column-chooser";
 import { DocumentsTable } from "../../components/storage/documents-table";
 import { EditDrawer } from "../../components/storage/edit-drawer";
-import { IndexPanel } from "../../components/storage/index-panel";
+import { IndexesTab } from "../../components/storage/indexes-tab";
 import { InsertDrawer } from "../../components/storage/insert-drawer";
 import { PageError } from "../../components/storage/page-error";
 import { QueryBar } from "../../components/storage/query-bar";
-import { SchemaPanel } from "../../components/storage/schema-panel";
+import { SchemaTab } from "../../components/storage/schema-tab";
 import {
   type DocumentFilter,
   type DocumentOrder,
@@ -46,9 +48,9 @@ export const Route = createFileRoute("/developer/storage_/$table")({
   validateSearch: (search: Record<string, unknown>): TableSearch => {
     const filters = parseFilters(search.filters);
     return {
-      panel:
-        search.panel === "schema" || search.panel === "indexes"
-          ? search.panel
+      tab:
+        search.tab === "schema" || search.tab === "indexes"
+          ? search.tab
           : undefined,
       sort:
         typeof search.sort === "string" && search.sort !== ""
@@ -68,7 +70,8 @@ export const Route = createFileRoute("/developer/storage_/$table")({
 });
 
 type TableSearch = {
-  panel?: "schema" | "indexes";
+  /** The page's sub-view. Documents is the default and has no value. */
+  tab?: TableTab;
   sort?: string;
   dir?: "asc" | "desc";
   filters?: DocumentFilter[];
@@ -86,6 +89,15 @@ function parseCursors(raw: unknown): string[] | undefined {
   );
   return out.length > 0 ? out : undefined;
 }
+
+type TableTab = "schema" | "indexes";
+type TableTabId = "documents" | TableTab;
+
+const TABS = [
+  { id: "documents", label: "Documents" },
+  { id: "schema", label: "Schema" },
+  { id: "indexes", label: "Indexes" },
+] as const satisfies ReadonlyArray<{ id: TableTabId; label: string }>;
 
 const NO_FILTERS: DocumentFilter[] = [];
 const NO_CURSORS: string[] = [];
@@ -377,7 +389,7 @@ function TableDocumentsPage() {
 
   // Every search write goes through the updater form: replacing the whole
   // search object would silently drop the other params (a filter change would
-  // close the schema panel, a panel toggle would drop the sort).
+  // switch back to the Documents tab, a tab switch would drop the sort).
   const patchSearch = useCallback(
     (patch: Partial<TableSearch>) => {
       void navigate({ search: (prev: TableSearch) => ({ ...prev, ...patch }) });
@@ -432,33 +444,16 @@ function TableDocumentsPage() {
     [order, indexBacked, applyOrder],
   );
 
-  const togglePanel = useCallback(
-    (panel: "schema" | "indexes" | undefined) => {
-      patchSearch({ panel: search.panel === panel ? undefined : panel });
-    },
-    [patchSearch, search.panel],
-  );
-
   const filterFields = useMemo(
     () => ["_id", ...availableFields],
     [availableFields],
   );
 
+  const activeTab: TableTabId = search.tab ?? "documents";
+
   return (
     <section
-      // `@container/documents-row` exists for the inspector row below, which
-      // has to know its own width and cannot get it from a media query: the
-      // shell's drawers sit between the viewport and this page and take 80px
-      // collapsed or 480px expanded, so the same viewport yields row widths
-      // 400px apart. Querying this section instead reads the row's real
-      // budget, because size containment is on the inline axis and this
-      // section's content box is exactly what the row has to spend.
-      //
-      // `container-type: inline-size` does not establish a containing block
-      // and does not open a stacking context, so the `fixed inset-0` drawers
-      // and dialogs inside this subtree still resolve against the viewport --
-      // verified in Chromium against `contain: layout`, which does trap them.
-      className="@container/documents-row flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
+      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-table-documents"
     >
       <div className="flex flex-col gap-2">
@@ -496,76 +491,59 @@ function TableDocumentsPage() {
               className="flex items-center gap-2"
               data-testid="documents-toolbar"
             >
-              <button
-                type="button"
-                onClick={() => togglePanel("schema")}
-                className={cn(
-                  "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium hover:bg-bg-panel",
-                  search.panel === "schema"
-                    ? "bg-bg-panel text-text-1"
-                    : "text-text-3 hover:text-text-1",
-                )}
-                data-testid="documents-toggle-schema"
-              >
-                schema
-              </button>
-              <button
-                type="button"
-                onClick={() => togglePanel("indexes")}
-                className={cn(
-                  "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium hover:bg-bg-panel",
-                  search.panel === "indexes"
-                    ? "bg-bg-panel text-text-1"
-                    : "text-text-3 hover:text-text-1",
-                )}
-                data-testid="documents-toggle-indexes"
-              >
-                indexes
-              </button>
               {/* Bulk delete lives in the selection toolbar above the rows it
                   acts on, not in a page-level button — two competing delete
                   affordances is how an operator deletes the wrong set. */}
-              <button
+              <Button
                 type="button"
+                size="sm"
                 onClick={() => setShowInsert(true)}
-                className="rounded-xs border border-border-2 px-2 py-1 text-xs font-medium text-text-1 hover:bg-bg-panel"
                 data-testid="documents-open-insert"
               >
-                insert
-              </button>
+                Insert
+              </Button>
             </div>
           }
         />
       </div>
 
-      {/* Stacked until the row can afford both children side by side. They
-          have conflicting floors: the table needs 20rem to stay readable and
-          the inspector wants 420px, so side-by-side costs 320 + 16 gap + 420 =
-          756px of row width. Under that one of them starves, and since the
-          table holds a floor, the inspector is the one that goes -- 6px at a
-          390px viewport, measured. Stacking spends height, which this row can
-          scroll, instead of width, which it cannot.
+      {/* Documents, Schema and Indexes are peers of one table, so they are
+          tabs with an address each, not inspectors beside the grid. Each tab
+          gets the whole width: a schema editor and a document grid both need
+          it, and a 420px inspector beside a grid starved one of them at every
+          width the shell's drawers produce. The Query tab lands in UIR21. */}
+      <PageTabs
+        label="Table views"
+        tabs={TABS}
+        active={activeTab}
+        testid="documents-tabs"
+        itemTestid="documents-tab"
+      />
 
-          756px is measured against the section's container, not the viewport,
-          because the drawers make the two disagree by up to 480px. A viewport
-          breakpoint here would have to pick one number for a threshold that
-          really ranges from 884px to 1284px: `lg` was the closest, and it
-          still starved the panel to 160px at 1024px with both drawers open,
-          and to 416px at 1280px. The container query has no such gap -- it
-          reads the row's own width, so drawer state stops mattering. */}
-      <div className="@min-[756px]/documents-row:flex-row flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-        {/* `flex-1` is `flex: 1 1 0%`, and `overflow-hidden` resolves this
-            column's automatic minimum width to zero, so with the schema or
-            index inspector open it yielded every pixel to its 420px sibling
-            and collapsed to its own two borders at narrow widths. 20rem is
-            what one readable row costs: the 38px selection gutter the `_id`
-            column is pinned against, the 13-character `_id` cell itself
-            (~118px at text-xs mono plus `px-3`), and one data cell wide
-            enough to read. The pinned action column is deliberately not in
-            that budget -- the grid scrolls horizontally, so it stays
-            reachable. */}
+      {activeTab === "schema" ? (
+        // The editor seeds its draft from the schema once, on mount. Until
+        // the table row has arrived there is no schema to seed from, so the
+        // tab waits instead of opening an empty editor over a real schema.
+        tableMeta === undefined ? (
+          <LoadingState
+            label="loading schema…"
+            className="flex-1"
+            testid="documents-schema-loading"
+          />
+        ) : (
+          <SchemaTab
+            key={table}
+            tenant={tenant}
+            table={table}
+            schema={tableMeta?.schema ?? null}
+            onSaved={refresh}
+          />
+        )
+      ) : activeTab === "indexes" ? (
+        <IndexesTab schema={tableMeta?.schema ?? null} />
+      ) : (
         <div
-          className="flex min-h-0 min-w-[20rem] flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
           data-testid="documents-table-column"
         >
           <QueryBar
@@ -622,25 +600,7 @@ function TableDocumentsPage() {
               order={order}
               indexBacked={indexBacked}
               onSort={requestSort}
-              onToggleAll={(checked) =>
-                setSelected(
-                  checked
-                    ? new Set(
-                        tablePage.data
-                          .map((d) => String(d._id ?? ""))
-                          .filter(Boolean),
-                      )
-                    : new Set(),
-                )
-              }
-              onToggleOne={(id, checked) =>
-                setSelected((prev) => {
-                  const next = new Set(prev);
-                  if (checked) next.add(id);
-                  else next.delete(id);
-                  return next;
-                })
-              }
+              onSelectionChange={(ids) => setSelected(new Set(ids))}
               onEdit={setEditing}
               onDelete={handleDelete}
               onPrev={goPrev}
@@ -660,23 +620,7 @@ function TableDocumentsPage() {
             />
           )}
         </div>
-
-        {search.panel === "schema" ? (
-          <SchemaPanel
-            tenant={tenant}
-            table={table}
-            schema={tableMeta?.schema ?? null}
-            onClose={() => togglePanel(undefined)}
-            onSaved={refresh}
-          />
-        ) : null}
-        {search.panel === "indexes" ? (
-          <IndexPanel
-            schema={tableMeta?.schema ?? null}
-            onClose={() => togglePanel(undefined)}
-          />
-        ) : null}
-      </div>
+      )}
 
       {showInsert ? (
         <InsertDrawer

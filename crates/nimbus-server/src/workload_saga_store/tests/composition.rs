@@ -645,6 +645,7 @@ async fn protocol_only_server_state_owns_no_workload_authority_or_saga_schema() 
         node_services: NodeServicesConfig::default(),
         transport: TransportConfig::default(),
         runtime: RuntimeGovernorConfig::default(),
+        object_storage: nimbus_object_storage::ObjectStorageConfig::default(),
     });
 
     assert!(state.network_manager().is_none());
