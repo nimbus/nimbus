@@ -40,4 +40,4 @@ schema backfill and rollback, range ordering, query planning, and the prior
 
 ## Pull request
 
-PR_PLACEHOLDER
+PR #336: https://github.com/nimbus/nimbus/pull/336 (branch `codex/mysql-index-keyspace`, base `main`, opened 2026-09-09 from dc88c7316).
