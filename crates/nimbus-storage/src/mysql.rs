@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::str::FromStr;
@@ -34,6 +35,7 @@ use crate::store::{
 mod backend;
 mod committer_lease;
 mod document_versions;
+mod index_entries;
 mod index_versions;
 mod provider;
 mod query_helpers;

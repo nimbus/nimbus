@@ -147,3 +147,32 @@ pub(super) async fn document_generated_column_expressions(
     pool.disconnect().await.expect("mysql pool should close");
     expressions
 }
+
+/// One row of the current-state index keyspace:
+/// `(table_id, index_id, document_id, encoded_tuple)` in keyspace order.
+pub(super) type IndexEntryRow = (String, String, String, Vec<u8>);
+
+pub(super) async fn index_entry_rows(
+    connection_string: &str,
+    database_name: &str,
+) -> Vec<IndexEntryRow> {
+    let opts = Opts::from_url(connection_string).expect("connection string should parse");
+    let pool = Pool::new(opts);
+    let mut conn = pool.get_conn().await.expect("mysql connection should open");
+    let rows = conn
+        .exec::<IndexEntryRow, _, _>(
+            format!(
+                "SELECT table_id, index_id, document_id, encoded_tuple \
+                 FROM `{database_name}`.`index_entries` \
+                 ORDER BY table_id, index_id, encoded_tuple, document_id"
+            ),
+            (),
+        )
+        .await
+        .expect("index entry rows should query");
+    conn.disconnect()
+        .await
+        .expect("mysql connection should close");
+    pool.disconnect().await.expect("mysql pool should close");
+    rows
+}

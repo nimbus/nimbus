@@ -7,8 +7,8 @@ use crate::keys::prefix_end;
 use crate::mysql::document_versions::{
     record_document_versions_for_events_in_session, record_document_versions_for_writes_in_session,
 };
-use crate::mysql::index_versions::{
-    record_index_versions_for_events_in_session, record_index_versions_for_writes_in_session,
+use crate::mysql::index_entries::{
+    record_index_effects_for_events_in_session, record_index_effects_for_writes_in_session,
 };
 use crate::retention::{validate_contiguous_journal_page, validate_retention_after_page};
 
@@ -148,6 +148,22 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
                 KEY idx_index_versions_visibility (table_id, index_id, encoded_tuple_hash, document_id, visible_from)\
             ) ENGINE=InnoDB",
             qualified_table(database_name, "index_versions")
+        ),
+        // The current-state index keyspace: one row per maintained index and
+        // document, keyed by the shared order-preserving encoded tuple. Index
+        // reads range over `idx_index_entries_tuple`; the prefix length keeps
+        // the key inside InnoDB's 3072-byte limit with two 191-character
+        // utf8mb4 columns ahead of it.
+        format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                table_id VARCHAR(191) NOT NULL,\
+                index_id VARCHAR(191) NOT NULL,\
+                document_id VARCHAR(191) NOT NULL,\
+                encoded_tuple LONGBLOB NOT NULL,\
+                PRIMARY KEY (table_id, index_id, document_id),\
+                KEY idx_index_entries_tuple (table_id, index_id, encoded_tuple(768))\
+            ) ENGINE=InnoDB",
+            qualified_table(database_name, "index_entries")
         ),
         format!(
             "CREATE TABLE IF NOT EXISTS {} (\
@@ -1042,7 +1058,7 @@ where
             &record.writes,
         )
         .await?;
-        record_index_versions_for_writes_in_session(
+        record_index_effects_for_writes_in_session(
             session,
             database_name,
             record.sequence,
@@ -1066,7 +1082,7 @@ where
         &record.events,
     )
     .await?;
-    record_index_versions_for_events_in_session(
+    record_index_effects_for_events_in_session(
         session,
         database_name,
         record.sequence,

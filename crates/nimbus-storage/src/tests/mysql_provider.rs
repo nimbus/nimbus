@@ -1,6 +1,7 @@
 mod committer_lease;
 mod execution_units;
 mod foundation;
+mod index_entries;
 mod journal;
 mod retention;
 mod schema;

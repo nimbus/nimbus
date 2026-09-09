@@ -1,9 +1,8 @@
 use super::document_versions::{
     prune_document_versions_before_in_session, record_document_versions_for_events_in_session,
 };
-use super::index_versions::{
-    prune_index_versions_before_in_session, record_index_versions_for_events_in_session,
-};
+use super::index_entries::record_index_effects_for_events_in_session;
+use super::index_versions::prune_index_versions_before_in_session;
 use super::*;
 use crate::sql::schema_events::{
     durable_record_changes_schema_cache, sql_record_schema_set_events,
@@ -1112,7 +1111,7 @@ impl MySqlWriteTransaction {
                 &record_events,
             )
             .await?;
-            record_index_versions_for_events_in_session(
+            record_index_effects_for_events_in_session(
                 conn,
                 &database_name,
                 record_sequence,
