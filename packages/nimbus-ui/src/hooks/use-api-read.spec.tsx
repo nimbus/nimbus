@@ -101,6 +101,41 @@ describe("useApiRead", () => {
     errorSpy.mockRestore();
   });
 
+  // A poll or a post-write refresh bumps `revision`: the hook reads again
+  // but keeps the last value on screen until the new one lands, so a table
+  // never blinks back to its skeleton on every tick.
+  it("re-reads the same path on a revision bump and keeps the last value meanwhile", async () => {
+    const gate = deferred<void>();
+    let reads = 0;
+    server.use(
+      http.get("*/api/thing", async () => {
+        reads += 1;
+        if (reads === 2) await gate.promise;
+        return HttpResponse.json({ n: reads });
+      }),
+    );
+    const { result, rerender } = renderHook(
+      ({ revision }) =>
+        useApiRead<{ n: number }>("/api/thing", undefined, revision),
+      { initialProps: { revision: 0 } },
+    );
+    await waitFor(() =>
+      expect(result.current).toEqual({ kind: "ok", value: { n: 1 } }),
+    );
+
+    rerender({ revision: 1 });
+    await waitFor(() => expect(reads).toBe(2));
+    expect(result.current).toEqual({ kind: "ok", value: { n: 1 } });
+
+    await act(async () => {
+      gate.resolve();
+      await gate.promise;
+    });
+    await waitFor(() =>
+      expect(result.current).toEqual({ kind: "ok", value: { n: 2 } }),
+    );
+  });
+
   it("aborts the old read and fetches again when the path changes", async () => {
     const oldGate = deferred<void>();
     const oldApiFetchSettled = deferred<void>();

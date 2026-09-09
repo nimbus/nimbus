@@ -249,7 +249,8 @@ function SandboxesView() {
       <EmptyState
         icon={Box}
         title="No live sandboxes"
-        body="Sandboxes are live runtime state, not deployment records. Running sandboxes for this tenant appear here once the runtime is connected."
+        body="Sandboxes are live runtime state, not deployment records. The Sandboxes page lists the ones running in this tenant, with a console on each."
+        cta={{ label: "Open Sandboxes", to: "/developer/sandboxes" }}
         testid="compute-sandboxes-empty"
       />
     </div>

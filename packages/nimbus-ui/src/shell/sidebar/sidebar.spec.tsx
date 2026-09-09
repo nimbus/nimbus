@@ -69,6 +69,7 @@ const DEVELOPER_IDS = [
   "storage",
   "files",
   "services",
+  "sandboxes",
   "schedules",
   "observability",
   "settings",

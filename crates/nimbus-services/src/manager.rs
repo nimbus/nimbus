@@ -8,6 +8,7 @@ mod handles;
 mod registry;
 mod sandboxes;
 mod session_channels;
+mod session_streams;
 mod sessions;
 mod source;
 mod source_retirement;
@@ -22,6 +23,10 @@ use nimbus_tenant::{TenantImagePolicyDecision, TenantImageVerificationProvider};
 use types::ServiceManagerState;
 use verification::DefaultTenantImageVerificationProvider;
 
+pub use session_streams::{
+    SESSION_CHANNEL_FRAME_BUFFER, SessionChannelAttachment, SessionChannelFrame,
+    SessionChannelSource, SessionChannelStream, UnsupportedSessionChannelSource,
+};
 pub use source::{SandboxServiceProvisionSource, StandaloneSandboxProvisionSource};
 pub use source_retirement::{
     WorkloadSourceRetirementClaim, WorkloadSourceRetirementIdentity,
@@ -51,6 +56,7 @@ pub struct ServiceManager {
     sandbox_backend_kind: SandboxBackendKind,
     image_verification_provider: Arc<dyn TenantImageVerificationProvider>,
     local_build_admission: LocalBuildAdmission,
+    session_channel_source: Arc<dyn SessionChannelSource>,
     state: Mutex<ServiceManagerState>,
 }
 
@@ -64,6 +70,7 @@ impl ServiceManager {
             sandbox_backend_kind,
             image_verification_provider: Arc::new(DefaultTenantImageVerificationProvider),
             local_build_admission: LocalBuildAdmission::Denied,
+            session_channel_source: Arc::new(UnsupportedSessionChannelSource),
             state: Mutex::new(ServiceManagerState::default()),
         }
     }

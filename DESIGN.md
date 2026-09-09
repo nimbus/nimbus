@@ -108,13 +108,14 @@ view.
 | Overview | This app's health and recent activity | Recent runs, error rate, last deploy, schedule status, latest events |
 | Compute | Request-scoped execution | Functions list, function detail, function runner, runs |
 | Services | Long-running placement (this tenant's view) | Compose-declared services in the active tenant, lifecycle state, endpoints, restart policy |
+| Sandboxes | Isolated workloads (microVMs and containers) | Live sandboxes in the active tenant, lifecycle state, endpoints, conditions, a console on each, create and stop |
 | Schedules | Periodic and future-dated work | Scheduled jobs (next/last run, cancel/retry), cron jobs |
 | Storage | Schema-aware data | Tables, document browser, schema tab, indexes tab, query builder |
 | Files | Opaque bytes / blob storage | Buckets, object browser, upload, preview, download over the console session |
 | Observability | Debugging and audit (this tenant) | Logs, events, traces, error groups |
 | Settings (tenant) | Tenant-owned configuration | Environment, secrets, schema, integrations, adapter binding (all planned; the page is one empty state until the first tenant-scoped setting has an API) |
 
-8 sections. Every section is tenant-scoped — the active tenant comes from
+9 sections. Every section is tenant-scoped — the active tenant comes from
 the sidebar tenant selector, not the URL. Services is **dual-persona** (it also
 appears in the Operator IA below); both consoles back onto the same
 `ServicesTable` and `ServiceDoc` shape, with the Developer side filtered
@@ -271,6 +272,56 @@ declared in the active tenant's `compose.yaml`, each with a `StateDot`.
 The Developer side never lists system services from `_nimbus`; the
 System Tenant Lens (⌘\\) is the only Developer-side path to system
 service state.
+
+### Sandboxes (Developer)
+
+Sandboxes owns the isolated workloads of the active tenant: microVMs
+(`krun`) and containers, each with a lifecycle, endpoints, conditions,
+and a console. The pages read the service-control routes
+(`/api/tenants/{tenant}/sandboxes`) and the session routes
+(`/api/sessions`); a server that runs no service manager answers 404 on
+all of them, and the list shows one plain "Sandbox routes not available
+on this server" state with the server's message instead of an empty
+list.
+
+- Sandbox list on `DataTable`: name (the owner's display name, else the
+  id), lifecycle state as a `StatePill`, profile and backend as
+  `CategoryPill`s, health, endpoint count, updated. Scoped to the
+  active tenant. Row activation opens the detail; the row menu offers
+  `Open sandbox`, `Open console`, and `Stop sandbox` on a sandbox that
+  can still stop. Stop sits behind a `ConfirmDialog`, shows `stopping`
+  on the row while the request is out, and keeps the real state plus
+  the refusal text under the pill when the route says no. The list
+  polls every 2 s while any row is transitional (`pending`, `starting`,
+  `stopping`) and stops when every row settles; a poll keeps the last
+  rows on screen, it never blinks back to the skeleton.
+- `New sandbox` opens a picker: id, display name, profile (`worker` or
+  `desktop`), backend (`krun` or `container`), OCI image reference, and
+  the command one argument per line. An id that does not match
+  `[a-z0-9][a-z0-9-]*` or a missing image never reaches the server. A
+  created sandbox opens its detail.
+- Sandbox detail: breadcrumb `Sandboxes › name`, profile and backend
+  pills, the state pill, the id as a copy chip, and `Stop` behind the
+  same confirmation. Tabs `Overview` (facts, endpoints as `host:port`,
+  and the conditions with their reason, message and transition time),
+  `Console`, and `Spec` (owner, root image, and the process with argv
+  and environment shown as `N values, redacted`; the server never sends
+  the values).
+- Console: the panel opens a `stdio` session on the sandbox
+  (`POST /api/sessions`, `channels: ["stdio"]`, 30 min TTL) as soon as
+  the sandbox is `ready`, reads the channel stream
+  (`application/x-ndjson`) and appends every frame in arrival order:
+  `opened`, `stdout`, `stderr`, `exit`, `closed`, each on its own line
+  with its kind. A sandbox that is not ready waits for an explicit
+  `Connect`. The input line posts to the channel with a trailing
+  newline and echoes locally; a refused write is a line in the log. The
+  panel closes its session when it unmounts or when the operator
+  disconnects, with the reason in the close body. No sandbox system
+  events are recorded, so the console is the live log and the
+  conditions on Overview are the lifecycle history.
+
+The Sandboxes sub-panel is a **dynamic list** of the tenant's sandboxes,
+each with a `StateDot`. Compute's Sandboxes view links here.
 
 ### Schedules (Developer)
 

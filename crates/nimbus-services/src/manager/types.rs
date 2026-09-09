@@ -66,6 +66,9 @@ pub(super) struct ServiceManagerState {
         BTreeMap<TenantSandboxResourceKey, SandboxResourceObservation>,
     pub(super) sessions: BTreeMap<String, SessionResource>,
     pub(super) session_channels: BTreeMap<SessionChannelKey, SessionChannelState>,
+    /// Input senders of live channel attachments, keyed like the channel state.
+    pub(super) session_channel_inputs:
+        BTreeMap<SessionChannelKey, tokio::sync::mpsc::Sender<String>>,
     /// Process-local services policy claims. Durable lifecycle authority stays
     /// in the workload saga store; these claims only fence source mutation,
     /// provision insertion, session admission, and terminal projection.

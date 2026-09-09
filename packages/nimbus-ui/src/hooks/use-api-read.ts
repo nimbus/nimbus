@@ -18,6 +18,9 @@ function defaultSelect<T>(result: ApiResult<T>): LoadingValue<T> {
 // in-flight read on unmount or a path change (no state update afterwards), and
 // reports a `LoadingValue<T>` — the console's single loading vocabulary.
 //
+// `revision` re-runs the read for the same path; a page bumps it after a
+// write it made, or on a poll tick while the resource is still moving.
+//
 // `R` is the raw response body when a `select` maps it to a different `T`;
 // without a `select`, `R` defaults to `T` and the body is used as-is.
 export function useApiRead<T, R = T>(
@@ -25,15 +28,25 @@ export function useApiRead<T, R = T>(
   select: (result: ApiResult<R>) => LoadingValue<T> = defaultSelect as (
     result: ApiResult<R>,
   ) => LoadingValue<T>,
+  // Bump to read the same path again (after a write, or on a poll tick).
+  revision = 0,
 ): LoadingValue<T> {
   const [value, setValue] = useState<LoadingValue<T>>({ kind: "loading" });
   const selectRef = useRef(select);
   selectRef.current = select;
+  const readPath = useRef<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: revision is the re-read trigger
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    setValue({ kind: "loading" });
+    // A new path starts from loading. A re-read of the same path keeps the
+    // last value on screen until the fresh one lands, so a poll or a
+    // post-write refresh does not blink the page back to its skeleton.
+    if (readPath.current !== path) {
+      readPath.current = path;
+      setValue({ kind: "loading" });
+    }
     void apiFetch<R>(path, { signal: controller.signal }).then((result) => {
       if (cancelled) return;
       setValue(selectRef.current(result));
@@ -42,7 +55,7 @@ export function useApiRead<T, R = T>(
       cancelled = true;
       controller.abort();
     };
-  }, [path]);
+  }, [path, revision]);
 
   return value;
 }

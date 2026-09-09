@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Box,
   Boxes,
   Building2,
   Clock,
@@ -66,6 +67,7 @@ export const DEVELOPER_NAV_GROUPS: ReadonlyArray<NavGroup> = [
     label: "Run",
     entries: [
       entry("developer", "services", "Services", "/developer/services", Boxes),
+      entry("developer", "sandboxes", "Sandboxes", "/developer/sandboxes", Box),
       entry(
         "developer",
         "schedules",

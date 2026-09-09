@@ -888,6 +888,14 @@ fn build_service_control_router() -> Router<Arc<AppState>> {
             post(http::close_session),
         )
         .route(
+            "/api/sessions/{session_id}/channels/{channel}/stream",
+            get(http::stream_session_channel),
+        )
+        .route(
+            "/api/sessions/{session_id}/channels/{channel}/input",
+            post(http::write_session_channel),
+        )
+        .route(
             "/api/tenants/{tenant_id}/sandboxes",
             get(http::list_sandboxes).post(http::create_sandbox),
         )

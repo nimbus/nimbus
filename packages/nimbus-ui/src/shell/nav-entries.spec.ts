@@ -15,7 +15,7 @@ import {
 const EXPECTED_DEVELOPER_GROUPS: Array<[string | null, string[]]> = [
   [null, ["overview"]],
   ["Build", ["compute", "storage", "files"]],
-  ["Run", ["services", "schedules"]],
+  ["Run", ["services", "sandboxes", "schedules"]],
   ["Observe", ["observability"]],
   [null, ["settings"]],
 ];
@@ -36,7 +36,7 @@ function shape(groups: ReadonlyArray<NavGroup>) {
 }
 
 describe("nav-entries", () => {
-  it("groups the eight developer entries as Build, Run and Observe", () => {
+  it("groups the nine developer entries as Build, Run and Observe", () => {
     expect(shape(DEVELOPER_NAV_GROUPS)).toEqual(EXPECTED_DEVELOPER_GROUPS);
   });
 

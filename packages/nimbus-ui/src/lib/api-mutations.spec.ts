@@ -6,9 +6,11 @@ import {
   documents,
   machines,
   objects,
+  sandboxes,
   schedules,
   schema,
   services,
+  sessions,
   system,
   tenants,
 } from "./api-mutations";
@@ -462,5 +464,127 @@ describe("objects", () => {
     );
     const result = await objects.remove("demo", "assets", "docs/a.txt");
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("api-mutations sandboxes and sessions", () => {
+  it("lists, reads, creates and stops sandboxes on the tenant routes", async () => {
+    const seen: Array<{ method: string; path: string; body: string }> = [];
+    const record = async (request: Request) => {
+      seen.push({
+        method: request.method,
+        path: new URL(request.url).pathname + new URL(request.url).search,
+        body: await request.text(),
+      });
+    };
+    server.use(
+      http.get("*/api/tenants/:t/sandboxes", async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ metadata: { tenantId: "acme" }, items: [] });
+      }),
+      http.get("*/api/tenants/:t/sandboxes/:id", async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ metadata: { id: "sb 1" } });
+      }),
+      http.post("*/api/tenants/:t/sandboxes", async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ metadata: { id: "sb-2" } }, { status: 201 });
+      }),
+      http.post("*/api/tenants/:t/sandboxes/:id/stop", async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ metadata: { id: "sb 1" } }, { status: 202 });
+      }),
+    );
+    const request = {
+      id: "sb-2",
+      profile: "worker" as const,
+      spec: {
+        owner: { kind: "standalone" as const, displayName: "scratch" },
+        backend: "krun" as const,
+        root: {
+          kind: "oci_image" as const,
+          source: { kind: "reference" as const, reference: "alpine:3.20" },
+        },
+        process: { argv: ["/bin/sh"] },
+      },
+    };
+    expect((await sandboxes.list("acme")).ok).toBe(true);
+    expect((await sandboxes.get("acme", "sb 1")).ok).toBe(true);
+    expect((await sandboxes.create("acme", request)).ok).toBe(true);
+    expect((await sandboxes.stop("acme", "sb 1")).ok).toBe(true);
+    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([
+      "GET /api/tenants/acme/sandboxes?limit=200",
+      "GET /api/tenants/acme/sandboxes/sb%201",
+      "POST /api/tenants/acme/sandboxes",
+      "POST /api/tenants/acme/sandboxes/sb%201/stop",
+    ]);
+    expect(JSON.parse(seen[2]?.body ?? "")).toEqual(request);
+    expect(seen[3]?.body).toBe("");
+  });
+
+  it("opens and closes a session and writes a channel with the tenant in the query", async () => {
+    const seen: Array<{ path: string; body: unknown }> = [];
+    const record = async (request: Request) => {
+      const url = new URL(request.url);
+      seen.push({
+        path: url.pathname + url.search,
+        body: await request.json(),
+      });
+    };
+    server.use(
+      http.post("*/api/sessions", async ({ request }) => {
+        await record(request);
+        return HttpResponse.json(
+          { metadata: { id: "sess-1" } },
+          { status: 201 },
+        );
+      }),
+      http.post("*/api/sessions/:id/close", async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ metadata: { id: "sess-1" } });
+      }),
+      http.post(
+        "*/api/sessions/:id/channels/:channel/input",
+        async ({ request }) => {
+          await record(request);
+          return new HttpResponse(null, { status: 202 });
+        },
+      ),
+    );
+    const opened = await sessions.open({
+      tenantId: "acme",
+      target: { sandbox: { id: "sb-1" } },
+      channels: ["stdio"],
+      requestedTtlMs: 1000,
+    });
+    expect(opened).toEqual({ ok: true, data: { metadata: { id: "sess-1" } } });
+    const written = await sessions.writeChannel(
+      "sess-1",
+      "stdio",
+      "acme",
+      "ls\n",
+    );
+    expect(written.ok).toBe(true);
+    const closed = await sessions.close("sess-1", "acme", "console closed");
+    expect(closed.ok).toBe(true);
+    expect(seen).toEqual([
+      {
+        path: "/api/sessions",
+        body: {
+          tenantId: "acme",
+          target: { sandbox: { id: "sb-1" } },
+          channels: ["stdio"],
+          requestedTtlMs: 1000,
+        },
+      },
+      {
+        path: "/api/sessions/sess-1/channels/stdio/input?tenantId=acme",
+        body: { data: "ls\n" },
+      },
+      {
+        path: "/api/sessions/sess-1/close?tenantId=acme",
+        body: { reason: "console closed" },
+      },
+    ]);
   });
 });

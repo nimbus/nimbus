@@ -40,6 +40,7 @@ mod scheduling;
 mod schema;
 mod service_grants;
 mod services;
+mod session_channels;
 mod sessions;
 mod source;
 mod tenants;
@@ -81,6 +82,7 @@ pub(crate) use services::{
     create_service_definition, delete_service_definition, get_service, list_service_definitions,
     restart_service, start_service, stop_service, update_service_definition,
 };
+pub(crate) use session_channels::{stream_session_channel, write_session_channel};
 pub(crate) use sessions::{close_session, get_session, list_sessions, open_session};
 pub(crate) use source::module_source;
 pub(crate) use tenants::{create_tenant, delete_tenant, list_tenants};

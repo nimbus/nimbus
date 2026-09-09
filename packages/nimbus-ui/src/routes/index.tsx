@@ -21,6 +21,7 @@ export const RESTORABLE_SECTIONS: Record<NavView, readonly string[]> = {
     "compute",
     "files",
     "observability",
+    "sandboxes",
     "schedules",
     "services",
     "settings",
