@@ -1,5 +1,8 @@
 import { render, screen } from "@testing-library/react";
+import { Inbox } from "lucide-react";
 import { describe, expect, it, vi } from "vitest";
+
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -26,16 +29,19 @@ describe("EmptyState", () => {
     );
     expect(screen.queryByTestId("es-body")).toBeNull();
     expect(screen.queryByTestId("es-cta")).toBeNull();
+    expect(screen.queryByTestId("es-snippet")).toBeNull();
   });
 
-  it("renders the title in font-mono per DESIGN.md", () => {
+  it("renders the title in the sans face: it is a sentence, not data", () => {
     render(<EmptyState title="Tenants endpoint unavailable" testid="es" />);
-    expect(screen.getByTestId("es-title")).toHaveClass("font-mono");
+    expect(screen.getByTestId("es-title")).not.toHaveClass("font-mono");
+    expect(screen.getByTestId("es-title")).toHaveClass("text-base");
   });
 
-  it("renders body content when provided", () => {
-    render(
+  it("renders body content and the icon when provided", () => {
+    const { container } = render(
       <EmptyState
+        icon={Inbox}
         title="Files"
         body="Buckets and uploads will live here."
         testid="es"
@@ -44,6 +50,7 @@ describe("EmptyState", () => {
     expect(screen.getByTestId("es-body")).toHaveTextContent(
       "Buckets and uploads will live here.",
     );
+    expect(container.querySelector("svg")).not.toBeNull();
   });
 
   it("renders a Link cta when given to:", () => {
@@ -73,5 +80,19 @@ describe("EmptyState", () => {
     expect(cta.tagName).toBe("BUTTON");
     cta.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the one command in mono with a copy control", () => {
+    render(
+      <TooltipProvider>
+        <EmptyState title="No functions" snippet="nimbus deploy" testid="es" />
+      </TooltipProvider>,
+    );
+    const snippet = screen.getByTestId("es-snippet");
+    expect(snippet.querySelector("code")).toHaveClass("font-mono");
+    expect(snippet).toHaveTextContent("nimbus deploy");
+    expect(
+      screen.getByRole("button", { name: "Copy command" }),
+    ).toBeInTheDocument();
   });
 });

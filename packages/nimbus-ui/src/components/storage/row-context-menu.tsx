@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib/utils";
 
 export type RowMenuItem = {
   readonly id: string;
@@ -125,7 +125,7 @@ export function RowContextMenu({
       role="menu"
       aria-label={label}
       style={{ left: pos.left, top: pos.top }}
-      className="fixed z-50 min-w-[180px] rounded-md border border-app bg-surface py-1 font-mono text-xs shadow-lg"
+      className="fixed z-50 min-w-[180px] rounded-md border border-border-2 bg-bg-panel py-1 font-mono text-xs shadow-lg"
       data-testid={testid}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -145,8 +145,8 @@ export function RowContextMenu({
           role="menuitem"
           data-testid={testid ? `${testid}-${item.id}` : undefined}
           className={cn(
-            "flex w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-surface-2",
-            item.danger ? "text-danger" : "text-default",
+            "flex w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-bg-raised",
+            item.danger ? "text-error" : "text-text-1",
           )}
           onClick={() => {
             item.onSelect();
@@ -154,7 +154,7 @@ export function RowContextMenu({
           }}
         >
           <span className="flex-1">{item.label}</span>
-          {item.hint ? <span className="text-muted">{item.hint}</span> : null}
+          {item.hint ? <span className="text-text-3">{item.hint}</span> : null}
         </button>
       ))}
     </div>

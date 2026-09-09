@@ -6,18 +6,18 @@
 <title>Nimbus &middot; Sign in</title>
 <style>
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: "Geist Mono";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("/ui/{{ JETBRAINS_MONO_400 }}") format("woff2");
+  src: url("/ui/fonts/GeistMono-Regular.woff2") format("woff2");
 }
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: "Geist Mono";
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url("/ui/{{ JETBRAINS_MONO_500 }}") format("woff2");
+  src: url("/ui/fonts/GeistMono-Medium.woff2") format("woff2");
 }
 
 :root {
@@ -119,21 +119,16 @@ main {
 }
 
 .brand-mark {
-  width: 52px;
+  width: 56px;
   height: auto;
-  aspect-ratio: 322 / 201;
+  aspect-ratio: 120 / 92;
   display: block;
-  /* Two-Tier Bridge: brand-tier blue, NOT chrome-tier --color-brand,
-     so the mark never swaps with the operator-console palette. The mark
-     reads as outline-only — `--logo-fill` stays transparent so the cloud
-     body does not flatten into a heavy silhouette next to the wordmark. */
-  --logo-stroke: var(--brand-blue);
-  --logo-fill: transparent;
-  color: var(--brand-blue);
+  /* The solid mascot is the sticker: fixed amber body and ink face in
+     both schemes, the same drawing as the favicon and the app icon. */
 }
 
 .brand-wordmark {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 500;
   font-size: 19px;
   letter-spacing: 0.02em;
@@ -153,7 +148,7 @@ main {
   position: absolute;
   top: 16px;
   right: 16px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   font-weight: 400;
   letter-spacing: 0.04em;
@@ -217,7 +212,7 @@ main {
    so the auth surface honours the DESIGN.md "Copy-to-Clipboard Chip" rule
    for every machine-readable value. */
 .copyable {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   font-weight: 400;
   line-height: inherit;
@@ -304,7 +299,7 @@ label {
 }
 
 input[type="password"] {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 14px;
   letter-spacing: 0.01em;
   padding: 10px 12px;
@@ -356,7 +351,7 @@ button[type="submit"] {
   border: 1px solid var(--brand-blue);
   border-radius: 8px;
   padding: 11px 14px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -387,7 +382,7 @@ button[type="submit"]:focus-visible {
 
 .other-ways summary {
   cursor: pointer;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -435,7 +430,7 @@ button[type="submit"]:focus-visible {
 }
 
 .other-section-title {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
   font-weight: 500;
   text-transform: uppercase;
@@ -471,7 +466,7 @@ button[type="submit"]:focus-visible {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   text-align: left;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   cursor: pointer;
   overflow: hidden;
@@ -565,7 +560,7 @@ button[type="submit"]:focus-visible {
 
 .local-only {
   margin: 20px 0 0;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--color-muted);
@@ -646,13 +641,11 @@ button[type="submit"]:focus-visible {
 <main aria-label="Sign in to Nimbus">
   <button type="button" class="brand-version" data-copy="v{{ NIMBUS_VERSION }}" aria-label="Copy version v{{ NIMBUS_VERSION }}" title="v{{ NIMBUS_VERSION }}">v{{ NIMBUS_VERSION }}</button>
   <div class="brand">
-    <svg class="brand-mark" viewBox="0 0 322 201" role="img" aria-label="Nimbus">
+    <svg class="brand-mark" viewBox="0 0 120 92" role="img" aria-label="Nimbus">
       <title>Nimbus</title>
-      <g transform="translate(-30,231) scale(0.1,-0.1)">
-        <path fill="var(--logo-fill, transparent)" d="M1447 2194 c-196 -47 -457 -291 -457 -425 0 -16 -8 -19 -45 -19 -155 0 -320 -89 -425 -228 -259 -345 -71 -840 323 -848 l97 -2 40 -51 c194 -245 610 -293 880 -101 27 19 29 19 66 3 140 -62 369 -1 497 133 l43 44 38 -20 c131 -66 304 -39 413 66 35 33 58 45 111 58 189 46 340 179 382 334 23 88 -11 115 -99 77 -133 -55 -228 -22 -326 115 -94 132 -196 196 -331 207 l-62 6 -4 56 c-15 204 -211 367 -431 359 l-79 -2 -34 46 c-116 160 -380 245 -597 192z" />
-        <path fill="var(--logo-stroke, currentColor)" d="M1447 2194 c-196 -47 -457 -291 -457 -425 0 -16 -8 -19 -45 -19 -155 0 -320 -89 -425 -228 -259 -345 -71 -840 323 -848 l97 -2 40 -51 c194 -245 610 -293 880 -101 27 19 29 19 66 3 140 -62 369 -1 497 133 l43 44 38 -20 c131 -66 304 -39 413 66 35 33 58 45 111 58 189 46 340 179 382 334 23 88 -11 115 -99 77 -133 -55 -228 -22 -326 115 -94 132 -196 196 -331 207 l-62 6 -4 56 c-15 204 -211 367 -431 359 l-79 -2 -34 46 c-116 160 -380 245 -597 192z m296 -81 c119 -35 217 -108 269 -200 23 -41 35 -52 47 -47 259 107 536 -166 435 -430 -5 -14 0 -13 37 4 82 37 196 20 287 -42 40 -27 71 -63 148 -170 65 -90 210 -138 317 -105 54 17 53 19 26 -35 -52 -101 -194 -196 -326 -217 -54 -9 -66 -15 -99 -51 -184 -203 -557 -49 -439 180 46 89 206 72 193 -20 -4 -24 -2 -27 9 -19 43 36 -20 147 -85 150 -164 7 -259 -157 -179 -310 l26 -51 -49 -50 c-107 -110 -292 -152 -427 -98 l-60 24 -29 -24 c-222 -185 -605 -160 -791 53 l-43 48 46 40 c172 151 121 432 -82 463 -144 21 -258 -194 -122 -229 20 -6 20 -5 -2 18 -82 87 70 201 169 127 180 -133 12 -416 -221 -372 -516 97 -360 950 167 917 l83 -5 5 45 c31 278 396 493 690 406z" />
-        <path fill="var(--logo-stroke, currentColor)" d="M1574 1556 c-119 -56 -171 -187 -110 -281 34 -52 108 -74 153 -45 16 10 14 10 -9 5 -71 -14 -137 56 -124 130 36 192 336 194 441 4 125 -226 -99 -523 -375 -496 l-55 6 35 -17 c163 -75 410 42 481 229 109 287 -173 588 -437 465z" />
-      </g>
+      <g fill="#f0b23e"><circle cx="36" cy="50" r="20"/><circle cx="60" cy="40" r="28"/><circle cx="84" cy="50" r="20"/><rect x="14" y="50" width="92" height="34" rx="17"/></g>
+      <g fill="#1a1204"><circle cx="48" cy="52" r="3.8"/><circle cx="72" cy="52" r="3.8"/></g>
+      <path d="M52 62 q8 8 16 0" fill="none" stroke="#1a1204" stroke-width="4" stroke-linecap="round"/>
     </svg>
     <span class="brand-wordmark">nimbus</span>
   </div>

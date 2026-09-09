@@ -26,7 +26,7 @@ function FilesPage() {
       title: "Files",
       children: (
         <p
-          className="px-3 py-6 text-xs text-muted"
+          className="px-3 py-6 text-xs text-text-3"
           data-testid="files-drawer-note"
         >
           {NOT_IN_BUILD}

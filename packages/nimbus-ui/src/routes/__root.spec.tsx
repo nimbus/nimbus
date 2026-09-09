@@ -22,7 +22,7 @@ vi.mock("@tanstack/react-router", () => ({
   }: {
     select: (s: {
       location: { pathname: string };
-      matches: { status: string; globalNotFound?: boolean }[];
+      matches: { status: string; _notFound?: boolean }[];
     }) => unknown;
   }) => select({ location: { pathname: pathnameRef.current }, matches: [] }),
 }));

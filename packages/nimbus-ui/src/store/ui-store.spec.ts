@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const THEME_STORAGE_KEY = "nimbus-ui:theme";
-const PALETTE_STORAGE_KEY = "nimbus-ui:palette";
 const ACTIVE_TENANT_KEY = "nimbus-ui:active-tenant";
 
 beforeEach(() => {
@@ -67,30 +66,6 @@ describe("ui-store", () => {
     button.remove();
   });
 
-  it("defaults to warm palette when nothing is persisted", async () => {
-    const { useUiStore } = await import("./ui-store");
-    expect(useUiStore.getState().palette).toBe("warm");
-  });
-
-  it("hydrates palette from the persisted key", async () => {
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, "blue");
-    const { useUiStore } = await import("./ui-store");
-    expect(useUiStore.getState().palette).toBe("blue");
-  });
-
-  it("falls back to warm when the persisted palette is malformed", async () => {
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, "rainbow");
-    const { useUiStore } = await import("./ui-store");
-    expect(useUiStore.getState().palette).toBe("warm");
-  });
-
-  it("setPalette writes through and updates state", async () => {
-    const { useUiStore } = await import("./ui-store");
-    useUiStore.getState().setPalette("mono");
-    expect(useUiStore.getState().palette).toBe("mono");
-    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe("mono");
-  });
-
   it("defaults activeTenant to null when nothing is persisted", async () => {
     const { useUiStore } = await import("./ui-store");
     expect(useUiStore.getState().activeTenant).toBeNull();
@@ -112,7 +87,7 @@ describe("ui-store", () => {
     expect(window.localStorage.getItem(ACTIVE_TENANT_KEY)).toBeNull();
   });
 
-  it("setLensOpen mirrors palette behavior on its own opener slot", async () => {
+  it("setLensOpen mirrors the command palette opener behavior on its own slot", async () => {
     const { useUiStore } = await import("./ui-store");
     const button = document.createElement("button");
     document.body.appendChild(button);

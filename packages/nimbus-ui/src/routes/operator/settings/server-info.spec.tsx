@@ -66,7 +66,7 @@ describe("ServerInfoSection state vocabulary", () => {
     );
     const unavailable = screen.getByTestId("settings-encryption-unavailable");
     expect(unavailable.querySelector("[data-state]")).toBeNull();
-    expect(unavailable.className).toContain("text-danger");
+    expect(unavailable.className).toContain("text-error");
   });
 
   it("renders version freshness as plain text, not a tinted chip or a state dot", () => {
@@ -79,7 +79,7 @@ describe("ServerInfoSection state vocabulary", () => {
 
     const updates = screen.getByTestId("settings-updates-current");
     expect(updates.querySelector("[data-state]")).toBeNull();
-    expect(updates.className).toContain("text-default");
+    expect(updates.className).toContain("text-text-1");
     expect(updates).toHaveTextContent("up to date");
   });
 });

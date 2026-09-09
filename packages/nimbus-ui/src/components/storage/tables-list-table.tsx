@@ -2,10 +2,10 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib/utils";
 import type { TableDoc } from "../../lib/types/table";
 import { CopyChip } from "../copy-chip";
-import { Td, Th } from "../data-table";
+import { Td, Th } from "../table-cells";
 import { RelativeTime } from "../time";
 import { RowContextMenu, type RowMenuItem } from "./row-context-menu";
 
@@ -84,7 +84,7 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
         className="w-full border-collapse text-sm"
         data-testid="tenant-tables-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
           <tr>
             <Th>Table</Th>
             <Th>Schema</Th>
@@ -117,7 +117,7 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
                 // its sticky `thead` carries no z-index, so a positioned row
                 // would paint over the header instead of scrolling under it.
                 className={cn(
-                  "group h-9 cursor-pointer border-t border-app hover:bg-surface-2",
+                  "group h-9 cursor-pointer border-t border-border-2 hover:bg-bg-raised",
                 )}
                 data-testid={`tenant-table-row-${name}`}
                 onFocus={() => setFocusRow(index)}
@@ -168,7 +168,7 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
                   <Link
                     to="/developer/storage/$table"
                     params={{ table: name }}
-                    className="font-mono text-default hover:underline"
+                    className="font-mono text-text-1 hover:underline"
                     data-testid={`tenant-table-link-${name}`}
                   >
                     {name}
@@ -192,7 +192,7 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
                   {table.lastWriteAt ? (
                     <RelativeTime epochMs={table.lastWriteAt} />
                   ) : (
-                    <span className="text-muted">never</span>
+                    <span className="text-text-3">never</span>
                   )}
                 </Td>
                 <Td
@@ -202,7 +202,7 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
                   <button
                     type="button"
                     onClick={() => open(name, "schema")}
-                    className="mr-2 rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+                    className="mr-2 rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
                     data-testid={`tenant-table-schema-${name}`}
                   >
                     schema
@@ -210,7 +210,7 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
                   <button
                     type="button"
                     onClick={() => open(name)}
-                    className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-default hover:bg-surface"
+                    className="rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-1 hover:bg-bg-panel"
                     data-testid={`tenant-table-open-${name}`}
                   >
                     open

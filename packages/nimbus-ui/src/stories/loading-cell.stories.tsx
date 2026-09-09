@@ -15,7 +15,7 @@ type Story = StoryObj<{ value: CellValue }>;
 
 function Render({ value }: { value: CellValue }) {
   return (
-    <span className="font-mono text-sm text-default">
+    <span className="font-mono text-sm text-text-1">
       <LoadingCell value={value} testid="story">
         {(n) => <span>{n} rows</span>}
       </LoadingCell>
@@ -46,7 +46,7 @@ export const InTable: Story = {
     <table className="text-sm">
       <tbody>
         <tr>
-          <td className="px-3 py-2 text-muted">rows</td>
+          <td className="px-3 py-2 text-text-3">rows</td>
           <td className="px-3 py-2 text-right">
             <LoadingCell value={{ kind: "ok", value: 42 }} testid="story-ok">
               {(n) => <span className="font-mono tabular">{n}</span>}
@@ -54,7 +54,7 @@ export const InTable: Story = {
           </td>
         </tr>
         <tr>
-          <td className="px-3 py-2 text-muted">loading</td>
+          <td className="px-3 py-2 text-text-3">loading</td>
           <td className="px-3 py-2 text-right">
             <LoadingCell<number>
               value={{ kind: "loading" }}
@@ -65,7 +65,7 @@ export const InTable: Story = {
           </td>
         </tr>
         <tr>
-          <td className="px-3 py-2 text-muted">offline</td>
+          <td className="px-3 py-2 text-text-3">offline</td>
           <td className="px-3 py-2 text-right">
             <LoadingCell<number>
               value={{ kind: "offline" }}

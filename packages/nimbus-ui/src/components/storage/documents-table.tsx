@@ -1,12 +1,11 @@
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 import { type MouseEvent as ReactMouseEvent, useRef, useState } from "react";
 import { toast } from "sonner";
-
-import { cn } from "../../lib/cn";
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 import { shortId } from "../../lib/format";
 import type { DocumentJson, PageResponse } from "../../lib/types/table";
-import { Checkbox } from "../checkbox";
-import { PIN_L, PIN_R, Td, Th } from "../data-table";
+import { PIN_L, PIN_R, Td, Th } from "../table-cells";
 import { CellValue } from "./cell-value";
 import { RowContextMenu, type RowMenuItem } from "./row-context-menu";
 import type { DocumentOrder } from "./table-query";
@@ -14,7 +13,8 @@ import type { DocumentOrder } from "./table-query";
 // Anything that handles its own click. A row click must not hijack the
 // checkbox, the `_id` copy chip, a container-value chip, or the row's own
 // action buttons — all of which sit inside the row.
-const INTERACTIVE = "button, a, input, label, [role='menuitem']";
+const INTERACTIVE =
+  "button, a, input, label, [role='menuitem'], [role='checkbox']";
 
 /** Rows shown while a page is in flight, matching PAGE_SIZE. */
 const SKELETON_ROWS = 25;
@@ -134,20 +134,20 @@ export function DocumentsTable({
           className="w-full border-separate border-spacing-0 text-base"
           data-testid="documents-table"
         >
-          <thead className="sticky top-0 z-20 [--row-bg:var(--nimbus-surface-2)] text-xs uppercase tracking-[0.14em] text-muted">
-            <tr className="bg-surface-2">
+          <thead className="sticky top-0 z-20 [--row-bg:var(--bg-raised)] text-xs font-medium text-text-3">
+            <tr className="bg-bg-raised">
               <Th className={cn("left-0 w-px px-3", PIN_L)}>
                 <Checkbox
-                  label="Select all on page"
+                  aria-label="Select all on page"
                   checked={!loading && allSelected}
                   indeterminate={!loading && selectedOnPage > 0}
                   // While a page is in flight the rows on screen are
                   // placeholders: a select-all here would select the documents
                   // of the page being replaced.
-                  onChange={(checked) => {
+                  onCheckedChange={(checked) => {
                     if (!loading) onToggleAll(checked);
                   }}
-                  testid="documents-select-all"
+                  data-testid="documents-select-all"
                 />
               </Th>
               {columns.map((col, i) => (
@@ -155,7 +155,7 @@ export function DocumentsTable({
                   key={col}
                   className={
                     i === 0
-                      ? cn("left-[38px] border-r border-app", PIN_L)
+                      ? cn("left-[38px] border-r border-border-2", PIN_L)
                       : undefined
                   }
                 >
@@ -169,7 +169,7 @@ export function DocumentsTable({
               ))}
               <Th
                 align="right"
-                className={cn("w-px border-l border-app", PIN_R)}
+                className={cn("w-px border-l border-border-2", PIN_R)}
               >
                 actions
               </Th>
@@ -207,7 +207,7 @@ export function DocumentsTable({
                         // worse than that: `PIN_L`/`PIN_R` are `z-10` over an
                         // opaque `--row-bg`, so they covered the ring's left
                         // and right segments outright.
-                        "group h-9 cursor-pointer [&>td]:border-t [&>td]:border-app",
+                        "group h-9 cursor-pointer [&>td]:border-t [&>td]:border-border-2",
                         // Same reason the row has to outrank those pinned
                         // cells: at offset 2px the outline is drawn inside the
                         // neighbouring rows' band, so their `z-10` cells eat
@@ -224,8 +224,8 @@ export function DocumentsTable({
                             // *replaced*, not stacked: emitted after the base
                             // utilities, it would otherwise erase the selection cue
                             // exactly while the operator is aiming at the row.
-                            "bg-surface-2 shadow-[inset_2px_0_0_var(--nimbus-accent)] [--row-bg:var(--nimbus-surface-2)]"
-                          : "[--row-bg:var(--nimbus-surface)] hover:bg-surface-2 hover:[--row-bg:var(--nimbus-surface-2)]",
+                            "bg-bg-raised shadow-[inset_2px_0_0_var(--accent)] [--row-bg:var(--bg-raised)]"
+                          : "[--row-bg:var(--bg-panel)] hover:bg-bg-raised hover:[--row-bg:var(--bg-raised)]",
                       )}
                       data-testid={`documents-row-${id}`}
                       onFocus={() => setFocusRow(index)}
@@ -272,19 +272,21 @@ export function DocumentsTable({
                     >
                       <Td className={cn("left-0 w-px px-3", PIN_L)}>
                         <Checkbox
-                          label={`Select document ${shortId(id)}`}
+                          aria-label={`Select document ${shortId(id)}`}
                           checked={isSelected}
-                          onChange={(checked) => onToggleOne(id, checked)}
-                          testid={`documents-select-${id}`}
+                          onCheckedChange={(checked) =>
+                            onToggleOne(id, checked)
+                          }
+                          data-testid={`documents-select-${id}`}
                         />
                       </Td>
                       {columns.map((col, i) => (
                         <Td
                           key={col}
                           className={cn(
-                            "font-mono text-default",
+                            "font-mono text-text-1",
                             i === 0 &&
-                              cn("left-[38px] border-r border-app", PIN_L),
+                              cn("left-[38px] border-r border-border-2", PIN_L),
                           )}
                         >
                           <CellValue
@@ -301,7 +303,7 @@ export function DocumentsTable({
                       <Td
                         align="right"
                         className={cn(
-                          "w-px whitespace-nowrap border-l border-app",
+                          "w-px whitespace-nowrap border-l border-border-2",
                           "opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
                           PIN_R,
                         )}
@@ -309,7 +311,7 @@ export function DocumentsTable({
                         <button
                           type="button"
                           onClick={() => onEdit(doc)}
-                          className="mr-2 rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+                          className="mr-2 rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
                           data-testid={`documents-edit-${id}`}
                         >
                           edit
@@ -317,7 +319,7 @@ export function DocumentsTable({
                         <button
                           type="button"
                           onClick={() => onDelete([id])}
-                          className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-danger hover:bg-surface"
+                          className="rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium text-error hover:bg-bg-panel"
                           data-testid={`documents-delete-${id}`}
                         >
                           delete
@@ -341,7 +343,7 @@ export function DocumentsTable({
         />
       ) : null}
       <div
-        className="flex items-center justify-between border-t border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
+        className="flex items-center justify-between border-t border-border-2 bg-bg-raised px-3 py-2 font-mono text-xs text-text-3"
         data-testid="documents-pagination"
       >
         <span className="tabular">
@@ -361,10 +363,10 @@ export function DocumentsTable({
             onClick={onPrev}
             disabled={loading || pageNumber <= 1}
             className={cn(
-              "rounded border border-app px-2 py-0.5 uppercase tracking-wide",
+              "font-medium rounded-xs border border-border-2 px-2 py-0.5",
               loading || pageNumber <= 1
-                ? "text-muted"
-                : "text-default hover:bg-surface",
+                ? "text-text-3"
+                : "text-text-1 hover:bg-bg-panel",
             )}
             data-testid="documents-prev-page"
           >
@@ -375,10 +377,10 @@ export function DocumentsTable({
             onClick={onNext}
             disabled={loading || !page.has_more}
             className={cn(
-              "rounded border border-app px-2 py-0.5 uppercase tracking-wide",
+              "font-medium rounded-xs border border-border-2 px-2 py-0.5",
               loading || !page.has_more
-                ? "text-muted"
-                : "text-default hover:bg-surface",
+                ? "text-text-3"
+                : "text-text-1 hover:bg-bg-panel",
             )}
             data-testid="documents-next-page"
           >
@@ -405,27 +407,30 @@ function SkeletonRows({ rows, columns }: { rows: number; columns: string[] }) {
           // biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity beyond their position
           key={row}
           aria-hidden="true"
-          className="h-9 [--row-bg:var(--nimbus-surface)] [&>td]:border-t [&>td]:border-app"
+          className="h-9 [--row-bg:var(--bg-panel)] [&>td]:border-t [&>td]:border-border-2"
           data-testid="documents-skeleton-row"
         >
           <Td className={cn("left-0 w-px px-3", PIN_L)}>
-            <span className="block size-3.5 rounded-sm bg-surface-2" />
+            <span className="block size-3.5 rounded-sm bg-bg-raised" />
           </Td>
           {columns.map((col, i) => (
             <Td
               key={col}
               className={cn(
-                i === 0 && cn("left-[38px] border-r border-app", PIN_L),
+                i === 0 && cn("left-[38px] border-r border-border-2", PIN_L),
               )}
             >
               <span
-                className="block h-2 rounded bg-surface-2"
+                className="block h-2 rounded-xs bg-bg-raised"
                 style={{ width: BAR_WIDTHS[(row + i) % BAR_WIDTHS.length] }}
               />
             </Td>
           ))}
-          <Td align="right" className={cn("w-px border-l border-app", PIN_R)}>
-            <span className="block h-2 w-10 rounded bg-surface-2" />
+          <Td
+            align="right"
+            className={cn("w-px border-l border-border-2", PIN_R)}
+          >
+            <span className="block h-2 w-10 rounded-xs bg-bg-raised" />
           </Td>
         </tr>
       ))}
@@ -463,13 +468,16 @@ function SortHeader({
           ? `Sort by ${field} — index-backed`
           : `Sort by ${field} — no index leads with this field, so sorting scans the table`
       }
-      className="group/sort flex w-full items-center gap-1 uppercase tracking-[0.14em] text-muted hover:text-default"
+      className="font-medium group/sort flex w-full items-center gap-1 text-text-3 hover:text-text-1"
       data-testid={`documents-sort-${field}`}
       data-active={active ? "true" : "false"}
     >
-      <span className={cn("truncate", active && "text-default")}>{field}</span>
+      <span className={cn("truncate", active && "text-text-1")}>{field}</span>
       {indexed ? (
-        <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-brand" />
+        <span
+          aria-hidden
+          className="size-1.5 shrink-0 rounded-full bg-accent"
+        />
       ) : null}
       <Icon
         size={11}
@@ -477,7 +485,7 @@ function SortHeader({
         className={cn(
           "shrink-0",
           active
-            ? "text-default"
+            ? "text-text-1"
             : "opacity-0 transition-opacity group-hover/sort:opacity-60",
         )}
       />

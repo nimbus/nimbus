@@ -1,15 +1,14 @@
 import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { ScrollRegion } from "../../components/scroll-region";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import {
   type SubDrawerSpec,
   useContributeSubDrawer,
@@ -65,9 +64,9 @@ const METHOD_TONE: Record<string, string> = {
   POST: "text-accent",
   PUT: "text-warning",
   PATCH: "text-warning",
-  DELETE: "text-danger",
-  OPTIONS: "text-muted",
-  HEAD: "text-muted",
+  DELETE: "text-error",
+  OPTIONS: "text-text-3",
+  HEAD: "text-text-3",
 };
 
 const NETWORK_SUB_DRAWER: SubDrawerSpec = {
@@ -157,7 +156,7 @@ function RoutesSection() {
         subtitle="HTTP routes, listeners, published ports from the live registry — adapters appear as they register."
         trailing={
           <span
-            className="font-mono text-xs text-muted"
+            className="font-mono text-xs text-text-3"
             data-testid="network-total"
           >
             {routes === undefined
@@ -168,13 +167,11 @@ function RoutesSection() {
       />
 
       <div
-        className="flex flex-wrap items-center gap-2 rounded-md border border-app bg-surface-2 px-3 py-2"
+        className="flex flex-wrap items-center gap-2 rounded-md border border-border-2 bg-bg-raised px-3 py-2"
         data-testid="network-filters"
       >
         <label className="flex items-center gap-2">
-          <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-            filter
-          </span>
+          <span className="text-xs font-medium text-text-3">filter</span>
           <input
             type="search"
             value={filter}
@@ -182,7 +179,7 @@ function RoutesSection() {
             data-inline-search
             placeholder="method, path, handler"
             data-testid="network-filter-input"
-            className="w-72 rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted/70"
+            className="w-72 rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3/70"
           />
         </label>
         {/* Toggle buttons, not tabs: they filter the table in place and do not
@@ -207,7 +204,7 @@ function RoutesSection() {
         </fieldset>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         {routes === undefined ? (
           // No `rowContentHeight`: `Td`'s 40px row floor already sizes the real
           // and the placeholder rows alike (measured 40.00px in both states at
@@ -252,10 +249,10 @@ function FilterChip({
       onClick={onClick}
       data-testid={`network-adapter-${label}`}
       className={cn(
-        "rounded border px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
+        "rounded-xs border px-2 py-0.5 text-xs font-medium",
         active
-          ? "border-strong bg-surface text-default"
-          : "border-app text-muted hover:bg-surface hover:text-default",
+          ? "border-border-3 bg-bg-panel text-text-1"
+          : "border-border-2 text-text-3 hover:bg-bg-panel hover:text-text-1",
       )}
     >
       {label}
@@ -265,7 +262,7 @@ function FilterChip({
 
 function RoutesTableHead() {
   return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
       <tr>
         <Th>Method</Th>
         <Th>Path</Th>
@@ -322,17 +319,15 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
           <tbody>
             {routes.map((route) => {
               const method = (route.method ?? "").toUpperCase();
-              const tone = METHOD_TONE[method] ?? "text-default";
+              const tone = METHOD_TONE[method] ?? "text-text-1";
               return (
                 <tr
                   key={route._id}
-                  className="border-t border-app hover:bg-surface-2"
+                  className="border-t border-border-2 hover:bg-bg-raised"
                   data-testid={`network-route-${method}-${route.path ?? route._id}`}
                 >
                   <Td className="whitespace-nowrap">
-                    <span
-                      className={cn("font-mono uppercase tracking-wide", tone)}
-                    >
+                    <span className={cn("font-medium", tone)}>
                       {method || "—"}
                     </span>
                   </Td>
@@ -343,27 +338,27 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
                       what lands the whole table inside the panel at 1440px;
                       the fade covers the narrower viewports. */}
                     <span
-                      className="block max-w-[42ch] truncate font-mono text-default"
+                      className="block max-w-[42ch] truncate font-mono text-text-1"
                       title={route.path ?? undefined}
                     >
                       {route.path ?? "—"}
                     </span>
                   </Td>
                   <Td className="whitespace-nowrap">
-                    <span className="font-mono text-default">
+                    <span className="font-mono text-text-1">
                       {route.adapter ?? "—"}
                     </span>
                   </Td>
                   <Td>
                     <span
-                      className="block max-w-[28ch] truncate font-mono text-muted"
+                      className="block max-w-[28ch] truncate font-mono text-text-3"
                       title={route.handler ?? undefined}
                     >
                       {route.handler ?? "—"}
                     </span>
                   </Td>
                   <Td className="whitespace-nowrap">
-                    <span className="font-mono uppercase tracking-wide text-muted">
+                    <span className="font-medium text-text-3">
                       {route.authRequired ? "required" : "public"}
                     </span>
                   </Td>
@@ -371,7 +366,7 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
                     {typeof route.lastRequestAt === "number" ? (
                       <RelativeTime epochMs={route.lastRequestAt} />
                     ) : (
-                      <span className="tabular text-muted">never</span>
+                      <span className="tabular text-text-3">never</span>
                     )}
                   </Td>
                 </tr>
@@ -384,7 +379,7 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
         <div
           aria-hidden
           data-testid="network-routes-overflow-cue"
-          className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-surface to-transparent"
+          className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-bg-panel to-transparent"
         />
       ) : null}
     </div>

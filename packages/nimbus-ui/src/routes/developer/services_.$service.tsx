@@ -6,16 +6,15 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
+import { StatePill } from "../../components/pill";
 import { ServiceDetailLoaderError } from "../../components/service-loader-errors";
-import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -117,7 +116,7 @@ function ServiceDetailPage() {
       className="flex h-full flex-col overflow-hidden"
       data-testid="page-service-detail"
     >
-      <div className="flex shrink-0 flex-col gap-2 border-b border-app px-6 pb-3 pt-4">
+      <div className="flex shrink-0 flex-col gap-2 border-b border-border-2 px-6 pb-3 pt-4">
         <Breadcrumb
           segments={[
             { label: "Services", href: "/developer/services" },
@@ -126,17 +125,17 @@ function ServiceDetailPage() {
         />
         <header className="flex flex-wrap items-baseline gap-3">
           <h1
-            className="font-mono text-default"
+            className="font-mono text-text-1"
             style={{ fontSize: "var(--text-lg)" }}
           >
             {displayName}
           </h1>
           {service.kind ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted">
+            <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3">
               {service.kind}
             </span>
           ) : null}
-          {service.state ? <StateChip state={service.state} /> : null}
+          {service.state ? <StatePill state={service.state} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
               label="bundle sha256"
@@ -151,7 +150,7 @@ function ServiceDetailPage() {
 
       <nav
         aria-label="Service detail sections"
-        className="flex shrink-0 gap-px border-b border-app bg-surface-2 px-6"
+        className="flex shrink-0 gap-px border-b border-border-2 bg-bg-raised px-6"
         data-testid="service-detail-tabs"
       >
         {TABS.map((t) => {
@@ -164,10 +163,10 @@ function ServiceDetailPage() {
               aria-current={isActive ? "page" : undefined}
               data-testid={`service-detail-tab-${t.id}`}
               className={cn(
-                "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
+                "flex items-center px-3 py-2 text-xs font-medium",
                 isActive
-                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
-                  : "text-muted hover:text-default",
+                  ? "border-b-2 border-[color:var(--accent)] text-text-1"
+                  : "text-text-3 hover:text-text-1",
               )}
             >
               {t.label}
@@ -201,12 +200,12 @@ function TabBody({
 function OverviewTab({ service }: { service: ServiceDoc }) {
   return (
     <div
-      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-default"
+      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-text-1"
       data-testid="service-tab-overview"
     >
       <Stat label="Name" value={service.name ?? "—"} />
       <Stat label="Kind" value={service.kind ?? "—"} />
-      <Stat label="State" value={<StateChip state={service.state} />} />
+      <Stat label="State" value={<StatePill state={service.state} />} />
       <Stat label="Tenant" value={service.tenantId ?? "—"} />
       <Stat label="Machine" value={service.machineId ?? "—"} />
       <Stat
@@ -219,7 +218,7 @@ function OverviewTab({ service }: { service: ServiceDoc }) {
           )
         }
       />
-      <div className="rounded border border-app bg-surface-2 px-3 py-3 text-xs text-muted">
+      <div className="rounded-xs border border-border-2 bg-bg-raised px-3 py-3 text-xs text-text-3">
         Logs, environment variables, ports, and code-ref details are not yet
         surfaced by the system tenant for the services index. A follow-up plan
         will wire these dimensions through the ServiceManager and compose.yaml
@@ -244,7 +243,7 @@ function EndpointsTab({ service }: { service: ServiceDoc }) {
       className="h-full overflow-auto px-6 py-4"
       data-testid="service-tab-endpoints"
     >
-      <pre className="m-0 rounded border border-app bg-surface-2 p-3 font-mono text-xs text-default">
+      <pre className="m-0 rounded-xs border border-border-2 bg-bg-raised p-3 font-mono text-xs text-text-1">
         {JSON.stringify(endpoints, null, 2)}
       </pre>
     </div>
@@ -266,7 +265,7 @@ function HealthTab({ service }: { service: ServiceDoc }) {
       className="h-full overflow-auto px-6 py-4"
       data-testid="service-tab-health"
     >
-      <pre className="m-0 rounded border border-app bg-surface-2 p-3 font-mono text-xs text-default">
+      <pre className="m-0 rounded-xs border border-border-2 bg-bg-raised p-3 font-mono text-xs text-text-1">
         {JSON.stringify(health, null, 2)}
       </pre>
     </div>
@@ -304,7 +303,7 @@ export function BundleTab({
   }
   return (
     <div
-      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-default"
+      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-text-1"
       data-testid="service-tab-bundle"
     >
       <Stat
@@ -342,10 +341,8 @@ export function BundleTab({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
-        {label}
-      </span>
-      <span className="font-mono text-xs text-default">{value}</span>
+      <span className="w-32 text-xs font-medium text-text-3">{label}</span>
+      <span className="font-mono text-xs text-text-1">{value}</span>
     </div>
   );
 }
@@ -368,12 +365,12 @@ function DetailSubDrawer({
     : services;
   if (services.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">No services declared.</div>
+      <div className="px-3 py-6 text-xs text-text-3">No services declared.</div>
     );
   }
   if (filtered.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         No services match the filter.
       </div>
     );
@@ -391,15 +388,15 @@ function DetailSubDrawer({
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 text-sm",
                 isActive
-                  ? "bg-surface-2 text-default"
-                  : "text-muted hover:bg-surface-2 hover:text-default",
+                  ? "bg-bg-raised text-text-1"
+                  : "text-text-3 hover:bg-bg-raised hover:text-text-1",
               )}
             >
               <span className="flex-1 truncate font-mono text-xs">
                 {svc.name ?? shortId(svc._id, 12)}
               </span>
               {svc.state ? (
-                <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
+                <span className="tabular text-xs font-medium text-text-3">
                   {svc.state}
                 </span>
               ) : null}
@@ -418,15 +415,15 @@ function ServiceNotFound() {
       className="flex h-full flex-col items-center justify-center gap-2 text-center"
       data-testid="service-not-found"
     >
-      <span className="font-mono text-sm text-default">Service not found</span>
-      <span className="max-w-md text-xs text-muted">
+      <span className="font-mono text-sm text-text-1">Service not found</span>
+      <span className="max-w-md text-xs text-text-3">
         No service matches the id{" "}
-        <code className="font-mono text-default">{shortId(serviceId, 12)}</code>
-        . It may have been stopped or never registered.
+        <code className="font-mono text-text-1">{shortId(serviceId, 12)}</code>.
+        It may have been stopped or never registered.
       </span>
       <Link
         to="/developer/services"
-        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
       >
         ← back to services
       </Link>

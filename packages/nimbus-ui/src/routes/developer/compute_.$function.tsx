@@ -6,20 +6,18 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { CategoryChip } from "../../components/category-chip";
 import { CodeBlock } from "../../components/code-block";
 import { CopyChip } from "../../components/copy-chip";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
 import { LoadingState, SkeletonRows } from "../../components/loading-state";
-import { StateChip } from "../../components/state-chip";
+import { CategoryPill, StatePill } from "../../components/pill";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { useApiRead } from "../../hooks/use-api-read";
-import { cn } from "../../lib/cn";
 import { formatDuration, shortHash, shortId } from "../../lib/format";
 import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
@@ -145,7 +143,7 @@ function FunctionDetailPage() {
       className="flex h-full flex-col overflow-hidden"
       data-testid="page-function-detail"
     >
-      <div className="flex shrink-0 flex-col gap-2 border-b border-app px-6 pb-3 pt-4">
+      <div className="flex shrink-0 flex-col gap-2 border-b border-border-2 px-6 pb-3 pt-4">
         <Breadcrumb
           segments={[
             { label: "Compute", href: "/developer/compute" },
@@ -154,14 +152,14 @@ function FunctionDetailPage() {
         />
         <header className="flex flex-wrap items-baseline gap-3">
           <h1
-            className="font-mono text-default"
+            className="font-mono text-text-1"
             style={{ fontSize: "var(--text-lg)" }}
           >
             {functionPath}
           </h1>
-          {fn?.kind ? <CategoryChip value={fn.kind} /> : null}
-          {fn?.adapter ? <CategoryChip value={fn.adapter} /> : null}
-          {fn?.lastStatus ? <StateChip state={fn.lastStatus} /> : null}
+          {fn?.kind ? <CategoryPill value={fn.kind} /> : null}
+          {fn?.adapter ? <CategoryPill value={fn.adapter} /> : null}
+          {fn?.lastStatus ? <StatePill state={fn.lastStatus} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
               label="bundle sha256"
@@ -176,7 +174,7 @@ function FunctionDetailPage() {
 
       <nav
         aria-label="Function detail sections"
-        className="flex shrink-0 gap-px border-b border-app bg-surface-2 px-6"
+        className="flex shrink-0 gap-px border-b border-border-2 bg-bg-raised px-6"
         data-testid="function-detail-tabs"
       >
         {TABS.map((t) => {
@@ -189,10 +187,10 @@ function FunctionDetailPage() {
               aria-current={isActive ? "page" : undefined}
               data-testid={`function-detail-tab-${t.id}`}
               className={cn(
-                "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
+                "flex items-center px-3 py-2 text-xs font-medium",
                 isActive
-                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
-                  : "text-muted hover:text-default",
+                  ? "border-b-2 border-[color:var(--accent)] text-text-1"
+                  : "text-text-3 hover:text-text-1",
               )}
             >
               {t.label}
@@ -242,7 +240,7 @@ function StatisticsTab({
 }) {
   return (
     <div
-      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-default"
+      className="flex h-full flex-col gap-3 overflow-auto px-6 py-4 text-sm text-text-1"
       data-testid="function-tab-statistics"
     >
       <Stat label="Kind" value={fn.kind ?? "—"} />
@@ -268,7 +266,7 @@ function StatisticsTab({
           )
         }
       />
-      <div className="rounded border border-app bg-surface-2 px-3 py-3 text-xs text-muted">
+      <div className="rounded-xs border border-border-2 bg-bg-raised px-3 py-3 text-xs text-text-3">
         Aggregate latency and invocation telemetry is not yet exposed by the
         system tenant. A follow-up plan will populate this panel with p50/p95/
         p99 latency and success/error rate from the runs index.
@@ -280,10 +278,8 @@ function StatisticsTab({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
-        {label}
-      </span>
-      <span className="font-mono text-xs text-default">{value}</span>
+      <span className="w-32 text-xs font-medium text-text-3">{label}</span>
+      <span className="font-mono text-xs text-text-1">{value}</span>
     </div>
   );
 }
@@ -393,7 +389,7 @@ function SourceTab({
       className="flex h-full flex-col overflow-hidden"
       data-testid="function-tab-source"
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-app bg-surface-2 px-6 py-1.5 font-mono text-xs uppercase tracking-wide text-muted">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border-2 bg-bg-raised px-6 py-1.5 text-xs font-medium text-text-3">
         <span>{modulePath}</span>
         {ready.digest ? (
           <span className="ml-auto normal-case" title={ready.digest}>
@@ -447,14 +443,12 @@ function SymbolsBar({
   }
   return (
     <div
-      className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-app bg-surface px-6 py-2"
+      className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border-2 bg-bg-panel px-6 py-2"
       data-testid="function-source-symbols"
     >
       {analysis.exports.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-xs uppercase tracking-wide text-muted">
-            defines
-          </span>
+          <span className="text-xs font-medium text-text-3">defines</span>
           {analysis.exports.map((symbol) => {
             // The TS-compiler hover for this export's declaration (FSV8),
             // shown as the chip's native tooltip.
@@ -475,9 +469,7 @@ function SymbolsBar({
       ) : null}
       {analysis.references.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-xs uppercase tracking-wide text-muted">
-            calls
-          </span>
+          <span className="text-xs font-medium text-text-3">calls</span>
           {analysis.references.map((reference) => (
             <SymbolLink
               key={reference.target}
@@ -490,9 +482,7 @@ function SymbolsBar({
       ) : null}
       {callers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-xs uppercase tracking-wide text-muted">
-            called by
-          </span>
+          <span className="text-xs font-medium text-text-3">called by</span>
           {callers.map((caller) => (
             <SymbolLink
               key={caller}
@@ -519,7 +509,7 @@ function SymbolLink({
   testid: string;
 }) {
   // A bordered chip, not an inline link: the border plus the hover fill carry
-  // the affordance, so this keeps `text-link` and stays off `.link-inline` —
+  // the affordance, so this keeps `text-accent-link` and stays off `.link-inline` —
   // a resting underline inside a chip reads as a rendering defect.
   return (
     <Link
@@ -528,7 +518,7 @@ function SymbolLink({
       search={{ tab: "source" }}
       data-testid={testid}
       title={title}
-      className="rounded border border-app px-1.5 py-0.5 font-mono text-xs text-link hover:bg-surface-2"
+      className="rounded-xs border border-border-2 px-1.5 py-0.5 font-mono text-xs text-accent-link hover:bg-bg-raised"
     >
       {label}
     </Link>
@@ -572,15 +562,15 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
         {filtered.map((ev) => (
           <li
             key={ev._id}
-            className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-xs"
+            className="rounded-xs border border-border-2 bg-bg-raised px-3 py-2 font-mono text-xs"
           >
             <div className="flex items-baseline gap-3">
-              <span className="text-xs uppercase tracking-wide text-muted">
+              <span className="text-xs font-medium text-text-3">
                 {ev.level ?? "info"}
               </span>
-              <span className="text-default">{ev.message ?? ""}</span>
+              <span className="text-text-1">{ev.message ?? ""}</span>
               {typeof ev.createdAt === "number" ? (
-                <span className="ml-auto text-muted">
+                <span className="ml-auto text-text-3">
                   <RelativeTime epochMs={ev.createdAt} />
                 </span>
               ) : null}
@@ -608,9 +598,9 @@ function RunsTableHead() {
   return (
     // Sticky because the pane below scrolls 50 runs and the four columns are a
     // mono id, a state glyph and two numbers, which read as nothing once their
-    // labels leave the viewport. `bg-surface-2` is load-bearing, not styling: a
+    // labels leave the viewport. `bg-bg-raised` is load-bearing, not styling: a
     // transparent sticky head lets the rows scroll visibly through it.
-    <thead className="sticky top-0 z-20 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 z-20 bg-bg-raised text-xs font-medium text-text-3">
       <tr>
         <Th width="29%">Run ID</Th>
         <Th width="21%">Status</Th>
@@ -668,20 +658,20 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
           {runs.map((run) => (
             <tr
               key={run._id}
-              className="border-t border-app hover:bg-surface-2"
+              className="border-t border-border-2 hover:bg-bg-raised"
             >
               <Td>
                 <Link
                   to="/developer/compute/runs/$runId"
                   params={{ runId: run._id }}
-                  className="font-mono text-xs text-default hover:underline"
+                  className="font-mono text-xs text-text-1 hover:underline"
                   data-testid={`function-tab-runs-link-${run._id}`}
                 >
                   {shortId(run._id, 12)}
                 </Link>
               </Td>
               <Td>
-                <StateChip state={run.status} />
+                <StatePill state={run.status} />
               </Td>
               <Td>
                 {typeof run.durationMs === "number" ? (
@@ -689,14 +679,14 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
                     {formatDuration(run.durationMs)}
                   </span>
                 ) : (
-                  <span className="tabular text-muted">—</span>
+                  <span className="tabular text-text-3">—</span>
                 )}
               </Td>
               <Td>
                 {typeof run.startedAt === "number" ? (
                   <RelativeTime epochMs={run.startedAt} />
                 ) : (
-                  <span className="tabular text-muted">—</span>
+                  <span className="tabular text-text-3">—</span>
                 )}
               </Td>
             </tr>
@@ -716,7 +706,7 @@ function DetailSubDrawer({
   const tree = useMemo(() => buildFunctionTree(functions ?? []), [functions]);
   if (functions === undefined) {
     return (
-      <div className="px-3 py-3 text-xs text-muted">
+      <div className="px-3 py-3 text-xs text-text-3">
         <span aria-hidden>·</span>
         <span className="sr-only">loading</span>
       </div>
@@ -730,15 +720,15 @@ function DetailSubDrawer({
 function NotFound({ path }: { path: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-      <span className="font-mono text-sm text-default">Function not found</span>
-      <span className="max-w-md text-xs text-muted">
+      <span className="font-mono text-sm text-text-1">Function not found</span>
+      <span className="max-w-md text-xs text-text-3">
         No function matches the path{" "}
-        <code className="font-mono text-default">{path}</code>. It may have been
+        <code className="font-mono text-text-1">{path}</code>. It may have been
         removed or renamed. Open Compute to see the current inventory.
       </span>
       <Link
         to="/developer/compute"
-        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded-xs border border-border-2 px-3 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
       >
         ← back to compute
       </Link>

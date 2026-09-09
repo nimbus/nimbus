@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { Boxes, Database } from "lucide-react";
 
 import { EmptyState } from "../components/empty-state";
 
@@ -7,7 +8,7 @@ const meta: Meta<typeof EmptyState> = {
   component: EmptyState,
   decorators: [
     (Story) => (
-      <div className="h-64 w-full max-w-xl rounded-md border border-app bg-surface">
+      <div className="h-64 w-full max-w-xl rounded-md border border-border-2 bg-bg-panel">
         <Story />
       </div>
     ),
@@ -42,5 +43,25 @@ export const WithLinkCta: Story = {
     title: "Welcome to Nimbus",
     body: "Get started by visiting the developer console.",
     cta: { label: "Open Developer", to: "/developer" },
+  },
+};
+
+export const WithIcon: Story = {
+  args: {
+    icon: Boxes,
+    title: "No sandboxes",
+    body: "A sandbox starts when an agent or a service asks for one.",
+  },
+};
+
+// The snippet is the first command an operator runs from the empty state,
+// with the copy button the CLI examples share.
+export const WithSnippet: Story = {
+  args: {
+    icon: Database,
+    title: "No tables yet",
+    body: "Create a table from the CLI, or write a document and Nimbus creates the table for you.",
+    snippet: "nimbus storage tables create users",
+    cta: { label: "Read the storage guide", to: "/developer/docs" },
   },
 };

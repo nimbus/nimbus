@@ -36,7 +36,7 @@ vi.mock("../hooks/use-staleness", () => ({
 }));
 
 import type { VersionInfo } from "../api/system";
-import { statePalette } from "../components/state-chip";
+import { statePalette } from "../components/state-dot";
 import { StatusBar, UPGRADE_TONE_KINDS, type UpgradeTone } from "./status-bar";
 
 beforeEach(() => {

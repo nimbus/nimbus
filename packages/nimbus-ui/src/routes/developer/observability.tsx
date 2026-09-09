@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../../components/page-header";
-import { cn } from "../../lib/cn";
+import { CategoryPill } from "../../components/pill";
 import {
   type StaticSubDrawerSpec,
   useContributeSubDrawer,
@@ -98,7 +98,7 @@ function Header({ tab }: { tab: ActiveObservabilityTab }) {
         subtitle={
           <>
             Live event stream and recent runs. Reads stream from the{" "}
-            <code className="font-mono text-default">_nimbus</code> system
+            <code className="font-mono text-text-1">_nimbus</code> system
             tenant.
           </>
         }
@@ -106,7 +106,7 @@ function Header({ tab }: { tab: ActiveObservabilityTab }) {
       />
       <nav
         aria-label="Observability tabs"
-        className="flex shrink-0 gap-px self-start overflow-hidden rounded-md border border-app bg-surface-2"
+        className="flex shrink-0 gap-px self-start overflow-hidden rounded-md border border-border-2 bg-bg-raised"
         data-testid="observability-tabs"
       >
         {OBSERVABILITY_SUB_DRAWER.items.map((item) =>
@@ -133,24 +133,18 @@ function DisabledTab({ id, label }: { id: ObservabilityTab; label: string }) {
       data-testid={`observability-tab-${id}`}
       title={`${label} — coming soon`}
       className={cn(
-        "inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
-        "cursor-not-allowed text-muted",
+        "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium",
+        "cursor-not-allowed text-text-3",
       )}
     >
       {label}
-      {/* The bordered, filled chip carries the disabled state. The previous
-          `opacity-60` on the wrapper was the only signal separating this from
-          an enabled-but-inactive tab, and it stacked on 9px muted text — below
-          any legible floor. 11px (`text-xs`) is the smallest sanctioned step.
-          The treatment is `components/category-chip.tsx` verbatim; it stays
-          inline only because CategoryChip takes no testid. */}
-      <span
+      {/* The neutral pill carries the disabled state at the smallest
+          sanctioned step; a muted wrapper alone did not read as disabled. */}
+      <CategoryPill
         aria-hidden
-        className="inline-flex items-center rounded border border-app bg-surface-2 px-1.5 py-0.5 font-mono text-xs leading-none uppercase tracking-wide text-muted"
+        value="coming soon"
         data-testid={`observability-tab-${id}-coming-soon`}
-      >
-        coming soon
-      </span>
+      />
     </span>
   );
 }
@@ -171,10 +165,10 @@ function ActiveTabLink({
       data-testid={`observability-tab-${id}`}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
+        "px-3 py-1.5 text-xs font-medium",
         active
-          ? "bg-surface text-default"
-          : "text-muted hover:bg-surface hover:text-default",
+          ? "bg-bg-panel text-text-1"
+          : "text-text-3 hover:bg-bg-panel hover:text-text-1",
       )}
     >
       {label}

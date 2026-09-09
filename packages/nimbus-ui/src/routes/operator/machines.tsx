@@ -2,16 +2,15 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
-import { PIN_R, Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
-import { StateChip } from "../../components/state-chip";
+import { StatePill } from "../../components/pill";
+import { PIN_R, Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { formatMemory } from "../../lib/format";
 import {
   type SubDrawerSpec,
@@ -64,12 +63,12 @@ function MachinesPage() {
       search: { placeholder: "Filter machines" },
       children:
         machines === undefined ? (
-          <div className="px-3 py-3 text-xs text-muted">
+          <div className="px-3 py-3 text-xs text-text-3">
             <span aria-hidden>·</span>
             <span className="sr-only">loading</span>
           </div>
         ) : list.length === 0 ? (
-          <div className="px-3 py-6 text-xs text-muted">
+          <div className="px-3 py-6 text-xs text-text-3">
             <p>No machines yet.</p>
           </div>
         ) : (
@@ -79,10 +78,10 @@ function MachinesPage() {
                 <a
                   href={`/operator/machines?selected=${machine._id}`}
                   data-testid={`sub-drawer-item-op-${machine._id}`}
-                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
+                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
                 >
                   <span className="flex-1 truncate">{machine.name}</span>
-                  <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
+                  <span className="tabular text-xs font-medium text-text-3">
                     {machine.state}
                   </span>
                 </a>
@@ -119,7 +118,7 @@ function MachinesPage() {
         subtitle="Outer Linux VMs hosting sandboxes on macOS/Windows dev hosts (krunkit / WSL2). Not cluster Nodes."
         trailing={
           <span
-            className="font-mono text-xs text-muted"
+            className="font-mono text-xs text-text-3"
             data-testid="machines-total"
           >
             {machines === undefined ? "loading…" : `${machines.length} total`}
@@ -128,7 +127,7 @@ function MachinesPage() {
       />
       <div className="flex min-h-0 flex-1 gap-4">
         <div
-          className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface"
+          className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
           data-testid="machines-table-container"
         >
           {machines === undefined ? (
@@ -150,7 +149,7 @@ function MachinesPage() {
               body={
                 <>
                   Machines are the outer dev VM on macOS and Windows. Run{" "}
-                  <code className="whitespace-nowrap rounded border border-app bg-surface-2 px-1 font-mono text-default">
+                  <code className="whitespace-nowrap rounded-xs border border-border-2 bg-bg-raised px-1 font-mono text-text-1">
                     {MACHINE_INIT_COMMAND}
                   </code>{" "}
                   to create one — it appears here in real time. Pure-Linux nodes
@@ -245,21 +244,21 @@ function MachineTable({
                 data-testid={`machines-row-${machine.name}`}
                 data-selected={isSelected || undefined}
                 className={cn(
-                  "border-t border-app hover:bg-surface-2",
+                  "border-t border-border-2 hover:bg-bg-raised",
                   // The pinned Actions cell paints `--row-bg`, so the row has
                   // to publish its own background — hover included, or the
                   // data columns show through the cell exactly while the
                   // operator is aiming at it.
                   isSelected
-                    ? "bg-surface-2 [--row-bg:var(--nimbus-surface-2)]"
-                    : "[--row-bg:var(--nimbus-surface)] hover:[--row-bg:var(--nimbus-surface-2)]",
+                    ? "bg-bg-raised [--row-bg:var(--bg-raised)]"
+                    : "[--row-bg:var(--bg-panel)] hover:[--row-bg:var(--bg-raised)]",
                 )}
               >
                 <Td>
                   <button
                     type="button"
                     onClick={() => onSelect(isSelected ? null : machine._id)}
-                    className="font-mono text-default hover:underline"
+                    className="font-mono text-text-1 hover:underline"
                   >
                     {machine.name}
                   </button>
@@ -269,10 +268,10 @@ function MachineTable({
                     className="flex flex-col gap-1"
                     data-testid={`machines-state-${machine.name}`}
                   >
-                    <StateChip state={optimisticState} />
+                    <StatePill state={optimisticState} />
                     {error ? (
                       <span
-                        className="font-mono text-xs text-danger"
+                        className="font-mono text-xs text-error"
                         data-testid={`machines-error-${machine.name}`}
                       >
                         {error}
@@ -281,12 +280,12 @@ function MachineTable({
                   </div>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-default">
+                  <span className="font-mono text-xs text-text-1">
                     {machine.provider ?? "—"}
                   </span>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-default">
+                  <span className="font-mono text-xs text-text-1">
                     {machine.kind ?? "—"}
                   </span>
                 </Td>
@@ -305,15 +304,18 @@ function MachineTable({
                   {typeof machine._updateTime === "number" ? (
                     <RelativeTime epochMs={machine._updateTime} />
                   ) : (
-                    <span className="tabular text-muted">—</span>
+                    <span className="tabular text-text-3">—</span>
                   )}
                 </Td>
                 <Td
-                  className={cn("w-px border-l border-app text-right", PIN_R)}
+                  className={cn(
+                    "w-px border-l border-border-2 text-right",
+                    PIN_R,
+                  )}
                 >
                   <div className="inline-flex gap-1">
                     {actions.length === 0 ? (
-                      <span className="font-mono text-xs text-muted">
+                      <span className="font-mono text-xs text-text-3">
                         {pendingAction ? "…" : "—"}
                       </span>
                     ) : (
@@ -341,7 +343,7 @@ function MachineTable({
 
 function MachineTableHead() {
   return (
-    <thead className="sticky top-0 z-20 bg-surface-2 [--row-bg:var(--nimbus-surface-2)] text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 z-20 bg-bg-raised [--row-bg:var(--bg-raised)] text-xs font-medium text-text-3">
       <tr>
         <Th>Name</Th>
         <Th>State</Th>
@@ -351,7 +353,7 @@ function MachineTableHead() {
         <Th className="text-right">Memory</Th>
         <Th className="text-right">Disk</Th>
         <Th>Updated</Th>
-        <Th className={cn("w-px border-l border-app text-right", PIN_R)}>
+        <Th className={cn("w-px border-l border-border-2 text-right", PIN_R)}>
           Actions
         </Th>
       </tr>
@@ -375,15 +377,15 @@ function ActionButton({
   // Graying out swaps the tone rather than dimming it. CSS `opacity`
   // composites in gamma-encoded sRGB, so the `opacity-50` this used to carry
   // measured between 1.5:1 and 3.1:1 for the delete and stop tones against the
-  // row behind them — unreadable, worst in the mono dark palette. `text-muted`
+  // row behind them — unreadable, worst in the mono dark palette. `text-text-3`
   // is a palette token and stays above 4.5:1 in every palette and theme.
   const tone = disabled
-    ? "text-muted"
+    ? "text-text-3"
     : action === "delete"
-      ? "text-danger hover:bg-danger/10"
+      ? "text-error hover:bg-error/10"
       : action === "stop"
         ? "text-warning hover:bg-warning/10"
-        : "text-default hover:bg-surface-2";
+        : "text-text-1 hover:bg-bg-raised";
   return (
     <button
       type="button"
@@ -408,7 +410,7 @@ function ActionButton({
       aria-busy={busy || undefined}
       data-testid={`machines-action-${action}-${machineName}`}
       className={cn(
-        "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
+        "rounded-xs border border-border-2 px-2 py-0.5 text-xs font-medium",
         "aria-disabled:cursor-not-allowed",
         tone,
       )}

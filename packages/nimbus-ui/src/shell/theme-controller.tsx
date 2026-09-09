@@ -1,25 +1,12 @@
 import { useEffect } from "react";
 import { useUiStore } from "../store/ui-store";
 
+// ThemeController stamps the resolved theme on <html>. The favicon is the
+// solid mascot in fixed colours, so it needs no swap when the theme changes.
 export function ThemeController() {
   const theme = useUiStore((state) => state.theme);
-  const palette = useUiStore((state) => state.palette);
   useEffect(() => {
-    const root = document.documentElement;
-    root.dataset.theme = theme;
-    root.dataset.palette = palette;
-    // The favicon follows the resolved console theme, not the OS scheme —
-    // an SVG prefers-color-scheme query cannot see data-theme. The static
-    // /ui/favicon.svg link stays as the no-JS/initial fallback.
-    const icon = document.querySelector(
-      'link[rel="icon"][type="image/svg+xml"]',
-    );
-    if (icon) {
-      icon.setAttribute(
-        "href",
-        theme === "dark" ? "/ui/favicon-night.svg" : "/ui/favicon-warm.svg",
-      );
-    }
-  }, [theme, palette]);
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
   return null;
 }

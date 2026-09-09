@@ -1,8 +1,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-
+import { cn } from "@/lib/utils";
 import { useTenantList } from "../../hooks/use-tenant-list";
-import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { useUiStore } from "../../store/ui-store";
 import { CopyChip } from "../copy-chip";
@@ -149,7 +148,7 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
 
   return (
     <div
-      className="shrink-0 border-t border-app bg-surface"
+      className="shrink-0 border-t border-border-2 bg-bg-panel"
       data-testid="function-runner"
       data-open={open ? "true" : "false"}
     >
@@ -158,7 +157,7 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         data-testid="function-runner-toggle"
-        className="flex w-full items-center gap-2 px-6 py-2 text-left font-mono text-xs uppercase tracking-wide text-muted hover:text-default"
+        className="flex w-full items-center gap-2 px-6 py-2 text-left text-xs font-medium text-text-3 hover:text-text-1"
       >
         {open ? (
           <ChevronDown size={12} aria-hidden />
@@ -166,34 +165,32 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
           <ChevronRight size={12} aria-hidden />
         )}
         <span>Runner</span>
-        <span className="text-xs text-muted">
+        <span className="text-xs text-text-3">
           {open ? "click to collapse" : "click to invoke this function"}
         </span>
         <span className="ml-auto">
           {result.kind === "running" ? (
-            <span className="rounded border border-app px-1.5 py-0.5 text-xs uppercase text-muted">
+            <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-text-3">
               running…
             </span>
           ) : result.kind === "ok" ? (
-            <span className="rounded border border-app px-1.5 py-0.5 text-xs uppercase text-success">
+            <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-success">
               ok · {result.durationMs}ms
             </span>
           ) : result.kind === "error" ? (
-            <span className="rounded border border-app px-1.5 py-0.5 text-xs uppercase text-danger">
+            <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-error">
               error
             </span>
           ) : null}
         </span>
       </button>
       {open ? (
-        <div className="grid grid-cols-[1fr_1fr] gap-3 border-t border-app px-6 py-3">
+        <div className="grid grid-cols-[1fr_1fr] gap-3 border-t border-border-2 px-6 py-3">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-                tenant
-              </span>
+              <span className="text-xs font-medium text-text-3">tenant</span>
               {tenantError ? (
-                <span className="font-mono text-xs text-danger">
+                <span className="font-mono text-xs text-error">
                   failed: {tenantError}
                 </span>
               ) : (
@@ -202,7 +199,7 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
                   onChange={(e) => setTenantOverride(e.target.value || null)}
                   disabled={tenantLoading}
                   data-testid="function-runner-tenant"
-                  className="rounded border border-app bg-surface-2 px-2 py-1 font-mono text-xs text-default"
+                  className="rounded-xs border border-border-2 bg-bg-raised px-2 py-1 font-mono text-xs text-text-1"
                 >
                   <option value="" disabled>
                     {tenantLoading ? "loading…" : "select tenant"}
@@ -219,7 +216,7 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
               className="flex flex-col gap-1"
               data-testid="function-runner-args"
             >
-              <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
+              <span className="text-xs font-medium text-text-3">
                 arguments (json object)
               </span>
               <textarea
@@ -228,11 +225,11 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
                 rows={6}
                 spellCheck={false}
                 data-testid="function-runner-args-input"
-                className="rounded border border-app bg-surface-2 px-2 py-1 font-mono text-xs text-default placeholder:text-muted/70"
+                className="rounded-xs border border-border-2 bg-bg-raised px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3/70"
                 placeholder='{ "key": "value" }'
               />
               {(parseError ?? (!parsedArgs.ok && parsedArgs.error)) ? (
-                <span className="font-mono text-xs text-danger">
+                <span className="font-mono text-xs text-error">
                   {parseError ?? (parsedArgs.ok ? null : parsedArgs.error)}
                 </span>
               ) : null}
@@ -244,10 +241,10 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
                 disabled={!canSubmit}
                 data-testid="function-runner-submit"
                 className={cn(
-                  "rounded-md border px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
+                  "rounded-md border px-3 py-1.5 text-xs font-medium",
                   canSubmit
-                    ? "border-strong bg-surface-2 text-default hover:bg-surface"
-                    : "border-app bg-surface-2 text-muted",
+                    ? "border-border-3 bg-bg-raised text-text-1 hover:bg-bg-panel"
+                    : "border-border-2 bg-bg-raised text-text-3",
                 )}
               >
                 {result.kind === "running"
@@ -255,7 +252,7 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
                   : `Run ${inferredKind || "function"}`}
               </button>
               {isQuery ? (
-                <span className="font-mono text-xs uppercase tracking-wide text-muted">
+                <span className="text-xs font-medium text-text-3">
                   queries are read-only
                 </span>
               ) : null}
@@ -272,7 +269,7 @@ function ResultPanel({ result }: { result: RunResult }) {
   if (result.kind === "idle") {
     return (
       <div
-        className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
+        className="rounded-xs border border-border-2 bg-bg-raised px-3 py-2 font-mono text-xs text-text-3"
         data-testid="function-runner-result-idle"
       >
         No result yet — submit to invoke.
@@ -282,7 +279,7 @@ function ResultPanel({ result }: { result: RunResult }) {
   if (result.kind === "running") {
     return (
       <div
-        className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
+        className="rounded-xs border border-border-2 bg-bg-raised px-3 py-2 font-mono text-xs text-text-3"
         data-testid="function-runner-result-running"
       >
         Running…
@@ -292,25 +289,25 @@ function ResultPanel({ result }: { result: RunResult }) {
   if (result.kind === "error") {
     return (
       <div
-        className="flex flex-col gap-2 rounded border border-app bg-surface-2 px-3 py-3"
+        className="flex flex-col gap-2 rounded-xs border border-border-2 bg-bg-raised px-3 py-3"
         data-testid="function-runner-result-error"
       >
         <div className="flex items-center gap-2">
-          <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-danger">
+          <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-error">
             error
           </span>
           {result.code ? (
-            <span className="font-mono text-xs uppercase tracking-wide text-muted">
+            <span className="text-xs font-medium text-text-3">
               {result.code}
             </span>
           ) : null}
-          <span className="tabular text-xs text-muted">
+          <span className="tabular text-xs text-text-3">
             {result.durationMs}ms
           </span>
         </div>
-        <p className="font-mono text-xs text-default">{result.message}</p>
+        <p className="font-mono text-xs text-text-1">{result.message}</p>
         {result.remediation ? (
-          <p className="text-xs text-muted">{result.remediation}</p>
+          <p className="text-xs text-text-3">{result.remediation}</p>
         ) : null}
         {result.requestId ? (
           <CopyChip
@@ -326,14 +323,14 @@ function ResultPanel({ result }: { result: RunResult }) {
   }
   return (
     <div
-      className="flex flex-col gap-2 rounded border border-app bg-surface-2 px-3 py-3"
+      className="flex flex-col gap-2 rounded-xs border border-border-2 bg-bg-raised px-3 py-3"
       data-testid="function-runner-result-ok"
     >
       <div className="flex items-center gap-2">
-        <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-success">
+        <span className="rounded-xs border border-border-2 px-1.5 py-0.5 text-xs font-medium text-success">
           ok
         </span>
-        <span className="tabular text-xs text-muted">
+        <span className="tabular text-xs text-text-3">
           {result.durationMs}ms
         </span>
         {result.correlationId ? (
@@ -347,7 +344,7 @@ function ResultPanel({ result }: { result: RunResult }) {
         ) : null}
       </div>
       <pre
-        className="max-h-48 overflow-auto rounded border border-app bg-surface p-2 font-mono text-xs text-default"
+        className="max-h-48 overflow-auto rounded-xs border border-border-2 bg-bg-panel p-2 font-mono text-xs text-text-1"
         data-testid="function-runner-result-json"
       >
         {JSON.stringify(result.data, null, 2)}

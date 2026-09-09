@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { useEffect } from "react";
 
 import { AppearanceSection } from "../components/appearance-section";
-import { type Palette, type ThemeMode, useUiStore } from "../store/ui-store";
+import { type ThemeMode, useUiStore } from "../store/ui-store";
 
 const meta: Meta<typeof AppearanceSection> = {
   title: "Components/AppearanceSection",
@@ -18,41 +18,32 @@ const meta: Meta<typeof AppearanceSection> = {
 
 export default meta;
 
-type StoryArgs = { mode: ThemeMode; palette: Palette };
+type StoryArgs = { mode: ThemeMode };
 type Story = StoryObj<StoryArgs>;
 
-function Frame({ mode, palette }: StoryArgs) {
+function Frame({ mode }: StoryArgs) {
   const setThemeMode = useUiStore((s) => s.setThemeMode);
-  const setPalette = useUiStore((s) => s.setPalette);
   useEffect(() => {
     const previousMode = useUiStore.getState().themeMode;
-    const previousPalette = useUiStore.getState().palette;
     setThemeMode(mode);
-    setPalette(palette);
     return () => {
       setThemeMode(previousMode);
-      setPalette(previousPalette);
     };
-  }, [mode, palette, setThemeMode, setPalette]);
+  }, [mode, setThemeMode]);
   return <AppearanceSection />;
 }
 
-export const Default: Story = {
-  args: { mode: "system", palette: "warm" },
+export const System: Story = {
+  args: { mode: "system" },
   render: (args) => <Frame {...args} />,
 };
 
-export const BlueDark: Story = {
-  args: { mode: "dark", palette: "blue" },
+export const Dark: Story = {
+  args: { mode: "dark" },
   render: (args) => <Frame {...args} />,
 };
 
-export const MonoLight: Story = {
-  args: { mode: "light", palette: "mono" },
-  render: (args) => <Frame {...args} />,
-};
-
-export const BlueSystem: Story = {
-  args: { mode: "system", palette: "blue" },
+export const Light: Story = {
+  args: { mode: "light" },
   render: (args) => <Frame {...args} />,
 };

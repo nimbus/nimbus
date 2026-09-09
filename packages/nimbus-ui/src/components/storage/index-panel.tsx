@@ -25,18 +25,18 @@ export function IndexPanel({
       // the identical pair of constraints; `storage_.$table.tsx` owns the
       // `documents-row` container this query is measured against, and with no
       // such container in scope the rule never matches and `w-full` stands.
-      className="@min-[756px]/documents-row:w-[420px] flex w-full min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      className="@min-[756px]/documents-row:w-[420px] flex w-full min-w-0 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
       data-testid="documents-indexes-panel"
     >
       <PanelHeader title="Indexes" onClose={onClose} />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3">
-        <p className="font-mono text-xs text-muted">
+        <p className="font-mono text-xs text-text-3">
           Read-only view derived from the table schema. Index REST endpoints
           (create/drop) ship after the native index API lands.
         </p>
         {indexes.length === 0 ? (
           <p
-            className="font-mono text-xs text-muted"
+            className="font-mono text-xs text-text-3"
             data-testid="documents-indexes-empty"
           >
             No indexes defined.
@@ -46,7 +46,7 @@ export function IndexPanel({
             className="w-full border-collapse text-xs"
             data-testid="documents-indexes-table"
           >
-            <thead className="text-xs uppercase tracking-wide text-muted">
+            <thead className="text-xs font-medium text-text-3">
               <tr>
                 <th className="px-2 py-1 text-left">Name</th>
                 <th className="px-2 py-1 text-left">Fields</th>
@@ -55,14 +55,14 @@ export function IndexPanel({
             </thead>
             <tbody>
               {indexes.map((idx) => (
-                <tr key={idx.name} className="border-t border-app">
-                  <td className="px-2 py-1 font-mono text-default">
+                <tr key={idx.name} className="border-t border-border-2">
+                  <td className="px-2 py-1 font-mono text-text-1">
                     {idx.name}
                   </td>
-                  <td className="px-2 py-1 font-mono text-default">
+                  <td className="px-2 py-1 font-mono text-text-1">
                     {idx.fields.join(", ")}
                   </td>
-                  <td className="px-2 py-1 font-mono text-muted">
+                  <td className="px-2 py-1 font-mono text-text-3">
                     {idx.unique ? "yes" : "no"}
                   </td>
                 </tr>

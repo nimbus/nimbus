@@ -3,8 +3,14 @@ import { type ReactNode, useCallback } from "react";
 
 import { EmptyState } from "./empty-state";
 
+/* The router hands a boundary `unknown`; a loader rejects with whatever the
+   client threw, which is an Error in practice but is not typed as one. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 type LoaderErrorStateProps = {
-  error: Error;
+  error: unknown;
   onRetry: () => void;
   pageTestId: string;
   title: string;
@@ -23,17 +29,17 @@ function LoaderErrorState({
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid={pageTestId}
     >
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         <EmptyState
           title={title}
           body={
             <>
               {subject}:{" "}
               <span
-                className="font-mono text-default"
+                className="font-mono text-text-1"
                 data-testid="storage-server-error"
               >
-                {error.message}
+                {errorMessage(error)}
               </span>
               . Retry once the backend is reachable.
             </>
@@ -50,7 +56,7 @@ export function ServicesLoaderError({
   error,
   reset,
 }: {
-  error: Error;
+  error: unknown;
   reset: () => void;
 }) {
   return (
@@ -68,7 +74,7 @@ export function ServiceDetailLoaderError({
   error,
   reset,
 }: {
-  error: Error;
+  error: unknown;
   reset: () => void;
 }) {
   return (
@@ -82,7 +88,7 @@ export function ServiceDetailLoaderError({
   );
 }
 
-export function AdminServicesLoaderError({ error }: { error: Error }) {
+export function AdminServicesLoaderError({ error }: { error: unknown }) {
   const router = useRouter();
   const reload = useCallback(() => {
     void router.invalidate();
@@ -98,7 +104,7 @@ export function AdminServicesLoaderError({ error }: { error: Error }) {
   );
 }
 
-export function AdminServiceDetailLoaderError({ error }: { error: Error }) {
+export function AdminServiceDetailLoaderError({ error }: { error: unknown }) {
   const router = useRouter();
   const reload = useCallback(() => {
     void router.invalidate();

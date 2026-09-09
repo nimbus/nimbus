@@ -1,10 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { PageHeader } from "../../components/page-header";
 import { AdminServicesLoaderError } from "../../components/service-loader-errors";
-import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
@@ -54,7 +53,7 @@ function AdminServicesPage() {
         trailing={<SummaryChip services={services} />}
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         <ServicesTable
           services={services}
           activeTenant={null}
@@ -72,7 +71,7 @@ function SummaryChip({ services }: { services: ServiceDoc[] }) {
   }
   return (
     <span
-      className="whitespace-nowrap font-mono text-xs text-muted"
+      className="whitespace-nowrap font-mono text-xs text-text-3"
       data-testid="admin-services-summary"
     >
       {services.length} service{services.length === 1 ? "" : "s"} ·{" "}
@@ -85,7 +84,7 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
   const filter = useSubDrawerSearch().trim().toLowerCase();
   if (services.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         <p>No services registered.</p>
         <p className="mt-2">
           Services appear here once a tenant deploys a runtime bundle.
@@ -104,7 +103,7 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
     : services;
   if (filtered.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         No services match the filter.
       </div>
     );
@@ -114,7 +113,7 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
     <ul className="flex flex-col gap-2 px-2 py-2">
       {grouped.map(([tenant, items]) => (
         <li key={tenant} className="flex flex-col gap-px">
-          <div className="px-2 pb-1 pt-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">
+          <div className="px-2 pb-1 pt-2 text-xs font-medium text-text-3">
             {tenant}
           </div>
           {items.map((svc) => (
@@ -124,14 +123,14 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
               params={{ service: svc._id }}
               data-testid={`sub-drawer-item-op-service-${svc.name ?? svc._id}`}
               className={cn(
-                "flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default",
+                "flex h-8 items-center gap-2 rounded-md px-2 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1",
               )}
             >
               <span className="flex-1 truncate font-mono text-xs">
                 {svc.name ?? shortId(svc._id, 12)}
               </span>
               {svc.state ? (
-                <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
+                <span className="tabular text-xs font-medium text-text-3">
                   {svc.state}
                 </span>
               ) : null}

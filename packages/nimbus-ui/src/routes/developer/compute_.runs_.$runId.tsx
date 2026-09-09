@@ -1,17 +1,13 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useMemo } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
-import {
-  resolveStateKind,
-  StateChip,
-  statePalette,
-} from "../../components/state-chip";
+import { StatePill } from "../../components/pill";
+import { resolveStateKind, statePalette } from "../../components/state-dot";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import { locationLine, parseRunError } from "../../lib/run-error";
@@ -68,7 +64,7 @@ function RunDetailPage() {
           ]}
           testid="run-detail-breadcrumb"
         />
-        <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
+        <h1 className="text-text-1" style={{ fontSize: "var(--text-xl)" }}>
           Run detail
         </h1>
       </header>
@@ -110,24 +106,24 @@ function Summary({ run, runId }: { run: RunDoc; runId: string }) {
   const startedAt = run.startedAt ?? run._creationTime;
   return (
     <div
-      className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-md border border-app bg-surface p-4 md:grid-cols-4"
+      className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-md border border-border-2 bg-bg-panel p-4 md:grid-cols-4"
       data-testid="run-detail-summary"
     >
       <Field label="Function" testid="run-detail-function">
-        <span className="font-mono text-sm text-default">
+        <span className="font-mono text-sm text-text-1">
           {run.functionPath ?? "—"}
         </span>
       </Field>
       <Field label="Status" testid="run-detail-status">
-        <StateChip state={run.status} />
+        <StatePill state={run.status} />
       </Field>
       <Field label="Kind" testid="run-detail-kind">
-        <span className="font-mono text-xs uppercase tracking-wide text-muted">
+        <span className="text-xs font-medium text-text-3">
           {run.kind ?? "—"}
         </span>
       </Field>
       <Field label="Duration" testid="run-detail-duration">
-        <span className="font-mono tabular text-sm text-default">
+        <span className="font-mono tabular text-sm text-text-1">
           {formatDuration(run.durationMs)}
         </span>
       </Field>
@@ -146,19 +142,19 @@ function Summary({ run, runId }: { run: RunDoc; runId: string }) {
             {shortId(run.bundleId, 12)}
           </CopyChip>
         ) : (
-          <span className="tabular text-muted">—</span>
+          <span className="tabular text-text-3">—</span>
         )}
       </Field>
       <Field label="Started" testid="run-detail-started">
         {typeof startedAt === "number" ? (
           <span
-            className="font-mono tabular text-xs text-default"
+            className="font-mono tabular text-xs text-text-1"
             title={formatAbsoluteTime(startedAt)}
           >
             <RelativeTime epochMs={startedAt} />
           </span>
         ) : (
-          <span className="tabular text-muted">—</span>
+          <span className="tabular text-text-3">—</span>
         )}
       </Field>
       <Field label="Correlation" testid="run-detail-correlation">
@@ -185,9 +181,7 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-1" data-testid={testid}>
-      <span className="text-xs uppercase tracking-wide text-muted">
-        {label}
-      </span>
+      <span className="text-xs font-medium text-text-3">{label}</span>
       {children}
     </div>
   );
@@ -237,14 +231,12 @@ function TraceWaterfall({
 
   return (
     <div
-      className="rounded-md border border-app bg-surface p-4"
+      className="rounded-md border border-border-2 bg-bg-panel p-4"
       data-testid="run-detail-trace"
     >
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-          Trace timing
-        </h2>
-        <span className="font-mono tabular text-xs text-muted">
+        <h2 className="text-xs font-medium text-text-3">Trace timing</h2>
+        <span className="font-mono tabular text-xs text-text-3">
           {formatDuration(total)} total
         </span>
       </div>
@@ -262,7 +254,7 @@ function TraceWaterfall({
         />
         {spans.length === 0 ? (
           <p
-            className="font-mono text-xs text-muted"
+            className="font-mono text-xs text-text-3"
             data-testid="run-detail-trace-empty"
           >
             No correlated events yet — only the run span is shown.
@@ -288,28 +280,28 @@ function TraceWaterfall({
 type WaterfallTone = "ok" | "muted" | "error";
 
 const toneFills: Record<WaterfallTone, string> = {
-  ok: "bg-[color-mix(in_oklch,var(--nimbus-success)_70%,transparent)]",
-  muted: "bg-[color-mix(in_oklch,var(--nimbus-muted)_50%,transparent)]",
-  error: "bg-[color-mix(in_oklch,var(--nimbus-danger)_75%,transparent)]",
+  ok: "bg-[color-mix(in_oklch,var(--success)_70%,transparent)]",
+  muted: "bg-[color-mix(in_oklch,var(--text-3)_50%,transparent)]",
+  error: "bg-[color-mix(in_oklch,var(--error)_75%,transparent)]",
 };
 
 /**
  * A bar's fill is a status color, and DESIGN.md rules that color is never the
  * only signal. Each status tone therefore also carries a glyph the eye can
- * separate by *shape* — ✓ against ✗, the way `StateChip` separates its states
+ * separate by *shape* — ✓ against ✗, the way `StatePill` separates its states
  * — and that glyph names its state to assistive tech. `muted` is the absence
  * of a status rather than a status, so it claims neither a glyph nor a name.
  *
- * A full `StateChip` per row was rejected: the waterfall is a dense trace and
- * an uppercase state word on every row would out-weigh the bars it annotates.
+ * A full `StatePill` per row was rejected: the waterfall is a dense trace and
+ * a state word on every row would out-weigh the bars it annotates.
  */
 const toneMarkers: Record<
   WaterfallTone,
   { glyph: string; token: string } | null
 > = {
-  ok: { glyph: "✓", token: "--nimbus-success" },
+  ok: { glyph: "✓", token: "--success" },
   muted: null,
-  error: { glyph: "✗", token: "--nimbus-danger" },
+  error: { glyph: "✗", token: "--error" },
 };
 
 /**
@@ -319,8 +311,8 @@ const toneMarkers: Record<
  */
 function toneForState(state: string | null | undefined): WaterfallTone {
   const { token } = statePalette[resolveStateKind(state)];
-  if (token === "--nimbus-danger") return "error";
-  if (token === "--nimbus-success") return "ok";
+  if (token === "--error") return "error";
+  if (token === "--success") return "ok";
   return "muted";
 }
 
@@ -366,15 +358,15 @@ function WaterfallBar({
             {marker.glyph}
           </span>
         ) : null}
-        <span className="truncate text-default">{label}</span>
+        <span className="truncate text-text-1">{label}</span>
       </span>
-      <div className="relative h-3 rounded-full bg-surface-2">
+      <div className="relative h-3 rounded-full bg-bg-raised">
         <div
           className={cn("absolute top-0 h-3 rounded-full", toneFills[tone])}
           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
         />
       </div>
-      <span className="tabular text-muted text-right">
+      <span className="tabular text-text-3 text-right">
         {offsetMs === 0 ? "0ms" : `+${formatDuration(offsetMs)}`}
       </span>
     </div>
@@ -390,17 +382,15 @@ function CorrelatedEvents({
 }) {
   return (
     <div
-      className="rounded-md border border-app bg-surface"
+      className="rounded-md border border-border-2 bg-bg-panel"
       data-testid="run-detail-events"
     >
-      <div className="flex items-baseline justify-between border-b border-app px-4 py-3">
-        <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-          Correlated events
-        </h2>
+      <div className="flex items-baseline justify-between border-b border-border-2 px-4 py-3">
+        <h2 className="text-xs font-medium text-text-3">Correlated events</h2>
         <Link
           to="/developer/observability"
           search={{ tab: "logs", correlationId: runId }}
-          className="font-mono text-xs uppercase tracking-wide text-muted hover:text-default focus-visible:text-default"
+          className="text-xs font-medium text-text-3 hover:text-text-1 focus-visible:text-text-1"
           data-testid="run-detail-open-logs"
         >
           open in logs →
@@ -408,13 +398,13 @@ function CorrelatedEvents({
       </div>
       {events.length === 0 ? (
         <div
-          className="px-4 py-6 font-mono text-xs text-muted"
+          className="px-4 py-6 font-mono text-xs text-text-3"
           data-testid="run-detail-events-empty"
         >
           No events recorded for this run.
         </div>
       ) : (
-        <ul className="divide-y divide-app">
+        <ul className="divide-y divide-border-2">
           {events.map((event) => (
             <li
               key={event._id}
@@ -424,12 +414,12 @@ function CorrelatedEvents({
               <RelativeTime
                 epochMs={event.createdAt ?? event._creationTime ?? 0}
               />
-              <StateChip state={event.level ?? "info"} />
-              <span className="font-mono text-xs uppercase tracking-wide text-muted">
+              <StatePill state={event.level ?? "info"} />
+              <span className="text-xs font-medium text-text-3">
                 {event.source ?? "—"}
                 {event.category ? ` · ${event.category}` : ""}
               </span>
-              <span className="font-mono text-default truncate">
+              <span className="font-mono text-text-1 truncate">
                 {event.message ?? "(no message)"}
               </span>
             </li>
@@ -451,33 +441,31 @@ function ErrorPanel({
   const line = location ? locationLine(location) : undefined;
   return (
     <div
-      className="rounded-md border border-danger bg-surface p-4"
+      className="rounded-md border border-error bg-bg-panel p-4"
       data-testid="run-detail-error"
     >
-      <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.14em] text-danger">
-        Error
-      </h2>
+      <h2 className="mb-2 text-xs font-medium text-error">Error</h2>
       {location ? (
         functionPath && line ? (
           <Link
             to="/developer/compute/$function"
             params={{ function: functionPath }}
             search={{ tab: "source", line }}
-            className="mb-2 inline-block rounded border border-danger px-2 py-0.5 font-mono text-xs text-danger hover:bg-surface-2"
+            className="mb-2 inline-block rounded-xs border border-error px-2 py-0.5 font-mono text-xs text-error hover:bg-bg-raised"
             data-testid="run-detail-error-location"
           >
             at {location} ↗
           </Link>
         ) : (
           <span
-            className="mb-2 inline-block font-mono text-xs text-danger"
+            className="mb-2 inline-block font-mono text-xs text-error"
             data-testid="run-detail-error-location"
           >
             at {location}
           </span>
         )
       ) : null}
-      <pre className="overflow-auto font-mono text-xs text-default whitespace-pre-wrap">
+      <pre className="overflow-auto font-mono text-xs text-text-1 whitespace-pre-wrap">
         {message}
       </pre>
     </div>
@@ -495,13 +483,11 @@ function Panel({
 }) {
   return (
     <div
-      className="rounded-md border border-app bg-surface p-4"
+      className="rounded-md border border-border-2 bg-bg-panel p-4"
       data-testid={testid}
     >
-      <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.14em] text-muted">
-        {title}
-      </h2>
-      <p className="font-mono text-xs text-muted">{empty}</p>
+      <h2 className="mb-2 text-xs font-medium text-text-3">{title}</h2>
+      <p className="font-mono text-xs text-text-3">{empty}</p>
     </div>
   );
 }
@@ -514,19 +500,19 @@ function RunNotFound() {
       data-testid="page-run-detail"
     >
       <div
-        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-app bg-surface px-6 py-10 text-center"
+        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-border-2 bg-bg-panel px-6 py-10 text-center"
         data-testid="run-detail-missing"
       >
-        <p className="font-mono text-sm text-default">Run not found</p>
-        <p className="max-w-md text-xs text-muted">
-          No run with id <code className="font-mono text-default">{runId}</code>
-          . It may have been pruned, or the correlation id does not point to a
-          run record.
+        <p className="font-mono text-sm text-text-1">Run not found</p>
+        <p className="max-w-md text-xs text-text-3">
+          No run with id <code className="font-mono text-text-1">{runId}</code>.
+          It may have been pruned, or the correlation id does not point to a run
+          record.
         </p>
         <Link
           to="/developer/observability"
           search={{ tab: "runs" }}
-          className="mt-2 rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          className="mt-2 rounded-xs border border-border-2 px-2 py-1 text-xs font-medium text-text-3 hover:bg-bg-panel hover:text-text-1"
           data-testid="run-detail-back"
         >
           ← all runs

@@ -2,30 +2,7 @@ import { create } from "zustand";
 
 export type ThemeMode = "light" | "dark" | "system";
 export type Theme = "light" | "dark";
-export type Palette = "blue" | "mono" | "warm";
 export type NavView = "developer" | "operator";
-
-export const PALETTES: ReadonlyArray<{
-  id: Palette;
-  label: string;
-  description: string;
-}> = [
-  {
-    id: "warm",
-    label: "Warm",
-    description: "Warm · Night Blue — product default",
-  },
-  {
-    id: "blue",
-    label: "Blue",
-    description: "Cool Blue · Night Blue — cool alternative",
-  },
-  {
-    id: "mono",
-    label: "Mono",
-    description: "Monochrome · Reverse Mono — minimal, enterprise",
-  },
-];
 
 type UiState = {
   paletteOpen: boolean;
@@ -33,7 +10,6 @@ type UiState = {
   actionMenuOpen: boolean;
   themeMode: ThemeMode;
   theme: Theme;
-  palette: Palette;
   lastView: NavView;
   primaryDrawerCollapsed: boolean;
   subDrawerOpen: boolean;
@@ -44,7 +20,6 @@ type UiState = {
   setLensOpen: (open: boolean, opener?: HTMLElement | null) => void;
   setActionMenuOpen: (open: boolean) => void;
   setThemeMode: (mode: ThemeMode) => void;
-  setPalette: (palette: Palette) => void;
   setLastView: (view: NavView) => void;
   setPrimaryDrawerCollapsed: (collapsed: boolean) => void;
   togglePrimaryDrawer: () => void;
@@ -55,7 +30,6 @@ type UiState = {
 };
 
 const THEME_STORAGE_KEY = "nimbus-ui:theme";
-const PALETTE_STORAGE_KEY = "nimbus-ui:palette";
 const LAST_VIEW_STORAGE_KEY = "nimbus-ui:last-view";
 const LAST_ROUTE_STORAGE_PREFIX = "nimbus-ui:last-route:";
 const PRIMARY_DRAWER_COLLAPSED_KEY = "nimbus-ui:primary-drawer-collapsed";
@@ -75,15 +49,6 @@ function readStoredMode(): ThemeMode {
     return stored;
   }
   return "system";
-}
-
-function readStoredPalette(): Palette {
-  if (typeof window === "undefined") return "warm";
-  const stored = window.localStorage.getItem(PALETTE_STORAGE_KEY);
-  if (stored === "blue" || stored === "mono" || stored === "warm") {
-    return stored;
-  }
-  return "warm";
 }
 
 export function readLastView(): NavView {
@@ -137,7 +102,6 @@ export function persistActiveTenant(tenant: string | null) {
 }
 
 const initialMode = readStoredMode();
-const initialPalette = readStoredPalette();
 const initialLastView = readLastView();
 const initialPrimaryDrawerCollapsed = readPrimaryDrawerCollapsed();
 const initialSubDrawerOpen = readSubDrawerOpen();
@@ -149,7 +113,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   actionMenuOpen: false,
   themeMode: initialMode,
   theme: resolveTheme(initialMode),
-  palette: initialPalette,
   lastView: initialLastView,
   primaryDrawerCollapsed: initialPrimaryDrawerCollapsed,
   subDrawerOpen: initialSubDrawerOpen,
@@ -186,10 +149,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   setThemeMode: (mode) => {
     persistMode(mode);
     set({ themeMode: mode, theme: resolveTheme(mode) });
-  },
-  setPalette: (palette) => {
-    persistPalette(palette);
-    set({ palette });
   },
   setLastView: (view) => {
     persistLastView(view);
@@ -229,11 +188,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 function persistMode(mode: ThemeMode) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(THEME_STORAGE_KEY, mode);
-}
-
-function persistPalette(palette: Palette) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(PALETTE_STORAGE_KEY, palette);
 }
 
 function persistLastView(view: NavView) {

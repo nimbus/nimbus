@@ -142,7 +142,7 @@ describe("DocumentsTable rows", () => {
     // regression would actually take. The trailing guard keeps a longer
     // utility that merely starts with the same letters from matching.
     expect(row.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
-    expect(row.className).not.toMatch(/ring-\[color:var\(--nimbus-/);
+    expect(row.className).not.toMatch(/ring-\[color:var\(--/);
     // Lifted over the neighbouring rows' pinned cells (`z-10`), which would
     // otherwise cover the ring where it is drawn in their 2px band, and under
     // the sticky header (`z-20`), which has to stay on top when the row

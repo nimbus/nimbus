@@ -1,7 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib/utils";
 import type { TableDoc } from "../../lib/types/table";
 import {
   type SubDrawerSpec,
@@ -37,7 +37,7 @@ export function useTablesSubDrawer({
       children: !tenant ? (
         <NoTenantHelp hasTenants={hasTenants} />
       ) : tables === undefined ? (
-        <div className="px-3 py-3 text-xs text-muted">
+        <div className="px-3 py-3 text-xs text-text-3">
           <span aria-hidden>·</span>
           <span className="sr-only">loading</span>
         </div>
@@ -52,14 +52,14 @@ export function useTablesSubDrawer({
 
 function NoTenantHelp({ hasTenants }: { hasTenants: boolean | undefined }) {
   return (
-    <div className="px-3 py-6 text-xs text-muted">
+    <div className="px-3 py-6 text-xs text-text-3">
       {hasTenants === false ? (
         <>
           <p>No tenants yet.</p>
           <p className="mt-2">
-            Click{" "}
-            <code className="font-mono text-default">+ CREATE TENANT</code> in
-            the top nav to create one. Tables and documents scope to a tenant.
+            Click <code className="font-mono text-text-1">+ CREATE TENANT</code>{" "}
+            in the top nav to create one. Tables and documents scope to a
+            tenant.
           </p>
         </>
       ) : (
@@ -99,7 +99,7 @@ function TablesSubDrawerList({ tables }: { tables: TableDoc[] }) {
 
   if (sorted.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">
+      <div className="px-3 py-6 text-xs text-text-3">
         <p>No tables yet.</p>
         <p className="mt-2">
           Insert a document or call{" "}
@@ -112,11 +112,11 @@ function TablesSubDrawerList({ tables }: { tables: TableDoc[] }) {
   if (visible.length === 0) {
     return (
       <div
-        className="px-3 py-6 text-xs text-muted"
+        className="px-3 py-6 text-xs text-text-3"
         data-testid="sub-drawer-tables-no-match"
       >
-        No table matches{" "}
-        <span className="font-mono text-default">{search}</span>.
+        No table matches <span className="font-mono text-text-1">{search}</span>
+        .
       </div>
     );
   }
@@ -137,16 +137,14 @@ function TablesSubDrawerList({ tables }: { tables: TableDoc[] }) {
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",
                 active
-                  ? "bg-surface-2 text-default"
-                  : "text-muted hover:bg-surface-2 hover:text-default",
+                  ? "bg-bg-raised text-text-1"
+                  : "text-text-3 hover:bg-bg-raised hover:text-text-1",
               )}
-              style={
-                active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
-              }
+              style={active ? { borderLeftColor: "var(--accent)" } : undefined}
             >
               <span className="flex-1 truncate font-mono text-xs">{name}</span>
               {typeof table.rowCount === "number" ? (
-                <span className="tabular font-mono text-xs text-muted">
+                <span className="tabular font-mono text-xs text-text-3">
                   {table.rowCount}
                 </span>
               ) : null}

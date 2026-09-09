@@ -1,8 +1,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-
+import { cn } from "@/lib/utils";
 import { schema as schemaApi } from "../../lib/api-mutations";
-import { cn } from "../../lib/cn";
 import type { TableSchemaShape } from "../../lib/types/table";
 import { ConfirmDialog } from "../confirm-dialog";
 import { PanelHeader } from "../slideover";
@@ -90,12 +89,12 @@ export function SchemaPanel({
       // width rather than the viewport's. Rendered with no such container in
       // scope the rule simply never matches and the panel stays `w-full`,
       // which is the safe direction: full width, never clipped.
-      className="@min-[756px]/documents-row:w-[420px] flex w-full min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      className="@min-[756px]/documents-row:w-[420px] flex w-full min-w-0 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
       data-testid="documents-schema-panel"
     >
       <PanelHeader title="Schema" onClose={onClose} />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3">
-        <p className="font-mono text-xs text-muted">
+        <p className="font-mono text-xs text-text-3">
           Replace the schema by editing this JSON and saving. Drop removes
           enforcement (the table still keeps its documents).
         </p>
@@ -103,13 +102,13 @@ export function SchemaPanel({
           value={json}
           onChange={(e) => setJson(e.target.value)}
           spellCheck={false}
-          className="min-h-[280px] flex-1 resize-none rounded border border-app bg-surface-2 p-2 font-mono text-xs text-default focus-visible:border-strong"
+          className="min-h-[280px] flex-1 resize-none rounded-xs border border-border-2 bg-bg-raised p-2 font-mono text-xs text-text-1 focus-visible:border-accent"
           data-testid="documents-schema-textarea"
           aria-label="Schema JSON"
         />
         {error ? (
           <p
-            className="font-mono text-xs text-danger"
+            className="font-mono text-xs text-error"
             data-testid="documents-schema-error"
           >
             {error}
@@ -121,10 +120,10 @@ export function SchemaPanel({
             onClick={() => setConfirmDrop(true)}
             disabled={deleting || !schema}
             className={cn(
-              "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
+              "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium",
               deleting || !schema
-                ? "text-muted"
-                : "text-danger hover:bg-surface-2",
+                ? "text-text-3"
+                : "text-error hover:bg-bg-raised",
             )}
             data-testid="documents-schema-drop"
           >
@@ -135,8 +134,8 @@ export function SchemaPanel({
             onClick={() => void save()}
             disabled={saving}
             className={cn(
-              "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
-              saving ? "text-muted" : "text-default hover:bg-surface-2",
+              "rounded-xs border border-border-2 px-2 py-1 text-xs font-medium",
+              saving ? "text-text-3" : "text-text-1 hover:bg-bg-raised",
             )}
             data-testid="documents-schema-save"
           >

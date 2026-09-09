@@ -199,7 +199,7 @@ describe("MachinesPage action column", () => {
     for (const row of container.querySelectorAll("tbody tr")) {
       expect(row.className).toMatch(/\[--row-bg:/);
       expect(row.className).toMatch(
-        /hover:\[--row-bg:|bg-surface-2 \[--row-bg:/,
+        /hover:\[--row-bg:|bg-bg-raised \[--row-bg:/,
       );
     }
   });

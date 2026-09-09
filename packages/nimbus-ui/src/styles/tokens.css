@@ -1,0 +1,294 @@
+/*
+ * Nimbus design tokens. DESIGN.md is the source of truth; this file is its
+ * executable form. Components consume role tokens only, never raw values.
+ *
+ * One palette: neutral grounds and one amber accent. Dark is the default on
+ * :root. Light applies under [data-theme="light"], set by the theme bootstrap
+ * in index.html before paint and kept current by shell/theme-controller.tsx.
+ *
+ * Every value below is a hex or rgba literal on purpose: styles/contrast.spec.ts
+ * parses this file and gates each text token at 4.5:1 on all four grounds.
+ */
+
+/* ---- Fonts (self-hosted from public/fonts; no runtime font CDN) ----
+   The URLs are root-absolute so Vite rewrites them with `base` ("/ui/") at
+   build time and serves them from public/ in dev. */
+
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Geist-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/Geist-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/Geist-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/GeistMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/GeistMono-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/GeistMono-SemiBold.woff2") format("woff2");
+}
+
+/* ---- Role tokens: dark (default) ---- */
+
+:root {
+  --bg-canvas: #0a0b0c;
+  --bg-panel: #101112;
+  --bg-raised: #18191b;
+  --bg-hover: #1f2124;
+
+  --border-1: rgba(255, 255, 255, 0.05);
+  --border-2: rgba(255, 255, 255, 0.08);
+  --border-3: rgba(255, 255, 255, 0.12);
+
+  --text-1: #f6f7f8;
+  --text-2: #c9ced6;
+  --text-3: #8b909a;
+  --text-4: #62666d; /* disabled only; documented non-AA */
+
+  --accent: #f0b23e;
+  --accent-hover: #f6c35c;
+  --accent-ink: #1a1204; /* text on accent fills */
+  --accent-link: #f0b23e;
+
+  --success: #4ade80;
+  --warning: #fb923c;
+  --error: #f87171;
+  --error-ink: #1f0a0a; /* text on error fills */
+  --info: #60a5fa;
+  --success-tint: rgba(74, 222, 128, 0.14);
+  --warning-tint: rgba(251, 146, 60, 0.14);
+  --error-tint: rgba(248, 113, 113, 0.14);
+  --info-tint: rgba(96, 165, 250, 0.14);
+  --accent-tint: rgba(240, 178, 62, 0.14);
+
+  color-scheme: dark;
+}
+
+/* ---- Role tokens: light ----
+   Four values deviate from the Starport exemplar so every text token clears
+   4.5:1 on the darkest light ground (--bg-hover #ececee), not only on the
+   white canvas. The console paints metadata, links and states inside hovered
+   rows and raised panels all day, so the hover ground is the binding floor.
+     text-3      #71717a -> #66666e  (4.10:1 -> 4.82:1 on hover)
+     success     #15803d -> #15753a  (4.25:1 -> 4.89:1 on hover)
+     warning     #c2410c -> #b53b0a  (4.39:1 -> 4.95:1 on hover)
+     accent-link #a16207 -> #975c06  (4.17:1 -> 4.62:1 on hover)
+   --accent stays #b45309: it paints fills and the focus ring, where 3:1 is the
+   floor, and it clears that on every ground (4.26:1 on hover). */
+
+:root[data-theme="light"] {
+  --bg-canvas: #ffffff;
+  --bg-panel: #fafafa;
+  --bg-raised: #f4f4f5;
+  --bg-hover: #ececee;
+
+  --border-1: rgba(0, 0, 0, 0.06);
+  --border-2: rgba(0, 0, 0, 0.1);
+  --border-3: rgba(0, 0, 0, 0.15);
+
+  --text-1: #18181b;
+  --text-2: #3f3f46;
+  --text-3: #66666e;
+  --text-4: #a1a1aa;
+
+  --accent: #b45309;
+  --accent-hover: #92400e;
+  --accent-ink: #ffffff;
+  --accent-link: #975c06;
+
+  --success: #15753a;
+  --warning: #b53b0a;
+  --error: #b91c1c;
+  --error-ink: #ffffff;
+  --info: #1d4ed8;
+  --success-tint: rgba(21, 117, 58, 0.14);
+  --warning-tint: rgba(181, 59, 10, 0.14);
+  --error-tint: rgba(185, 28, 28, 0.14);
+  --info-tint: rgba(29, 78, 216, 0.14);
+  --accent-tint: rgba(180, 83, 9, 0.14);
+
+  color-scheme: light;
+}
+
+/* ---- Tailwind theme: utilities read the role tokens ----
+   `@theme inline` makes each name a real theme key, so Tailwind generates the
+   base utility and every variant of it (`hover:bg-bg-hover`,
+   `aria-selected:text-text-1`, `bg-error/10`). The utilities keep pointing at
+   var(--*), which the [data-theme] block above re-declares, so a mode switch
+   restyles the whole app without regenerating any CSS. */
+
+@theme inline {
+  /* Skeleton shimmer: a faint band that crosses the raised ground once every
+   * 1.8 s. The reduced-motion block in globals.css collapses it with every
+   * other animation. */
+  --animate-shimmer: shimmer 1.8s linear infinite;
+  /* Mascot blink: the eye group closes once every six seconds. The mascot
+   * leaves the class out under reduced motion, so the backstop below is a
+   * second net, not the first. */
+  --animate-blink: blink 6s ease-in-out infinite;
+  @keyframes blink {
+    0%,
+    94%,
+    100% {
+      transform: scaleY(1);
+    }
+    97% {
+      transform: scaleY(0.08);
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: 0% 0;
+    }
+  }
+
+  --color-*: initial;
+  --color-bg-canvas: var(--bg-canvas);
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-raised: var(--bg-raised);
+  --color-bg-hover: var(--bg-hover);
+  --color-border-1: var(--border-1);
+  --color-border-2: var(--border-2);
+  --color-border-3: var(--border-3);
+  --color-text-1: var(--text-1);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-4: var(--text-4);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-link: var(--accent-link);
+  --color-accent-tint: var(--accent-tint);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-error-ink: var(--error-ink);
+  --color-info: var(--info);
+  --color-success-tint: var(--success-tint);
+  --color-warning-tint: var(--warning-tint);
+  --color-error-tint: var(--error-tint);
+  --color-info-tint: var(--info-tint);
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  /* shadcn-vocabulary bridge for the registry primitives in components/ui.
+   * Every name resolves to a role token above; no generated palette exists.
+   * shadcn's "accent" is a hover ground, not the one amber accent, so the
+   * primitives that say bg-accent paint the amber; port a primitive to
+   * bg-bg-hover / text-text-1 when the registry meant a hover ground. */
+  --color-background: var(--bg-canvas);
+  --color-foreground: var(--text-1);
+  --color-card: var(--bg-panel);
+  --color-card-foreground: var(--text-1);
+  --color-popover: var(--bg-raised);
+  --color-popover-foreground: var(--text-1);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-ink);
+  --color-secondary: var(--bg-raised);
+  --color-secondary-foreground: var(--text-1);
+  --color-muted: var(--bg-raised);
+  --color-muted-foreground: var(--text-3);
+  --color-accent-foreground: var(--text-1);
+  --color-destructive: var(--error);
+  --color-destructive-foreground: var(--error);
+  --color-border: var(--border-2);
+  --color-input: var(--border-2);
+  --color-ring: var(--accent);
+  --color-sidebar: var(--bg-panel);
+  --color-sidebar-foreground: var(--text-1);
+  --color-sidebar-primary: var(--accent);
+  --color-sidebar-primary-foreground: var(--accent-ink);
+  --color-sidebar-accent: var(--bg-hover);
+  --color-sidebar-accent-foreground: var(--text-1);
+  --color-sidebar-border: var(--border-1);
+  --color-sidebar-ring: var(--accent);
+  --color-chart-1: var(--accent);
+  --color-chart-2: var(--info);
+  --color-chart-3: var(--success);
+  --color-chart-4: var(--warning);
+  --color-chart-5: var(--error);
+  --color-red-50: var(--error-tint);
+  --color-red-100: var(--error-tint);
+  --color-red-600: var(--error);
+  --color-red-700: var(--error);
+  --color-red-800: var(--error);
+}
+
+/* Non-inline theme: these emit real custom properties on :root, so base rules
+   and hand-written CSS can read `var(--text-base)`, `var(--radius-sm)` and
+   `var(--font-mono)` as well as the utilities. */
+@theme {
+  --font-sans: "Geist", system-ui, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  /* Type scale (DESIGN.md): size/line pairs. Body is base 14/20. */
+  --text-*: initial;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+  --text-md: 16px;
+  --text-md--line-height: 24px;
+  --text-lg: 20px;
+  --text-lg--line-height: 28px;
+  --text-lg--letter-spacing: -0.01em;
+  --text-xl: 24px;
+  --text-xl--line-height: 32px;
+  --text-xl--letter-spacing: -0.01em;
+  --text-2xl: 32px;
+  --text-2xl--line-height: 38px;
+  --text-2xl--letter-spacing: -0.02em;
+
+  --radius-*: initial;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  --ease-standard: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+
+  /* Above-the-page-plane shadow (popovers and modals): the drop shadow plus
+   * the inset 1px white ring that lifts a dark surface. */
+  --shadow-overlay:
+    0 8px 24px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+
+  --statusbar-height: 1.75rem;
+}

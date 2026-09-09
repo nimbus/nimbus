@@ -2,12 +2,11 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
-
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
-import { cn } from "../../lib/cn";
 import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";
@@ -136,12 +135,10 @@ function ComputeDrawer({
             className={cn(
               "flex h-9 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",
               active
-                ? "bg-surface-2 text-default"
-                : "text-muted hover:bg-surface-2 hover:text-default",
+                ? "bg-bg-raised text-text-1"
+                : "text-text-3 hover:bg-bg-raised hover:text-text-1",
             )}
-            style={
-              active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
-            }
+            style={active ? { borderLeftColor: "var(--accent)" } : undefined}
           >
             <Icon size={14} aria-hidden className="shrink-0" />
             <span className="flex-1 text-left">{opt.label}</span>
@@ -195,7 +192,7 @@ function FunctionsView({
           <BundleHint bundles={bundles} />
         </span>
       </Toolbar>
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel">
         {functions === undefined ? (
           <LoadingState label="Loading functions…" />
         ) : (
@@ -214,7 +211,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   if (bundles === undefined) {
     return (
       <span
-        className="font-mono text-xs text-muted"
+        className="font-mono text-xs text-text-3"
         data-testid="compute-bundles-loading"
       >
         bundles: loading…
@@ -224,7 +221,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   const active = bundles.filter((b) => b.status === "active").length;
   return (
     <span
-      className="font-mono text-xs text-muted"
+      className="font-mono text-xs text-text-3"
       data-testid="compute-bundles"
     >
       {bundles.length} bundle{bundles.length === 1 ? "" : "s"}
@@ -243,7 +240,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
 function SandboxesView() {
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-2 bg-bg-panel"
       data-testid="compute-sandboxes"
     >
       <EmptyState
@@ -276,14 +273,14 @@ function Toolbar({
 }) {
   return (
     <div
-      className="flex flex-wrap items-center gap-2 rounded-md border border-app bg-surface-2 px-3 py-2"
+      className="flex flex-wrap items-center gap-2 rounded-md border border-border-2 bg-bg-raised px-3 py-2"
       data-testid={testid}
     >
       <div className="relative">
         <Search
           size={13}
           aria-hidden
-          className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted"
+          className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-text-3"
         />
         <input
           type="search"
@@ -296,7 +293,7 @@ function Toolbar({
           // under WCAG 2.2 SC 1.4.11's 3:1 non-text floor (2.21:1 on
           // `--surface-2`, its worst ground). Cancelling the console-wide
           // outline for it traded a compliant ring for a failing one.
-          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted"
+          className="h-7 w-56 rounded-xs border border-border-2 bg-bg-panel pl-7 pr-2 font-mono text-xs text-text-1 placeholder:text-text-3"
         />
       </div>
       {children}
@@ -365,10 +362,10 @@ function Chip({
       onClick={onClick}
       data-testid={testid}
       className={cn(
-        "rounded border px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
+        "rounded-xs border px-2 py-0.5 text-xs font-medium",
         active
-          ? "border-strong bg-surface text-default"
-          : "border-app text-muted hover:bg-surface hover:text-default",
+          ? "border-border-3 bg-bg-panel text-text-1"
+          : "border-border-2 text-text-3 hover:bg-bg-panel hover:text-text-1",
       )}
     >
       {label}

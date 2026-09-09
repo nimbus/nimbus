@@ -35,7 +35,7 @@ export const TwoOption: Story = {
         onChange={setValue}
         testid="story-view"
         className="h-7"
-        segmentClassName="h-7 px-3 py-0 font-mono uppercase tracking-[0.12em] text-xs"
+        segmentClassName="h-7 px-3 py-0 text-xs font-medium"
       />
     );
   },

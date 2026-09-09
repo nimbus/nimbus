@@ -2,9 +2,8 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { useRouterState } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
-
+import { Kbd } from "@/components/ui/kbd";
 import { api } from "../../convex/_generated/api";
-import { Kbd } from "../components/kbd";
 import { metaGlyph } from "../lib/platform";
 import { useUiStore } from "../store/ui-store";
 
@@ -33,14 +32,14 @@ export function SystemTenantLens() {
       tabIndex={-1}
       aria-label="System tenant lens"
       data-testid="system-tenant-lens"
-      className="fixed inset-y-0 right-0 z-40 flex w-[min(560px,50vw)] flex-col border-l shadow-2xl bg-surface border-app animate-in slide-in-from-right-4 duration-150"
+      className="fixed inset-y-0 right-0 z-40 flex w-[min(560px,50vw)] flex-col border-l shadow-2xl bg-bg-panel border-border-2 animate-in slide-in-from-right-4 duration-150"
     >
-      <header className="flex items-center justify-between border-b border-app px-3 py-2">
+      <header className="flex items-center justify-between border-b border-border-2 px-3 py-2">
         <div>
-          <div className="text-xs uppercase tracking-wider text-muted">
+          <div className="text-xs font-medium text-text-3">
             System tenant lens
           </div>
-          <div className="font-mono text-sm text-default">
+          <div className="font-mono text-sm text-text-1">
             _nimbus <span aria-hidden="true">›</span> {view.label}
           </div>
         </div>
@@ -54,14 +53,14 @@ export function SystemTenantLens() {
           type="button"
           aria-label="Close lens"
           onClick={() => setLensOpen(false)}
-          className="flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-default"
+          className="flex h-8 w-8 items-center justify-center rounded-xs text-text-3 hover:bg-bg-raised hover:text-text-1"
           data-testid="lens-close"
         >
           <X size={16} aria-hidden />
         </button>
       </header>
       <LensBody view={view} />
-      <footer className="flex items-center gap-2 border-t border-app px-3 py-1.5 text-xs text-muted">
+      <footer className="flex items-center gap-2 border-t border-border-2 px-3 py-1.5 text-xs text-text-3">
         <Kbd>{metaGlyph}</Kbd>
         <Kbd>\</Kbd>
         <span>toggle</span>
@@ -98,7 +97,7 @@ function LensBody({ view }: { view: LensView }) {
   return (
     <div className="flex-1 overflow-auto px-3 py-2">
       <pre
-        className="font-mono text-xs leading-relaxed text-default"
+        className="font-mono text-xs leading-relaxed text-text-1"
         data-testid="lens-json"
       >
         {docs === undefined

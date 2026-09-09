@@ -9,8 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { cn } from "@/lib/utils";
 import { useTenantList } from "../hooks/use-tenant-list";
-import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 
 export type TenantSelectorMode =
@@ -160,7 +160,7 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
         onClick={() =>
           navigate({ to: "/operator/tenants", search: { create: 1 } })
         }
-        className="flex h-7 items-center gap-1 rounded-md border border-app bg-surface px-2 font-mono text-xs uppercase tracking-[0.18em] text-muted hover:bg-surface-2 hover:text-default"
+        className="flex h-7 items-center gap-1 rounded-md border border-border-2 bg-bg-panel px-2 text-xs font-medium text-text-3 hover:bg-bg-raised hover:text-text-1"
       >
         <Plus size={12} aria-hidden />
         Create tenant
@@ -188,15 +188,13 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
           data-mode={mode.kind}
           data-unavailable="true"
           title="Tenant filtering is unavailable until the events table exposes a tenant column"
-          className="flex h-7 max-w-[16rem] cursor-not-allowed items-center gap-2 rounded-md border border-app bg-surface px-2 font-mono text-xs text-default opacity-60"
+          className="flex h-7 max-w-[16rem] cursor-not-allowed items-center gap-2 rounded-md border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 opacity-60"
         >
-          <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
-            Filter
-          </span>
+          <span className="text-xs font-medium text-text-3">Filter</span>
           <span className="truncate">All tenants</span>
           <span
             aria-hidden
-            className="rounded bg-surface-2 px-1 text-xs uppercase tracking-wide text-muted"
+            className="rounded-xs bg-bg-raised px-1 text-xs font-medium text-text-3"
             data-testid="tenant-selector-coming-soon"
           >
             coming soon
@@ -219,12 +217,12 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
         onClick={() => setOpen((v) => !v)}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          "flex h-7 max-w-[14rem] items-center gap-2 rounded-md border border-app bg-surface px-2 font-mono text-xs text-default",
-          "hover:bg-surface-2",
-          open && "bg-surface-2",
+          "flex h-7 max-w-[14rem] items-center gap-2 rounded-md border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1",
+          "hover:bg-bg-raised",
+          open && "bg-bg-raised",
         )}
       >
-        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
+        <span className="text-xs font-medium text-text-3">
           {mode.kind === "operator-filter" ? "Filter" : "Tenant"}
         </span>
         <span className="truncate">{triggerLabel}</span>
@@ -232,7 +230,7 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
           size={12}
           aria-hidden
           className={cn(
-            "shrink-0 text-muted transition-transform",
+            "shrink-0 text-text-3 transition-transform",
             open && "rotate-180",
           )}
         />
@@ -252,25 +250,25 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
           }
           data-testid="tenant-selector-menu"
           onKeyDown={onKeyDown}
-          className="absolute right-0 top-full z-10 mt-1 max-h-72 w-[16rem] overflow-auto rounded-md border border-app bg-surface shadow-lg focus:outline-none"
+          className="absolute right-0 top-full z-10 mt-1 max-h-72 w-[16rem] overflow-auto rounded-md border border-border-2 bg-bg-panel shadow-lg focus:outline-none"
         >
           {state.kind === "loading" ? (
             <p
-              className="px-3 py-2 font-mono text-xs text-muted"
+              className="px-3 py-2 font-mono text-xs text-text-3"
               data-testid="tenant-selector-loading"
             >
               loading…
             </p>
           ) : state.kind === "error" ? (
             <p
-              className="px-3 py-2 font-mono text-xs text-danger"
+              className="px-3 py-2 font-mono text-xs text-error"
               data-testid="tenant-selector-error"
             >
               {state.message}
             </p>
           ) : entries.length === 0 ? (
             <p
-              className="px-3 py-2 font-mono text-xs text-muted"
+              className="px-3 py-2 font-mono text-xs text-text-3"
               data-testid="tenant-selector-empty"
             >
               No tenants yet.
@@ -295,24 +293,24 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
                       className={cn(
                         "flex h-8 w-full items-center justify-between gap-2 px-3 text-left font-mono text-xs",
                         isFocused
-                          ? "bg-surface-2 text-default"
-                          : "text-muted hover:bg-surface-2 hover:text-default",
-                        isActive && "text-default",
+                          ? "bg-bg-raised text-text-1"
+                          : "text-text-3 hover:bg-bg-raised hover:text-text-1",
+                        isActive && "text-text-1",
                       )}
                     >
                       <span className="flex-1 truncate">{entry.label}</span>
                       {entry.backend ? (
-                        <span className="rounded border border-app px-1 py-px text-xs uppercase tracking-wide text-muted">
+                        <span className="rounded-xs border border-border-2 px-1 py-px text-xs font-medium text-text-3">
                           {entry.backend}
                         </span>
                       ) : null}
                       {isActive ? (
                         // Matches `Select`: the marker takes the active row's
-                        // tone. `text-brand` measured 2.48:1 on --surface in
+                        // tone. `text-accent` measured 2.48:1 on --surface in
                         // the warm palette, failing at 11px.
                         <span
                           aria-hidden
-                          className="font-mono text-xs text-default"
+                          className="font-mono text-xs text-text-1"
                         >
                           ●
                         </span>

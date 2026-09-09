@@ -23,7 +23,7 @@ export function GraphView() {
 
   return (
     <div
-      className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
+      className="min-h-0 flex-1 overflow-auto rounded-md border border-border-2 bg-bg-panel"
       data-testid="compute-graph"
     >
       {state.kind === "ok" ? (
@@ -113,7 +113,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--nimbus-muted)" />
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-3)" />
         </marker>
       </defs>
 
@@ -123,11 +123,9 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
           key={module}
           x={PAD + mi * COL_W}
           y={PAD}
-          className="font-mono"
-          fontSize="10"
-          letterSpacing="1.4"
-          fill="var(--nimbus-muted)"
-          style={{ textTransform: "uppercase" }}
+          fontSize="12"
+          fontWeight="500"
+          fill="var(--text-3)"
         >
           {module}
         </text>
@@ -148,7 +146,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
             key={`${edge.from}->${edge.to}`}
             d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`}
             fill="none"
-            stroke="var(--nimbus-muted)"
+            stroke="var(--text-3)"
             strokeWidth="1.5"
             strokeOpacity="0.7"
             markerEnd="url(#nimbus-graph-arrow)"
@@ -185,15 +183,15 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
                 width={NODE_W}
                 height={NODE_H}
                 rx="6"
-                fill="var(--nimbus-surface-2)"
-                stroke="var(--nimbus-border-strong)"
+                fill="var(--bg-raised)"
+                stroke="var(--border-3)"
               />
               <text
                 x={10}
                 y={NODE_H / 2 + 4}
                 className="font-mono"
                 fontSize="12"
-                fill="var(--nimbus-text)"
+                fill="var(--text-1)"
               >
                 {node.name}
               </text>
@@ -207,7 +205,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-40 items-center justify-center px-6 text-center text-xs text-muted">
+    <div className="flex h-40 items-center justify-center px-6 text-center text-xs text-text-3">
       {children}
     </div>
   );

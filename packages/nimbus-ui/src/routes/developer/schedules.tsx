@@ -2,12 +2,12 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
+import { StatePill } from "../../components/pill";
 import { ScrollRegion } from "../../components/scroll-region";
-import { StateChip } from "../../components/state-chip";
+import { Td, Th } from "../../components/table-cells";
 import { RelativeTime } from "../../components/time";
 import { formatDuration, shortId } from "../../lib/format";
 import {
@@ -102,7 +102,7 @@ function SchedulesPage() {
         subtitle="Invocations for this tenant: one-shot scheduled jobs and recurring cron entries."
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border-2 bg-bg-panel">
         {section === "scheduled" ? (
           <ScheduledTable jobs={scheduled} />
         ) : (
@@ -155,19 +155,19 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
             return (
               <tr
                 key={job._id}
-                className="border-t border-app hover:bg-surface-2"
+                className="border-t border-border-2 hover:bg-bg-raised"
                 data-testid={`schedules-scheduled-${job._id}`}
               >
                 <Td>
-                  <span className="font-mono text-default">
+                  <span className="font-mono text-text-1">
                     {job.functionPath ?? shortId(job._id, 12)}
                   </span>
                 </Td>
                 <Td>
-                  <StateChip state={job.status} />
+                  <StatePill state={job.status} />
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-default">
+                  <span className="font-mono text-xs text-text-1">
                     {job.tenantId ?? "—"}
                   </span>
                 </Td>
@@ -175,16 +175,16 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
                   {typeof job.scheduledTime === "number" ? (
                     <RelativeTime epochMs={job.scheduledTime} />
                   ) : (
-                    <span className="tabular text-muted">—</span>
+                    <span className="tabular text-text-3">—</span>
                   )}
                 </Td>
                 <Td>
                   {duration !== null ? (
-                    <span className="tabular font-mono text-xs text-default">
+                    <span className="tabular font-mono text-xs text-text-1">
                       {formatDuration(duration)}
                     </span>
                   ) : (
-                    <span className="tabular text-muted">—</span>
+                    <span className="tabular text-text-3">—</span>
                   )}
                 </Td>
               </tr>
@@ -198,7 +198,7 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
 
 function ScheduledTableHead() {
   return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
       <tr>
         <Th>Function</Th>
         <Th>Status</Th>
@@ -240,39 +240,39 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
           {jobs.map((job) => (
             <tr
               key={job._id}
-              className="border-t border-app hover:bg-surface-2"
+              className="border-t border-border-2 hover:bg-bg-raised"
               data-testid={`schedules-cron-${job.name ?? job._id}`}
             >
               <Td>
-                <span className="font-mono text-default">
+                <span className="font-mono text-text-1">
                   {job.name ?? shortId(job._id, 12)}
                 </span>
               </Td>
               <Td>
-                <span className="font-mono text-xs text-default">
+                <span className="font-mono text-xs text-text-1">
                   {job.functionPath ?? "—"}
                 </span>
               </Td>
               <Td>
-                <span className="font-mono text-xs text-default">
+                <span className="font-mono text-xs text-text-1">
                   {job.cron ?? job.schedule ?? "—"}
                 </span>
               </Td>
               <Td>
-                <StateChip state={job.status} />
+                <StatePill state={job.status} />
               </Td>
               <Td>
                 {typeof job.nextRunAt === "number" ? (
                   <RelativeTime epochMs={job.nextRunAt} />
                 ) : (
-                  <span className="tabular text-muted">—</span>
+                  <span className="tabular text-text-3">—</span>
                 )}
               </Td>
               <Td>
                 {typeof job.lastRunAt === "number" ? (
                   <RelativeTime epochMs={job.lastRunAt} />
                 ) : (
-                  <span className="tabular text-muted">never</span>
+                  <span className="tabular text-text-3">never</span>
                 )}
               </Td>
             </tr>
@@ -285,7 +285,7 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
 
 function CronTableHead() {
   return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 bg-bg-raised text-xs font-medium text-text-3">
       <tr>
         <Th>Name</Th>
         <Th>Function</Th>

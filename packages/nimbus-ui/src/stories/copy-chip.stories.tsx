@@ -32,7 +32,7 @@ export const HiddenUntilHover: Story = {
     children: "copy",
   },
   render: (args) => (
-    <div className="group inline-flex items-center gap-1 text-xs text-muted">
+    <div className="group inline-flex items-center gap-1 text-xs text-text-3">
       <span>tnt_demo</span>
       <CopyChip {...args} />
     </div>

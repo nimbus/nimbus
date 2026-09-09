@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nimbus UI rebuild plan</title>
+<style>
+  :root {
+    --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
+    --page: #ffffff; --accent: #b45309;
+    --todo: #6b7280; --in-progress: #2563eb; --blocked: #dc2626;
+    --deferred: #7c3aed; --done: #16a34a; --no-action: #64748b;
+    --rejected: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e5e9ee; --muted: #9aa4af; --line: #333a43; --soft: #1b2027;
+      --page: #11151a; --accent: #f0b23e;
+      --todo: #9aa4af; --in-progress: #60a5fa; --blocked: #f87171;
+      --deferred: #a78bfa; --done: #4ade80; --no-action: #94a3b8;
+      --rejected: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 1080px; background: var(--page); color: var(--ink); font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; border-bottom: 1px solid var(--line); padding-bottom: 0.25rem; }
+  h3 { font-size: 1rem; margin: 1.25rem 0 0.4rem; }
+  code { background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 0.05rem 0.35rem; font-size: 0.85em; }
+  pre { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 0.9rem 1rem; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; border: none; padding: 0; }
+  blockquote { margin: 0.75rem 0; padding: 0.6rem 1rem; border-left: 3px solid var(--accent); background: var(--soft); }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.92rem; }
+  th, td { border: 1px solid var(--line); padding: 0.35rem 0.55rem; text-align: left; vertical-align: top; }
+  th { background: var(--soft); }
+  #status-line { color: var(--muted); font-size: 0.92rem; margin: 0 0 1rem; }
+  .bar { height: 0.75rem; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--soft); }
+  .bar .fill { height: 100%; width: 0; background: var(--done); transition: width 0.3s; }
+  .counts { color: var(--muted); font-size: 0.92rem; margin: 0.4rem 0 0; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+  figure { margin: 0; border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; background: var(--soft); }
+  figcaption { font-weight: 600; margin-bottom: 0.5rem; }
+  figure svg { max-width: 100%; height: auto; font: 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  tr[data-status] td:nth-child(3) code { font-weight: 600; }
+  tr[data-status="todo"] td:nth-child(3) code, tr[data-status^="todo("] td:nth-child(3) code { color: var(--todo); }
+  tr[data-status="in_progress"] td:nth-child(3) code, tr[data-status^="in_progress("] td:nth-child(3) code { color: var(--in-progress); }
+  tr[data-status="blocked"] td:nth-child(3) code, tr[data-status^="blocked("] td:nth-child(3) code { color: var(--blocked); }
+  tr[data-status="deferred"] td:nth-child(3) code, tr[data-status^="deferred("] td:nth-child(3) code { color: var(--deferred); }
+  tr[data-status="done"] td:nth-child(3) code, tr[data-status^="done("] td:nth-child(3) code { color: var(--done); }
+  tr[data-status="no-action"] td:nth-child(3) code, tr[data-status^="no-action("] td:nth-child(3) code { color: var(--no-action); }
+  tr[data-status="rejected"] td:nth-child(3) code, tr[data-status^="rejected("] td:nth-child(3) code { color: var(--rejected); }
+  @page { margin: 0.7in 0.6in; size: letter; }
+  @media print { body { max-width: none; padding: 0; } }
+</style>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var rows = document.querySelectorAll("#ledger tbody tr");
+    var terminal = { "done": 1, "no-action": 1, "rejected": 1 };
+    var total = rows.length, closed = 0, current = "";
+    rows.forEach(function (row) {
+      var raw = row.getAttribute("data-status") || "";
+      var status = raw.split("(")[0].trim();
+      if (terminal[status]) { closed += 1; }
+      if (status === "in_progress" && !current) { current = row.id + " " + row.cells[1].textContent.trim(); }
+    });
+    var pct = total ? Math.round((closed / total) * 100) : 0;
+    document.querySelector("#progress .fill").style.width = pct + "%";
+    var text = closed + " of " + total + " tasks terminal (" + pct + "%).";
+    if (current) { text += " In progress: " + current; }
+    document.querySelector("#progress .counts").textContent = text;
+  });
+</script>
+</head>
+<body>
+
+<header id="overview">
+  <h1>Nimbus UI rebuild plan</h1>
+  <p id="status-line">
+    Status: <code data-plan-status="active">active</code> ·
+    Owner: this plan ·
+    Created: 2026-09-08 ·
+    Baseline: main @ 67a7f3ffa ·
+    Proof root: <code>proof/nimbus-ui-rebuild/</code> ·
+    Next action: Phase 1 pull request (UIR0–UIR4), then UIR5 shell (sidebar with scope row, grouped nav, footer, rail, mobile sheet)
+  </p>
+
+  <section id="outcome">
+    <h2>Outcome</h2>
+    <blockquote>
+      The operator console at <code>packages/nimbus-ui</code> runs on the Starport console stack
+      (shadcn <code>base-nova</code> on Base UI, TanStack Router, Table, Virtual, and Charts) with one
+      neutral-plus-amber palette in light and dark, Geist Sans for labels and Geist Mono for data, one
+      sidebar that owns the Developer and Operator scope, a resizable sub-panel only where a page lists
+      data, the Nimbus cloud as a face-only mascot mark, and every page rebuilt in place with its specs
+      and end-to-end tests green. The thirteen findings of the 2026-09-08 design review are closed, and
+      the four capability gaps (onboarding, observability, storage editors, Files, Sandboxes, and
+      Deploys) ship behind named server contracts. The reactive <code>@nimbus/nimbus/react</code>
+      data layer, the codegen pipeline, and the embedded <code>/ui/*</code> delivery do not change.
+    </blockquote>
+  </section>
+
+  <section id="progress">
+    <h2>Progress</h2>
+    <div class="bar"><div class="fill"></div></div>
+    <p class="counts">Progress appears here when the page loads. The status ledger below is the source of truth.</p>
+  </section>
+
+  <section id="architecture">
+    <h2>Architecture</h2>
+    <div class="pair">
+      <figure>
+        <figcaption>Before</figcaption>
+        <svg viewBox="0 0 320 190" role="img" aria-label="Before: four navigation strata">
+          <rect x="8" y="8" width="304" height="26" rx="4" fill="none" stroke="currentColor"/>
+          <text x="160" y="25" text-anchor="middle" fill="currentColor">top bar: brand · view switcher · tenant · ⌘K</text>
+          <rect x="8" y="40" width="70" height="112" rx="4" fill="none" stroke="currentColor"/>
+          <text x="43" y="98" text-anchor="middle" fill="currentColor">drawer</text>
+          <rect x="84" y="40" width="70" height="112" rx="4" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
+          <text x="119" y="92" text-anchor="middle" fill="currentColor">sub-drawer</text>
+          <text x="119" y="106" text-anchor="middle" fill="currentColor">(static + lists)</text>
+          <rect x="160" y="40" width="152" height="112" rx="4" fill="none" stroke="currentColor"/>
+          <text x="236" y="86" text-anchor="middle" fill="currentColor">page</text>
+          <text x="236" y="102" text-anchor="middle" fill="currentColor">hand-rolled Base UI 1.4</text>
+          <text x="236" y="118" text-anchor="middle" fill="currentColor">3 palettes · JetBrains Mono caps</text>
+          <rect x="8" y="158" width="304" height="24" rx="4" fill="none" stroke="currentColor"/>
+          <text x="160" y="174" text-anchor="middle" fill="currentColor">status bar: connection · version · zero-count badges</text>
+        </svg>
+      </figure>
+      <figure>
+        <figcaption>After</figcaption>
+        <svg viewBox="0 0 320 190" role="img" aria-label="After: one sidebar, optional resizable panel, page">
+          <rect x="8" y="8" width="96" height="174" rx="4" fill="none" stroke="currentColor"/>
+          <text x="56" y="26" text-anchor="middle" fill="currentColor">mascot · Nimbus</text>
+          <text x="56" y="44" text-anchor="middle" fill="currentColor">Developer ⇄ Operator</text>
+          <text x="56" y="58" text-anchor="middle" fill="currentColor">tenant / server</text>
+          <line x1="16" y1="66" x2="96" y2="66" stroke="currentColor" stroke-dasharray="2 2"/>
+          <text x="56" y="84" text-anchor="middle" fill="currentColor">Build · Run · Observe</text>
+          <text x="56" y="98" text-anchor="middle" fill="currentColor">grouped nav</text>
+          <line x1="16" y1="150" x2="96" y2="150" stroke="currentColor" stroke-dasharray="2 2"/>
+          <text x="56" y="166" text-anchor="middle" fill="currentColor">● v0.1.47 · theme</text>
+          <text x="56" y="178" text-anchor="middle" fill="currentColor">Collapse</text>
+          <rect x="110" y="8" width="60" height="174" rx="4" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
+          <text x="140" y="90" text-anchor="middle" fill="currentColor">panel</text>
+          <text x="140" y="104" text-anchor="middle" fill="currentColor">(lists only)</text>
+          <text x="140" y="118" text-anchor="middle" fill="currentColor">resizable</text>
+          <rect x="176" y="8" width="136" height="174" rx="4" fill="none" stroke="currentColor"/>
+          <text x="244" y="70" text-anchor="middle" fill="currentColor">page</text>
+          <text x="244" y="88" text-anchor="middle" fill="currentColor">header + tabs</text>
+          <text x="244" y="104" text-anchor="middle" fill="currentColor">shadcn base-nova</text>
+          <text x="244" y="120" text-anchor="middle" fill="currentColor">TanStack Table · Charts</text>
+          <text x="244" y="136" text-anchor="middle" fill="currentColor">one palette · Geist</text>
+        </svg>
+      </figure>
+    </div>
+    <p>The data layer stays the same in both views: routes call <code>useQuery(api.x, args)</code> from <code>@nimbus/nimbus/react</code> over the <code>/convex</code> WebSocket, and writes go through <code>lib/api-mutations.ts</code>. The plan replaces the visual system, the shell, and the page compositions, and it adds server contracts only where a gap task names one.</p>
+  </section>
+</header>
+
+<main>
+  <section id="scope">
+    <h2>Scope</h2>
+    <p><strong>Owns:</strong> everything under <code>packages/nimbus-ui</code> (tokens, primitives, shell, routes, specs, stories, end-to-end tests, fonts, favicon, mascot), the design-review findings F1 through F13, and the five server contracts that the gap tasks name (function error class, tenant-scoped run logs and spans, error fingerprint, schema apply and index build status, sandbox exec stream, deploy history and rollback).</p>
+    <p><strong>Does not own:</strong> release packaging of the embedded UI (<code>distribution-plan.md</code>); secret CRUD screens (<code>secret-management-plan.md</code> S12, which consumes this shell); sandbox backend behavior (<code>nimbus-sandbox-plan.md</code>); the closed Band UI hygiene rows in <code>architecture-review-2026-07-plan.md</code>, which stay as history.</p>
+    <p><strong>Non-goals:</strong> a marketing site or docs theme; TanStack Query (the reactive SDK is the cache); a mobile-first redesign beyond the <code>&lt;640px</code> sheet layout; a component library published outside this package; compatibility shims for the old palette keys or drawer state (pre-launch: delete them).</p>
+  </section>
+
+  <section id="decisions">
+    <h2>Decisions</h2>
+    <table>
+      <thead><tr><th>Decision</th><th>Choice</th><th>Rejected</th></tr></thead>
+      <tbody>
+        <tr><td>Approach</td><td>Rebuild in place, page by page, on the existing route tree and data layer.</td><td>Greenfield package; feature-flagged parallel UI.</td></tr>
+        <tr><td>Shell</td><td>One 240px sidebar owns brand, a scope row (Developer ⇄ Operator segmented control, then tenant selector or server identity), grouped nav (Build, Run, Observe for Developer; Fleet, Access, Observe for Operator), and a footer (connection dot + version, labeled theme toggle, Collapse). A resizable sub-panel (<code>react-resizable-panels</code>, min 180, default 240, max 400, collapsible, persisted per section) appears only for data lists: Storage tables, Compute functions, Tenants, Settings categories. Static sub-drawers become page-header tabs. No top bar and no status bar on desktop; <code>&lt;640px</code> uses a sheet and a 48px top bar. Exemplars: Convex <code>DeploymentDashboardLayout</code> and <code>SidebarDetailLayout</code>.</td><td>Keep the top-bar switcher (scope belongs beside the nav it changes). Merge the two views (tenant scope and server scope are different objects).</td></tr>
+        <tr><td>Palette</td><td>Starport role tokens (canvas, panel, raised, hover; border-1..3; text-1..4) with one amber accent for four jobs: CTA, link, focus ring, selected. Light and dark only. Delete the blue and mono palettes and <code>nimbus-ui:palette</code>.</td><td>Palette picker; cream light theme.</td></tr>
+        <tr><td>Type</td><td>Geist Sans for labels and prose, Geist Mono for data, self-hosted. Weight ceiling 600. Uppercase only for sidebar group labels.</td><td>JetBrains Mono tracked caps as the interface voice.</td></tr>
+        <tr><td>Mascot</td><td>Owner decision 2026-09-08: concept A "Dot" is the mark (outline cloud, dot eyes, smile) at every size from 16px to the lockup. Concept C "Solid" (amber fill, ink face) is the app icon, favicon at 32px and above, and sticker. Both are a face only, symmetric, one stroke weight in <code>currentColor</code>, with semantic states idle, working, error, empty, celebrate, blink-only motion under <code>prefers-reduced-motion</code>.</td><td>B "Curls" (heritage spiral cheeks) and D "Eyes" are shelved. The wisp on the current logo is removed.</td></tr>
+        <tr><td>Charts</td><td><code>@tanstack/charts</code> pinned exact, behind one seam <code>components/ui/chart.tsx</code>. Only that file imports the package.</td><td>Recharts (Starport's choice; the owner asked for TanStack Charts).</td></tr>
+        <tr><td>Storybook</td><td>Kept for Nimbus-owned components only: mascot states, StateDot, Pill, DataTable, EmptyState, sub-panel. No stories for shadcn primitives.</td><td>Full catalog; removal.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="findings">
+    <h2>Design review findings</h2>
+    <p>Source: the 2026-09-08 senior design review. Each finding routes to one owning task.</p>
+    <table>
+      <thead><tr><th>ID</th><th>Severity</th><th>Finding</th><th>Task</th></tr></thead>
+      <tbody>
+        <tr><td>F1</td><td>Critical</td><td>A user-thrown function error surfaces as <code>SERVICE.INTERNAL</code> "requires operator investigation" (<code>ws-protocol-150</code>). The message and stack are lost.</td><td>UIR18</td></tr>
+        <tr><td>F2</td><td>Critical</td><td>Logs stay empty after runs because the stream reads the <code>_nimbus</code> system tenant; Events and Errors nav items dead-end on "Coming soon".</td><td>UIR8, UIR12, UIR19</td></tr>
+        <tr><td>F3</td><td>High</td><td>Tenant create fails silently in the UI (the API returns 201); Delete sits inline with the same style as Create.</td><td>UIR14</td></tr>
+        <tr><td>F4</td><td>High</td><td>Overview shows sixteen boxes with no thesis.</td><td>UIR9</td></tr>
+        <tr><td>F5</td><td>High</td><td>Uppercase tracked mono is the voice of every label.</td><td>UIR2</td></tr>
+        <tr><td>F6</td><td>Medium</td><td>Four navigation strata: top bar, drawer, sub-drawer, status bar.</td><td>UIR5, UIR8</td></tr>
+        <tr><td>F7</td><td>Medium</td><td>Zero-count badges in the nav.</td><td>UIR5</td></tr>
+        <tr><td>F8</td><td>Medium</td><td>Cream light theme, icon-only theme toggle, palette picker.</td><td>UIR2, UIR7</td></tr>
+        <tr><td>F9</td><td>Medium</td><td>Empty states point at other pages instead of the next action.</td><td>UIR3, UIR17</td></tr>
+        <tr><td>F10</td><td>Low</td><td>The runner asks for raw JSON although the validator is known.</td><td>UIR10</td></tr>
+        <tr><td>F11</td><td>Low</td><td>"Source not available" gives no command.</td><td>UIR10</td></tr>
+        <tr><td>F12</td><td>Low</td><td>Two-line brand lockup with version.</td><td>UIR4, UIR5</td></tr>
+        <tr><td>F13</td><td>Keep</td><td>Storage documents view, status dots and pills, dense tables, runner bottom drawer, tenant lens ⌘\ and selector.</td><td>UIR3, UIR10, UIR11</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="promotion-gate">
+    <h2>Promotion gate</h2>
+    <p>Promote this plan to <code>active</code> only when every item holds:</p>
+    <ul>
+      <li>The owner has chosen the mascot concept (done 2026-09-08: A for the mark, C for the icon).</li>
+      <li>The owner accepts the shell decision and the phase order.</li>
+      <li>The baseline commit and the proof root exist.</li>
+      <li>The goal block names real documents, paths, and gates.</li>
+    </ul>
+  </section>
+
+  <section id="invariants">
+    <h2>Invariants</h2>
+    <ol>
+      <li>Pre-launch rules apply: breaking changes, no compatibility shims, no feature flags for the old shell, delete old localStorage keys.</li>
+      <li><code>@nimbus/nimbus/react</code> stays the only data layer. No TanStack Query. Writes go through <code>lib/api-mutations.ts</code>.</li>
+      <li><code>npm run codegen</code>, <code>npm run typecheck</code>, <code>npm run test</code>, <code>npm run build</code>, and <code>npm run test:e2e:smoke</code> pass at the end of every task. <code>make check</code> still embeds <code>packages/nimbus-ui/dist</code>.</li>
+      <li>One accent, four jobs. Semantic colors (ok, warn, error) never use the accent hue. Mono is the voice of data, never of labels.</li>
+      <li>Every shadcn primitive is installed by the CLI into <code>src/components/ui</code> and is not hand-edited except through a recorded reason in the proof root.</li>
+      <li>Every route keeps its spec file, and every rebuilt page adds or updates a Storybook story only if the component is Nimbus-owned.</li>
+      <li>A server contract change lands with its Rust tests and its console consumer in the same task, and it reads <code>docs/private/adapters/convex/ai-guidelines.md</code> first when it touches the Convex surface.</li>
+      <li>Each phase ends with <code>autoreview --gate pre-pr --mode auto</code> before its pull request.</li>
+    </ol>
+  </section>
+
+  <section id="ledger">
+    <h2>Status ledger</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr id="UIR0" data-status="done"><td>UIR0</td><td>Baseline: pin main @ 67a7f3ffa, create the proof root, author the verifier red, capture fail-before screenshots. No production behavior changes.</td><td><code>done</code></td><td>verify.sh: 20 failing; 851/851 tests; tsc clean; <code>proof/nimbus-ui-rebuild/UIR0.md</code></td></tr>
+        <tr id="UIR1" data-status="done"><td>UIR1</td><td>Phase 1 foundation: shadcn base-nova init, components.json, dependency upgrade and additions, path aliases.</td><td><code>done</code></td><td>verify.sh: 15 failing (UIR1 rows ok); 852/852 tests; tsc clean; build ok; smoke 1/1; <code>proof/nimbus-ui-rebuild/UIR1.md</code></td></tr>
+        <tr id="UIR2" data-status="done"><td>UIR2</td><td>Phase 1 foundation: role tokens, amber accent, light and dark, Geist fonts, palette removal (F5, F8).</td><td><code>done</code></td><td>2026-09-08. tokens.css + globals.css rewritten; Geist self-hosted; palette removed; 827 tests; build; make build; smoke 1/1; verify.sh UIR2 rows ok; light and dark Storage screenshots. <code>proof/nimbus-ui-rebuild/UIR2.md</code>.</td></tr>
+        <tr id="UIR3" data-status="done"><td>UIR3</td><td>Phase 1 foundation: primitives via shadcn CLI plus Nimbus-owned StateDot, Pill, DataTable, EmptyState, CopyButton, Chart seam (F9, F13).</td><td><code>done</code></td><td>2026-09-08. 18 registry files under ui/; Pill, StateDot, DataTable (TanStack Table v9 + Virtual), EmptyState, CopyButton, LoadFailed, chart seam; chips, kbd, checkbox, modal-focus hook deleted with no importer; every Nimbus-owned component has a spec; 814 tests; build; make build; smoke 1/1; verify.sh UIR3 row ok; light and dark Storage screenshots. <code>proof/nimbus-ui-rebuild/UIR3.md</code>.</td></tr>
+        <tr id="UIR4" data-status="done"><td>UIR4</td><td>Phase 1 foundation: mascot mark with states, favicon and app icon, Storybook trimmed to Nimbus-owned components (F12).</td><td><code>done</code></td><td>Commit 0a7b33ccc. Mascot spec 10 tests (five states, no animation under reduced motion); 826/826; storybook:build ok; local_ui 14/14; make build 64s; smoke 1/1; verify.sh UIR4 rows ok, 8 failing all UIR5+; <code>proof/nimbus-ui-rebuild/UIR4.md</code></td></tr>
+        <tr id="UIR5" data-status="in_progress"><td>UIR5</td><td>Phase 2 shell: sidebar with scope row, grouped nav, footer, 64px rail, mobile sheet (F6, F7, F12).</td><td><code>in_progress</code></td><td>Started 2026-09-08 on codex/nimbus-ui-rebuild after the Phase 1 pull request.</td></tr>
+        <tr id="UIR6" data-status="todo"><td>UIR6</td><td>Phase 2 shell: resizable sub-panel for data lists, persisted per section.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR7" data-status="todo"><td>UIR7</td><td>Phase 2 shell: command palette, keyboard contract, labeled theme toggle, disconnected overlay, error boundary (F8).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR8" data-status="todo"><td>UIR8</td><td>Phase 2 shell: delete top nav, status bar, static sub-drawers, Coming-soon nav items, old localStorage keys (F2, F6).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR9" data-status="todo"><td>UIR9</td><td>Phase 3 pages: Developer Overview (F4).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR10" data-status="todo"><td>UIR10</td><td>Phase 3 pages: Compute list, function detail, runner, runs (F10, F11, F13).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR11" data-status="todo"><td>UIR11</td><td>Phase 3 pages: Storage tables and documents on TanStack Table and Virtual (F13).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR12" data-status="todo"><td>UIR12</td><td>Phase 3 pages: Observability with Runs and Logs tabs (F2 console half).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR13" data-status="todo"><td>UIR13</td><td>Phase 3 pages: Developer and Operator Settings on the sub-panel; System category added.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR14" data-status="todo"><td>UIR14</td><td>Phase 3 pages: Operator Overview, Tenants, Machines, Network (F3).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR15" data-status="todo"><td>UIR15</td><td>Phase 3 pages: Services, service detail, Schedules.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR16" data-status="todo"><td>UIR16</td><td>Phase 3 pages: Files listing, upload, detail.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR17" data-status="todo"><td>UIR17</td><td>Phase 4 gaps: first-run onboarding and empty states with snippets (F9).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR18" data-status="todo"><td>UIR18</td><td>Phase 4 gaps: function error class on the wire plus the console error card (F1).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR19" data-status="todo"><td>UIR19</td><td>Phase 4 gaps: tenant-scoped run logs by default plus log search (F2 server half).</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR20" data-status="todo"><td>UIR20</td><td>Phase 4 gaps: traces per run and error groups by fingerprint.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR21" data-status="todo"><td>UIR21</td><td>Phase 4 gaps: storage query builder, schema editor with apply, index editor with build status.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR22" data-status="todo"><td>UIR22</td><td>Phase 4 gaps: Sandboxes page with lifecycle, exec stream, live logs.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR23" data-status="todo"><td>UIR23</td><td>Phase 4 gaps: Deploys page with history, bundle hash, rollback.</td><td><code>todo</code></td><td></td></tr>
+        <tr id="UIR24" data-status="todo"><td>UIR24</td><td>Cleanup after the final pull request merges: archive this plan under <code>archive/</code> with the pull request range, keep the proof root, replace the index entry with a retrospective.</td><td><code>todo</code></td><td></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tasks">
+    <h2>Tasks</h2>
+    <p>Common verification for every implementation task, run from <code>packages/nimbus-ui</code>: <code>npm run lint</code>, <code>npm run typecheck</code>, <code>npm run test</code>, <code>npm run build</code>, then <code>npm run test:e2e:smoke</code> against a local <code>target/debug/nimbus start</code>. Each task writes <code>proof/nimbus-ui-rebuild/&lt;ID&gt;.md</code> with the command summary lines, the test counts, and one dark and one light screenshot of the changed surface. Phase pull requests: one per phase, or one per page in phase 3 when a page exceeds 1,500 changed lines.</p>
+
+    <h3 id="task-UIR0">UIR0 Baseline</h3>
+    <ul>
+      <li><strong>Problem:</strong> the plan needs a pinned baseline, a red verifier, and fail-before evidence.</li>
+      <li><strong>Owning seam and paths:</strong> <code>proof/nimbus-ui-rebuild/verify.sh</code>, <code>proof/nimbus-ui-rebuild/baseline/</code>.</li>
+      <li><strong>Steps:</strong> 1. Worktree <code>nimbus-worktrees/nimbus-ui-rebuild</code> on branch <code>codex/nimbus-ui-rebuild</code> from main @ 67a7f3ffa. 2. Write <code>verify.sh</code>: it asserts <code>components.json</code> exists, <code>@tanstack/react-table</code> and <code>@tanstack/charts</code> are in <code>package.json</code>, <code>src/shell/top-nav.tsx</code> and <code>src/shell/status-bar.tsx</code> do not exist, <code>nimbus-ui:palette</code> does not appear under <code>src</code>, <code>@fontsource/jetbrains-mono</code> is gone, <code>src/components/ui/chart.tsx</code> is the only importer of <code>@tanstack/charts</code>, and the seven route groups each have a spec. It prints <code>verify: N failing</code>. 3. Copy the review screenshots s17 through s30 into <code>baseline/</code>. 4. Record the current test counts.</li>
+      <li><strong>Acceptance:</strong> <code>verify.sh</code> reports a nonzero failing count on the baseline; the proof directory holds the screenshots and counts.</li>
+      <li><strong>Fail-before:</strong> <code>verify.sh</code> exits 1 on the baseline.</li>
+      <li><strong>Verification:</strong> <code>bash docs/private/plans/proof/nimbus-ui-rebuild/verify.sh</code>; <code>npm run test -w packages/nimbus-ui</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR1">UIR1 Stack</h3>
+    <ul>
+      <li><strong>Problem:</strong> the package hand-rolls Base UI 1.4.1 primitives and has no shadcn registry, table, virtual, panel, or chart dependency.</li>
+      <li><strong>Owning seam and paths:</strong> <code>packages/nimbus-ui/package.json</code>, <code>components.json</code>, <code>vite.config.ts</code>, <code>tsconfig.json</code>, <code>src/lib/utils.ts</code>.</li>
+      <li><strong>Steps:</strong> 1. Upgrade <code>@base-ui/react</code> to 1.7.x, <code>@tanstack/react-router</code> to 1.170.x, React to 19.2.8. 2. Add <code>@tanstack/react-table</code> 9.2.x, <code>@tanstack/react-virtual</code> 3.14.x, <code>react-resizable-panels</code>, <code>tw-animate-css</code>, <code>@tanstack/charts</code> pinned exact, <code>shadcn</code> 4.19.x as a dev dependency. 3. Copy Starport's <code>components.json</code> (style <code>base-nova</code>, base color neutral, aliases <code>@/components</code>, <code>@/lib/utils</code>, <code>@/components/ui</code>, <code>@/lib</code>, <code>@/hooks</code>) and point <code>tailwind.css</code> at <code>src/styles/globals.css</code>. 4. Add the <code>@/</code> alias to Vite and TypeScript. 5. Keep <code>cn</code> in <code>src/lib/cn.ts</code> and re-export it from <code>src/lib/utils.ts</code> so the registry resolves. 6. Verify current package versions with web research before pinning.</li>
+      <li><strong>Acceptance:</strong> <code>npx shadcn add button</code> writes <code>src/components/ui/button.tsx</code> with no manual edits; typecheck, tests, and build pass on the untouched pages.</li>
+      <li><strong>Fail-before:</strong> <code>verify.sh</code> fails on <code>components.json</code> and the dependency assertions.</li>
+      <li><strong>Verification:</strong> common commands; <code>npm ci</code> at the repository root regenerates <code>package-lock.json</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR2">UIR2 Tokens, palette, type</h3>
+    <ul>
+      <li><strong>Problem:</strong> three palettes, a cream light theme, JetBrains Mono uppercase labels (F5, F8).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/styles/globals.css</code>, <code>src/shell/theme-controller.tsx</code>, <code>src/shell/appearance-menu.tsx</code>, <code>src/components/appearance-section.tsx</code>, <code>src/store</code>, <code>public/fonts/</code>.</li>
+      <li><strong>Steps:</strong> 1. Replace the token block with the Starport role tokens: dark canvas <code>#0a0b0c</code>, panel <code>#101112</code>, raised <code>#18191b</code>, hover <code>#1f2124</code>, borders white at .05/.08/.12, text <code>#f6f7f8</code>/<code>#c9ced6</code>/<code>#8b909a</code>/<code>#62666d</code>; light canvas <code>#fff</code>, panel <code>#fafafa</code>, raised <code>#f4f4f5</code>, hover <code>#ececee</code>, borders black at .06/.10/.15, text <code>#18181b</code>/<code>#3f3f46</code>/<code>#71717a</code>/<code>#a1a1aa</code>; accent dark <code>#f0b23e</code> (hover <code>#f6c35c</code>, ink <code>#1a1204</code>), light <code>#b45309</code> (hover <code>#92400e</code>, link <code>#a16207</code>). Map them onto the shadcn variables (<code>--background</code>, <code>--card</code>, <code>--primary</code>, <code>--ring</code>, and the rest). 2. Type scale xs 12, sm 13, base 14, md 16, lg 20, xl 24, 2xl 32; mono one size down. 3. Self-host Geist Sans and Geist Mono under <code>public/fonts/</code> with <code>@font-face</code> and <code>font-display: swap</code>; remove <code>@fontsource/jetbrains-mono</code>. 4. Delete the palette store slice, the appearance menu palette rows, and the <code>nimbus-ui:palette</code> key. Keep <code>nimbus-ui:theme</code> with values <code>light</code>, <code>dark</code>, <code>system</code>. 5. Remove every <code>uppercase tracking-*</code> class outside sidebar group labels.</li>
+      <li><strong>Acceptance:</strong> <code>grep -rn "nimbus-ui:palette" src</code> returns nothing; <code>grep -rn "uppercase" src | grep -v sidebar</code> returns nothing; the appearance section spec asserts two modes and no palette; light and dark screenshots of Storage show the new grounds.</li>
+      <li><strong>Fail-before:</strong> the grep assertions in <code>verify.sh</code> fail on the baseline.</li>
+      <li><strong>Verification:</strong> common commands; <code>verify.sh</code> palette and font assertions pass.</li>
+    </ul>
+
+    <h3 id="task-UIR3">UIR3 Primitives</h3>
+    <ul>
+      <li><strong>Problem:</strong> the package owns twenty hand-rolled primitives that shadcn provides, and it lacks a shared DataTable, EmptyState with snippet, and chart seam (F9, F13).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/components/ui/</code> (registry-owned), <code>src/components/</code> (Nimbus-owned).</li>
+      <li><strong>Steps:</strong> 1. <code>npx shadcn add</code> button, dialog, dropdown-menu, popover, tooltip, tabs, sheet, command, input, input-group, select, textarea, skeleton, sonner, checkbox, separator, scroll-area. 2. Port from Starport as Nimbus-owned files: <code>Pill</code> (lifecycle), <code>StateDot</code> (liveness), <code>DataTable</code> on TanStack Table with optional Virtual rows, <code>CopyButton</code>, <code>RelativeTime</code>, <code>ConfirmDialog</code>, <code>LoadFailed</code>. 3. Rebuild <code>EmptyState</code> as icon + one sentence + one CTA + one mono snippet with copy. 4. Create <code>src/components/ui/chart.tsx</code> as the only importer of <code>@tanstack/charts</code>; export <code>Sparkline</code>, <code>AreaChart</code>, and <code>BarChart</code> with tokenized colors. 5. Delete the replaced hand-rolled files (<code>select.tsx</code>, <code>checkbox.tsx</code>, <code>slideover.tsx</code>, <code>confirm-dialog.tsx</code>, <code>segmented-control.tsx</code>, <code>state-chip.tsx</code>, <code>category-chip.tsx</code>, <code>kbd.tsx</code> where shadcn covers them) and migrate their specs to the new components.</li>
+      <li><strong>Acceptance:</strong> every Nimbus-owned component has a spec; <code>grep -rln "@tanstack/charts" src</code> lists only <code>chart.tsx</code>; the deleted files have no remaining importer.</li>
+      <li><strong>Fail-before:</strong> <code>verify.sh</code> chart-importer assertion fails while <code>chart.tsx</code> is absent.</li>
+      <li><strong>Verification:</strong> common commands.</li>
+    </ul>
+
+    <h3 id="task-UIR4">UIR4 Mascot and Storybook</h3>
+    <ul>
+      <li><strong>Problem:</strong> the brand mark is a two-line lockup with a wisp, and the catalog documents shadcn-equivalent primitives (F12).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/components/mascot.tsx</code> (replaces <code>src/shell/logo-mark.tsx</code>), <code>public/nimbus-logo.svg</code>, <code>public/favicon.svg</code>, <code>public/icon-512.png</code>, <code>src/stories/</code>, <code>.storybook/</code>.</li>
+      <li><strong>Steps:</strong> 1. Implement concept A as a React component: body union of circles at (36,50) r20, (60,40) r28, (84,50) r20, and a rounded rect 14,50 92×34 rx17 in viewBox <code>0 0 120 92</code>, outline in <code>currentColor</code>, fill <code>var(--panel)</code>, eyes at (48,52) and (72,52), mouth at y 64. Props: <code>size</code>, <code>state</code> (idle, working, error, empty, celebrate). 2. Export concept C as the static favicon and app icon; replace <code>nimbus-logo.svg</code> with the wisp-free body. 3. Blink only, under <code>prefers-reduced-motion: no-preference</code>. 4. Delete stories for replaced primitives; add stories for Mascot (all states and sizes 16, 24, 32, 48), StateDot, Pill, DataTable, EmptyState. 5. Keep <code>addon-a11y</code> and make <code>storybook:build</code> pass.</li>
+      <li><strong>Acceptance:</strong> the Mascot spec renders all five states and asserts no animation under reduced motion; <code>npm run storybook:build</code> passes with only Nimbus-owned stories; the favicon shows the solid face at 32px.</li>
+      <li><strong>Fail-before:</strong> <code>src/components/mascot.tsx</code> is absent and <code>logo-mark.tsx</code> renders the wisp path.</li>
+      <li><strong>Verification:</strong> common commands; <code>npm run storybook:build</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR5">UIR5 Sidebar</h3>
+    <ul>
+      <li><strong>Problem:</strong> the scope switcher sits in a top bar away from the nav it changes, and zero-count badges add noise (F6, F7, F12).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/shell/sidebar/</code> (new: <code>sidebar.tsx</code>, <code>scope-row.tsx</code>, <code>nav-groups.tsx</code>, <code>footer.tsx</code>, <code>rail.tsx</code>, <code>mobile-sheet.tsx</code>), <code>src/shell/nav-entries.ts</code>, <code>src/shell/view-switcher.tsx</code>, <code>src/shell/tenant-selector.tsx</code>, <code>src/shell/use-viewport-tier.ts</code>, <code>src/routes/__root.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Build the 240px sidebar: mascot + wordmark; scope row with the Developer ⇄ Operator segmented control, then the tenant selector (Developer) or the server identity line (Operator); grouped nav from <code>nav-entries.ts</code> with uppercase group labels; footer with connection dot + version, labeled theme toggle, Collapse. 2. Rail at 64px shows icons with tooltips. 3. Below 640px, a sheet plus a 48px top bar with the mascot and a menu button. 4. Remove count badges; keep attention badges only with semantic color. 5. Keep <code>nimbus-ui:last-view</code>, <code>nimbus-ui:last-route:*</code>, <code>nimbus-ui:active-tenant</code>; rename <code>nimbus-ui:primary-drawer-collapsed</code> to <code>nimbus-ui:sidebar-collapsed</code> with no migration.</li>
+      <li><strong>Acceptance:</strong> the sidebar spec asserts the scope row switches nav groups, the rail toggles, and no badge renders for a zero count; <code>tests/e2e/smoke.spec.ts</code> navigates through the sidebar; a 400px viewport screenshot shows the sheet.</li>
+      <li><strong>Fail-before:</strong> the smoke test fails when the top bar selectors are removed before the sidebar exists.</li>
+      <li><strong>Verification:</strong> common commands; Playwright smoke with <code>--project=mobile</code> added to <code>playwright.config.ts</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR6">UIR6 Resizable sub-panel</h3>
+    <ul>
+      <li><strong>Problem:</strong> the sub-drawer is fixed width and appears for static sections where tabs serve better.</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/shell/sub-panel.tsx</code> (replaces <code>src/shell/sub-drawer.tsx</code>), <code>src/components/storage/tables-sub-drawer.tsx</code>, <code>src/shell/function-tree-view.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Build <code>SubPanel</code> on <code>react-resizable-panels</code> with min 180, default 240, max 400, a collapse handle, and <code>autoSaveId</code> per section (<code>nimbus-ui:panel:storage</code>, <code>:compute</code>, <code>:tenants</code>, <code>:settings</code>). 2. Route Storage tables, Compute functions, Tenants, and Settings categories through it. 3. Give the panel a search field when the list exceeds twenty rows.</li>
+      <li><strong>Acceptance:</strong> the sub-panel spec asserts the size persists across remount and that collapse restores; keyboard resize works with arrow keys on the handle.</li>
+      <li><strong>Fail-before:</strong> the sub-drawer spec has no resize assertion and fails when ported to the new component.</li>
+      <li><strong>Verification:</strong> common commands.</li>
+    </ul>
+
+    <h3 id="task-UIR7">UIR7 Command palette, keyboard, theme, overlays</h3>
+    <ul>
+      <li><strong>Problem:</strong> the palette, keyboard contract, disconnected overlay, and error boundary are styled on the old tokens, and the theme toggle does not show its state (F8).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/shell/command-palette.tsx</code>, <code>src/shell/keyboard-contract.tsx</code>, <code>src/shell/disconnected-overlay.tsx</code>, <code>src/shell/error-boundary.tsx</code>, <code>src/shell/sidebar/footer.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Rebuild the palette on the shadcn <code>command</code> primitive at 640px with route, tenant, and action groups. 2. Keep ⌘K, ⌘\ tenant lens, and the existing route shortcuts; document them in the palette footer. 3. Theme toggle shows the current mode name. 4. Disconnected overlay and error boundary use the mascot error state and the EmptyState layout.</li>
+      <li><strong>Acceptance:</strong> the palette spec asserts the three groups and keyboard navigation; the keyboard contract spec passes unchanged; the toggle spec asserts the visible label.</li>
+      <li><strong>Fail-before:</strong> the toggle spec fails on the icon-only control.</li>
+      <li><strong>Verification:</strong> common commands.</li>
+    </ul>
+
+    <h3 id="task-UIR8">UIR8 Remove the old shell</h3>
+    <ul>
+      <li><strong>Problem:</strong> the top nav, status bar, static sub-drawers, and Coming-soon items still exist after the sidebar lands (F2, F6).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/shell/top-nav.tsx</code>, <code>src/shell/status-bar.tsx</code>, <code>src/shell/primary-drawer.tsx</code>, <code>src/shell/sub-drawer.tsx</code>, the Observability and Settings route folders that used static sub-drawers.</li>
+      <li><strong>Steps:</strong> 1. Delete the four shell files and their specs. 2. Convert Observability sections and Settings categories that were static sub-drawer entries into page-header tabs (Settings keeps the sub-panel for categories per UIR6; Observability uses tabs). 3. Remove Events and Errors from nav until UIR20 adds their pages. 4. Delete the old localStorage keys.</li>
+      <li><strong>Acceptance:</strong> <code>verify.sh</code> shell assertions pass; no route imports the deleted files; the smoke test passes.</li>
+      <li><strong>Fail-before:</strong> <code>verify.sh</code> shell assertions fail while the files exist.</li>
+      <li><strong>Verification:</strong> common commands; <code>verify.sh</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR9">UIR9 Developer Overview</h3>
+    <ul>
+      <li><strong>Problem:</strong> sixteen equal boxes with no thesis (F4).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/index.tsx</code> and its spec.</li>
+      <li><strong>Steps:</strong> 1. Status headline (mascot state + one sentence) and one mono fact line (tenant, endpoint, version). 2. Connect panel with the endpoint URL and snippet tabs (curl, TypeScript SDK, Convex client). 3. One stats row (functions, tables, runs 24h, errors 24h) with sparklines from the chart seam. 4. Recent runs table (five rows, link to Observability). 5. Hide facts that have no value.</li>
+      <li><strong>Acceptance:</strong> the spec asserts the headline, the snippet tabs, and that an empty tenant renders the onboarding state from UIR17 rather than empty tiles.</li>
+      <li><strong>Fail-before:</strong> the current spec asserts the tile grid and fails after the rewrite.</li>
+      <li><strong>Verification:</strong> common commands; screenshots dark and light with the <code>agent-chat</code> example tenant populated.</li>
+    </ul>
+
+    <h3 id="task-UIR10">UIR10 Compute</h3>
+    <ul>
+      <li><strong>Problem:</strong> the runner asks for raw JSON, source shows no command, and Sandboxes and the call graph hide in a sub-drawer (F10, F11, F13).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/compute.tsx</code>, <code>compute_.$function.tsx</code>, <code>compute_.runs_.$runId.tsx</code>, <code>-graph-view.tsx</code>, <code>src/components/function-runner/</code>, <code>src/shell/function-tree-view.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Functions list in the sub-panel; the page shows the selected function with tabs Overview, Source, Runs, Graph. 2. Runner stays a bottom drawer; pre-fill arguments from the validator with a form mode and a JSON mode; button reads "Run function" with ⌘⏎. 3. Source tab shows the file when available and otherwise the exact <code>nimbus dev</code> command with a copy button. 4. Run detail uses Pill for state and mono for timings.</li>
+      <li><strong>Acceptance:</strong> the runner spec asserts prefilled fields for a validator with two string args and the ⌘⏎ shortcut; the function spec asserts the source snippet; runs table uses DataTable.</li>
+      <li><strong>Fail-before:</strong> the runner spec fails on the prefill assertion.</li>
+      <li><strong>Verification:</strong> common commands; manual run of <code>agent-chat</code> <code>send</code> with prefilled args recorded in the proof.</li>
+    </ul>
+
+    <h3 id="task-UIR11">UIR11 Storage</h3>
+    <ul>
+      <li><strong>Problem:</strong> the documents view is the strongest page but runs on a hand-rolled table without virtualization (F13).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/storage.tsx</code>, <code>storage_.$table.tsx</code>, <code>src/components/storage/</code>.</li>
+      <li><strong>Steps:</strong> 1. Tables list in the sub-panel. 2. Documents on DataTable with TanStack Virtual rows, column chooser, sticky header, row context menu, bulk toolbar. 3. Tabs Documents, Schema, Indexes, Query (Query lands in UIR21; until then it is not shown). 4. Insert and edit drawers on the shadcn sheet.</li>
+      <li><strong>Acceptance:</strong> the documents table spec asserts virtualization renders at most 60 rows for a 1,000-row fixture; column prefs persist; the existing storage specs pass on the new components.</li>
+      <li><strong>Fail-before:</strong> the virtualization assertion fails on the current table.</li>
+      <li><strong>Verification:</strong> common commands.</li>
+    </ul>
+
+    <h3 id="task-UIR12">UIR12 Observability</h3>
+    <ul>
+      <li><strong>Problem:</strong> Logs read the system tenant and the sections use a static sub-drawer (F2 console half).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/observability.tsx</code>, <code>observability/-filters.tsx</code>, <code>-logs.tsx</code>, <code>-runs.tsx</code>, <code>src/routes/operator/observability.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Tabs Runs and Logs (Traces and Errors arrive in UIR20). 2. Logs default to the active tenant with the lens ⌘\ for <code>_nimbus</code>. 3. Filters as a facet bar. 4. Runs on DataTable with Pill states and a right-side detail sheet.</li>
+      <li><strong>Acceptance:</strong> the logs spec asserts the default tenant filter equals the active tenant; three runs in the fixture produce three log groups.</li>
+      <li><strong>Fail-before:</strong> the logs spec fails while the stream reads <code>_nimbus</code>.</li>
+      <li><strong>Verification:</strong> common commands.</li>
+    </ul>
+
+    <h3 id="task-UIR13">UIR13 Settings</h3>
+    <ul>
+      <li><strong>Problem:</strong> Settings categories use the static sub-drawer, and the appearance section still exposes palettes.</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/settings.tsx</code>, <code>src/routes/operator/settings.tsx</code> and its <code>-configuration</code>, <code>-danger-zone</code>, <code>-deploys</code>, <code>-integrations</code>, <code>-primitives</code>, <code>-server-info</code> files.</li>
+      <li><strong>Steps:</strong> 1. Categories in the sub-panel. 2. Appearance shows mode only. 3. Add a System category (server info, version, data directory, uptime). 4. Danger zone actions use ConfirmDialog with typed confirmation. 5. Move <code>-deploys</code> content to the Deploys page in UIR23 and leave a link.</li>
+      <li><strong>Acceptance:</strong> settings specs pass on the sub-panel; the danger-zone spec asserts the typed confirmation.</li>
+      <li><strong>Fail-before:</strong> the appearance spec fails when palette rows are removed.</li>
+      <li><strong>Verification:</strong> common commands; <code>tests/e2e/rotate-token.spec.ts</code> and <code>shutdown.spec.ts</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR14">UIR14 Operator pages</h3>
+    <ul>
+      <li><strong>Problem:</strong> tenant create fails silently and Delete has the same weight as Create; Network shows an unlabeled count (F3).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/operator/index.tsx</code>, <code>tenants.tsx</code>, <code>machines.tsx</code>, <code>-machine-detail.tsx</code>, <code>network.tsx</code>, <code>-network-inventory.tsx</code>, <code>src/shell/tenants-fetch.ts</code>, <code>src/lib/api-mutations.ts</code>.</li>
+      <li><strong>Steps:</strong> 1. Find the tenant create failure (the API returns 201; the UI shows nothing) and fix the root cause in the mutation path. 2. Create is the one primary button; it shows pending, then a toast, then the row. Delete moves to the row menu behind ConfirmDialog. 3. Operator Overview mirrors UIR9 with server facts. 4. Machines shows health and capacity with StateDot; Network labels every count.</li>
+      <li><strong>Acceptance:</strong> the tenants spec asserts pending state, toast, error surface, and the row menu delete; an end-to-end test creates and deletes a tenant.</li>
+      <li><strong>Fail-before:</strong> the create-feedback assertion fails on the current page.</li>
+      <li><strong>Verification:</strong> common commands; new <code>tests/e2e/tenants.spec.ts</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR15">UIR15 Services and Schedules</h3>
+    <ul>
+      <li><strong>Problem:</strong> these pages were not exercised with data in the review and still use old primitives.</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/services.tsx</code>, <code>services_.$service.tsx</code>, <code>schedules.tsx</code>, <code>src/routes/operator/services.tsx</code>, <code>services_.$service.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Services on DataTable with lifecycle Pills and row-menu actions (start, stop, restart, logs). 2. Service detail with tabs Overview, Logs (live), Config. 3. Schedules with a detail sheet and a "Run now" action.</li>
+      <li><strong>Acceptance:</strong> specs assert the row actions and the Run now mutation; a seeded service fixture renders one of each lifecycle Pill.</li>
+      <li><strong>Fail-before:</strong> the Run now spec fails before the action exists.</li>
+      <li><strong>Verification:</strong> common commands.</li>
+    </ul>
+
+    <h3 id="task-UIR16">UIR16 Files</h3>
+    <ul>
+      <li><strong>Problem:</strong> Files is a placeholder.</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/files.tsx</code>, <code>src/components/files/</code>, the object storage read and write API already exposed by <code>nimbus-server</code> (locate the handlers at task start and record them in the proof).</li>
+      <li><strong>Steps:</strong> 1. Listing on DataTable with size, type, and modified columns. 2. Upload via drag or button through <code>api-mutations.ts</code>. 3. Detail sheet with preview for text and images, and a copy URL.</li>
+      <li><strong>Acceptance:</strong> the files spec asserts listing, upload progress, and detail; an end-to-end test uploads and lists one file.</li>
+      <li><strong>Fail-before:</strong> the listing spec fails on the placeholder.</li>
+      <li><strong>Verification:</strong> common commands; new <code>tests/e2e/files.spec.ts</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR17">UIR17 Onboarding and empty states</h3>
+    <ul>
+      <li><strong>Problem:</strong> a new tenant sees empty tiles and empty states that point at other pages (F9).</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/components/onboarding/</code>, every route that renders <code>EmptyState</code>.</li>
+      <li><strong>Steps:</strong> 1. First-run panel on Overview: three steps (install CLI, <code>nimbus dev</code> in an app, first function run) with live completion from the same queries the page uses. 2. Every empty state gets the next action and a mono snippet for that page (create a table, deploy a function, upload a file). 3. Mascot empty state in the panel.</li>
+      <li><strong>Acceptance:</strong> the onboarding spec asserts step completion transitions; each route spec asserts its snippet text.</li>
+      <li><strong>Fail-before:</strong> the Overview spec fails on the first-run assertion.</li>
+      <li><strong>Verification:</strong> common commands; screenshot of an empty tenant.</li>
+    </ul>
+
+    <h3 id="task-UIR18">UIR18 Function error class</h3>
+    <ul>
+      <li><strong>Problem:</strong> a user-thrown error reaches the console as <code>SERVICE.INTERNAL</code> and loses its message and stack (F1).</li>
+      <li><strong>Owning seam and paths:</strong> the WebSocket error mapping in <code>crates/nimbus-server</code> that emits <code>ws-protocol-150</code>, the execution-unit error type in <code>crates/nimbus-engine</code>, <code>packages/nimbus/src/react</code> error surface, <code>src/lib/run-error.ts</code>, <code>src/components/function-runner/</code>. Read <code>docs/private/adapters/convex/ai-guidelines.md</code> first.</li>
+      <li><strong>Steps:</strong> 1. Add a <code>FUNCTION.THROWN</code> class (name to match the existing code vocabulary) that carries message, stack, and function path, distinct from runtime and service faults. 2. Map it through the protocol and the SDK. 3. Console renders an error card with the message, the stack, and the run link; only real service faults keep the operator-investigation copy.</li>
+      <li><strong>Acceptance:</strong> a Rust test asserts the class for a thrown <code>Error</code>; the SDK test asserts the message survives; the runner spec asserts the card; a manual run of <code>agent-chat</code> <code>send</code> with empty text shows "Message text must not be empty".</li>
+      <li><strong>Fail-before:</strong> the Rust test fails while thrown errors map to the internal class.</li>
+      <li><strong>Verification:</strong> <code>cargo test -p nimbus-server &lt;test&gt;</code>, <code>cargo test -p nimbus-engine &lt;test&gt;</code>, <code>npm run test -w packages/nimbus</code>, common commands, <code>make clippy</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR19">UIR19 Tenant logs and log search</h3>
+    <ul>
+      <li><strong>Problem:</strong> run output is not queryable by tenant and there is no search (F2 server half).</li>
+      <li><strong>Owning seam and paths:</strong> the log stream query in <code>crates/nimbus-server</code> and its storage in <code>crates/nimbus-storage</code> (locate at task start), <code>src/routes/developer/observability/-logs.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Add tenant, run id, level, and text filters to the log query with a bounded page size. 2. Console log search field with debounce and a result count. 3. Per-run log view linked from the run detail.</li>
+      <li><strong>Acceptance:</strong> a Rust test asserts tenant filtering and text search; the logs spec asserts the search results and count.</li>
+      <li><strong>Fail-before:</strong> the Rust filter test fails before the query supports tenant and text.</li>
+      <li><strong>Verification:</strong> focused Cargo tests, common commands, <code>make clippy</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR20">UIR20 Traces and error groups</h3>
+    <ul>
+      <li><strong>Problem:</strong> Events and Errors have no pages.</li>
+      <li><strong>Owning seam and paths:</strong> span recording per run in <code>crates/nimbus-engine</code>, an error fingerprint (function path + error class + normalized message) in the same crate, Observability Traces and Errors tabs.</li>
+      <li><strong>Steps:</strong> 1. Record spans for function invocation, database operations, and scheduled actions per run. 2. Fingerprint errors and expose a grouped query with count, first seen, last seen. 3. Traces tab with a waterfall per run; Errors tab with groups and a drill-in to runs.</li>
+      <li><strong>Acceptance:</strong> Rust tests assert span nesting and fingerprint stability across two identical throws; specs assert the waterfall and the group table.</li>
+      <li><strong>Fail-before:</strong> the fingerprint test fails before the function exists.</li>
+      <li><strong>Verification:</strong> focused Cargo tests, common commands, <code>make clippy</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR21">UIR21 Storage editors</h3>
+    <ul>
+      <li><strong>Problem:</strong> the console can read schemas and indexes but cannot build queries or apply changes.</li>
+      <li><strong>Owning seam and paths:</strong> schema apply and index build status in <code>crates/nimbus-storage</code> and their server handlers, <code>src/components/storage/query-bar.tsx</code>, <code>schema-panel.tsx</code>, <code>index-panel.tsx</code>.</li>
+      <li><strong>Steps:</strong> 1. Query tab: field, operator, value rows compiled to the existing <code>table-query.ts</code> contract, with a "Show as code" toggle. 2. Schema editor with validation and an apply endpoint that returns violations rather than a partial apply (schema stays optional per the repository rule). 3. Index editor with create and drop and a build status Pill polled from the server.</li>
+      <li><strong>Acceptance:</strong> Rust tests assert apply rejects a violating document set and reports the violation; specs assert the builder compiles to the same query as the typed bar; index build status transitions in the spec fixture.</li>
+      <li><strong>Fail-before:</strong> the schema apply test fails before the endpoint exists.</li>
+      <li><strong>Verification:</strong> focused Cargo tests, common commands, <code>make clippy</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR22">UIR22 Sandboxes</h3>
+    <ul>
+      <li><strong>Problem:</strong> sandboxes are visible only inside the Compute sub-drawer with no lifecycle actions.</li>
+      <li><strong>Owning seam and paths:</strong> <code>src/routes/developer/sandboxes.tsx</code> (new), an exec stream over the existing sandbox session API in <code>crates/nimbus-services</code> (backend behavior stays with <code>nimbus-sandbox-plan.md</code>).</li>
+      <li><strong>Steps:</strong> 1. List with lifecycle Pills and row-menu actions. 2. Detail with live logs and an exec panel that streams stdout and stderr. 3. Create from a profile picker.</li>
+      <li><strong>Acceptance:</strong> a Rust test asserts the stream frames; the spec asserts the exec panel appends frames in order.</li>
+      <li><strong>Fail-before:</strong> the stream test fails before the endpoint exists.</li>
+      <li><strong>Verification:</strong> focused Cargo tests, common commands, <code>make clippy</code>.</li>
+    </ul>
+
+    <h3 id="task-UIR23">UIR23 Deploys</h3>
+    <ul>
+      <li><strong>Problem:</strong> deploy history and rollback do not exist in the console.</li>
+      <li><strong>Owning seam and paths:</strong> deploy history (bundle hash, time, actor, functions changed) and rollback in <code>crates/nimbus-server</code> and the bundle provenance seam, <code>src/routes/developer/deploys.tsx</code> (new), the former <code>operator/settings/-deploys.tsx</code> content.</li>
+      <li><strong>Steps:</strong> 1. Record each bundle activation with its SHA-256 provenance hash. 2. Expose history and a rollback that re-activates a recorded bundle through the same integrity check. 3. Deploys page with history table, diff of function paths, and a rollback action behind ConfirmDialog.</li>
+      <li><strong>Acceptance:</strong> Rust tests assert history order and that rollback to a tampered bundle is rejected; the spec asserts the confirm flow.</li>
+      <li><strong>Fail-before:</strong> the history test fails before the record exists.</li>
+      <li><strong>Verification:</strong> focused Cargo tests, common commands, <code>make clippy</code>, <code>make ci</code> before the final pull request.</li>
+    </ul>
+
+    <h3 id="task-UIR24">UIR24 Cleanup</h3>
+    <ul>
+      <li><strong>Problem:</strong> a merged plan must not linger as a stale control plane.</li>
+      <li><strong>Owning seam and paths:</strong> this plan file, <code>proof/nimbus-ui-rebuild/</code>, <code>docs/private/plans/README.md</code>.</li>
+      <li><strong>Steps:</strong> confirm the merge of the final pull request, move this file to <code>archive/</code> with status <code>complete</code> and the pull request range, keep the proof root, replace the index entry with a one-paragraph retrospective.</li>
+      <li><strong>Acceptance:</strong> the index holds only the retrospective; the archive holds the plan with every ledger row terminal.</li>
+      <li><strong>Fail-before:</strong> not applicable, because the ledger row records the merge.</li>
+      <li><strong>Verification:</strong> <code>grep -rn nimbus-ui-rebuild docs/private/plans/README.md</code> shows the retrospective only.</li>
+    </ul>
+  </section>
+
+  <section id="goal">
+    <h2>Goal</h2>
+    <pre><code>Execute this plan to completion. This is a whole-plan goal, not a
+single-task goal. Read the plan fully, then read: CLAUDE.md,
+docs/private/plans/README.md, docs/private/operating/local-dev.md,
+docs/private/operating/verification.md, packages/nimbus-ui/README.md,
+and ~/src/github.com/agentstation/starport/console/DESIGN.md as the
+visual exemplar. Read docs/private/adapters/convex/ai-guidelines.md
+before UIR18 through UIR23. Work in ~/src/github.com/nimbus/nimbus-worktrees/nimbus-ui-rebuild on
+branch codex/nimbus-ui-rebuild from main @ 67a7f3ffa. Chat history is
+not progress state. Resume from the status ledger, the execution log,
+and git state. If compaction happens, continue from the plan and git
+state rather than restarting. Loop: keep one task in_progress,
+implement at the owning seam, capture fail-before evidence, run the
+verification commands, commit the work per the commit policy, write
+the proof file, append the execution log with the work commit, mark the
+task terminal with evidence, commit the plan update the same way, then
+advance to the next task. Decide rather than ask. Mark a wrong or
+already-satisfied task no-action with a one-line reason. Record a
+blocker and continue with the next eligible task. Binding constraints:
+the eight invariants and the non-goals in this plan; pre-launch
+breaking changes with no shims; @nimbus/nimbus/react stays the data
+layer; one accent, four jobs; shadcn primitives come from the CLI;
+verify package versions with web research before pinning. Commit
+policy: one commit per task plus one plan commit, end every commit
+message with "Claude-Session:
+https://claude.ai/code/session_01Tp3UXd1DxGt6rG6RAdZxLr", one pull
+request per phase (or per page in phase 3 above 1,500 changed lines),
+run autoreview --gate pre-pr --mode auto before each pull request, and
+end each pull request description with the same session URL. Stop only
+at a valid stop state from the plans skill. Before you stop, update the
+ledger and the log, and record the next action in the status line. The
+goal is met when UIR0 through UIR23 are terminal, verify.sh reports
+zero failing, make ci passes, and UIR24 waits only on the final merge.</code></pre>
+  </section>
+
+  <section id="execution-log">
+    <h2>Execution log</h2>
+    <!-- Append-only: add rows at the end of this table. This section stays last in the file. -->
+    <table>
+      <thead><tr><th>Date</th><th>Item</th><th>Action</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>2026-09-08</td><td>meta</td><td>activated</td><td>Owner approved the plan, the shell decision, and mascot A (mark) with C (icon). Status flipped to active; worktree created.</td></tr>
+        <tr><td>2026-09-08</td><td>meta</td><td>authored</td><td>Plan authored from the 2026-09-08 design review (F1–F13), the mascot concepts page, and the owner decisions on approach, shell, palette, mascot, gaps, Storybook, and sequence. No implementation started by this step.</td></tr>
+      <tr><td>2026-09-08</td><td>UIR0</td><td>done</td><td>Verifier red at 20 failing on main @ 67a7f3ffa; baseline 851 tests, tsc clean, one pre-existing Biome format error; 14 baseline screenshots in the proof root.</td></tr>
+      <tr><td>2026-09-08</td><td>UIR1</td><td>done</td><td>Stack in place: Base UI 1.8.0, router 1.170.33, table, virtual, charts, panels, cva, shadcn 4.21.0, components.json, @/ alias. The registry now imports the <code>cn</code> package, so utils.ts re-exports it and clsx/tailwind-merge are gone. Registry button forced a shadcn colour bridge and an unlayered focus-ring rule (contrast.spec.ts gained a test). Router 1.170: error boundary error is unknown; globalNotFound is _notFound. Verifier 15 failing; 852 tests; build; smoke 1/1.</td></tr>
+      <tr><td>2026-09-08</td><td>UIR2</td><td>done</td><td>One palette: Starport role tokens on <code>:root</code> (dark) and <code>[data-theme="light"]</code>, four light values deepened for AA on <code>--bg-hover</code>; Geist and Geist Mono self-hosted; 105 files moved to the role-token utilities, labels to sentence case, bare <code>rounded</code> to <code>rounded-xs</code>; palette slice, swatches and <code>data-palette</code> deleted; DESIGN.md palette, type, shape and badge sections rewritten. contrast and token-utilities specs re-cut as gates. 827 tests; build; make build; smoke 1/1; verify.sh 11 failing (all UIR3+).</td></tr>
+      <tr><td>2026-09-08</td><td>UIR3</td><td>done</td><td>Registry set added by the shadcn CLI (18 files under <code>ui/</code>, chart seam included; <code>select.tsx</code> hover moved off the amber <code>bg-accent</code>; Button carries <code>data-variant</code>/<code>data-size</code>). Nimbus-owned Pill, StateDot, DataTable (TanStack Table v9, Virtual rows, ARIA table on divs), EmptyState, CopyButton, LoadFailed, Skeleton; ConfirmDialog, Slideover, SegmentedControl, Select rebuilt on Base UI. state-chip, category-chip, kbd, checkbox, use-modal-focus, next-themes deleted; 30 call sites migrated. Base UI modality is inert siblings, not <code>aria-modal</code>, and initial focus lands a frame later, so specs assert accordingly. Four missing component specs added. 814 tests; build; make build 1m 13s; smoke 1/1; verify.sh 10 failing (all UIR4+).</td></tr>
+      <tr><td>2026-09-08</td><td>UIR4</td><td>done</td><td><code>Mascot</code> component (five states, outline and solid, blink only, absent under reduced motion via <code>useReducedMotion</code>); <code>logo-mark.tsx</code> deleted; top nav renders the 30px outline mark. Solid face exported as <code>favicon.svg</code>, <code>favicon.ico</code> (16/32/48) and <code>icon-512.png</code>; warm/night favicons and the ThemeController swap removed. Sign-in page (<code>crates/nimbus-assets</code>) takes the solid sticker, added to this task because no other task owns it; the same server test exposed a UIR1 break (the page asked for JetBrains Mono files that stopped shipping), fixed by pointing it at the shipped Geist Mono files. Stories: Mascot, Pill, DataTable, StateDot gallery, EmptyState variants. DESIGN.md Mascot subsection. 826 tests; storybook:build; local_ui 14/14; make build 64s; smoke 1/1; verify.sh 8 failing (all UIR5+). Open: the sign-in page keeps its blue palette and needs an owner (UIR8 or a new task).</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+
+</body>
+</html>

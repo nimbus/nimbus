@@ -2,9 +2,9 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 import { useTenantList } from "../hooks/use-tenant-list";
-import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 import {
   type NavCountEntry,
@@ -38,7 +38,7 @@ export function PrimaryDrawer() {
         if (!isInteractiveTarget(e.target)) toggle();
       }}
       className={cn(
-        "flex h-full shrink-0 flex-col gap-1 border-r border-app bg-surface py-3 transition-[width] duration-150",
+        "flex h-full shrink-0 flex-col gap-1 border-r border-border-2 bg-bg-panel py-3 transition-[width] duration-150",
         collapsed ? "w-12 px-1" : "w-56 px-2",
       )}
       data-view={view}
@@ -61,7 +61,7 @@ export function PrimaryDrawer() {
           title={collapsed ? "Expand navigation" : "Collapse navigation"}
           data-testid="primary-drawer-toggle"
           className={cn(
-            "flex h-8 items-center gap-2 rounded-md text-xs text-muted transition-colors hover:bg-surface-2 hover:text-default",
+            "flex h-8 items-center gap-2 rounded-md text-xs text-text-3 transition-colors hover:bg-bg-raised hover:text-text-1",
             collapsed ? "justify-center px-0" : "px-2",
           )}
         >
@@ -135,10 +135,10 @@ function DrawerEntry({
           "group flex h-9 items-center rounded-md border-l-2 border-transparent text-sm",
           collapsed ? "justify-center px-0" : "gap-2 px-2",
           active
-            ? "bg-surface-2 text-default"
-            : "text-muted hover:bg-surface-2 hover:text-default",
+            ? "bg-bg-raised text-text-1"
+            : "text-text-3 hover:bg-bg-raised hover:text-text-1",
         )}
-        style={active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined}
+        style={active ? { borderLeftColor: "var(--accent)" } : undefined}
         aria-current={active ? "page" : undefined}
         aria-label={collapsed ? entry.label : undefined}
         data-testid={`nav-${entry.id}`}
@@ -168,7 +168,7 @@ function CountBadge({ id, value }: { id: string; value: number | undefined }) {
     return (
       <>
         <span
-          className="tabular text-xs text-muted"
+          className="tabular text-xs text-text-3"
           aria-hidden="true"
           data-testid={`nav-${id}-count-loading`}
         >
@@ -180,7 +180,7 @@ function CountBadge({ id, value }: { id: string; value: number | undefined }) {
   }
   return (
     <span
-      className="tabular font-mono text-xs text-muted"
+      className="tabular font-mono text-xs text-text-3"
       data-testid={`nav-${id}-count`}
     >
       {value}
