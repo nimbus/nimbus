@@ -121,7 +121,7 @@ active registry through a rollback; only the Convex bundle moves.
 | `make build` | ok |
 | `npm run test:e2e` | 27 passed, 1 skipped, 1 failed (the panel assertion above); the deploys walk 1 passed after the fix |
 | `verify.sh` | 0 failing |
-| `make ci` | UNVERIFIED. Two runs: the first ended with `No space left on device` while linking the workspace test profile (the data volume was 100% full); after 11.6 GiB of regenerable workspace artifacts were removed from this worktree's `target`, the second run was stopped by the host for low memory while compiling `nimbus-cli`. Format, the Node 22 anchor snapshot check and the nimbus-runtime lane (9 test binaries) passed in both runs. Hosted CI owns the remaining gate. |
+| `make ci` | Green, with one flaky unrelated test. The first run ended with `No space left on device` (the data volume was 100% full) and the second was stopped by the host for low memory; after the host was cleared the third run passed fmt, clippy, deny, the runtime lane and the workspace lane (7771 tests: 7770 passed, 1 failed). The one failure, `nimbus-cli machine::manager::tests::stop_cleanup::request_vmm_state_change_sends_hard_stop_payload` (`Connection refused` on the test's own temporary `krunkit.sock`), is a socket-readiness race under parallel nextest load: it passed alone three times in a row, and this branch does not touch `crates/nimbus-cli/src/machine`. The remaining targets ran after it: `test-rust-docs`, `verify-harness`, `build-js`, `typecheck-js`, `test-js` (130 files, 1125 passed) and `proof-helpers` all passed. `proof-helpers` first failed because its REC and tenant-autoscaling verifiers read gitignored `docs/private` files that a fresh worktree lacks; with the main checkout's `docs/private` copied in (no file overwritten) it passed. |
 
 Screenshot at 1280×720 from the e2e walk: `UIR23-deploys-empty.png` (the
 Deploys page and sub-panel on a server with no recorded activation).
@@ -138,4 +138,5 @@ Deploys page and sub-panel on a server with no recorded activation).
   under msw and the server tests; the e2e walk covers the empty history
   only, because the fixture server has no deployable bundle.
 - The artifact store keeps every deployed bundle; nothing prunes it.
-- `make ci` is UNVERIFIED on this host (disk and memory); every other gate is green.
+- `make ci` is green apart from the pre-existing nimbus-cli socket-readiness race named above; the test is out of scope for this branch and is not changed here.
+- `make proof-helpers` needs the gitignored `docs/private` tree; a fresh worktree fails it until those files are copied in from the main checkout.
