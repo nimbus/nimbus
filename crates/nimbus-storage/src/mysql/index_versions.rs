@@ -1,7 +1,7 @@
 use super::document_versions::get_document_version_at_from_session;
+use super::index_entries::IndexTupleMutation;
 use super::*;
 use crate::diagnostics::IndexVersionStorageDiagnostic;
-use crate::index::encoded_index_tuple_for_document;
 use crate::index::history_scan::HistoricalIndexDocumentEntry;
 use crate::sql::index_history::{SqlHistoricalIndexStore, sql_historical_index_facade};
 use crate::{
@@ -15,14 +15,6 @@ pub(crate) struct IndexVersionInterval {
     pub document_id: DocumentId,
     pub visible_from: SequenceNumber,
     pub visible_until: Option<SequenceNumber>,
-}
-
-struct IndexVersionMutation {
-    table_id: String,
-    index_id: String,
-    document_id: String,
-    close_tuple: Option<Vec<u8>>,
-    open_tuple: Option<Vec<u8>>,
 }
 
 impl MySqlTenantStore {
@@ -236,38 +228,19 @@ fn mysql_index_version_visible_at(
     visible_from <= sequence && visible_until.is_none_or(|until| sequence < until)
 }
 
-pub(super) async fn record_index_versions_for_events_in_session<C>(
+/// Closes and opens visibility intervals for the tuple mutations of one write
+/// batch. The caller computes the mutations once in
+/// `super::index_entries` and applies them to the current-state keyspace in
+/// the same session.
+pub(super) async fn record_index_versions_for_mutations_in_session<C>(
     session: &mut C,
     database_name: &str,
     sequence: SequenceNumber,
-    events: &[TenantEventKind],
+    mutations: &[IndexTupleMutation],
 ) -> Result<()>
 where
     C: Queryable,
 {
-    for event in events {
-        if let TenantEventKind::DocumentWrite { writes } = event {
-            record_index_versions_for_writes_in_session(session, database_name, sequence, writes)
-                .await?;
-        }
-    }
-    Ok(())
-}
-
-pub(super) async fn record_index_versions_for_writes_in_session<C>(
-    session: &mut C,
-    database_name: &str,
-    sequence: SequenceNumber,
-    writes: &[WriteOp],
-) -> Result<()>
-where
-    C: Queryable,
-{
-    if writes.is_empty() {
-        return Ok(());
-    }
-
-    let mutations = index_version_mutations_for_writes(session, database_name, writes).await?;
     if mutations.is_empty() {
         return Ok(());
     }
@@ -298,8 +271,8 @@ where
     );
 
     for mutation in mutations {
-        if let Some(close_tuple) = mutation.close_tuple {
-            let tuple_hash = encoded_tuple_hash(close_tuple.as_slice());
+        if let Some(close_tuple) = mutation.close_tuple.as_deref() {
+            let tuple_hash = encoded_tuple_hash(close_tuple);
             session
                 .exec_drop(
                     close_query.as_str(),
@@ -315,8 +288,8 @@ where
                 .await
                 .map_err(map_mysql_error)?;
         }
-        if let Some(open_tuple) = mutation.open_tuple {
-            let tuple_hash = encoded_tuple_hash(open_tuple.as_slice());
+        if let Some(open_tuple) = mutation.open_tuple.as_deref() {
+            let tuple_hash = encoded_tuple_hash(open_tuple);
             session
                 .exec_drop(
                     open_query.as_str(),
@@ -374,48 +347,6 @@ where
             "MySQL index-version prune count is negative",
         )
     })
-}
-
-async fn index_version_mutations_for_writes<C>(
-    session: &mut C,
-    database_name: &str,
-    writes: &[WriteOp],
-) -> Result<Vec<IndexVersionMutation>>
-where
-    C: Queryable,
-{
-    let mut mutations = Vec::new();
-    for write in writes {
-        let Some(table_schema) =
-            load_table_schema_from_session(session, database_name, &write.table).await?
-        else {
-            continue;
-        };
-        for index in table_schema.maintained_indexes() {
-            let close_tuple = write
-                .previous
-                .as_ref()
-                .map(|previous| encoded_index_tuple_for_document(previous, index))
-                .transpose()?
-                .flatten();
-            let open_tuple = write
-                .current
-                .as_ref()
-                .map(|current| encoded_index_tuple_for_document(current, index))
-                .transpose()?
-                .flatten();
-            if close_tuple.is_some() || open_tuple.is_some() {
-                mutations.push(IndexVersionMutation {
-                    table_id: write.table_id.as_str().to_string(),
-                    index_id: index.id.as_str().to_string(),
-                    document_id: write.doc_id.to_string(),
-                    close_tuple,
-                    open_tuple,
-                });
-            }
-        }
-    }
-    Ok(mutations)
 }
 
 #[cfg(test)]

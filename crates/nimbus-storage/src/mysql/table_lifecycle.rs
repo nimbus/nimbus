@@ -133,9 +133,6 @@ impl MySqlWriteTransaction {
         };
 
         if self.load_table_id(&table)?.is_none() {
-            if let Some(previous) = self.load_table_schema(&table)? {
-                self.drop_table_indexes(&previous)?;
-            }
             self.delete_table_schema_entry(&table)?;
             self.schema_cache_changed = true;
         }
@@ -349,6 +346,12 @@ where
         .exec_drop(delete_documents, (table_id.as_str(),))
         .await
         .map_err(map_mysql_error)?;
+    super::index_entries::purge_index_entries_for_table_in_session(
+        session,
+        database_name,
+        table_id,
+    )
+    .await?;
     let delete_catalog = format!(
         "DELETE FROM {} WHERE table_id = ?",
         qualified_table(database_name, "table_catalog")

@@ -11,15 +11,15 @@
 //! rejection messages are observable, and they were spelled out identically in
 //! both stores and again in [`crate::sql::read_snapshot`].
 //!
-//! Two neighbours in those files stay per-backend on purpose because their
-//! observable error text differs between the dialects, and this step is
-//! behavior-preserving:
+//! One neighbour in those files stays per-backend on purpose because its
+//! observable error text differs between the dialects:
 //!
-//! - `field_type_for_table_schema` — PostgreSQL says `indexed field '{}' not
-//!   found for table '{}'`, MySQL says `field '{}' not found in schema for
-//!   table '{}'`.
 //! - `validate_durable_journal_stream_limit` — PostgreSQL says `journal stream
 //!   limit ...`, MySQL says `durable journal stream limit ...`.
+//!
+//! PostgreSQL also keeps its own `field_type_for_table_schema` for the typed
+//! generated-column read path; MySQL reads through its `index_entries`
+//! keyspace and needs no field types at read time.
 
 use std::cmp::Ordering;
 use std::ops::Bound;

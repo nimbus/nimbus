@@ -21,7 +21,12 @@ fn empty_range_bounds() -> IndexRangeScanBounds {
     IndexRangeScanBounds::Empty
 }
 
-fn range_scan_bounds_for_match_prefix(
+/// Plans the key range for an index read whose leading key bytes equal
+/// `match_prefix` and whose next encoded value falls in `start..end`. The
+/// embedded keyspace passes a table- and index-qualified prefix; a SQL
+/// keyspace passes the bare encoded tuple prefix because its rows already
+/// carry the table and index identity in their own columns.
+pub(crate) fn range_scan_bounds_for_match_prefix(
     match_prefix: Vec<u8>,
     start: IndexRangeBound<'_>,
     end: IndexRangeBound<'_>,

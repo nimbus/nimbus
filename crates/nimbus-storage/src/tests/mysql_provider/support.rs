@@ -6,11 +6,11 @@ pub(super) use std::time::{SystemTime, UNIX_EPOCH};
 pub(super) use super::super::provider_support::*;
 pub(super) use super::super::{
     ExternalProviderFixtureMode, FieldSchema, FieldType, MySqlProvider, MySqlProviderConfig,
-    TenantEventRecord, TenantReadStorage, external_provider_fixture_mode,
+    TenantEventRecord, TenantReadStorage, TenantStore, external_provider_fixture_mode,
 };
 pub(super) use crate::{FaultInjector, FaultPoint, ResolvedScheduleOp, ResolvedWrite};
 pub(super) use mysql_async::prelude::Queryable;
-pub(super) use mysql_async::{Opts, Pool};
+pub(super) use mysql_async::{Opts, Params, Pool, Row};
 pub(super) use nimbus_core::{
     CronJob, CronSchedule, Document, Mutation, ScheduledJobOutcome, ScheduledJobResult, Schema,
     SchemaChangeEvent, SequenceNumber, SystemWallClock, TableId, TableName, TableSchema,
@@ -122,28 +122,73 @@ pub(super) async fn document_index_counts(
     (generated_columns, secondary_indexes)
 }
 
-pub(super) async fn document_generated_column_expressions(
+/// One row of the current-state index keyspace:
+/// `(table_id, index_id, document_id, encoded_tuple)` in keyspace order.
+pub(super) type IndexEntryRow = (String, String, String, Vec<u8>);
+
+pub(super) async fn index_entry_rows(
     connection_string: &str,
     database_name: &str,
-) -> Vec<String> {
+) -> Vec<IndexEntryRow> {
     let opts = Opts::from_url(connection_string).expect("connection string should parse");
     let pool = Pool::new(opts);
     let mut conn = pool.get_conn().await.expect("mysql connection should open");
-    let expressions = conn
-        .exec::<String, _, _>(
-            "SELECT GENERATION_EXPRESSION \
-             FROM INFORMATION_SCHEMA.COLUMNS \
-             WHERE TABLE_SCHEMA = ? \
-               AND TABLE_NAME = 'documents' \
-               AND COLUMN_NAME LIKE 'gcol\\_%' \
-             ORDER BY COLUMN_NAME",
-            (database_name,),
+    let rows = conn
+        .exec::<IndexEntryRow, _, _>(
+            format!(
+                "SELECT table_id, index_id, document_id, encoded_tuple \
+                 FROM `{database_name}`.`index_entries` \
+                 ORDER BY table_id, index_id, encoded_tuple, document_id"
+            ),
+            (),
         )
         .await
-        .expect("generated column expressions should query");
+        .expect("index entry rows should query");
     conn.disconnect()
         .await
         .expect("mysql connection should close");
     pool.disconnect().await.expect("mysql pool should close");
-    expressions
+    rows
+}
+
+/// One row of a MySQL `EXPLAIN`: the table alias, the access type
+/// (`ALL`, `range`, `eq_ref`, ...), and the chosen key when there is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ExplainRow {
+    pub(super) table: String,
+    pub(super) access_type: String,
+    pub(super) key: Option<String>,
+}
+
+pub(super) async fn explain_rows(
+    connection_string: &str,
+    sql: &str,
+    params: Params,
+) -> Vec<ExplainRow> {
+    let opts = Opts::from_url(connection_string).expect("connection string should parse");
+    let pool = Pool::new(opts);
+    let mut conn = pool.get_conn().await.expect("mysql connection should open");
+    let rows: Vec<Row> = conn
+        .exec(format!("EXPLAIN {sql}"), params)
+        .await
+        .expect("explain should run");
+    let plan = rows
+        .into_iter()
+        .map(|row| ExplainRow {
+            table: row
+                .get::<Option<String>, _>("table")
+                .flatten()
+                .expect("explain row should name a table"),
+            access_type: row
+                .get::<Option<String>, _>("type")
+                .flatten()
+                .expect("explain row should name an access type"),
+            key: row.get::<Option<String>, _>("key").flatten(),
+        })
+        .collect();
+    conn.disconnect()
+        .await
+        .expect("mysql connection should close");
+    pool.disconnect().await.expect("mysql pool should close");
+    plan
 }

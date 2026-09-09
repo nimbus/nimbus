@@ -30,6 +30,8 @@
 pub(crate) mod commit_effects;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod index_history;
+#[cfg(feature = "mysql")]
+pub(crate) mod index_keyspace;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod predicate;
 #[cfg(any(feature = "mysql", feature = "postgres"))]

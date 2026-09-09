@@ -1,0 +1,16 @@
+autoreview target: branch
+branch: codex/mysql-index-keyspace
+gate: pre-pr (configured cadence: pre-pr)
+profile: nimbus
+config: /Users/jack/.config/autoreview/config.toml, /Users/jack/.agents/skills/nimbus-autoreview/autoreview.toml
+selection: sol=7.96
+reviewers: codex model=gpt-5.6-sol thinking=xhigh
+tools: on
+web_search: on
+ref: origin/main
+trufflehog: clean (3.8s)
+bundle: 280164 bytes; review passes: 1
+autoreview clean: no accepted/actionable findings reported
+overall: patch is correct (0.95)
+No P0 defects are demonstrated by the change bundle. The new MySQL index keyspace remains transactionally coupled to document writes, index history, schema changes, and commit-log application, and the bundle includes behavioral coverage for write maintenance, schema backfill and rollback, range ordering, query planning, and the prior 64-key failure.
+autoreview clean attestation stored for this substantive diff
