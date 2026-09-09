@@ -232,3 +232,83 @@ async fn mysql_table_lifecycle_activates_hidden_identity_and_diagnostics_track_l
     })
     .await;
 }
+
+/// Regression for the InnoDB 64-key cap: a tenant schema with more than 64
+/// maintained indexes must apply and serve index reads on MySQL.
+#[tokio::test(flavor = "multi_thread")]
+async fn mysql_schema_with_more_than_sixty_four_indexes_applies_and_reads() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("many-indexes").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table = TableName::new("wide").expect("table name should build");
+        let index_count = 70usize;
+        let fields = (0..index_count)
+            .map(|position| format!("f{position}"))
+            .collect::<Vec<_>>();
+        let table_schema = TableSchema {
+            table: table.clone(),
+            fields: fields
+                .iter()
+                .map(|name| FieldSchema {
+                    name: name.clone(),
+                    field_type: FieldType::Number,
+                    required: false,
+                })
+                .collect(),
+            indexes: fields
+                .iter()
+                .map(|name| nimbus_core::IndexDefinition {
+                    id: nimbus_core::IndexId::new(),
+                    state: nimbus_core::IndexState::Enabled,
+                    name: format!("by_{name}"),
+                    fields: vec![name.clone()],
+                })
+                .collect(),
+            access_policy: None,
+        };
+        let documents = (0..2u64)
+            .map(|seed| {
+                Document::new(
+                    table.clone(),
+                    serde_json::Map::from_iter(
+                        fields
+                            .iter()
+                            .map(|name| (name.clone(), serde_json::json!(seed))),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        for document in &documents {
+            opened
+                .store
+                .insert(document)
+                .expect("document should insert before the schema exists");
+        }
+
+        opened
+            .store
+            .replace_table_schema(&table_schema)
+            .expect("a schema with more than 64 indexes should apply on MySQL");
+
+        let mut check_cancel = || Ok(());
+        for index_name in [
+            format!("by_{}", fields[0]),
+            format!("by_{}", fields[index_count - 1]),
+        ] {
+            let found = opened
+                .store
+                .index_scan_prefix_cancellable(
+                    &table,
+                    &index_name,
+                    &[serde_json::json!(1)],
+                    &mut check_cancel,
+                )
+                .expect("index scan should succeed");
+            assert_eq!(found, vec![documents[1].clone()], "{index_name}");
+        }
+    })
+    .await;
+}
