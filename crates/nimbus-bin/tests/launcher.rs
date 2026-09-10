@@ -1,6 +1,39 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// Builds a command for the launcher under test with a configuration
+/// surface the test owns completely.
+///
+/// `nimbus start` reads its configuration from `NIMBUS_*` variables as well
+/// as from flags, so any such variable in the parent environment silently
+/// changes what the child does. The coverage workflow sets provider fixture
+/// URLs at job level for the suites that need a live provider, and its
+/// `rest` shard carries `nimbus-bin`. Inherited by this launcher child,
+/// `NIMBUS_MYSQL_URL` and the libSQL pair made it refuse to start at all:
+/// "External provider config requires --tenant-provider". These tests assert
+/// the launcher's own process contract, so the child gets the flags they
+/// pass and nothing else.
+fn nimbus_command() -> Command {
+    let mut command = Command::new(nimbus_bin());
+    for key in nimbus_config_vars(std::env::vars_os().map(|(key, _)| key)) {
+        command.env_remove(&key);
+    }
+    command
+}
+
+/// Selects the variables that configure Nimbus from an environment. Split out
+/// from [`nimbus_command`] so the selection is testable without mutating this
+/// process's own environment.
+fn nimbus_config_vars<I>(vars: I) -> Vec<OsString>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    vars.into_iter()
+        .filter(|key| key.to_string_lossy().starts_with("NIMBUS_"))
+        .collect()
+}
 
 fn nimbus_bin() -> PathBuf {
     std::env::var_os("NEXTEST_BIN_EXE_nimbus")
@@ -13,8 +46,36 @@ fn nimbus_bin() -> PathBuf {
 }
 
 #[test]
+fn nimbus_config_vars_selects_only_nimbus_configuration() {
+    let environment = [
+        "NIMBUS_MYSQL_URL",
+        "NIMBUS_LIBSQL_URL",
+        "NIMBUS_LIBSQL_ADMIN_URL",
+        "NIMBUS_TENANT_PROVIDER",
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "NEXTEST_BIN_EXE_nimbus",
+        "NIMBUSED",
+    ]
+    .into_iter()
+    .map(OsString::from);
+
+    assert_eq!(
+        nimbus_config_vars(environment),
+        vec![
+            OsString::from("NIMBUS_MYSQL_URL"),
+            OsString::from("NIMBUS_LIBSQL_URL"),
+            OsString::from("NIMBUS_LIBSQL_ADMIN_URL"),
+            OsString::from("NIMBUS_TENANT_PROVIDER"),
+        ],
+        "only the NIMBUS_ configuration prefix may be stripped from a launcher child"
+    );
+}
+
+#[test]
 fn launcher_runs_nimbus_cli_version_command() {
-    let output = Command::new(nimbus_bin())
+    let output = nimbus_command()
         .arg("--version")
         .output()
         .expect("nimbus launcher should execute");
@@ -41,7 +102,7 @@ fn launcher_renders_cli_errors_for_operators() {
         "nimbus-bin-launcher-{}-{nonce}",
         std::process::id()
     ));
-    let mut command = Command::new(nimbus_bin());
+    let mut command = nimbus_command();
     command.args([
         "start",
         "--host",
@@ -87,7 +148,7 @@ fn launcher_gracefully_stops_on_sigterm() {
     let stderr_path = test_root.join("stderr.log");
     let stderr = std::fs::File::create(&stderr_path).expect("stderr log should open");
 
-    let mut command = Command::new(nimbus_bin());
+    let mut command = nimbus_command();
     command
         .args(["start", "--host", "127.0.0.1", "--port", "0", "--data-dir"])
         .arg(test_root.join("data"))
