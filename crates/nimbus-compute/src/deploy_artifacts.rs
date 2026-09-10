@@ -60,8 +60,10 @@ impl DeployArtifactStore {
     /// A digest that is not a SHA-256 names nothing this store could have
     /// written, so the answer is `false` rather than an error.
     pub fn is_retained(&self, sha256: &str) -> bool {
-        self.bundle_dir(sha256)
-            .is_ok_and(|bundle_dir| bundle_dir.join(MANIFEST_FILE).is_file())
+        let Ok(bundle_dir) = self.bundle_dir(sha256) else {
+            return false;
+        };
+        bundle_dir.join(MANIFEST_FILE).is_file()
     }
 
     /// Copies the Convex artifacts under `app_dir` into the store under
