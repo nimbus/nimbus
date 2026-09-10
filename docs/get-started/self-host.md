@@ -11,7 +11,8 @@ files, no Node.js — `curl` is enough.
 ## 1. Install Nimbus
 
 ```bash
-brew install nimbus/tap/nimbus
+brew trust --cask nimbus/tap/nimbus
+brew install --cask nimbus/tap/nimbus
 ```
 
 Other platforms ship via the install script and release binaries — see the

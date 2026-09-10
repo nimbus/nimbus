@@ -120,10 +120,19 @@ const docs = await client.db("myapp").collection("messages").find().toArray();
 ## Quick start
 
 ```bash
-brew install nimbus/tap/nimbus   # see Install below for other platforms
+brew trust --cask nimbus/tap/nimbus
+brew install --cask nimbus/tap/nimbus   # see Install below for other platforms
 nimbus init convex my-app
 cd my-app
 nimbus dev
+```
+
+Homebrew 6 requires package trust. See [Homebrew tap trust](https://docs.brew.sh/Tap-Trust).
+Use `brew install` for the first installation. To upgrade an installed cask:
+
+```bash
+brew update
+brew upgrade --cask nimbus/tap/nimbus
 ```
 
 `nimbus dev` generates types, creates a `demo` tenant, and serves on
@@ -166,7 +175,8 @@ for the full status matrix, including what is not built yet.
 **Homebrew (macOS and Linux):**
 
 ```bash
-brew install nimbus/tap/nimbus
+brew trust --cask nimbus/tap/nimbus
+brew install --cask nimbus/tap/nimbus
 ```
 
 **Binary download:** grab the archive for your platform from

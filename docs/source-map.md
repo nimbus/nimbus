@@ -7,6 +7,9 @@ source-backed check before changing any behavior claim. Every page with a
 load-bearing claim gets a row; `scripts/check-docs.sh` verifies the listed
 sources exist.
 
+Homebrew installation examples use package trust from [Homebrew tap trust](https://docs.brew.sh/Tap-Trust).
+The release workflow generates the Nimbus cask.
+
 ## Get started + landing
 
 | Doc page | Claim / surface | Source |
