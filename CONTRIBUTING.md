@@ -41,3 +41,29 @@ Unless otherwise agreed in writing, accepted contributions are provided under:
 Submitting a pull request does not guarantee acceptance. Maintainers may request
 changes, decline contributions, or defer them to keep the project cohesive and
 supportable.
+
+## Release notes
+
+`CHANGELOG.md` is the single source of truth for what a release changed.
+
+Its entries are written by hand in the release preparation pull request and
+reviewed there. When the tag is pushed, the release workflow prints that
+version's section and publishes it verbatim as the GitHub release notes, so the
+notes readers see are the words a reviewer approved. Nothing writes back to
+`main` after a tag.
+
+Two consequences are worth knowing:
+
+- A release whose section is missing or empty fails. CI reports this on the
+  preparation pull request, against the version the tree declares, while you
+  can still write the entry. The same check runs again at tag time and fails
+  the release rather than publishing empty notes.
+- Do not regenerate `CHANGELOG.md` in place. `make changelog-draft` writes
+  `CHANGELOG.draft.md` from conventional commits as a starting point; edit what
+  you need from it into `CHANGELOG.md` by hand.
+
+To read back exactly what a release would publish:
+
+```bash
+make changelog-notes VERSION=v0.1.48
+```

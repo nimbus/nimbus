@@ -91,3 +91,6 @@ crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.pc.bin
 # that only outlives a run if the holder was killed mid-generation.
 packages/firebase/src/gen/
 packages/firebase/src/gen.lock/
+
+# `make changelog-draft` scratch output; CHANGELOG.md is the curated file.
+CHANGELOG.draft.md

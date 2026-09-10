@@ -11,6 +11,41 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 VERIFY_SCRIPT = REPO_ROOT / "scripts" / "verify-release-version-contract.sh"
 VERSION = "1.2.3"
 
+CHANGELOG = f"""# Changelog
+
+## [{VERSION}] - 2026-08-31
+
+### Added
+
+- A thing worth reading about.
+
+## [1.2.2] - 2026-08-30
+
+### Fixed
+
+- An older defect.
+"""
+
+EMPTY_SECTION_CHANGELOG = f"""# Changelog
+
+## [{VERSION}] - 2026-08-31
+
+## [1.2.2] - 2026-08-30
+
+### Fixed
+
+- An older defect.
+"""
+
+MISSING_HEADING_CHANGELOG = """# Changelog
+
+## [1.2.2] - 2026-08-30
+
+### Fixed
+
+- An older defect.
+"""
+
 
 class ReleaseVersionContractTests(unittest.TestCase):
     def test_staged_local_package_root_requires_an_exact_version(self) -> None:
@@ -63,10 +98,8 @@ class ReleaseVersionContractTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (fixture / "CHANGELOG.md").write_text(
-                f"# Changelog\n\n## [{VERSION}] - 2026-08-31\n",
-                encoding="utf-8",
-            )
+            changelog = fixture / "CHANGELOG.md"
+            changelog.write_text(CHANGELOG, encoding="utf-8")
             subprocess.run(
                 ["git", "init", "--quiet"], cwd=fixture, check=True
             )
@@ -94,6 +127,23 @@ class ReleaseVersionContractTests(unittest.TestCase):
             accepted = self.run_verifier(fixture)
             self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
             self.assertIn(f"matches {VERSION}", accepted.stdout)
+
+            # The release workflow publishes this section verbatim, so a
+            # heading with nothing under it must fail here rather than ship an
+            # empty release.
+            changelog.write_text(EMPTY_SECTION_CHANGELOG, encoding="utf-8")
+            empty = self.run_verifier(fixture)
+            self.assertNotEqual(empty.returncode, 0)
+            self.assertIn(
+                f"CHANGELOG.md section for {VERSION} is empty", empty.stderr
+            )
+
+            changelog.write_text(MISSING_HEADING_CHANGELOG, encoding="utf-8")
+            missing_heading = self.run_verifier(fixture)
+            self.assertNotEqual(missing_heading.returncode, 0)
+            self.assertIn(
+                f"CHANGELOG.md missing heading for {VERSION}", missing_heading.stderr
+            )
 
     @staticmethod
     def run_verifier(fixture: Path) -> subprocess.CompletedProcess[str]:

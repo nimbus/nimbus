@@ -1105,44 +1105,35 @@ jobs:
             --require-license \
             --checksums artifacts/checksums-sha256.txt
 
-      - name: Generate release notes
-        id: release-notes
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
-        with:
-          config: cliff.toml
-          args: --latest --strip header
-          github_token: ${{ github.token }}
-        env:
-          OUTPUT: /tmp/RELEASE_NOTES.md
-
-      - name: Generate full changelog
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
-        with:
-          config: cliff.toml
-          github_token: ${{ github.token }}
-        env:
-          OUTPUT: /tmp/CHANGELOG.md
-
-      - name: Update CHANGELOG.md on main
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # CHANGELOG.md is the reviewed source of truth for what a release
+      # changed. It is written in the release preparation pull request,
+      # reviewed there, and frozen by the tag, so the notes published here are
+      # the same words a human approved. Nothing writes back to main after a
+      # tag: a bot commit would race the branch and could only overwrite the
+      # curated section with raw commit subjects.
+      - name: Build release notes from CHANGELOG.md
         run: |
-          FILE_SHA=$(gh api repos/${{ github.repository }}/contents/CHANGELOG.md \
-            --jq '.sha' 2>/dev/null || echo "")
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          bash scripts/extract-release-notes.sh "${TAG}" > /tmp/RELEASE_NOTES.md
 
-          ARGS=(
-            repos/${{ github.repository }}/contents/CHANGELOG.md
-            --method PUT
-            --field message="docs: update CHANGELOG.md for ${{ github.ref_name }}"
-            --field content="$(base64 -w0 /tmp/CHANGELOG.md)"
-            --field branch="main"
-          )
-          if [ -n "$FILE_SHA" ]; then
-            ARGS+=(--field sha="$FILE_SHA")
-          fi
+          # `fetch-depth: 0` above makes the previous tag reachable, so the
+          # notes can close with a compare link. A first release has no
+          # predecessor, which is not an error.
+          PREVIOUS_TAG="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          {
+            printf '\n'
+            if [ -n "${PREVIOUS_TAG}" ]; then
+              printf '**Full changelog**: https://github.com/${{ github.repository }}/compare/%s...%s\n' \
+                "${PREVIOUS_TAG}" "${TAG}"
+            else
+              printf '**Full changelog**: https://github.com/${{ github.repository }}/commits/%s\n' \
+                "${TAG}"
+            fi
+          } >> /tmp/RELEASE_NOTES.md
 
-          gh api "${ARGS[@]}" --silent
-        continue-on-error: true
+          printf 'release notes for %s:\n' "${TAG}"
+          cat /tmp/RELEASE_NOTES.md
 
       - name: Determine prerelease
         id: prerelease
@@ -1293,21 +1284,30 @@ jobs:
           # Get current file SHA (if it exists) for the update API call
           FILE_SHA=$(gh api repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb --jq '.sha' 2>/dev/null || echo "")
 
+          # Build the request body as a file and send it on stdin. Passing the
+          # base64 payload as `--field content="$(base64 ...)"` puts the whole
+          # encoded file into one argv entry, and Linux caps a single argument
+          # at MAX_ARG_STRLEN (128 KiB) regardless of total ARG_MAX. A cask
+          # that grows past that would fail with "Argument list too long"
+          # rather than anything naming the real problem. Stdin has no such
+          # cap.
           if [ -n "$FILE_SHA" ]; then
-            gh api repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb \
-              --method PUT \
-              --field message="Update nimbus to ${VERSION}" \
-              --field content="$(base64 -w0 /tmp/nimbus.rb)" \
-              --field sha="$FILE_SHA" \
-              --silent
+            MESSAGE="Update nimbus to ${VERSION}"
           else
-            gh api repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb \
-              --method PUT \
-              --field message="Add nimbus cask at ${VERSION}" \
-              --field content="$(base64 -w0 /tmp/nimbus.rb)" \
-              --silent
+            MESSAGE="Add nimbus cask at ${VERSION}"
           fi
-        continue-on-error: true
+          jq -n \
+            --arg message "${MESSAGE}" \
+            --arg content "$(base64 -w0 /tmp/nimbus.rb)" \
+            --arg sha "${FILE_SHA}" \
+            '{message: $message, content: $content}
+               + (if $sha == "" then {} else {sha: $sha} end)' \
+            > /tmp/nimbus-cask-request.json
+
+          gh api repos/nimbus/homebrew-tap/contents/Casks/nimbus.rb \
+            --method PUT \
+            --input /tmp/nimbus-cask-request.json \
+            --silent
 
   # The release above is created with the workflow's GITHUB_TOKEN, and
   # events raised by that token do not trigger other workflows' `release:`

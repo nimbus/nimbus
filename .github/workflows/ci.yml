@@ -2733,6 +2733,26 @@ jobs:
       - name: Verify Bun/JSC shared smoke runner
         run: python3 -m unittest scripts.test_run_bun_jsc_shared_smoke
 
+      - name: Verify release notes helper
+        run: |
+          bash -n scripts/extract-release-notes.sh
+          python3 -m unittest scripts.test_extract_release_notes
+          python3 -m unittest scripts.test_verify_release_version_contract
+
+      # The release workflow publishes the CHANGELOG.md section for the tag
+      # verbatim, and fails closed when that section is missing or empty. By
+      # then the tag exists and the only remaining option is to fail the
+      # release, so check the same contract here, against the version the tree
+      # declares. On an ordinary pull request that is the last released
+      # version, whose entry is already written and unchanged. On a release
+      # preparation pull request it is the new version, so a missing or empty
+      # entry is reported while a human can still write it.
+      - name: Verify the declared version has a release entry
+        run: |
+          VERSION="$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")"
+          printf 'workspace version: %s\n' "${VERSION}"
+          bash scripts/verify-release-version-contract.sh "${VERSION}"
+
       - name: Verify Linux package helper
         run: bash scripts/verify-build-linux-release-packages-helper.sh
 
