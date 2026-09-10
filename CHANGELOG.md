@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.48] - 2026-09-09
+
+### Added
+
+- **nimbus-ui**: Rebuild the operator console on the Starport console stack
+  (shadcn `base-nova` on Base UI, TanStack Router, Table, Virtual, and Charts)
+  with one neutral-plus-amber palette in light and dark, Geist type, a single
+  sidebar with a resizable sub-panel, a command palette, and the face-only
+  mascot. Every page is rebuilt in place. by @jackspirou in [#331](https://github.com/nimbus/nimbus/pull/331),
+  [#332](https://github.com/nimbus/nimbus/pull/332), and [#333](https://github.com/nimbus/nimbus/pull/333)
+- **nimbus-ui**: Onboarding next actions in every empty state, log search, run
+  traces and error groups, storage editors with a checked schema apply, a Files
+  object browser, Sandboxes, and a Deploys page with history, retained bundles,
+  and rollback. by @jackspirou in [#334](https://github.com/nimbus/nimbus/pull/334)
+- **server**: Native session-authenticated routes for tenant objects, console
+  log search, error groups, session channel streams, schema apply with a
+  document scan, deploy history, and rollback. by @jackspirou in [#333](https://github.com/nimbus/nimbus/pull/333) and
+  [#334](https://github.com/nimbus/nimbus/pull/334)
+- **runtime**: A thrown function error keeps its own `function.thrown` error
+  class from the runtime to the console instead of an internal error. by
+  @jackspirou in [#334](https://github.com/nimbus/nimbus/pull/334)
+- **compute**: Retained deploy artifacts and a `deploys` history table, so a
+  rollback restores an earlier Convex bundle without the client. by
+  @jackspirou in [#334](https://github.com/nimbus/nimbus/pull/334)
+
+### Changed
+
+- **storage**: MySQL keeps index entries in one bootstrap-created
+  `index_entries` table instead of per-index InnoDB keys and generated columns
+  on the shared `documents` table, so a schema applies with any number of
+  indexes, schema apply commits with its journal record, and no DDL runs after
+  tenant bootstrap. by @jackspirou in [#336](https://github.com/nimbus/nimbus/pull/336)
+
+### Fixed
+
+- **release**: Repair apt dispatch and Homebrew install hooks. by @jackspirou
+  in [#330](https://github.com/nimbus/nimbus/pull/330)
+- **ci**: Drop the unused Google Chrome apt source on hosted runners before
+  `apt-get update`, which removes the intermittent Hash Sum mismatch failure.
+  by @jackspirou in [#337](https://github.com/nimbus/nimbus/pull/337)
+- **nimbus-cli**: Bind the VMM endpoint before the stop request in the VMM stop
+  tests, and track the proof-helpers gate inputs. by @jackspirou in [#335](https://github.com/nimbus/nimbus/pull/335)
+
 ## [0.1.47] - 2026-09-06
 
 ### Fixed
