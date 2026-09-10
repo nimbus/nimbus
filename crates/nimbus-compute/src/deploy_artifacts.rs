@@ -12,10 +12,18 @@
 //! stale bundle is rejected before it can be activated, the same rule the
 //! runtime applies before every invocation.
 //!
+//! Two values become path components under the store root, and neither is
+//! trusted from its caller. A bundle digest is checked to be 64 lowercase
+//! hexadecimal characters, and every file name a manifest carries is checked
+//! to be one ordinary path component. Both checks run before the value joins
+//! a path, so a rollback request for a crafted bundle id, or a tampered
+//! manifest that names `../`, cannot read or write outside the store.
+//!
 //! [`stage`]: DeployArtifactStore::stage
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
 
 use nimbus_core::Error;
 use nimbus_runtime::RuntimeBundle;
@@ -48,8 +56,12 @@ impl DeployArtifactStore {
     }
 
     /// Whether a bundle's artifacts are on disk, so a rollback can stage them.
+    ///
+    /// A digest that is not a SHA-256 names nothing this store could have
+    /// written, so the answer is `false` rather than an error.
     pub fn is_retained(&self, sha256: &str) -> bool {
-        self.bundle_dir(sha256).join(MANIFEST_FILE).is_file()
+        self.bundle_dir(sha256)
+            .is_ok_and(|bundle_dir| bundle_dir.join(MANIFEST_FILE).is_file())
     }
 
     /// Copies the Convex artifacts under `app_dir` into the store under
@@ -57,6 +69,7 @@ impl DeployArtifactStore {
     /// written beside its final path and renamed into place, so a crash
     /// mid-copy leaves no half bundle behind a manifest.
     pub fn retain(&self, sha256: &str, app_dir: &Path) -> Result<(), Error> {
+        let bundle_dir = self.bundle_dir(sha256)?;
         let source_dir = app_dir.join(CONVEX_ARTIFACT_DIR);
         std::fs::create_dir_all(&self.root).map_err(|error| {
             Error::Internal(format!(
@@ -100,7 +113,6 @@ impl DeployArtifactStore {
             Error::Internal(format!("failed to write deploy artifact manifest: {error}"))
         })?;
 
-        let bundle_dir = self.bundle_dir(sha256);
         if bundle_dir.exists() {
             std::fs::remove_dir_all(&bundle_dir).map_err(|error| {
                 Error::Internal(format!(
@@ -125,7 +137,7 @@ impl DeployArtifactStore {
     /// provenance hash. A mismatch is `Error::InvalidInput` and nothing is
     /// activated.
     pub fn stage(&self, sha256: &str) -> Result<TempDir, Error> {
-        let bundle_dir = self.bundle_dir(sha256);
+        let bundle_dir = self.bundle_dir(sha256)?;
         let manifest_path = bundle_dir.join(MANIFEST_FILE);
         if !manifest_path.is_file() {
             return Err(Error::NotFound(format!(
@@ -182,6 +194,14 @@ impl DeployArtifactStore {
             ))
         })?;
         for (name, expected) in &manifest.files {
+            // The manifest is bytes on disk. Check the name it carries before
+            // it joins either path, so a tampered manifest cannot read from,
+            // or write to, anywhere but this bundle's own directory.
+            let name = checked_artifact_name(name).map_err(|reason| {
+                Error::InvalidInput(format!(
+                    "deploy artifact integrity check failed for bundle {sha256}: {reason}"
+                ))
+            })?;
             let bytes = std::fs::read(bundle_dir.join(name)).map_err(|error| {
                 Error::InvalidInput(format!(
                     "deploy artifact integrity check failed for bundle {sha256}: {name} could not \
@@ -227,8 +247,45 @@ impl DeployArtifactStore {
         Ok(app_dir)
     }
 
-    fn bundle_dir(&self, sha256: &str) -> PathBuf {
-        self.root.join(sha256)
+    /// The directory holding one bundle's artifacts. The digest is checked
+    /// here, the single place it becomes a path component, so every caller
+    /// inherits the check.
+    fn bundle_dir(&self, sha256: &str) -> Result<PathBuf, Error> {
+        let digest = checked_digest(sha256).map_err(|reason| {
+            Error::InvalidInput(format!(
+                "deploy bundle {sha256:?} is not addressable: {reason}"
+            ))
+        })?;
+        Ok(self.root.join(digest))
+    }
+}
+
+/// Accepts a bundle digest only in the form this store writes: exactly 64
+/// lowercase hexadecimal characters. That form cannot hold a path separator,
+/// `.`, or `..`, so a checked digest is always one directory under the root.
+fn checked_digest(sha256: &str) -> Result<&str, String> {
+    if sha256.len() == 64
+        && sha256
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Ok(sha256);
+    }
+    Err("expected 64 lowercase hexadecimal characters".to_owned())
+}
+
+/// Accepts an artifact file name only when it is one ordinary path component.
+/// This rejects an empty name, `.`, `..`, an absolute path, and any name
+/// carrying a separator, on every platform the store runs on.
+fn checked_artifact_name(name: &str) -> Result<&str, String> {
+    let mut components = Path::new(name).components();
+    let first = components.next();
+    let rest = components.next();
+    match (first, rest) {
+        (Some(Component::Normal(component)), None) if component == OsStr::new(name) => Ok(name),
+        _ => Err(format!(
+            "artifact name {name:?} must be one ordinary path component"
+        )),
     }
 }
 
@@ -259,6 +316,12 @@ fn list_files(dir: &Path) -> Result<Vec<ArtifactFile>, Error> {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
+        let name = checked_artifact_name(name).map_err(|reason| {
+            Error::Internal(format!(
+                "refusing to retain deploy artifact {}: {reason}",
+                path.display()
+            ))
+        })?;
         files.push(ArtifactFile {
             name: name.to_owned(),
             path: path.clone(),
@@ -271,6 +334,12 @@ fn list_files(dir: &Path) -> Result<Vec<ArtifactFile>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A store key is a SHA-256, so the tests use real digests rather than a
+    /// short stand-in that the path check would rightly refuse.
+    const BUNDLE: &str = "b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c";
+    const UNRETAINED_BUNDLE: &str =
+        "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730";
 
     fn write_app_dir(root: &Path, bundle: &str) -> PathBuf {
         let app_dir = root.join("app");
@@ -291,13 +360,13 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir should build");
         let app_dir = write_app_dir(temp.path(), "export const value = 1;\n");
         let store = DeployArtifactStore::new(temp.path().join("store"));
-        assert!(!store.is_retained("abc"));
+        assert!(!store.is_retained(BUNDLE));
         store
-            .retain("abc", &app_dir)
+            .retain(BUNDLE, &app_dir)
             .expect("artifacts should retain");
-        assert!(store.is_retained("abc"));
+        assert!(store.is_retained(BUNDLE));
 
-        let staged = store.stage("abc").expect("artifacts should stage");
+        let staged = store.stage(BUNDLE).expect("artifacts should stage");
         let convex_dir = staged.path().join(CONVEX_ARTIFACT_DIR);
         assert_eq!(
             std::fs::read_to_string(convex_dir.join(RUNTIME_BUNDLE_FILE)).expect("bundle reads"),
@@ -313,16 +382,19 @@ mod tests {
         let app_dir = write_app_dir(temp.path(), "export const value = 1;\n");
         let store = DeployArtifactStore::new(temp.path().join("store"));
         store
-            .retain("abc", &app_dir)
+            .retain(BUNDLE, &app_dir)
             .expect("artifacts should retain");
         std::fs::write(
-            temp.path().join("store/abc").join(RUNTIME_BUNDLE_FILE),
+            temp.path()
+                .join("store")
+                .join(BUNDLE)
+                .join(RUNTIME_BUNDLE_FILE),
             "export const value = 2;\n",
         )
         .expect("tamper should write");
 
         let error = store
-            .stage("abc")
+            .stage(BUNDLE)
             .expect_err("tampered bundle must not stage");
         assert!(
             matches!(&error, Error::InvalidInput(message) if message.contains("integrity check failed")),
@@ -345,14 +417,90 @@ mod tests {
         .expect("hash should write");
         let store = DeployArtifactStore::new(temp.path().join("store"));
         store
-            .retain("abc", &app_dir)
+            .retain(BUNDLE, &app_dir)
             .expect("artifacts should retain");
 
         let error = store
-            .stage("abc")
+            .stage(BUNDLE)
             .expect_err("stale provenance must not stage");
         assert!(
             matches!(&error, Error::InvalidInput(message) if message.contains("provenance record expects 0000")),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn is_retained_refuses_a_key_that_is_not_a_sha256() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let store = DeployArtifactStore::new(temp.path().join("store"));
+        assert!(!store.is_retained("../../etc"));
+        assert!(!store.is_retained(""));
+        assert!(!store.is_retained("ABC"));
+    }
+
+    #[test]
+    fn retain_refuses_a_key_that_is_not_a_sha256() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let app_dir = write_app_dir(temp.path(), "export const value = 1;\n");
+        let store = DeployArtifactStore::new(temp.path().join("store"));
+
+        let error = store
+            .retain("../escape", &app_dir)
+            .expect_err("a traversing key must not retain");
+        assert!(
+            matches!(&error, Error::InvalidInput(message) if message.contains("not addressable")),
+            "unexpected error: {error:?}"
+        );
+        assert!(
+            !temp.path().join("escape").exists(),
+            "nothing may be written outside the store root"
+        );
+    }
+
+    #[test]
+    fn stage_refuses_a_key_that_escapes_the_store_root() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let store = DeployArtifactStore::new(temp.path().join("store"));
+
+        let error = store
+            .stage("../../etc")
+            .expect_err("a traversing key must not stage");
+        assert!(
+            matches!(&error, Error::InvalidInput(message) if message.contains("not addressable")),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn stage_refuses_a_manifest_name_that_leaves_the_bundle_directory() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let app_dir = write_app_dir(temp.path(), "export const value = 1;\n");
+        let store_root = temp.path().join("store");
+        let store = DeployArtifactStore::new(store_root.clone());
+        store
+            .retain(BUNDLE, &app_dir)
+            .expect("artifacts should retain");
+
+        // The payload exists and hashes to what the tampered manifest claims,
+        // so the digest check cannot refuse it. Only the name check can.
+        let payload = b"export const owned = true;\n";
+        std::fs::write(store_root.join("escape.mjs"), payload).expect("payload should write");
+        std::fs::write(
+            store_root.join(BUNDLE).join(MANIFEST_FILE),
+            format!(
+                "{{\"version\":1,\"sha256\":\"{BUNDLE}\",\"files\":{{\"../escape.mjs\":\"{}\"}}}}",
+                source_package_digest(payload)
+            ),
+        )
+        .expect("tampered manifest should write");
+
+        let error = store
+            .stage(BUNDLE)
+            .expect_err("a traversing artifact name must not stage");
+        assert!(
+            matches!(&error, Error::InvalidInput(message)
+                if message.contains("integrity check failed")
+                    && message.contains("../escape.mjs")),
             "unexpected error: {error:?}"
         );
     }
@@ -362,7 +510,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir should build");
         let store = DeployArtifactStore::new(temp.path().join("store"));
         let error = store
-            .stage("missing")
+            .stage(UNRETAINED_BUNDLE)
             .expect_err("missing bundle must not stage");
         assert!(
             matches!(error, Error::NotFound(_)),
