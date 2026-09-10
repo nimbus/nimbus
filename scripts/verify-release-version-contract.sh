@@ -189,8 +189,27 @@ EOF
   fi
 fi
 
-if ! grep -Eq "^## \\[${expected_version//./\\.}\\] - " "${repo_root}/CHANGELOG.md"; then
+# The release workflow publishes this section verbatim as the GitHub release
+# notes, so a heading with nothing under it would ship an empty release. Check
+# for content here, in the preparation pull request, where a human can still
+# write it — not at tag time, when the only remaining option is to fail the
+# release. The check is self-contained rather than delegating to
+# extract-release-notes.sh, because this script is copied into a fixture
+# directory on its own by scripts/test_verify_release_version_contract.py.
+changelog_heading="## [${expected_version}] - "
+if ! awk -v heading="${changelog_heading}" '
+  index($0, heading) == 1 { found = 1 }
+  END { exit found ? 0 : 1 }
+' "${repo_root}/CHANGELOG.md"; then
   printf 'mismatch: CHANGELOG.md missing heading for %s\n' "${expected_version}" >&2
+  error_count=$((error_count + 1))
+elif ! awk -v heading="${changelog_heading}" '
+  index($0, heading) == 1 { collecting = 1; next }
+  collecting && index($0, "## [") == 1 { exit }
+  collecting && $0 ~ /[^[:space:]]/ { content = 1; exit }
+  END { exit content ? 0 : 1 }
+' "${repo_root}/CHANGELOG.md"; then
+  printf 'mismatch: CHANGELOG.md section for %s is empty\n' "${expected_version}" >&2
   error_count=$((error_count + 1))
 fi
 
