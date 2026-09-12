@@ -94,23 +94,6 @@ pub enum ClientConfigKey {
     /// Supported keys:
     /// - `allow_http`
     AllowHttp,
-    /// Skip certificate validation on https connections.
-    ///
-    /// <div class="warning">
-    ///
-    /// **Warning**
-    ///
-    /// You should think very carefully before using this method. If
-    /// invalid certificates are trusted, *any* certificate for *any* site
-    /// will be trusted for use. This includes expired certificates. This
-    /// introduces significant vulnerabilities, and should only be used
-    /// as a last resort or for testing
-    ///
-    /// </div>
-    ///
-    /// Supported keys:
-    /// - `allow_invalid_certificates`
-    AllowInvalidCertificates,
     /// Disable certificate validation using the operating system's certificate facilities.
     ///
     /// See [`ClientOptions::with_no_system_certificates`]
@@ -229,7 +212,6 @@ impl AsRef<str> for ClientConfigKey {
     fn as_ref(&self) -> &str {
         match self {
             Self::AllowHttp => "allow_http",
-            Self::AllowInvalidCertificates => "allow_invalid_certificates",
             Self::NoSystemCertificates => "disable_system_certificates",
             Self::ConnectTimeout => "connect_timeout",
             Self::DefaultContentType => "default_content_type",
@@ -258,7 +240,6 @@ impl FromStr for ClientConfigKey {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "allow_http" => Ok(Self::AllowHttp),
-            "allow_invalid_certificates" => Ok(Self::AllowInvalidCertificates),
             "disable_system_certificates" => Ok(Self::NoSystemCertificates),
             "connect_timeout" => Ok(Self::ConnectTimeout),
             "default_content_type" => Ok(Self::DefaultContentType),
@@ -350,7 +331,6 @@ pub struct ClientOptions {
     proxy_ca_certificate: Option<String>,
     proxy_excludes: Option<String>,
     allow_http: ConfigValue<bool>,
-    allow_invalid_certificates: ConfigValue<bool>,
     timeout: Option<ConfigValue<Duration>>,
     connect_timeout: Option<ConfigValue<Duration>>,
     read_timeout: Option<ConfigValue<Duration>>,
@@ -386,7 +366,6 @@ impl Default for ClientOptions {
             proxy_ca_certificate: None,
             proxy_excludes: None,
             allow_http: Default::default(),
-            allow_invalid_certificates: Default::default(),
             timeout: Some(Duration::from_secs(30).into()),
             connect_timeout: Some(Duration::from_secs(5).into()),
             read_timeout: None,
@@ -416,9 +395,6 @@ impl ClientOptions {
     pub fn with_config(mut self, key: ClientConfigKey, value: impl Into<String>) -> Self {
         match key {
             ClientConfigKey::AllowHttp => self.allow_http.parse(value),
-            ClientConfigKey::AllowInvalidCertificates => {
-                self.allow_invalid_certificates.parse(value)
-            }
             ClientConfigKey::NoSystemCertificates => self.no_system_certificates.parse(value),
             ClientConfigKey::ConnectTimeout => {
                 self.connect_timeout = Some(ConfigValue::Deferred(value.into()))
@@ -465,9 +441,6 @@ impl ClientOptions {
     pub fn get_config_value(&self, key: &ClientConfigKey) -> Option<String> {
         match key {
             ClientConfigKey::AllowHttp => Some(self.allow_http.to_string()),
-            ClientConfigKey::AllowInvalidCertificates => {
-                Some(self.allow_invalid_certificates.to_string())
-            }
             ClientConfigKey::NoSystemCertificates => Some(self.no_system_certificates.to_string()),
             ClientConfigKey::ConnectTimeout => self.connect_timeout.as_ref().map(fmt_duration),
             ClientConfigKey::ReadTimeout => self.read_timeout.as_ref().map(fmt_duration),
@@ -550,28 +523,6 @@ impl ClientOptions {
     /// * `true`:  HTTP and HTTPS are allowed
     pub fn with_allow_http(mut self, allow_http: bool) -> Self {
         self.allow_http = allow_http.into();
-        self
-    }
-
-    /// Allows connections to invalid SSL certificates
-    ///
-    /// If `allow_invalid_certificates` is :
-    /// * `false` (default):  Only valid HTTPS certificates are allowed
-    /// * `true`:  All HTTPS certificates are allowed
-    ///
-    /// <div class="warning">
-    ///
-    /// **Warning**
-    ///
-    /// You should think very carefully before using this method. If
-    /// invalid certificates are trusted, *any* certificate for *any* site
-    /// will be trusted for use. This includes expired certificates. This
-    /// introduces significant vulnerabilities, and should only be used
-    /// as a last resort or for testing
-    ///
-    /// </div>
-    pub fn with_allow_invalid_certificates(mut self, allow_invalid_certificates: bool) -> Self {
-        self.allow_invalid_certificates = allow_invalid_certificates.into();
         self
     }
 
@@ -918,10 +869,6 @@ impl ClientOptions {
             builder = builder.http2_prior_knowledge()
         }
 
-        if self.allow_invalid_certificates.get()? {
-            builder = builder.danger_accept_invalid_certs(true)
-        }
-
         // Explicitly disable compression, since it may be automatically enabled
         // when certain reqwest features are enabled. Compression interferes
         // with the `Content-Length` header, which is used to determine the
@@ -1106,7 +1053,6 @@ mod tests {
     #[test]
     fn client_test_config_from_map() {
         let allow_http = "true".to_string();
-        let allow_invalid_certificates = "false".to_string();
         let connect_timeout = "90 seconds".to_string();
         let default_content_type = "object_store:fake_default_content_type".to_string();
         let http1_only = "true".to_string();
@@ -1125,10 +1071,6 @@ mod tests {
 
         let options = HashMap::from([
             ("allow_http", allow_http.clone()),
-            (
-                "allow_invalid_certificates",
-                allow_invalid_certificates.clone(),
-            ),
             ("connect_timeout", connect_timeout.clone()),
             ("default_content_type", default_content_type.clone()),
             ("http1_only", http1_only.clone()),
@@ -1166,12 +1108,6 @@ mod tests {
                 .get_config_value(&ClientConfigKey::AllowHttp)
                 .unwrap(),
             allow_http
-        );
-        assert_eq!(
-            builder
-                .get_config_value(&ClientConfigKey::AllowInvalidCertificates)
-                .unwrap(),
-            allow_invalid_certificates
         );
         assert_eq!(
             builder
@@ -1262,5 +1198,20 @@ mod tests {
                 .unwrap(),
             user_agent
         );
+    }
+
+    #[test]
+    fn client_rejects_certificate_verification_bypass_config() {
+        let error = "allow_invalid_certificates"
+            .parse::<ClientConfigKey>()
+            .expect_err("certificate verification bypass must not be configurable");
+
+        match error {
+            crate::Error::UnknownConfigurationKey { store, key } => {
+                assert_eq!(store, "HTTP");
+                assert_eq!(key, "allow_invalid_certificates");
+            }
+            error => panic!("unexpected error: {error}"),
+        }
     }
 }
