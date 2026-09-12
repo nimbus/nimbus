@@ -21,7 +21,11 @@ PROOF_DIR="${PRIVATE_ROOT}/plans/proof/nimbus-dev-autodetect"
 
 DEV_DIR="crates/nimbus-bin/src/dev"
 START_ADAPTERS="crates/nimbus-bin/src/start/adapters.rs"
-LANDING="website/src/content/docs/index.mdx"
+# The docs landing page. It moved out of Starlight content into the fumadocs
+# app when the site was restyled, and its tabs are JSX elements now, not MDX
+# components: `<Tab value="Firebase">` where they used to be
+# `<TabItem label="Firebase">`. Condition 12 reads them either way.
+LANDING="website/src/app/(docs)/docs/page.tsx"
 
 PASS=0
 FAIL=0
@@ -181,11 +185,11 @@ fi
 
 # --- 12. landing tab flips gated on shipped rows ---------------------------------
 C="12. landing tabs show nimbus dev only with their gating rows done"
-tab_block() { # tab_block <label> — print the TabItem block for a label
+tab_block() { # tab_block <label> — print the tab block for a label
   awk -v label="$1" '
-    $0 ~ "<TabItem label=\"" label "\">" {inblock=1}
+    $0 ~ "<Tab value=\"" label "\">" {inblock=1}
     inblock {print}
-    inblock && /<\/TabItem>/ {exit}
+    inblock && /<\/Tab>/ {exit}
   ' "${LANDING}" 2>/dev/null
 }
 row_done() { # row_done <ROW-ID> — plan ledger row is done
