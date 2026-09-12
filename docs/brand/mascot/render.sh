@@ -3,6 +3,8 @@
 #
 # Writes into the console:
 #   packages/nimbus-ui/public/icon-512.png   (apple-touch-icon; gold mascot on the night tile)
+# Writes into the docs site:
+#   website/public/og.png                    (1200x630 social card)
 # Writes into DESKTOP_DIR/buildResources when DESKTOP_DIR is set:
 #   icon.png (512), icon.icns, icon.ico, trayTemplate.png (24x16), trayTemplate@2x.png (48x32)
 #
@@ -13,6 +15,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${here}/../../.." && pwd)"
 tile="${here}/mascot-tile.svg"
 template="${here}/mascot-template.svg"
+og="${here}/og.svg"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
@@ -22,6 +25,9 @@ done
 
 rsvg-convert -w 512 -h 512 "${tile}" -o "${repo_root}/packages/nimbus-ui/public/icon-512.png"
 echo "wrote packages/nimbus-ui/public/icon-512.png"
+
+rsvg-convert -w 1200 -h 630 "${og}" -o "${repo_root}/website/public/og.png"
+echo "wrote website/public/og.png"
 
 if [[ -z "${DESKTOP_DIR:-}" ]]; then
   exit 0

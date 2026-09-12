@@ -1,31 +1,30 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
-import { Mascot } from '@/components/mascot';
+import { Journey } from '@/components/odyssey/journey';
+import { OG_IMAGE } from '@/lib/og';
 
 export const metadata: Metadata = {
+  // Starlight composed the tab title as "page | site", which would have read
+  // "nimbus | nimbus" here. The home page names itself instead.
+  title: 'nimbus — your cloud, one binary',
+  description:
+    'The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.',
   alternates: { canonical: '/' },
+  openGraph: {
+    title: 'nimbus — your cloud, one binary',
+    description:
+      'The single-binary backend for apps and AI agents. Drop-in compatible with Convex, Firestore, MongoDB, and DynamoDB.',
+    url: '/',
+    siteName: 'Nimbus',
+    type: 'website',
+    images: [OG_IMAGE],
+  },
 };
 
-// Placeholder. The Odyssey homepage lands here, rethemed on the Nimbus
-// tokens.
+// The home page is the journey: one scroll-driven scene that follows a
+// request from an app through the binary and back. It is a client component
+// because the whole page is a canvas the scroll position drives; this file
+// stays a server component so the route keeps its metadata.
 export default function Page() {
-  return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-      <Mascot className="h-24 w-32" title="Nimbus" />
-      <h1 className="text-[32px] leading-[38px] font-semibold tracking-[-0.02em] text-(--text-1)">
-        Your cloud backend in one binary
-      </h1>
-      <p className="max-w-xl text-[16px] leading-6 text-(--text-2)">
-        The single-binary backend for apps and AI agents. Drop-in compatible
-        with Convex, Firestore, MongoDB, and DynamoDB.
-      </p>
-      <Link
-        href="/docs/"
-        className="rounded-md bg-(--accent) px-4 py-2 text-[14px] font-medium text-(--accent-ink) transition-colors hover:bg-(--accent-hover)"
-      >
-        Read the documentation
-      </Link>
-    </main>
-  );
+  return <Journey />;
 }
