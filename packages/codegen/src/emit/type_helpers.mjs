@@ -1,4 +1,4 @@
-export { ensureModuleTree, renderTree } from "./tree_helpers.mjs";
+export { ensureModuleTree, renderTree, setTreeValue } from "./tree_helpers.mjs";
 export { buildFunctionIndex, helperCall, helperName } from "./reference_helpers.mjs";
 export {
   renderDocumentType,
