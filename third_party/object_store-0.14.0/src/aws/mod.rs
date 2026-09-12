@@ -545,7 +545,6 @@ impl PaginatedListStore for AmazonS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ClientOptions;
     use crate::ObjectStoreExt;
     #[cfg(feature = "reqwest")]
     use crate::client::SpawnedReqwestConnector;
@@ -907,7 +906,6 @@ mod tests {
 
         let store = AmazonS3Builder::from_env()
             .with_ssec_encryption(BASE64_STANDARD.encode(customer_key))
-            .with_client_options(ClientOptions::default().with_allow_invalid_certificates(true))
             .build()
             .unwrap();
 
