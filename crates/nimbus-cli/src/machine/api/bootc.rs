@@ -24,15 +24,10 @@ pub(super) async fn machine_api_bootc_switch(
     spawn_bootc_task(move || {
         let before = read_bootc_status(&state)?;
         let transport = request.transport.as_deref().unwrap_or("registry");
+        let transport_arg = format!("--transport={transport}");
         let output = run_bootc_command(
             &state,
-            &[
-                "switch",
-                "--quiet",
-                "--transport",
-                transport,
-                &request.image,
-            ],
+            &["switch", "--quiet", &transport_arg, "--", &request.image],
         )?;
         let after = read_bootc_status(&state)?;
         Ok(MachineApiBootcOperationResponse {
@@ -54,12 +49,12 @@ pub(super) async fn machine_api_bootc_upgrade(
     spawn_bootc_task(move || {
         let before = read_bootc_status(&state)?;
         let mut args = vec!["upgrade", "--quiet"];
+        let tag_arg = request.tag.as_deref().map(|tag| format!("--tag={tag}"));
         if request.check {
             args.push("--check");
         }
-        if let Some(tag) = request.tag.as_deref() {
-            args.push("--tag");
-            args.push(tag);
+        if let Some(tag_arg) = tag_arg.as_deref() {
+            args.push(tag_arg);
         }
         let output = run_bootc_command(&state, &args)?;
         let after = read_bootc_status(&state)?;
@@ -212,9 +207,23 @@ fn render_command_stream(label: &str, contents: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
     use super::*;
     use nimbus_network::{NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration};
     use tempfile::TempDir;
+
+    const FAKE_BOOTC: &str = r#"#!/bin/sh
+case "${1-}" in
+    status)
+        printf '%s\n' '{"status":{"booted":null,"staged":null,"rollback":null}}'
+        ;;
+    *)
+        printf '%s\n' "$@" > "${0}.args"
+        ;;
+esac
+"#;
 
     #[test]
     fn extracts_bootc_status_digest_fields() {
@@ -245,6 +254,83 @@ mod tests {
             Some("sha256:staged")
         );
         assert_eq!(deployment_image(&status, "rollback"), None);
+    }
+
+    #[tokio::test]
+    async fn bootc_switch_separates_user_values_from_options() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let (state, authority, args_path) = fake_bootc_state(&temp_dir, "bootc-switch-args");
+
+        let Json(response) = machine_api_bootc_switch(
+            State(state),
+            Json(MachineApiBootcSwitchRequest {
+                forwarder_authority: authority,
+                image: "--apply".to_owned(),
+                transport: Some("--help".to_owned()),
+            }),
+        )
+        .await
+        .expect("fake bootc switch should succeed");
+
+        assert!(response.stdout.is_empty());
+        assert!(response.stderr.is_empty());
+        assert_eq!(
+            fs::read_to_string(args_path).expect("recorded bootc arguments should read"),
+            "switch\n--quiet\n--transport=--help\n--\n--apply\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn bootc_upgrade_binds_tag_as_option_value() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let (state, authority, args_path) = fake_bootc_state(&temp_dir, "bootc-upgrade-args");
+
+        let Json(response) = machine_api_bootc_upgrade(
+            State(state),
+            Json(MachineApiBootcUpgradeRequest {
+                forwarder_authority: authority,
+                check: false,
+                tag: Some("--apply".to_owned()),
+            }),
+        )
+        .await
+        .expect("fake bootc upgrade should succeed");
+
+        assert!(response.stdout.is_empty());
+        assert!(response.stderr.is_empty());
+        assert_eq!(
+            fs::read_to_string(args_path).expect("recorded bootc arguments should read"),
+            "upgrade\n--quiet\n--tag=--apply\n"
+        );
+    }
+
+    fn fake_bootc_state(
+        temp_dir: &TempDir,
+        registration_key: &str,
+    ) -> (MachineApiState, MachineForwarderAuthority, PathBuf) {
+        let bootc_path = temp_dir.path().join("bootc");
+        crate::test_support::write_executable_stub(&bootc_path, FAKE_BOOTC);
+        let authority = MachineForwarderAuthority::new(
+            NetworkProviderHandle::new(
+                NetworkProviderId::for_registration_key(registration_key),
+                "provider-instance",
+            )
+            .expect("provider handle should validate"),
+            NetworkResourceGeneration::new(1),
+        );
+        let state = MachineApiState {
+            control_data_dir: temp_dir.path().join("control"),
+            listen_mode: MachineApiListenMode::DirectSocket,
+            binary_lookup_path: Some(temp_dir.path().as_os_str().to_os_string()),
+            helper_binary_dirs: Vec::new(),
+            service_workloads: None,
+            machine_port_forwarder: None,
+            forwarder_authority: Some(authority.clone()),
+        };
+        let mut args_path = bootc_path.into_os_string();
+        args_path.push(".args");
+        let args_path = PathBuf::from(args_path);
+        (state, authority, args_path)
     }
 
     #[tokio::test]
