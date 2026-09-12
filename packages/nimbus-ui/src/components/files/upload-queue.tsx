@@ -57,7 +57,7 @@ export function UploadQueue({
             {item.status === "uploading" ? (
               <>
                 <progress
-                  className="h-1.5 w-32 overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-bg-panel [&::-webkit-progress-value]:bg-accent"
+                  className="h-1.5 w-32 overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-bg-panel [&::-webkit-progress-value]:bg-accent-edge"
                   max={100}
                   value={percent}
                   aria-label={`Uploading ${item.name}`}

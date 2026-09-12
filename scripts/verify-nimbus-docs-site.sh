@@ -47,6 +47,7 @@ ARCH_MANIFEST=(
   cli-codegen
   sdk-packages
   observability
+  network-control-plane
 )
 
 PASS=0
@@ -300,7 +301,7 @@ else
 fi
 
 # --- 17. architecture manifest coverage ---------------------------------------------
-C="17. docs/concepts/architecture/ has every DOC7 manifest page with source-map entries"
+C="17. docs/concepts/architecture/ matches the DOC7 manifest exactly, with source-map entries"
 arch_missing=()
 for s in "${ARCH_MANIFEST[@]}"; do
   if [[ ! -f "docs/concepts/architecture/${s}.md" && ! -f "docs/concepts/architecture/${s}.mdx" ]]; then
@@ -308,6 +309,21 @@ for s in "${ARCH_MANIFEST[@]}"; do
   elif [[ -f "${SOURCE_MAP}" ]] && ! grep -q "${s}" "${SOURCE_MAP}"; then
     arch_missing+=("${s}(no source-map entry)")
   fi
+done
+# The check runs both ways. Manifest-into-tree alone passes while a page is
+# absent from the manifest, which leaves that page outside the gate and free
+# to go stale or disappear unnoticed. `index` is the section landing page and
+# carries no system of its own.
+for f in docs/concepts/architecture/*.md docs/concepts/architecture/*.mdx; do
+  [[ -e "${f}" ]] || continue
+  slug="$(basename "${f}")"
+  slug="${slug%.*}"
+  [[ "${slug}" == "index" ]] && continue
+  listed=0
+  for s in "${ARCH_MANIFEST[@]}"; do
+    [[ "${s}" == "${slug}" ]] && listed=1 && break
+  done
+  ((listed)) || arch_missing+=("${slug}(page not in manifest)")
 done
 if [[ ${#arch_missing[@]} -eq 0 && -f "${SOURCE_MAP}" ]]; then
   pass "${C}"

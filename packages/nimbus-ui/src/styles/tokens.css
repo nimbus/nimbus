@@ -261,7 +261,11 @@
   --color-destructive-foreground: var(--error);
   --color-border: var(--border-2);
   --color-input: var(--border-2);
-  --color-ring: var(--accent);
+  /* A focus ring is a hairline, so it takes the edge and not the fill. The
+   * registry primitives reach it through `ring-ring` and `outline-ring`,
+   * which no Nimbus-owned rule can intercept, so the bridge is the only
+   * place the split can be made for them. */
+  --color-ring: var(--accent-edge);
   --color-sidebar: var(--bg-panel);
   --color-sidebar-foreground: var(--text-1);
   --color-sidebar-primary: var(--accent);
@@ -269,7 +273,7 @@
   --color-sidebar-accent: var(--bg-hover);
   --color-sidebar-accent-foreground: var(--text-1);
   --color-sidebar-border: var(--border-1);
-  --color-sidebar-ring: var(--accent);
+  --color-sidebar-ring: var(--accent-edge);
   --color-chart-1: var(--accent);
   --color-chart-2: var(--info);
   --color-chart-3: var(--success);

@@ -23,6 +23,10 @@ GROUPS = ["get-started", "developers", "agents", "operators", "concepts", "refer
 # The documentation landing page. It is hand-written TSX rather than Markdown,
 # so its links are scanned out of `href="..."` attributes further down.
 LANDING = "website/src/app/(docs)/docs/page.tsx"
+# The Odyssey home page. Its links are named constants rather than literal
+# attributes, so an href-only scan sees none of them; they are collected from
+# the `const NAME = '/path/'` form instead.
+HOME = "website/src/components/odyssey/journey.tsx"
 # Build-emitted artifacts that are valid link targets but have no .md source.
 EMITTED = {"/llms.txt", "/llms-full.txt", "/llms-small.txt", "/sitemap.xml"}
 
@@ -52,19 +56,29 @@ def strip_code(text):
 # --- 1. dead links --------------------------------------------------------------
 link_re = re.compile(r"\]\(([^)\s]+)\)")
 href_re = re.compile(r"href=\"([^\"]+)\"")
+# A site-absolute path held in an upper-case module constant. The Odyssey
+# writes `href={QUICKSTART}`, so the destination is never in the attribute.
+# Anchoring on a leading `/` is what keeps a media query or a data attribute
+# out of the link set.
+const_re = re.compile(r"^const [A-Z][A-Z0-9_]* = [\'\"](/[^\'\"]*)[\'\"]", re.M)
 
 
 def targets_in(path):
     """Every link target in a file, whatever its syntax."""
     text = open(path, encoding="utf-8").read()
     if path.endswith(".tsx"):
-        return [m.group(1) for m in href_re.finditer(text)]
+        return [m.group(1) for m in href_re.finditer(text)] + [
+            m.group(1) for m in const_re.finditer(text)
+        ]
     return [m.group(1) for m in link_re.finditer(strip_code(text))]
 
 
-scanned = files + ([LANDING] if os.path.exists(LANDING) else [])
-if not os.path.exists(LANDING):
-    fail("links", f"missing documentation landing {LANDING}")
+scanned = list(files)
+for page in (LANDING, HOME):
+    if os.path.exists(page):
+        scanned.append(page)
+    else:
+        fail("links", f"missing hand-written page {page}")
 
 for f in scanned:
     base = os.path.dirname(f)

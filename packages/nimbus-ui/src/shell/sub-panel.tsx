@@ -370,7 +370,7 @@ function ResizableGroup({
           // line with the accent, and the global :focus-visible ring is
           // switched off here because a ring around a 1px line reads as a
           // stray mark.
-          className="w-px shrink-0 bg-border-2 outline-none transition-colors duration-150 ease-standard data-[separator=active]:bg-accent data-[separator=focus]:bg-accent data-[separator=hover]:bg-accent"
+          className="w-px shrink-0 bg-border-2 outline-none transition-colors duration-150 ease-standard data-[separator=active]:bg-accent-edge data-[separator=focus]:bg-accent-edge data-[separator=hover]:bg-accent-edge"
         />
       ) : null}
       <Panel id={MAIN_ID} style={PANEL_STYLE}>

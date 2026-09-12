@@ -313,6 +313,20 @@ describe("reduced motion", () => {
 const GOLD_MISUSE =
   /\b(?:text|border|divide|outline|ring|decoration|fill|stroke|shadow)-accent(?![\w-])/g;
 
+/* `bg-accent` cannot be banned outright: painting a fill is the one thing the
+   gold is for. What separates a fill from a hairline is the ink on top of it,
+   so the rule is that ink -- a class string that paints the gold must also
+   name `--accent-ink`. A splitter, a progress bar and a focused row carry no
+   ink, so each one fails here and takes `bg-accent-edge` instead.
+
+   Matching runs over one string literal at a time rather than the file,
+   because a className is a literal and the ink has to be on the same
+   element, not merely somewhere in the module. */
+const GOLD_FILL = /\bbg-accent(?![\w-])/;
+const ACCENT_INK = /\btext-accent-ink(?![\w-])/;
+const STRING_LITERAL =
+  /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
+
 describe("the gold is a fill", () => {
   it("never paints text or a hairline in a Nimbus-owned component", () => {
     const offenders: string[] = [];
@@ -324,5 +338,33 @@ describe("the gold is a fill", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("paints the gold only under accent ink", () => {
+    const offenders: string[] = [];
+    for (const file of tsxFiles(SRC)) {
+      const text = readFileSync(file, "utf8");
+      for (const literal of text.matchAll(STRING_LITERAL)) {
+        if (!GOLD_FILL.test(literal[0])) continue;
+        if (ACCENT_INK.test(literal[0])) continue;
+        const line = text.slice(0, literal.index).split("\n").length;
+        offenders.push(`${relative(SRC, file)}:${line} bg-accent with no ink`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  /* The shadcn bridge resolves the registry's vocabulary onto the role
+     tokens, and `ring`/`sidebar-ring` are the registry's focus indicator.
+     They are hairlines, so they take the edge. No rule in a Nimbus-owned
+     component can correct them: `ring-ring` is generated from the bridge, so
+     the bridge is where the split has to hold. */
+  it("routes the registry ring to the edge and not the fill", () => {
+    // The bridge is the `@theme inline` block, not `:root`: these are
+    // Tailwind utility-namespace names, not role tokens.
+    const bridge = block("@theme inline");
+    for (const token of ["--color-ring", "--color-sidebar-ring"]) {
+      expect(bridge[token]).toBe("var(--accent-edge)");
+    }
   });
 });

@@ -146,7 +146,11 @@ describe("QueryBar", () => {
     // from matching.
     expect(field.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
     // The tint stays — as emphasis on top of the ring, not instead of it.
-    expect(field.className).toContain("focus-visible:border-accent");
+    // The edge, not the fill: `toContain("border-accent")` would also pass on
+    // `border-accent-edge`, so the assertion is anchored at both ends.
+    expect(field.className).toMatch(
+      /(^|\s)focus-visible:border-accent-edge(?![\w-])/,
+    );
   });
 
   it("shows the sort as its own removable chip", async () => {
