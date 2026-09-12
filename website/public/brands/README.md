@@ -1,6 +1,6 @@
 # Brand glyphs for the landing adapter tabs
 
-Rendered as monochrome `mask-image` glyphs (see `src/styles/custom.css`).
+Rendered as monochrome `mask-image` glyphs on the home page adapter tabs.
 
 - `convex.svg`, `firebase.svg`, `googlecloud.svg`, `mongodb.svg` — from
   [simple-icons](https://simpleicons.org) (CC0-1.0). Trademarks belong to

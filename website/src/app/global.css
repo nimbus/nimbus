@@ -1,0 +1,55 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/preset.css';
+@import '../styles/tokens.css';
+@import '../styles/docs-theme.css';
+
+@plugin '@fumadocs/tailwind/typography' {
+  disableRoundedTable: true;
+}
+
+/* Fumadocs ships its class names inside compiled JavaScript, which the
+   Tailwind scanner cannot read from source. */
+@source '../../node_modules/fumadocs-ui/dist';
+
+html {
+  /* The gutter is always reserved, so a short page and a long page put the
+     content in the same place. */
+  scrollbar-gutter: stable;
+}
+
+/* The scroll lock a dialog applies must not shift the page under it. */
+html > body[data-scroll-locked] {
+  margin-right: 0 !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+body {
+  background-color: var(--bg-canvas);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: var(--accent-tint);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent-edge) 40%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--accent-edge) 20%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
