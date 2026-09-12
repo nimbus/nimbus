@@ -6,7 +6,7 @@
 # 2. Source map — every doc page and every cited source path in
 #    docs/source-map.md exists in the repository.
 # 3. docs/private fence — nothing published references docs/private/, and
-#    the website content loader exposes only the six public groups.
+#    the website content collection compiles only the six public groups.
 # 4. Title uniqueness — every published page has a frontmatter title that
 #    is unique across the corpus (case-insensitive).
 #
@@ -20,9 +20,11 @@ python3 - <<'PYEOF'
 import os, re, sys, glob
 
 GROUPS = ["get-started", "developers", "agents", "operators", "concepts", "reference"]
-LANDING = "website/src/content/docs/index.mdx"
+# The documentation landing page. It is hand-written TSX rather than Markdown,
+# so its links are scanned out of `href="..."` attributes further down.
+LANDING = "website/src/app/(docs)/docs/page.tsx"
 # Build-emitted artifacts that are valid link targets but have no .md source.
-EMITTED = {"/llms.txt", "/llms-full.txt", "/llms-small.txt", "/sitemap-index.xml"}
+EMITTED = {"/llms.txt", "/llms-full.txt", "/llms-small.txt", "/sitemap.xml"}
 
 failures = []
 
@@ -39,9 +41,8 @@ for g in GROUPS:
         if rel.endswith("/index"):
             rel = rel[: -len("/index")]
         pages.add("/" + rel + "/")
-pages.add("/")  # landing
-if os.path.exists(LANDING):
-    files.append(LANDING)
+pages.add("/")       # the home page: the Odyssey
+pages.add("/docs/")  # the documentation landing
 
 def strip_code(text):
     text = re.sub(r"```.*?```", "", text, flags=re.S)
@@ -50,11 +51,25 @@ def strip_code(text):
 
 # --- 1. dead links --------------------------------------------------------------
 link_re = re.compile(r"\]\(([^)\s]+)\)")
-for f in files:
-    body = strip_code(open(f, encoding="utf-8").read())
+href_re = re.compile(r"href=\"([^\"]+)\"")
+
+
+def targets_in(path):
+    """Every link target in a file, whatever its syntax."""
+    text = open(path, encoding="utf-8").read()
+    if path.endswith(".tsx"):
+        return [m.group(1) for m in href_re.finditer(text)]
+    return [m.group(1) for m in link_re.finditer(strip_code(text))]
+
+
+scanned = files + ([LANDING] if os.path.exists(LANDING) else [])
+if not os.path.exists(LANDING):
+    fail("links", f"missing documentation landing {LANDING}")
+
+for f in scanned:
     base = os.path.dirname(f)
-    for m in link_re.finditer(body):
-        target = m.group(1).split("#", 1)[0]
+    for raw in targets_in(f):
+        target = raw.split("#", 1)[0]
         if not target:
             continue  # pure anchor
         if re.match(r"^[a-z][a-z0-9+.-]*:", target):
@@ -69,6 +84,10 @@ for f in files:
             if os.path.exists("website/public" + target):
                 continue
             fail("links", f"{f}: dead internal link {target}")
+        elif f.endswith(".tsx"):
+            # A TSX page has no directory of its own to resolve against: every
+            # link it writes is either absolute or external.
+            fail("links", f"{f}: relative link {target} outside the content tree")
         else:
             resolved = os.path.normpath(os.path.join(base, target))
             if not os.path.exists(resolved):
@@ -113,22 +132,34 @@ for f in files:
     if "open source" in lowered:
         fail("fence", f"{f}: claims 'open source' (Nimbus is source-available)")
 
-content_dir = "website/src/content/docs"
-allowed = set(GROUPS) | {"index.mdx"}
-entries = set(os.listdir(content_dir))
-if entries != allowed:
-    fail("fence", f"{content_dir} entries {sorted(entries)} != allowed {sorted(allowed)}")
-for g in GROUPS:
-    p = os.path.join(content_dir, g)
-    if not os.path.islink(p):
-        fail("fence", f"{p} is not a symlink")
-    elif os.path.realpath(p) != os.path.realpath(f"docs/{g}"):
-        fail("fence", f"{p} does not resolve to docs/{g}")
+# Nothing is copied into the website package: the content collection reads
+# `../docs` directly and names the groups it compiles. That allow-list is the
+# fence, so it has to name exactly the six published groups and nothing else.
+CONFIG = "website/source.config.ts"
+if not os.path.exists(CONFIG):
+    fail("fence", f"missing {CONFIG}")
+else:
+    config = open(CONFIG, encoding="utf-8").read()
+    block = re.search(r"PUBLISHED_GROUPS\s*=\s*\[(.*?)\]", config, re.S)
+    if not block:
+        fail("fence", f"{CONFIG}: no PUBLISHED_GROUPS allow-list")
+    else:
+        declared = re.findall(r"['\"]([^'\"]+)['\"]", block.group(1))
+        if declared != GROUPS:
+            fail("fence", f"{CONFIG}: PUBLISHED_GROUPS {declared} != {GROUPS}")
+    if not re.search(r"dir:\s*['\"]\.\./docs['\"]", config):
+        fail("fence", f"{CONFIG}: collection does not read ../docs")
+    if not re.search(r"files:\s*PUBLISHED_GROUPS\.map", config):
+        fail("fence", f"{CONFIG}: the collection does not apply the allow-list to `files`")
 
-if os.path.isdir("website/dist"):
-    if os.path.isdir("website/dist/private"):
-        fail("fence", "website/dist/private exists in build output")
-    for llms in glob.glob("website/dist/llms*.txt"):
+OUT = "website/out"
+if os.path.isdir(OUT):
+    if os.path.isdir(f"{OUT}/private"):
+        fail("fence", f"{OUT}/private exists in build output")
+    for g in ("brand", "assets"):
+        if os.path.isdir(f"{OUT}/{g}"):
+            fail("fence", f"{OUT}/{g} exists in build output")
+    for llms in glob.glob(f"{OUT}/llms*.txt"):
         if "docs/private" in open(llms, encoding="utf-8", errors="replace").read():
             fail("fence", f"{llms} references docs/private")
 
@@ -163,5 +194,5 @@ if failures:
     for f in failures:
         print("  " + f)
     sys.exit(1)
-print(f"check-docs: PASS — {len(files)} pages link-clean, source map resolves, private fence intact, titles unique")
+print(f"check-docs: PASS — {len(scanned)} pages link-clean, source map resolves, private fence intact, titles unique")
 PYEOF

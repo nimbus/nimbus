@@ -1092,36 +1092,41 @@ second logo next to the filled one on the app icon, and at 24px its
 
 The Documentation site is the third brand surface, sitting between the
 product tier (operator console) and the brand tier (marketing). Its
-governing rule: **the doc body is product-tier; the splash hero is the
-site's single brand-tier moment.** Renderer: Astro Starlight in
-`website/`; tokens live in `website/src/styles/custom.css`.
+governing rule: **the doc body is product-tier; the home page is the site's
+single brand-tier moment.** Renderer: a Next static export drawn by
+fumadocs in `website/`; tokens live in `website/src/styles/tokens.css`, the
+host theme in `website/src/styles/docs-theme.css`, and the home page in
+`website/src/styles/odyssey.css`.
 
-- **Doc body = product tier.** Starlight's gray scale maps to the product
-  neutrals (`--bg-canvas`/`--bg-panel`/`--border-2`/`--text-1`/`--text-3`,
-  both modes verbatim). Starlight has a single accent family: light
-  `--sl-color-accent` ← `--accent-link` (#866423) with accent-high deepened
-  for link text on paper; dark `--sl-color-accent` ← `--accent` (#f0b23e).
-  One identity family per mode — teal and blue stay out of the doc body.
-  No gradients in the doc body.
-- **Splash hero = brand tier, once.** Dark mode renders the hero title in
-  the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`
-  over Night Blue. Light mode is golden daylight, so its hero composes
-  the warm identity instead: `#F0B23E → #866423` (Nimbus gold into the
-  same gold taken down at its own hue) on warm paper. The gradient ends on
-  `--accent-edge` so the hero's darkest stop is the value the rest of the
-  light surface already uses for accent text. These are the only gradient sites on the docs surface.
-- **Logo + wordmark + favicon.** The top nav renders the transparent mark
-  next to the lowercase wordmark `nimbus` (Starlight `title` +
-  `logo.light/dark`). Hero and nav use `warm-transparent` (light) /
-  `night-blue-transparent` (dark) so the mark sits on the page's own
-  background. The favicon is the **mascot in fixed gold** — the same
+- **Doc body = product tier.** Fumadocs paints every surface through a
+  `--color-fd-*` custom property. `docs-theme.css` answers each one from a
+  Nimbus role token rather than from the vendor gray scale, so the docs and
+  the console they document share one set of roles. `--color-fd-primary`
+  takes `--accent-edge`, not `--accent`: fumadocs uses "primary" as text far
+  more often than as a fill, and a thin accent is `--accent-edge` under the
+  §Colour rule. `--color-fd-accent` is the hover ground, because fumadocs
+  means the hovered surface by that word where Nimbus means the brand
+  colour. One identity family per mode — teal and blue stay out of the doc
+  body, and the doc body carries no gradient.
+- **Home page = brand tier, once.** `/` is the Odyssey: one scroll-driven
+  canvas that follows a request from an app through the binary and back,
+  twenty chapters mixed from a single progress value. It is the only place
+  on the surface that leaves the role tokens, and it ends on Nimbus gold.
+  Under reduced motion, or on a viewport too short to hold the stage, it
+  renders as a storyboard of stills carrying the same arc. `/docs/` is the
+  written entrance to the same story and is product tier throughout.
+- **Logo + wordmark + favicon.** The top nav renders the mascot next to the
+  lowercase wordmark `nimbus`. The mark is the mascot in fixed gold —
+  `--mark` `#f0b23e` body on `--mark-ink` `#1a1204` face, the same
   `favicon.svg` the operator console ships (see **Mascot** above). The mark
   does not theme, so the docs site swaps nothing on `data-theme` and needs
-  no per-theme copies: one sticker on every surface, at every size.
-- **Typography.** Body uses the system UI stack; code/IDs/paths use
-  JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
-  letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px
-  cards, per §Spacing And Shape.
+  no per-theme copies: one sticker on every surface, at every size. The
+  social card at `/og.png` is the same mark on Night, rendered from
+  `docs/brand/mascot/og.svg` by `docs/brand/mascot/render.sh`.
+- **Typography.** Body and headings use Geist; code, IDs and paths use Geist
+  Mono. Both are self-hosted woff2 under `website/public/fonts/`, so the
+  site loads no third-party font. Tables apply `tabular-nums`. Radius 6px
+  default / 8px cards, per §Spacing And Shape.
 
 #### Messaging canon — one sentence, three surfaces
 

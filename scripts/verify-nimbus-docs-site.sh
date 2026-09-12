@@ -6,6 +6,10 @@
 # Ships in DOC0 so /goal is verifiable from day one; DOC1..DOC13 progressively
 # flip conditions from FAIL to PASS.
 #
+# The site is a Next static export rendered by fumadocs over `docs/`. It was a
+# Starlight site when this plan closed; the conditions moved with it, so the
+# same 17 outcomes are still the gate.
+#
 # Run from the repo root. Condition 6 checks build artifacts by default; set
 # NIMBUS_DOCS_VERIFY_BUILD=1 to run the website build inside the verifier.
 
@@ -15,9 +19,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit 1
 
 WEBSITE_PKG="website/package.json"
-ASTRO_CONFIG="website/astro.config.mjs"
-CONTENT_CONFIG="website/src/content.config.ts"
-LANDING="website/src/content/docs/index.mdx"
+NEXT_CONFIG="website/next.config.mjs"
+ROOT_LAYOUT="website/src/app/layout.tsx"
+SOURCE_CONFIG="website/source.config.ts"
+HOME="website/src/app/page.tsx"
+LANDING="website/src/app/(docs)/docs/page.tsx"
+TOKENS="website/src/styles/tokens.css"
+OUT="website/out"
 WRANGLER_CONFIG="website/wrangler.jsonc"
 DOCS_WF=".github/workflows/docs.yml"
 SOURCE_MAP="docs/source-map.md"
@@ -57,45 +65,53 @@ fail() {
 }
 
 # --- 1. website package deps -------------------------------------------------
-C="1. website/package.json declares astro + @astrojs/starlight + starlight-llms-txt"
+C="1. website/package.json declares next + fumadocs-core + fumadocs-mdx + fumadocs-ui"
 if [[ -f "${WEBSITE_PKG}" ]] \
-  && grep -q '"astro"' "${WEBSITE_PKG}" \
-  && grep -q '"@astrojs/starlight"' "${WEBSITE_PKG}" \
-  && grep -q '"starlight-llms-txt"' "${WEBSITE_PKG}"; then
+  && grep -q '"next"' "${WEBSITE_PKG}" \
+  && grep -q '"fumadocs-core"' "${WEBSITE_PKG}" \
+  && grep -q '"fumadocs-mdx"' "${WEBSITE_PKG}" \
+  && grep -q '"fumadocs-ui"' "${WEBSITE_PKG}" \
+  && ! grep -q '"@astrojs/starlight"' "${WEBSITE_PKG}"; then
   pass "${C}"
 else
-  fail "${C}" "missing ${WEBSITE_PKG} or one of the three required dependencies"
+  fail "${C}" "missing ${WEBSITE_PKG}, one of the four required dependencies, or a leftover Starlight dependency"
 fi
 
-# --- 2. astro config: site + static + llms plugin ----------------------------
-C="2. astro.config.mjs sets site=https://nimbusdocs.com, static output, llms plugin"
-if [[ -f "${ASTRO_CONFIG}" ]] \
-  && grep -q "site: 'https://nimbusdocs.com'" "${ASTRO_CONFIG}" \
-  && grep -q 'starlight-llms-txt' "${ASTRO_CONFIG}" \
-  && ! grep -Eq "output:\s*['\"](server|hybrid)" "${ASTRO_CONFIG}"; then
+# --- 2. next config: static export + canonical site URL ----------------------
+# `output: 'export'` is what makes the build a directory of files rather than a
+# server, and `trailingSlash` is what keeps every `docs/` link correct. The site
+# URL lives in the root layout, because `metadataBase` is what resolves the
+# relative canonical and social URLs the pages declare.
+C="2. next.config.mjs sets output:'export' + trailingSlash; layout sets metadataBase=https://nimbusdocs.com"
+if [[ -f "${NEXT_CONFIG}" ]] \
+  && grep -Eq "output:\s*'export'" "${NEXT_CONFIG}" \
+  && grep -Eq "trailingSlash:\s*true" "${NEXT_CONFIG}" \
+  && [[ -f "${ROOT_LAYOUT}" ]] \
+  && grep -q "metadataBase: new URL('https://nimbusdocs.com')" "${ROOT_LAYOUT}"; then
   pass "${C}"
 else
-  fail "${C}" "missing ${ASTRO_CONFIG}, site URL, llms plugin, or non-static output set"
+  fail "${C}" "missing ${NEXT_CONFIG}, static export, trailing slashes, or the canonical site URL in ${ROOT_LAYOUT}"
 fi
 
 # --- 3. content loaded only from the six public docs/ groups -----------------
-# Allow-list is implemented as one symlink per public group under
-# website/src/content/docs/, each resolving into the matching docs/<group>;
-# the only real file there is the splash landing index.mdx, so nothing
-# outside the groups can publish.
-C="3. Starlight content loads only from docs/{get-started,developers,agents,operators,concepts,reference} (symlink allow-list)"
-bad_links=()
-for g in "${PUBLIC_GROUPS[@]}"; do
-  link="website/src/content/docs/${g}"
-  if [[ ! -L "${link}" ]] || [[ "$(readlink "${link}")" != "../../../../docs/${g}" ]]; then
-    bad_links+=("${g}")
-  fi
-done
-real_files="$(find website/src/content/docs -type f ! -name 'index.mdx' 2>/dev/null | head -5)"
-if [[ ${#bad_links[@]} -eq 0 && -z "${real_files}" && -f "${CONTENT_CONFIG}" ]]; then
+# The allow-list is the loader glob in `source.config.ts`: the collection reads
+# `../docs` directly and compiles only `<group>/**/*.md`, so `docs/private`,
+# `docs/brand` and `docs/assets` cannot publish even by accident. Nothing is
+# copied into the package, so there is no second tree to keep honest.
+C="3. fumadocs loads only docs/{get-started,developers,agents,operators,concepts,reference} (source.config.ts allow-list)"
+listed=""
+if [[ -f "${SOURCE_CONFIG}" ]]; then
+  listed="$(sed -n "/^const PUBLISHED_GROUPS/,/\] as const/p" "${SOURCE_CONFIG}" \
+    | grep -oE "'[a-z-]+'" | tr -d "'" | tr '\n' ' ' | sed 's/ $//')"
+fi
+copied="$(find website/src/content -mindepth 1 2>/dev/null | head -5)"
+if [[ "${listed}" == "${PUBLIC_GROUPS[*]}" ]] \
+  && grep -q "dir: '../docs'" "${SOURCE_CONFIG}" \
+  && grep -q 'files: PUBLISHED_GROUPS.map' "${SOURCE_CONFIG}" \
+  && [[ -z "${copied}" ]]; then
   pass "${C}"
 else
-  fail "${C}" "bad/missing symlinks: [${bad_links[*]:-}] unexpected real files: [${real_files:-none}]"
+  fail "${C}" "allow-list is [${listed:-none}] not [${PUBLIC_GROUPS[*]}], loader does not read ../docs through it, or content was copied into [${copied:-none}]"
 fi
 
 # --- 4. public groups each have a landing page --------------------------------
@@ -111,8 +127,8 @@ else
 fi
 
 # --- 5. docs/ top level is exactly the allowed set; no private links ---------
-C="5. docs/ top level = six groups + brand/ + private/ + README.md + source-map.md; no published links into docs/private"
-allowed="get-started developers agents operators concepts reference brand private README.md source-map.md"
+C="5. docs/ top level = six groups + assets/ + brand/ + private/ + README.md + source-map.md; no published links into docs/private"
+allowed="get-started developers agents operators concepts reference assets brand private README.md source-map.md"
 unexpected=()
 for entry in docs/* docs/.[!.]*; do
   [[ -e "${entry}" ]] || continue
@@ -135,20 +151,24 @@ else
 fi
 
 # --- 6. build emits dist + llms artifacts ------------------------------------
-C="6. website build emits dist/, llms.txt, llms-full.txt, llms-small.txt"
+C="6. website build emits out/ with index.html, the three llms files, sitemap.xml, and the search index"
 if [[ "${NIMBUS_DOCS_VERIFY_BUILD:-0}" == "1" && -f "${WEBSITE_PKG}" ]]; then
   npm --prefix website run build >/dev/null 2>&1 || true
 fi
-if [[ -d website/dist && -f website/dist/llms.txt && -f website/dist/llms-full.txt && -f website/dist/llms-small.txt ]]; then
+missing_out=()
+for artifact in index.html docs/index.html llms.txt llms-full.txt llms-small.txt sitemap.xml api/search; do
+  [[ -e "${OUT}/${artifact}" ]] || missing_out+=("${artifact}")
+done
+if [[ -d "${OUT}" && ${#missing_out[@]} -eq 0 ]]; then
   pass "${C}"
 else
-  fail "${C}" "missing website/dist or llms artifacts (run: npm --prefix website run build)"
+  fail "${C}" "missing ${OUT} or artifacts [${missing_out[*]:-}] (run: npm --prefix website run build)"
 fi
 
 # --- 7. wrangler config: static assets, no worker script ---------------------
-C="7. wrangler.jsonc sets assets.directory=./dist and has no main"
+C="7. wrangler.jsonc sets assets.directory=./out and has no main"
 if [[ -f "${WRANGLER_CONFIG}" ]] \
-  && grep -q '"directory": "./dist"' "${WRANGLER_CONFIG}" \
+  && grep -q '"directory": "./out"' "${WRANGLER_CONFIG}" \
   && ! grep -Eq '"main"[[:space:]]*:' "${WRANGLER_CONFIG}"; then
   pass "${C}"
 else
@@ -156,10 +176,13 @@ else
 fi
 
 # --- 8. docs.yml pipeline ------------------------------------------------------
-C="8. docs.yml has paths, resilient PR preview, main deploy, concurrency; actionlint clean"
+C="8. docs.yml builds the export with npm ci + npm run build, has paths, resilient PR preview, main deploy, concurrency; actionlint clean"
 if [[ -f "${DOCS_WF}" ]] \
   && grep -q 'docs/get-started/\*\*' "${DOCS_WF}" \
+  && grep -q 'docs/assets/\*\*' "${DOCS_WF}" \
   && grep -q 'website/\*\*' "${DOCS_WF}" \
+  && grep -q 'run: npm ci' "${DOCS_WF}" \
+  && grep -q 'run: npm run build' "${DOCS_WF}" \
   && ! grep -q 'docs/private' "${DOCS_WF}" \
   && grep -q 'concurrency' "${DOCS_WF}" \
   && grep -Eq 'versions upload|wrangler-action' "${DOCS_WF}" \
@@ -226,15 +249,24 @@ else
   fail "${C}" "other workflows deploy to GitHub Pages: ${pages_users}"
 fi
 
-# --- 14. splash landing + DESIGN.md docs surface ---------------------------------
-C="14. landing uses template:splash with hero; DESIGN.md has Documentation site surface entry"
-if [[ -f "${LANDING}" ]] \
-  && grep -q 'template: splash' "${LANDING}" \
-  && grep -q 'hero:' "${LANDING}" \
+# --- 14. the two entrances + the palette + DESIGN.md ------------------------
+# `/` is the Odyssey, the scroll-driven pitch. `/docs/` is the written entrance
+# to the same story. Neither has Markdown behind it, so both are checked as
+# source files. `#b45309` is the retired accent: it must appear nowhere in the
+# site, in either theme.
+C="14. / renders the Odyssey, /docs/ is the landing, the palette has no #b45309, DESIGN.md documents the surface"
+stale_accent="$(grep -rIl 'b45309' website/src 2>/dev/null | head -3 || true)"
+if [[ -f "${HOME}" ]] \
+  && grep -q 'Journey' "${HOME}" \
+  && [[ -f "${LANDING}" ]] \
+  && grep -q 'DocsPage' "${LANDING}" \
+  && [[ -f "${TOKENS}" ]] \
+  && grep -q '#f0b23e' "${TOKENS}" \
+  && [[ -z "${stale_accent}" ]] \
   && grep -q 'Documentation site' DESIGN.md 2>/dev/null; then
   pass "${C}"
 else
-  fail "${C}" "landing missing splash/hero or DESIGN.md missing Documentation site entry"
+  fail "${C}" "missing Odyssey home, /docs landing, gold accent token, DESIGN.md entry, or retired #b45309 still in [${stale_accent:-none}]"
 fi
 
 # --- 15. README front door --------------------------------------------------------

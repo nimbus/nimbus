@@ -12,6 +12,10 @@ The release workflow generates the Nimbus cask.
 
 ## Get started + landing
 
+The landing rows cover the documentation landing page at `/docs/`. It is
+hand-authored TSX in `website/src/app/(docs)/docs/page.tsx`, not Markdown in
+this tree, and its adapter tabs make the same claims a page here would.
+
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
 | `get-started/quickstart.md` | `nimbus init convex` scaffold contents | `crates/nimbus-cli/src/init.rs`, `crates/nimbus-assets/embedded/templates/convex/` |
@@ -24,13 +28,13 @@ The release workflow generates the Nimbus cask.
 | `get-started/from-convex.md` | Convex function model + `convex/` layout compatibility | `packages/nimbus/src/server.ts`, `packages/convex/src/`, `crates/nimbus-convex/` |
 | `get-started/from-convex.md` | `nimbus dev` in an existing Convex app provisions packages and rewires the `convex` dependency to `file:./.nimbus/packages/convex` | `crates/nimbus-cli/src/provision.rs`, `crates/nimbus-cli/src/dev.rs` |
 | `get-started/deploy.md` | `nimbus deploy` flow: `NIMBUS_DEPLOY_TOKEN` startup enablement, Convex `--convex-silo` binding, dry-run validate+diff, atomic generation activation, loopback admin-token auto-read, `nimbus auth login` credentials fallback | `crates/nimbus-cli/src/deploy.rs`, `crates/nimbus-compute/src/deploy.rs`, `crates/nimbus-server/src/http/deploy.rs` |
-| `index.mdx` (landing) | Speaks Convex / Firestore / Cloud Functions / MongoDB / DynamoDB | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/` |
-| `index.mdx` (landing) | Single-binary storage/compute/networking/realtime/scheduling | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-engine/`, `crates/nimbus-storage/`, `crates/nimbus-server/` |
-| `index.mdx` (landing) | Firebase tab (Firestore surface): stock `firebase/app` + `firebase/firestore` imports via the drop-in `firebase` package; `nimbus dev` detects the `firebase` dependency and rewires it behind the fail-closed import scan; `connectFirestoreEmulator` to port 3210; `projectId` → tenant | `packages/firebase/package.json`, `packages/firebase/src/firestore.ts`, `crates/nimbus-cli/src/dev/firebase_scan.rs`, `crates/nimbus-cli/src/dev/wire.rs`, `crates/nimbus-cli/src/dev.rs` |
-| `index.mdx` (landing) | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes; `nimbus dev` detects an existing Functions project via `firebase.json` | `crates/nimbus-cloud-functions/src/lib.rs`, `crates/nimbus-cli/src/dev/adapter.rs`, `docs/developers/cloud-functions/index.md` |
-| `index.mdx` (landing) | MongoDB tab: `nimbus dev` detects the `mongodb` dependency and writes `NIMBUS_MONGODB_URL` (endpoint + generated credentials) to `.env.local`; client is `new MongoClient(process.env.NIMBUS_MONGODB_URL)` | `crates/nimbus-cli/src/dev/wire.rs`, `crates/nimbus-cli/src/dev/banner.rs` |
-| `index.mdx` (landing) | DynamoDB tab: `nimbus dev` detects `@aws-sdk/client-dynamodb` and writes `NIMBUS_DYNAMODB_ENDPOINT` / `NIMBUS_DYNAMODB_ACCESS_KEY_ID` / `NIMBUS_DYNAMODB_SECRET_ACCESS_KEY` to `.env.local`; client reads those env keys | `crates/nimbus-cli/src/dev/wire.rs`, `crates/nimbus-cli/src/dev/banner.rs` |
-| `index.mdx` (landing) | HTTP API tab: `POST /api/tenants`, `POST /api/tenants/{t}/documents`, bearer auth | `crates/nimbus-server/src/router.rs`, `packages/nimbus/src/native_rest_routes.json` |
+| `/docs/` landing | Speaks Convex / Firestore / Cloud Functions / MongoDB / DynamoDB | `crates/nimbus-convex/`, `crates/nimbus-firebase/`, `crates/nimbus-cloud-functions/`, `crates/nimbus-mongodb/`, `crates/nimbus-dynamodb/` |
+| `/docs/` landing | Single-binary storage/compute/networking/realtime/scheduling | `crates/nimbus-bin/src/main.rs`, `crates/nimbus-engine/`, `crates/nimbus-storage/`, `crates/nimbus-server/` |
+| `/docs/` landing | Firebase tab (Firestore surface): stock `firebase/app` + `firebase/firestore` imports via the drop-in `firebase` package; `nimbus dev` detects the `firebase` dependency and rewires it behind the fail-closed import scan; `connectFirestoreEmulator` to port 3210; `projectId` → tenant | `packages/firebase/package.json`, `packages/firebase/src/firestore.ts`, `crates/nimbus-cli/src/dev/firebase_scan.rs`, `crates/nimbus-cli/src/dev/wire.rs`, `crates/nimbus-cli/src/dev.rs` |
+| `/docs/` landing | Cloud Functions tab: firebase-functions v2 `onRequest`/`onDocumentCreated` handler shapes; `nimbus dev` detects an existing Functions project via `firebase.json` | `crates/nimbus-cloud-functions/src/lib.rs`, `crates/nimbus-cli/src/dev/adapter.rs`, `docs/developers/cloud-functions/index.md` |
+| `/docs/` landing | MongoDB tab: `nimbus dev` detects the `mongodb` dependency and writes `NIMBUS_MONGODB_URL` (endpoint + generated credentials) to `.env.local`; client is `new MongoClient(process.env.NIMBUS_MONGODB_URL)` | `crates/nimbus-cli/src/dev/wire.rs`, `crates/nimbus-cli/src/dev/banner.rs` |
+| `/docs/` landing | DynamoDB tab: `nimbus dev` detects `@aws-sdk/client-dynamodb` and writes `NIMBUS_DYNAMODB_ENDPOINT` / `NIMBUS_DYNAMODB_ACCESS_KEY_ID` / `NIMBUS_DYNAMODB_SECRET_ACCESS_KEY` to `.env.local`; client reads those env keys | `crates/nimbus-cli/src/dev/wire.rs`, `crates/nimbus-cli/src/dev/banner.rs` |
+| `/docs/` landing | HTTP API tab: `POST /api/tenants`, `POST /api/tenants/{t}/documents`, bearer auth | `crates/nimbus-server/src/router.rs`, `packages/nimbus/src/native_rest_routes.json` |
 
 ## Developers — platform guides
 

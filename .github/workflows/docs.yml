@@ -11,6 +11,7 @@ on:
       - "docs/concepts/**"
       - "docs/reference/**"
       - "docs/brand/**"
+      - "docs/assets/**"
       - "website/**"
       - ".github/workflows/docs.yml"
   pull_request:
@@ -22,6 +23,7 @@ on:
       - "docs/concepts/**"
       - "docs/reference/**"
       - "docs/brand/**"
+      - "docs/assets/**"
       - "website/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -61,12 +63,7 @@ jobs:
         run: npm run build
 
       - name: Check docs
-        run: |
-          if [ -f scripts/check-docs.sh ]; then
-            bash scripts/check-docs.sh
-          else
-            echo "scripts/check-docs.sh not present yet (lands in DOC8); skipping"
-          fi
+        run: bash scripts/check-docs.sh
 
       - name: Upload PR preview version
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
