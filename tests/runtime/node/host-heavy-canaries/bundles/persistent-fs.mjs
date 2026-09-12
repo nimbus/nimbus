@@ -11,7 +11,11 @@ async function capture(operation) {
 
 globalThis.__nimbusInvoke = async function () {
   const absoluteWriteDenied = await capture(() =>
-    writeFile("/tmp/nimbus-host-heavy-persistent.txt", "unexpected", "utf8")
+    writeFile("/tmp/nimbus-host-heavy-persistent.txt", "unexpected", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    })
   );
   const parentEscapeDenied = await capture(() =>
     mkdir("../persistent-cache", { recursive: true })
