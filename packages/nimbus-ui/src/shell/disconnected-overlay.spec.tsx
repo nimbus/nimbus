@@ -45,7 +45,7 @@ describe("DisconnectedOverlay", () => {
     expect(overlay).toHaveTextContent("Stale data shown, mutations disabled.");
     // The banner carries the mascot's error face, not a status dot: the shell
     // itself is the subject, and the text beside it says what the face says.
-    const mascot = overlay.querySelector("[data-mascot]");
+    const mascot = overlay.querySelector("svg[data-state]");
     expect(mascot).toHaveAttribute("data-state", "error");
     expect(mascot).toHaveAttribute("aria-hidden", "true");
     await act(async () => {

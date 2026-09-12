@@ -74,7 +74,7 @@ export function FirstRun({
       data-testid={testid}
     >
       <div className="flex flex-col items-center gap-3 text-center md:w-56">
-        <Mascot size={72} state="empty" variant="solid" decorative />
+        <Mascot size={72} state="empty" decorative />
         <h2
           id={`${testid}-title`}
           className="text-base font-medium text-text-1"

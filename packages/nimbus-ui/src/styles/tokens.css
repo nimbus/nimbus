@@ -79,6 +79,14 @@
   --accent-ink: #1a1204; /* text on accent fills */
   --accent-link: #f0b23e;
 
+  /* The mascot body and its face. One gold on every ground, so the mark in
+     the sidebar, the tab bar and the sign-in card are the same sticker. Not
+     the accent: that has to darken to #b45309 on the light grounds for its
+     3:1 fill floor and stops looking like the sticker. Logos are exempt from
+     that floor (SC 1.4.11), so the mark keeps the gold and does not theme. */
+  --mark: #f0b23e;
+  --mark-ink: #1a1204;
+
   --success: #4ade80;
   --warning: #fb923c;
   --error: #f87171;
@@ -191,6 +199,8 @@
   --color-accent-ink: var(--accent-ink);
   --color-accent-link: var(--accent-link);
   --color-accent-tint: var(--accent-tint);
+  --color-mark: var(--mark);
+  --color-mark-ink: var(--mark-ink);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-error: var(--error);

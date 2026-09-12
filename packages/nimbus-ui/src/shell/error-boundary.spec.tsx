@@ -73,7 +73,9 @@ describe("AppErrorBoundary", () => {
       "The console shell failed to render",
     );
     expect(
-      screen.getByTestId("error-boundary-state").querySelector("[data-mascot]"),
+      screen
+        .getByTestId("error-boundary-state")
+        .querySelector("svg[data-state]"),
     ).toHaveAttribute("data-state", "error");
     expect(screen.getByTestId("error-boundary-copy")).toHaveTextContent(
       "TopNav exploded",

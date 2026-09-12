@@ -739,8 +739,8 @@ sub-panel, and the page.
 The left column is the console's one navigation surface
 (`packages/nimbus-ui/src/shell/sidebar/`). Top to bottom:
 
-- **Brand row** (56px): the outline mascot next to the lowercase
-  wordmark; a link to the active view's home page.
+- **Brand row** (56px): the mascot next to the lowercase wordmark; a link
+  to the active view's home page.
 - **Scope row:** the **view switcher**, a two-segment `SegmentedControl`
   (Developer, Operator) at full width, then the **tenant selector**
   (Developer) or the **server identity line** (Operator: the hostname,
@@ -922,6 +922,19 @@ Accent:
 | `--accent-link` | `#f0b23e` | `#975c06` | Hyperlinks only |
 | `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(180,83,9,.14)` | Selected-row wash |
 
+The mark:
+
+| Token | Dark | Light | Use |
+| --- | --- | --- | --- |
+| `--mark` | `#f6f7f8` | `#f0b23e` | The mascot body, nothing else |
+| `--mark-ink` | `#18181b` | `#1a1204` | The mascot face |
+
+`--mark` is not the accent. The accent darkens to `#b45309` on the light
+grounds to clear its 3:1 fill floor, and a mascot painted with it stops
+looking like the sticker on the app icon. A logo is exempt from that floor
+(WCAG SC 1.4.11), so the mark keeps Nimbus gold in light and goes white in
+dark, where it reads as the `--text-1` of the surface.
+
 Semantic tokens (each has a `-tint` at 14% for washes):
 
 | Token | Dark | Light | Use |
@@ -966,7 +979,7 @@ only for:
 
 - The marketing logo variants (`docs/brand/logo/`)
 - README hero images and marketing pages
-- The solid mascot as favicon, app icon, and sign-in sticker (see
+- The mascot in fixed gold as favicon, app icon, and sign-in sticker (see
   **Mascot** below)
 - The desktop "CLI not found" setup card (`cli-not-found.html`) — this is
   the user's *first* contact with the app and is intentionally brand-tier
@@ -986,6 +999,10 @@ One family crosses tiers, by design:
   `#b45309` in light, and `--accent-link` is `#975c06` in light. Each is
   measured against the product grounds rather than copied from the brand
   sheet.
+- **Nimbus gold.** `#f0b23e` is also the sticker colour of the mascot, and
+  `--mark` carries it into the light console unchanged. It is the one brand
+  colour that appears inside the product at full strength, and it appears
+  only on the mascot body.
 
 No other colour crosses tiers. The blue, teal, and slate brand variants stay
 on the logo and marketing surfaces. The product has no blue identity and no
@@ -1044,10 +1061,20 @@ one shape from 16px up. The face carries the state; nothing else moves.
 `packages/nimbus-ui/src/components/mascot.tsx` is the single source of the
 drawing; the static assets are exports of it.
 
-| Variant   | Where                                                   | Colour                                                  |
-|-----------|---------------------------------------------------------|---------------------------------------------------------|
-| `outline` | The mark: sidebar brand row, mobile top bar, inline text | `currentColor` stroke, `--bg-panel` fill                |
-| `solid`   | The sticker: favicon, app icon, sign-in card, empty states at 32px and above | `--accent` body, `--accent-ink` face (fixed `#f0b23e` / `#1a1204` in static assets) |
+There is one drawing and it is always filled. In the console the body takes
+`--mark` and the face takes `--mark-ink`: Nimbus gold with an ink face on
+the light grounds, white with an ink face on the dark ones. Outside the
+console the same drawing is fixed at the sticker colours, `#f0b23e` on
+`#1a1204`, on a `#0a0b0c` tile where it needs a ground.
+
+| Where                                                       | Body / face                              |
+|-------------------------------------------------------------|------------------------------------------|
+| Sidebar brand row, mobile top bar, overview and nodes headlines, empty states, first run, disconnected banner | `--mark` / `--mark-ink` |
+| Favicon, app icon, desktop icon and tray, sign-in card, README, docs nav | Fixed `#f0b23e` / `#1a1204`; the README and docs swap to white / `#18181b` under a dark scheme |
+
+The outline variant is gone. A stroked cloud on the panel ground read as a
+second logo next to the filled one on the app icon, and at 24px its
+1px stroke lost to the semibold wordmark beside it.
 
 - **States.** `idle` (dot eyes, smile), `working` (eyes to the side, flat
   mouth, thought dots), `error` (crossed eyes, wobble, one drop), `empty`
@@ -1058,14 +1085,17 @@ drawing; the static assets are exports of it.
   `prefers-reduced-motion: reduce`; the `globals.css` backstop is the
   second net.
 - **Sizes.** 16 in a tab, 24 to 30 in the nav, 32 in a card header, 48 and
-  up in an empty state. Below 24px the outline stroke thickens from 5 to 7
-  units so it survives the tab bar.
+  up in an empty state. Below 40px the face thickens (mouth 4 to 5.5 units,
+  eyes 3.7 to 4.6) so it survives the tab bar.
 - **Static exports.** `favicon.svg` and `favicon.ico` (16, 32, 48) and
-  `icon-512.png` (solid face on a `#0a0b0c` tile) under
+  `icon-512.png` (gold face on a `#0a0b0c` tile) under
   `packages/nimbus-ui/public/`. The favicon is one fixed-colour drawing, so
-  the console does not swap it when the theme changes.
-- **Accent rule.** The amber body is the accent, so the solid variant appears
-  only where the accent may appear: once per surface, never as a wash.
+  the console does not swap it when the theme changes. The desktop app icon
+  and the docs favicon are the same export.
+- **Mark rule.** `--mark` paints the mascot body and nothing else. It is
+  not a second accent: no button, badge, wash, or text takes it. The
+  accessories outside the body (thought dots, drop, zz, sparks) take
+  `currentColor`.
 
 ### Documentation Site (nimbusdocs.com)
 
@@ -1091,14 +1121,10 @@ site's single brand-tier moment.** Renderer: Astro Starlight in
   next to the lowercase wordmark `nimbus` (Starlight `title` +
   `logo.light/dark`). Hero and nav use `warm-transparent` (light) /
   `night-blue-transparent` (dark) so the mark sits on the page's own
-  background. The favicon follows the **page's resolved theme**, not the
-  OS scheme: a head script swaps `favicon-warm.svg` / `favicon-night.svg`
-  on `data-theme` changes (an SVG `prefers-color-scheme` query can only
-  see the OS, so a light page on a dark OS would otherwise show the night
-  favicon). The auto media-query `favicon.svg` stays as the no-JS
-  fallback. The docs site keeps its own copies of these files; the
-  operator console ships the solid mascot as its favicon instead (see
-  **Mascot** above) and swaps nothing.
+  background. The favicon is the **mascot in fixed gold** — the same
+  `favicon.svg` the operator console ships (see **Mascot** above). The mark
+  does not theme, so the docs site swaps nothing on `data-theme` and needs
+  no per-theme copies: one sticker on every surface, at every size.
 - **Typography.** Body uses the system UI stack; code/IDs/paths use
   JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
   letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px
