@@ -51,6 +51,13 @@ from the crate's `default` features. The feature stays available as an opt-in.
 Pingora's brotli copy exports no `BrotliEncoder*` C symbols. It never references
 the gated `brotli-decompressor` FFI module.
 
+Nimbus also repairs the two custom-allocator FFI destruction paths in
+`BrotliEncoderDestroyInstance` and `BrotliEncoderDestroyWorkPool`. After moving
+the container out with `ptr::read`, each path now reads the allocator opaque
+from the moved local instead of the raw source pointer. Regression tests check
+that the custom free callback receives the original opaque and container
+address and that it releases all tracked allocations.
+
 The `brotli-decompressor-2.5.1` patch copies its crates.io release. Nimbus
 backports upstream's 4.x fix. The patch gates `pub mod ffi;` behind a new
 `ffi-api` feature. Version 2.5.1 otherwise exported the module and its

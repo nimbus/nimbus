@@ -294,9 +294,9 @@ pub unsafe extern "C" fn BrotliEncoderDestroyWorkPool(work_pool_ptr: *mut Brotli
     if let Err(panic_err) = compressor::catch_panic(|| {
         if (*wpp.0).custom_allocator.alloc_func.is_some() {
             if let Some(free_fn) = (*wpp.0).custom_allocator.free_func {
-                let _to_free = core::ptr::read(wpp.0);
+                let to_free = core::ptr::read(wpp.0);
                 let ptr = core::mem::transmute::<*mut BrotliEncoderWorkPool, *mut c_void>(wpp.0);
-                free_fn((*wpp.0).custom_allocator.opaque, ptr);
+                free_fn(to_free.custom_allocator.opaque, ptr);
             }
         } else {
             free_work_pool_no_custom_alloc(wpp.0);
