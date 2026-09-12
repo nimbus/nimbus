@@ -1,8 +1,12 @@
 import type { Metadata } from 'next';
-import type { ReactNode } from 'react';
+import { lazy, type ReactNode } from 'react';
 import { RootProvider } from 'fumadocs-ui/provider/next';
 
 import './global.css';
+
+// The dialog pulls in the search engine, so it loads on first open rather
+// than with every page.
+const SearchDialog = lazy(() => import('@/components/search-dialog'));
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://nimbusdocs.com'),
@@ -25,9 +29,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="flex min-h-screen flex-col">
-        {/* Search is a static index built at export time. DR5 turns it on. */}
         <RootProvider
-          search={{ enabled: false }}
+          search={{ SearchDialog }}
           theme={{ storageKey: 'nimbus-docs-theme' }}
         >
           {children}
