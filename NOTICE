@@ -100,6 +100,8 @@ brotli-decompressor — https://github.com/dropbox/rust-brotli-decompressor
 Licensed under the 3-Clause BSD License or the MIT License. Nimbus uses locally
 patched copies at third_party/brotli-3.5.0 and
 third_party/brotli-decompressor-2.5.1 to prevent duplicate exported C symbols.
+The brotli patch also repairs custom-allocator ownership during FFI container
+destruction.
 
 Copyright (c) 2016 Dropbox, Inc.
 All rights reserved.
