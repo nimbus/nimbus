@@ -916,24 +916,26 @@ Accent:
 
 | Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--accent` | `#f0b23e` | `#b45309` | Identity, selection, the focus ring, `::selection` |
-| `--accent-hover` | `#f6c35c` | `#92400e` | Hovered accent fill |
-| `--accent-ink` | `#1a1204` | `#ffffff` | Text on an accent fill |
-| `--accent-link` | `#f0b23e` | `#975c06` | Hyperlinks only |
-| `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(180,83,9,.14)` | Selected-row wash |
+| `--accent` | `#f0b23e` | `#f0b23e` | Nimbus gold. Fills only, always under `--accent-ink` |
+| `--accent-hover` | `#f6c35c` | `#e0a230` | Hovered accent fill |
+| `--accent-ink` | `#1a1204` | `#1a1204` | Text on an accent fill |
+| `--accent-edge` | `#f0b23e` | `#866423` | The ring, a 1–2px bar, a dot, an icon, accent text |
+| `--accent-link` | `#f0b23e` | `#866423` | Hyperlinks only |
+| `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(240,178,62,.22)` | Selected-row wash |
 
 The mark:
 
 | Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--mark` | `#f6f7f8` | `#f0b23e` | The mascot body, nothing else |
-| `--mark-ink` | `#18181b` | `#1a1204` | The mascot face |
+| `--mark` | `#f0b23e` | `#f0b23e` | The mascot body, nothing else |
+| `--mark-ink` | `#1a1204` | `#1a1204` | The mascot face |
 
-`--mark` is not the accent. The accent darkens to `#b45309` on the light
-grounds to clear its 3:1 fill floor, and a mascot painted with it stops
-looking like the sticker on the app icon. A logo is exempt from that floor
-(WCAG SC 1.4.11), so the mark keeps Nimbus gold in light and goes white in
-dark, where it reads as the `--text-1` of the surface.
+`--mark` holds the same literal as `--accent`, and the two are still
+separate tokens. A logo is exempt from the 3:1 non-text floor (WCAG SC
+1.4.11); the accent is not. The mark can therefore be the gold anywhere,
+unmeasured, while the accent may only be the gold where `--accent-ink`
+sits on top of it. Collapsing them would lose the reason the mascot is
+allowed on a white sidebar at all.
 
 Semantic tokens (each has a `-tint` at 14% for washes):
 
@@ -943,24 +945,38 @@ Semantic tokens (each has a `-tint` at 14% for washes):
 | `--warning` | `#fb923c` | `#b53b0a` | `Degraded`, `Starting`, `Reconnecting` |
 | `--error` | `#f87171` | `#b91c1c` | `Failed`, destructive, removals |
 | `--error-ink` | `#1f0a0a` | `#ffffff` | Text on an error fill |
+| `--success-ink` | `#06210f` | `#ffffff` | Text on a success fill |
 | `--info` | `#60a5fa` | `#1d4ed8` | `Running`, informational |
 
 Rules:
 
-- **One accent, four jobs.** `--accent` carries identity (the active nav
-  item, the primary CTA), selection (the selected row's bar and wash), the
-  focus ring, and `::selection`. There is no second identity colour.
-  `--accent-link` is hyperlinks and nothing else: never paint a button or
-  a nav item with it.
+- **One gold, and the gold is a fill.** `--accent` is `#f0b23e` in both
+  themes — the same literal as the mark, so the console has one identity
+  colour and light does not fork it. Gold cannot be darkened and stay
+  gold: at its own hue it turns olive, and the red-shifted ambers that
+  stay vivid (`#b45309`) are a different colour standing next to the
+  mascot. So the gold is never asked to carry contrast on its own. It
+  appears as a fill under `--accent-ink`, as `::selection`, and as the
+  `-tint` wash.
+- **`--accent-edge` carries every thin accent.** The focus ring, a 1–2px
+  selection bar, a 6px dot, an accent icon, accent text: all take
+  `--accent-edge`, which is measured against all four grounds. It is the
+  gold in dark, where the gold already clears the floors, and the gold
+  darkened at its own hue (`#866423`) in light. `--accent-link` is
+  hyperlinks and nothing else: never paint a button or a nav item with it.
 - **Semantic colours never use the accent hue.** `Running` is `--info`
   (blue), never amber. A state token and the accent are never the same
   literal, so a status never reads as "selected".
 - **Contrast is measured, not assumed.** `src/styles/contrast.spec.ts`
   reads `tokens.css` and holds every text token to 4.5:1 on all four
-  grounds, `--accent` to 3:1 on all four grounds (SC 1.4.11), the two ink
-  tokens to 4.5:1 on their fills, and `--text-4` below `--text-3`. The
-  light deviations from the exemplar (`--text-3`, `--success`, `--warning`,
-  `--accent-link`) exist to pass those gates.
+  grounds, `--accent-edge` to 3:1 on all four grounds (SC 1.4.11), every
+  ink token to 4.5:1 on its own fill, and `--text-4` below `--text-3`. It
+  also asserts `--accent` and `--mark` are one literal in both themes, and
+  greps the components for a utility that would paint the gold as text or
+  as a hairline. `--accent` itself is deliberately ungated against the
+  grounds: it is 1.60:1 on light `--bg-hover`, which is why it is a fill.
+  The light deviations from the exemplar (`--text-3`, `--success`,
+  `--warning`, `--accent-edge`) exist to pass those gates.
 - **Status colours must always have text or icon labels.** Colour alone is
   never the only signal.
 - **Surfaces never use the accent as a fill.** The accent appears as a
@@ -994,15 +1010,16 @@ surface, pick the equivalent product-tier token instead.
 
 One family crosses tiers, by design:
 
+- **Nimbus gold.** `#f0b23e` is the sticker colour of the mascot and the
+  product `--accent` in both themes. It is the one brand colour that
+  appears inside the product at full strength, and it crosses the tier
+  boundary unchanged because the console never asks it to do a job it
+  cannot do: it fills, and `--accent-ink` sits on it.
 - **Golden Hour.** Brand `#D97706` (Golden Hour stroke) is the amber the
-  product accent is built from. `--accent` is `#f0b23e` in dark and
-  `#b45309` in light, and `--accent-link` is `#975c06` in light. Each is
-  measured against the product grounds rather than copied from the brand
-  sheet.
-- **Nimbus gold.** `#f0b23e` is also the sticker colour of the mascot, and
-  `--mark` carries it into the light console unchanged. It is the one brand
-  colour that appears inside the product at full strength, and it appears
-  only on the mascot body.
+  darkened product tokens are built from. `--accent-edge` and
+  `--accent-link` are `#866423` in light — the gold taken down at its own
+  hue until it clears 4.5:1 on `--bg-hover`. These are measured against the
+  product grounds rather than copied from the brand sheet.
 
 No other colour crosses tiers. The product has no blue identity and no
 teal accent, and the marketing surfaces take the same night and paper
@@ -1083,15 +1100,17 @@ site's single brand-tier moment.** Renderer: Astro Starlight in
 - **Doc body = product tier.** Starlight's gray scale maps to the product
   neutrals (`--bg-canvas`/`--bg-panel`/`--border-2`/`--text-1`/`--text-3`,
   both modes verbatim). Starlight has a single accent family: light
-  `--sl-color-accent` ← `--accent-link` (#975c06) with accent-high deepened
+  `--sl-color-accent` ← `--accent-link` (#866423) with accent-high deepened
   for link text on paper; dark `--sl-color-accent` ← `--accent` (#f0b23e).
   One identity family per mode — teal and blue stay out of the doc body.
   No gradients in the doc body.
 - **Splash hero = brand tier, once.** Dark mode renders the hero title in
   the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`
   over Night Blue. Light mode is golden daylight, so its hero composes
-  the warm identity instead: `#F59E0B → #B45309` (amber-500 → amber-700)
-  on warm paper. These are the only gradient sites on the docs surface.
+  the warm identity instead: `#F0B23E → #866423` (Nimbus gold into the
+  same gold taken down at its own hue) on warm paper. The gradient ends on
+  `--accent-edge` so the hero's darkest stop is the value the rest of the
+  light surface already uses for accent text. These are the only gradient sites on the docs surface.
 - **Logo + wordmark + favicon.** The top nav renders the transparent mark
   next to the lowercase wordmark `nimbus` (Starlight `title` +
   `logo.light/dark`). Hero and nav use `warm-transparent` (light) /

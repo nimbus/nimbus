@@ -242,7 +242,7 @@ export function IndexesTab({
 }
 
 const INPUT_CLASS =
-  "h-[26px] rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent";
+  "h-[26px] rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent-edge";
 
 function NewIndexForm({
   existing,

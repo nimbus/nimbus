@@ -101,7 +101,7 @@ export function FirstRun({
                 className={cn(
                   "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium tabular-nums",
                   done
-                    ? "border-success bg-success text-accent-ink"
+                    ? "border-success bg-success text-success-ink"
                     : "border-border-2 text-text-3",
                 )}
               >

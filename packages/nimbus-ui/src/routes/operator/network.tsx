@@ -61,7 +61,7 @@ type RouteDoc = {
 // being a primary action.
 const METHOD_TONE: Record<string, string> = {
   GET: "text-success",
-  POST: "text-accent",
+  POST: "text-accent-edge",
   PUT: "text-warning",
   PATCH: "text-warning",
   DELETE: "text-error",

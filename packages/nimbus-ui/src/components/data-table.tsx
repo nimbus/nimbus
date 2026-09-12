@@ -360,7 +360,7 @@ export function DataTable<TData extends RowData>({
         focusable ? (event) => onRowKeyDown(event, row, index) : undefined
       }
       className={cn(
-        "grid items-center border-b border-border-1 outline-none last:border-b-0 focus-visible:border-accent",
+        "grid items-center border-b border-border-1 outline-none last:border-b-0 focus-visible:border-accent-edge",
         onRowActivate && "cursor-pointer hover:bg-bg-hover",
         row.getIsSelected() && "bg-accent-tint",
         rowClassName?.(row.original),
@@ -484,7 +484,7 @@ export function DataTable<TData extends RowData>({
                         onDoubleClick={() => column.resetSize()}
                         className={cn(
                           "absolute top-0 right-0 h-full w-1 cursor-col-resize select-none touch-none hover:bg-border-3",
-                          column.getIsResizing() && "bg-accent",
+                          column.getIsResizing() && "bg-accent-edge",
                         )}
                       />
                     )}

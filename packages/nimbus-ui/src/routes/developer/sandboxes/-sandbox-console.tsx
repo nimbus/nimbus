@@ -260,7 +260,7 @@ export function SandboxConsole({
           aria-label="Sandbox stdin"
           autoComplete="off"
           spellCheck={false}
-          className="h-[26px] min-w-0 flex-1 rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent disabled:opacity-60"
+          className="h-[26px] min-w-0 flex-1 rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent-edge disabled:opacity-60"
           data-testid={`${testid}-input`}
         />
         <Button
@@ -316,6 +316,6 @@ const LINE_CLASS: Record<ConsoleLine["kind"], string> = {
   stderr: "whitespace-pre-wrap text-warning",
   exit: "text-text-3",
   closed: "text-text-3",
-  input: "whitespace-pre-wrap text-accent",
+  input: "whitespace-pre-wrap text-accent-edge",
   error: "text-error",
 };

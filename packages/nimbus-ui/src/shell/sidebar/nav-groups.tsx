@@ -103,7 +103,7 @@ function NavRow({
       {active ? (
         <span
           aria-hidden
-          className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent"
+          className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent-edge"
         />
       ) : null}
       <Icon size={16} aria-hidden className="shrink-0" />

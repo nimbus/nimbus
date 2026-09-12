@@ -79,11 +79,11 @@ export function DropZone({
       {children}
       {active ? (
         <div
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-accent bg-bg-panel/80"
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-accent-edge bg-bg-panel/80"
           data-testid={`${testid}-overlay`}
         >
           <div className="flex items-center gap-2 rounded-md bg-bg-panel px-3 py-2 text-sm text-text-1 shadow-md">
-            <Upload className="size-4 text-accent" aria-hidden />
+            <Upload className="size-4 text-accent-edge" aria-hidden />
             {label}
           </div>
         </div>

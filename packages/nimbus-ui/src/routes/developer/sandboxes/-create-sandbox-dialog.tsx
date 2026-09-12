@@ -268,4 +268,4 @@ const BACKEND_LABELS: Record<SandboxBackend, string> = {
 };
 
 const INPUT_CLASS =
-  "h-[26px] w-full rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent";
+  "h-[26px] w-full rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent-edge";

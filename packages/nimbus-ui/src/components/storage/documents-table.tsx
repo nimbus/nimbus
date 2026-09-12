@@ -327,7 +327,7 @@ function SortLabel({
       {indexed ? (
         <span
           aria-hidden
-          className="size-1.5 shrink-0 rounded-full bg-accent"
+          className="size-1.5 shrink-0 rounded-full bg-accent-edge"
         />
       ) : null}
     </span>

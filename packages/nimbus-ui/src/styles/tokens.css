@@ -74,16 +74,28 @@
   --text-3: #8b909a;
   --text-4: #62666d; /* disabled only; documented non-AA */
 
+  /* Nimbus gold, the one identity colour, the same literal in both themes.
+     It is a fill: it carries `--accent-ink` on top and never paints text or a
+     hairline itself. Gold cannot be darkened and stay gold -- at its own hue
+     it turns olive, and the red-shifted ambers that stay vivid are a
+     different colour next to the mascot -- so light does not darken it.
+     `--accent-edge` carries the contrast instead. */
   --accent: #f0b23e;
   --accent-hover: #f6c35c;
   --accent-ink: #1a1204; /* text on accent fills */
+
+  /* The accent wherever it must be perceivable on its own: the focus ring,
+     a 1-2px bar, a small dot, an icon, accent text. Held to 4.5:1 on every
+     ground, which covers the 3:1 non-text floor (SC 1.4.11) as well. On the
+     dark grounds the gold already clears both, so this is the gold. */
+  --accent-edge: #f0b23e;
   --accent-link: #f0b23e;
 
-  /* The mascot body and its face. One gold on every ground, so the mark in
-     the sidebar, the tab bar and the sign-in card are the same sticker. Not
-     the accent: that has to darken to #b45309 on the light grounds for its
-     3:1 fill floor and stops looking like the sticker. Logos are exempt from
-     that floor (SC 1.4.11), so the mark keeps the gold and does not theme. */
+  /* The mascot body and its face. Logos are exempt from the non-text floor
+     (SC 1.4.11), so the mark is the unmeasured gold on every ground and the
+     mark in the sidebar, the tab bar and the sign-in card is one sticker. It
+     is declared apart from `--accent` because the exemption is the reason it
+     can stay gold, and the accent does not share that exemption. */
   --mark: #f0b23e;
   --mark-ink: #1a1204;
 
@@ -91,6 +103,7 @@
   --warning: #fb923c;
   --error: #f87171;
   --error-ink: #1f0a0a; /* text on error fills */
+  --success-ink: #06210f; /* text on success fills */
   --info: #60a5fa;
   --success-tint: rgba(74, 222, 128, 0.14);
   --warning-tint: rgba(251, 146, 60, 0.14);
@@ -109,9 +122,8 @@
      text-3      #71717a -> #66666e  (4.10:1 -> 4.82:1 on hover)
      success     #15803d -> #15753a  (4.25:1 -> 4.89:1 on hover)
      warning     #c2410c -> #b53b0a  (4.39:1 -> 4.95:1 on hover)
-     accent-link #a16207 -> #975c06  (4.17:1 -> 4.62:1 on hover)
-   --accent stays #b45309: it paints fills and the focus ring, where 3:1 is the
-   floor, and it clears that on every ground (4.26:1 on hover). */
+     accent-edge #a16207 -> #866423  (4.17:1 -> 4.61:1 on hover)
+   --accent does not deviate: it is the gold, unchanged from the dark block. */
 
 :root[data-theme="light"] {
   --bg-canvas: #ffffff;
@@ -128,21 +140,31 @@
   --text-3: #66666e;
   --text-4: #a1a1aa;
 
-  --accent: #b45309;
-  --accent-hover: #92400e;
-  --accent-ink: #ffffff;
-  --accent-link: #975c06;
+  /* Identical to the dark block: one gold, and dark ink on it at 9.84:1. */
+  --accent: #f0b23e;
+  --accent-hover: #e0a230;
+  --accent-ink: #1a1204;
+
+  /* The gold darkened at its own hue until it clears 4.5:1 on --bg-hover,
+     the binding ground. This is the only warm that theming moves. */
+  --accent-edge: #866423;
+  --accent-link: #866423;
+
+  /* Deliberately identical to the dark block: the mark does not theme. */
+  --mark: #f0b23e;
+  --mark-ink: #1a1204;
 
   --success: #15753a;
   --warning: #b53b0a;
   --error: #b91c1c;
   --error-ink: #ffffff;
+  --success-ink: #ffffff;
   --info: #1d4ed8;
   --success-tint: rgba(21, 117, 58, 0.14);
   --warning-tint: rgba(181, 59, 10, 0.14);
   --error-tint: rgba(185, 28, 28, 0.14);
   --info-tint: rgba(29, 78, 216, 0.14);
-  --accent-tint: rgba(180, 83, 9, 0.14);
+  --accent-tint: rgba(240, 178, 62, 0.22); /* gold needs more of itself on paper */
 
   color-scheme: light;
 }
@@ -197,6 +219,7 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
+  --color-accent-edge: var(--accent-edge);
   --color-accent-link: var(--accent-link);
   --color-accent-tint: var(--accent-tint);
   --color-mark: var(--mark);
@@ -205,6 +228,7 @@
   --color-warning: var(--warning);
   --color-error: var(--error);
   --color-error-ink: var(--error-ink);
+  --color-success-ink: var(--success-ink);
   --color-info: var(--info);
   --color-success-tint: var(--success-tint);
   --color-warning-tint: var(--warning-tint);

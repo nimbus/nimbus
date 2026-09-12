@@ -268,8 +268,9 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
                       ) : null}
                       {isActive ? (
                         // Matches `Select`: the marker takes the active row's
-                        // tone. `text-accent` measured 2.48:1 on --surface in
-                        // the warm palette, failing at 11px.
+                        // tone rather than the accent. The gold is a fill and
+                        // cannot carry an 11px glyph; --accent-edge could, but
+                        // a second tone here would compete with the row.
                         <span
                           aria-hidden
                           className="font-mono text-xs text-text-1"
