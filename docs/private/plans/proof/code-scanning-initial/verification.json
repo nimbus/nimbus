@@ -1,0 +1,56 @@
+{
+  "base": "b527e1742ab3c86f8e896765b7d4e63b964116ab",
+  "source_sha256": {
+    "packages/firebase/src/internal/document-data.ts": "a9baaf01141b71b241f9f9aacb68da8c21d2ecac05c6a7f0891129d4de16ac73",
+    "packages/firebase/src/selftest/field_paths.mjs": "23c7896a532dbe8b7fb029ac763c36f9e8803edd4b9cee7f6e2fd0c743f9d714",
+    "packages/firebase/src/selftest/runtime_surface.mjs": "52e9d1043cdb6d830a5803be76c78748ac5c786fe9d6e0ea4c75a7e7f1c172e2"
+  },
+  "node": "24.19.0",
+  "checks": {
+    "firebase_test": 0,
+    "firebase_typecheck": 0,
+    "firebase_build": 0,
+    "capability_boundary_lint": 0,
+    "cargo_fmt": 0,
+    "make_clippy": 0,
+    "docs_links": {
+      "exit": 0,
+      "pages": 109
+    },
+    "website_build": {
+      "exit": 0,
+      "pages": 110
+    },
+    "docs_site": {
+      "exit": 1,
+      "passed": 16,
+      "total": 17,
+      "failure": "existing docs/assets directory"
+    },
+    "make_ci": {
+      "status": "UNVERIFIED",
+      "exit": 143,
+      "reason": "stopped after machine tests contacted the active user development server",
+      "clippy": "PASS",
+      "deny": "PASS",
+      "runtime": {
+        "passed": 528,
+        "ignored": 99,
+        "filtered": 709
+      },
+      "workspace": {
+        "passed": 4803,
+        "live_server_failures": 18,
+        "target_symlink_failures": 2,
+        "terminated": 12,
+        "not_run": 2948,
+        "skipped": 111
+      }
+    },
+    "cli_path_recheck": {
+      "exit": 0,
+      "passed": 2,
+      "setup": "local fixture target directory, shared absolute CARGO_TARGET_DIR"
+    }
+  }
+}
