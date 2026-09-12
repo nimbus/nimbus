@@ -1,0 +1,5 @@
+PASS  17. docs/concepts/architecture/ has every DOC7 manifest page with source-map entries
+
+16/17 conditions green
+failing:
+  - 5. docs/ top level = six groups + brand/ + private/ + README.md + source-map.md; no published links into docs/private: unexpected top-level entries: [assets] private-linking pages: [none]

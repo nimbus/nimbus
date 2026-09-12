@@ -70,6 +70,23 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   gap on native and runtime paths, the generated-history read-visibility race,
   and the CodeQL path-injection alerts on `deploy_artifacts.rs` awaiting
   dismissal. Final evidence stays in `proof/nimbus-ui-rebuild/`.
+- `archive/nimbus-docs-restyle-plan.html` - `complete, archived`
+  (2026-09-12; PR #351). Rebuilt nimbusdocs.com on fumadocs with Next in
+  `output: 'export'` behind Cloudflare static assets, replacing Starlight, and
+  put the Odyssey on `/` with the splash content folded into `/docs/`. The
+  mascot became the mark everywhere -- console, docs, README, favicon, app
+  icon, Open Graph card -- solid gold with a dark face on every ground, and
+  the old cloud logo is deleted. The palette lost both `#b45309` and the
+  darkened gold `#866423`: the accent is now two colours in three roles, where
+  `--accent` is the gold in both themes, `--accent-ink` is its ink and its
+  carrier, and `--accent-text` is whichever of the pair a given ground can
+  show. The rule is that the gold must name its carrier, because no sRGB
+  colour clears 4.5:1 as text on both `#ffffff` and `#0a0b0c`. Gates: five new
+  checks across `contrast.spec.ts` and `verify-nimbus-docs-site.sh` (now
+  18 conditions), each negative-tested. Final evidence stays in
+  `proof/nimbus-docs-restyle/`, including the four Odyssey defects that only
+  live-browser verification could find and the latent translucent focus ring
+  whose token measured 4.61:1 while its composited stroke measured 1.77:1.
 - `archive/mysql-index-keyspace-plan.html` - `complete, archived`
   (2026-09-09; PR #336). Delivered the MySQL index keyspace: one
   bootstrap-created `index_entries` table replaces the per-index InnoDB keys

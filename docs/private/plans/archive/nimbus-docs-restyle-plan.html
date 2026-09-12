@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nimbus docs restyle plan</title>
+<style>
+  :root {
+    --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
+    --page: #ffffff; --accent: #2563eb;
+    --todo: #6b7280; --in-progress: #2563eb; --blocked: #dc2626;
+    --deferred: #7c3aed; --done: #16a34a; --no-action: #64748b;
+    --rejected: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e5e9ee; --muted: #9aa4af; --line: #333a43; --soft: #1b2027;
+      --page: #11151a; --accent: #60a5fa;
+      --todo: #9aa4af; --in-progress: #60a5fa; --blocked: #f87171;
+      --deferred: #a78bfa; --done: #4ade80; --no-action: #94a3b8;
+      --rejected: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 1080px;
+    background: var(--page); color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      sans-serif;
+  }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; border-bottom: 1px solid
+    var(--line); padding-bottom: 0.25rem; }
+  h3 { font-size: 1rem; margin: 1.25rem 0 0.4rem; }
+  code { background: var(--soft); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0.05rem 0.35rem; font-size: 0.85em; }
+  pre { background: var(--soft); border: 1px solid var(--line);
+    border-radius: 6px; padding: 0.9rem 1rem; overflow-x: auto;
+    line-height: 1.45; }
+  pre code { background: none; border: none; padding: 0; }
+  blockquote { margin: 0.75rem 0; padding: 0.6rem 1rem; border-left: 3px
+    solid var(--accent); background: var(--soft); }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0;
+    font-size: 0.92rem; }
+  th, td { border: 1px solid var(--line); padding: 0.35rem 0.55rem;
+    text-align: left; vertical-align: top; }
+  th { background: var(--soft); }
+  #status-line { color: var(--muted); font-size: 0.92rem; margin: 0 0 1rem; }
+  .bar { height: 0.75rem; border: 1px solid var(--line); border-radius:
+    999px; overflow: hidden; background: var(--soft); }
+  .bar .fill { height: 100%; width: 0; background: var(--done);
+    transition: width 0.3s; }
+  .counts { color: var(--muted); font-size: 0.92rem; margin: 0.4rem 0 0; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit,
+    minmax(280px, 1fr)); gap: 1rem; }
+  figure { margin: 0; border: 1px solid var(--line); border-radius: 8px;
+    padding: 0.75rem; background: var(--soft); }
+  figcaption { font-weight: 600; margin-bottom: 0.5rem; }
+  figure svg { max-width: 100%; height: auto; }
+  tr[data-status] td:nth-child(3) code { font-weight: 600; }
+  tr[data-status="todo"] td:nth-child(3) code,
+  tr[data-status^="todo("] td:nth-child(3) code { color: var(--todo); }
+  tr[data-status="in_progress"] td:nth-child(3) code,
+  tr[data-status^="in_progress("] td:nth-child(3) code {
+    color: var(--in-progress); }
+  tr[data-status="blocked"] td:nth-child(3) code,
+  tr[data-status^="blocked("] td:nth-child(3) code {
+    color: var(--blocked); }
+  tr[data-status="deferred"] td:nth-child(3) code,
+  tr[data-status^="deferred("] td:nth-child(3) code {
+    color: var(--deferred); }
+  tr[data-status="done"] td:nth-child(3) code,
+  tr[data-status^="done("] td:nth-child(3) code { color: var(--done); }
+  tr[data-status="no-action"] td:nth-child(3) code,
+  tr[data-status^="no-action("] td:nth-child(3) code {
+    color: var(--no-action); }
+  tr[data-status="rejected"] td:nth-child(3) code,
+  tr[data-status^="rejected("] td:nth-child(3) code {
+    color: var(--rejected); }
+  @page { margin: 0.7in 0.6in; size: letter; }
+  @media print {
+    :root {
+      --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
+      --page: #ffffff; --accent: #2563eb;
+      --todo: #6b7280; --in-progress: #2563eb; --blocked: #dc2626;
+      --deferred: #7c3aed; --done: #16a34a; --no-action: #64748b;
+      --rejected: #b45309;
+    }
+    body { max-width: none; padding: 0; }
+  }
+</style>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var rows = document.querySelectorAll("#ledger tbody tr");
+    var terminal = { "done": 1, "no-action": 1, "rejected": 1 };
+    var total = rows.length, closed = 0, current = "";
+    rows.forEach(function (row) {
+      var raw = row.getAttribute("data-status") || "";
+      var status = raw.split("(")[0].trim();
+      if (terminal[status]) { closed += 1; }
+      if (status === "in_progress" && !current) {
+        current = row.id + " " + row.cells[1].textContent.trim();
+      }
+    });
+    var pct = total ? Math.round((closed / total) * 100) : 0;
+    document.querySelector("#progress .fill").style.width = pct + "%";
+    var text = closed + " of " + total + " tasks terminal (" + pct + "%).";
+    if (current) { text += " In progress: " + current; }
+    document.querySelector("#progress .counts").textContent = text;
+  });
+</script>
+</head>
+<body>
+
+<header id="overview">
+  <h1>Nimbus docs restyle plan</h1>
+  <p id="status-line">
+    Status: <code data-plan-status="active">active</code> ·
+    Owner: this plan ·
+    Created: 2026-09-12 ·
+    Baseline: main @ b527e1742 ·
+    Proof root: <code>proof/nimbus-docs-restyle/</code> ·
+    Next action: see <a href="#current-resume-state">Current resume state</a>
+  </p>
+
+  <section id="current-resume-state">
+    <h2>Current resume state</h2>
+    <p>Updated: 2026-09-12 UTC.</p>
+    <table>
+      <thead><tr><th>Field</th><th>Current state</th></tr></thead>
+      <tbody>
+        <tr><td>Active task</td><td><a href="#DR9">DR9 Cleanup</a>, once <a href="https://github.com/nimbus/nimbus/pull/351">PR #351</a> merges.</td></tr>
+        <tr><td>Next action</td><td>Wait for hosted CI on <a href="https://github.com/nimbus/nimbus/pull/351">PR #351</a> at <code>0a11d43a3</code>, then merge, then run DR9. The structured review gap is resolved by owner decision: the <code>autoreview</code> branch gate cannot admit this branch's eleven binary assets, so the recorded evidence is the three clean per-commit runs plus a documented self-review, which is what <a href="proof/nimbus-docs-restyle/closeout.md">closeout.md</a> carries. Two files in the worktree belong to another session and must stay uncommitted: <code>examples/nimbus/agent-chat/package.json</code> and <code>package-lock.json</code>.</td></tr>
+        <tr><td>Worktree</td><td><code>~/src/github.com/nimbus/nimbus</code>, branch <code>nimbus-docs-restyle</code> from <code>main @ b527e1742</code>, at <code>c42a1f86e</code>. Ten commits, 125 files, +12004 / -5287. The fumadocs site under <code>website/</code> builds and is committed, with search, the three <code>llms</code> files, and the sitemap. Dirty files that this plan does not own and must not commit: <code>examples/nimbus/agent-chat/package.json</code>, <code>package-lock.json</code> (both written by a <code>nimbus dev --app-dir</code> run). A detached review worktree sits at <code>scratchpad/review-wt</code> with the local branches <code>ar-base</code> and <code>ar-review</code>; DR9 removes it. Desktop work lands in <code>~/src/github.com/nimbus/desktop</code>, branch <code>nimbus-mark</code> at <code>0127834</code>.</td></tr>
+        <tr><td>Verification</td><td>All at <code>c42a1f86e</code> unless noted. Console: vitest 130 files / 1126 tests, typecheck exit 0, biome lint exit 0 with four findings that are all present on <code>main</code>. Site: <code>npm run build</code> exit 0, 117 static routes, 112 <code>index.html</code>, 108 matching the 108 Markdown sources, no <code>private</code> path emitted. Gates: <code>check-docs.sh</code> PASS on 109 pages, <code>verify-nimbus-docs-site.sh</code> 17/17, <code>actionlint</code> exit 0. Full record in <a href="proof/nimbus-docs-restyle/closeout.md">the closeout proof</a>.</td></tr>
+        <tr><td>Running processes</td><td>The stray <code>python3 -m http.server 8791</code> is killed. A <code>serve</code> process holds port 8791 with <code>website/out</code> for the visual and runtime checks; DR9 kills it. One Chrome tab is open on the local site; DR9 closes it.</td></tr>
+        <tr><td>Required reads</td><td><code>DESIGN.md</code> §Mascot and §Documentation Site, <code>.agents/skills/docs/SKILL.md</code>, <code>scripts/verify-nimbus-docs-site.sh</code>, <code>scripts/check-docs.sh</code>, <code>.github/workflows/docs.yml</code>, <code>~/src/github.com/open-e2ee/console/src</code> (fumadocs exemplar), <code>~/src/github.com/nimbus/nimbus-marketing-2026-09-11/marketing-odyssey/app</code> (Odyssey source).</td></tr>
+        <tr><td>Unresolved</td><td>One. The structured <code>autoreview</code> branch gate cannot review this branch; see the next action. The mark decision changed during execution: <code>--mark</code> is <code>#f0b23e</code> on every ground, not white in dark. DR1 and DR3 are amended to match.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="outcome">
+    <h2>Outcome</h2>
+    <blockquote>
+      Every surface that carries the Nimbus mark draws the same solid mascot:
+      gold <code>#f0b23e</code> on light grounds, white <code>#f6f7f8</code> on
+      dark grounds, never an outline and never the darkened accent. The docs
+      site at nimbusdocs.com is a static Next and fumadocs export that reads
+      the console's palette, type, and mark; it serves the Odyssey story on
+      <code>/</code>, the six published docs groups under <code>/docs</code>,
+      static search, and the three llms text files; and it still cannot publish
+      anything under <code>docs/private/</code>.
+    </blockquote>
+  </section>
+
+  <section id="progress">
+    <h2>Progress</h2>
+    <div class="bar"><div class="fill"></div></div>
+    <p class="counts">Progress appears here when the page loads. The status
+      ledger below is the source of truth.</p>
+  </section>
+
+  <section id="architecture">
+    <h2>Architecture</h2>
+    <div class="pair">
+      <figure>
+        <figcaption>Before</figcaption>
+        <svg viewBox="0 0 320 190" role="img" aria-label="Before diagram">
+          <rect x="10" y="10" width="300" height="50" rx="8" fill="none" stroke="currentColor"/>
+          <text x="160" y="30" text-anchor="middle" fill="currentColor" font-size="12">docs/&lt;six groups&gt;  (Markdown, source of truth)</text>
+          <text x="160" y="48" text-anchor="middle" fill="currentColor" font-size="11">docs/private never published</text>
+          <rect x="10" y="80" width="140" height="100" rx="8" fill="none" stroke="currentColor"/>
+          <text x="80" y="100" text-anchor="middle" fill="currentColor" font-size="12">website/ Astro Starlight</text>
+          <text x="80" y="118" text-anchor="middle" fill="currentColor" font-size="11">symlinks into docs/</text>
+          <text x="80" y="136" text-anchor="middle" fill="currentColor" font-size="11">OKLCH sky theme, wisp</text>
+          <text x="80" y="154" text-anchor="middle" fill="currentColor" font-size="11">splash on /</text>
+          <text x="80" y="172" text-anchor="middle" fill="currentColor" font-size="11">Pagefind, starlight-llms-txt</text>
+          <rect x="170" y="80" width="140" height="100" rx="8" fill="none" stroke="currentColor"/>
+          <text x="240" y="100" text-anchor="middle" fill="currentColor" font-size="12">marks</text>
+          <text x="240" y="118" text-anchor="middle" fill="currentColor" font-size="11">console: fill/outline variants</text>
+          <text x="240" y="136" text-anchor="middle" fill="currentColor" font-size="11">desktop: wisp, blue dark</text>
+          <text x="240" y="154" text-anchor="middle" fill="currentColor" font-size="11">README: wisp banner</text>
+          <text x="240" y="172" text-anchor="middle" fill="currentColor" font-size="11">Odyssey: blue diamond</text>
+        </svg>
+      </figure>
+      <figure>
+        <figcaption>After</figcaption>
+        <svg viewBox="0 0 320 190" role="img" aria-label="After diagram">
+          <rect x="10" y="10" width="300" height="50" rx="8" fill="none" stroke="currentColor"/>
+          <text x="160" y="30" text-anchor="middle" fill="currentColor" font-size="12">docs/&lt;six groups&gt;  (Markdown, source of truth)</text>
+          <text x="160" y="48" text-anchor="middle" fill="currentColor" font-size="11">docs/private never published · docs/brand/mascot SVGs</text>
+          <rect x="10" y="80" width="140" height="100" rx="8" fill="none" stroke="currentColor"/>
+          <text x="80" y="100" text-anchor="middle" fill="currentColor" font-size="12">website/ Next + fumadocs</text>
+          <text x="80" y="118" text-anchor="middle" fill="currentColor" font-size="11">output: export → out/</text>
+          <text x="80" y="136" text-anchor="middle" fill="currentColor" font-size="11">tokens.css palette, Geist</text>
+          <text x="80" y="154" text-anchor="middle" fill="currentColor" font-size="11">Odyssey on /, docs on /docs</text>
+          <text x="80" y="172" text-anchor="middle" fill="currentColor" font-size="11">Orama static, llms routes</text>
+          <rect x="170" y="80" width="140" height="100" rx="8" fill="none" stroke="currentColor"/>
+          <text x="240" y="100" text-anchor="middle" fill="currentColor" font-size="12">marks</text>
+          <text x="240" y="118" text-anchor="middle" fill="currentColor" font-size="11">console: --mark / --mark-ink</text>
+          <text x="240" y="136" text-anchor="middle" fill="currentColor" font-size="11">desktop: solid mascot icons</text>
+          <text x="240" y="154" text-anchor="middle" fill="currentColor" font-size="11">README: gold/white picture</text>
+          <text x="240" y="172" text-anchor="middle" fill="currentColor" font-size="11">Odyssey: mascot lockup</text>
+        </svg>
+      </figure>
+    </div>
+    <p>The content seam does not move. The renderer under <code>website/</code>
+      is replaced, and every mark consumer reads the one mascot drawing.</p>
+  </section>
+</header>
+
+<main>
+  <section id="scope">
+    <h2>Scope</h2>
+    <p><strong>Owns:</strong> the mascot mark on every Nimbus surface (console
+      tokens and component, desktop icons and setup card, README banner,
+      Odyssey nav), the replacement of the Starlight renderer under
+      <code>website/</code> with a static Next and fumadocs export themed on the
+      console palette, the Odyssey homepage on <code>/</code>, the fold of the
+      old splash content into the docs landing, and the rewrite of the docs
+      gates, workflow, deploy config, docs skill, and <code>DESIGN.md</code>
+      §Documentation Site that describe the site.</p>
+    <p><strong>Does not own:</strong> the Markdown content under
+      <code>docs/</code> (the docs skill owns it; pages move only where a route
+      changes), the console shell beyond the mascot (archived
+      <code>nimbus-ui-rebuild-plan.html</code>), and the marketing repositories
+      under <code>nimbus-marketing-2026-09-11</code>, which stay as the source
+      the port copies from and are not edited.</p>
+    <p><strong>Non-goals:</strong> server-rendered docs, a Cloudflare Worker
+      runtime, i18n, a redesign of the Odyssey narrative or its scenes, and any
+      change to the console accent tokens. The accent stays
+      <code>#b45309</code> on light grounds for its contrast floor; only the
+      mark keeps gold.</p>
+  </section>
+
+  <section id="invariants">
+    <h2>Invariants</h2>
+    <ol>
+      <li>No file under <code>docs/private/</code> and no string "open source"
+        reaches the built site, the llms files, or the deploy artifact.</li>
+      <li>The six published groups stay the only docs content source. The
+        renderer reads them from <code>docs/</code>; it never carries a copy.</li>
+      <li>The mark is one drawing. Body <code>--mark</code>, face
+        <code>--mark-ink</code>; gold <code>#f0b23e</code> / <code>#1a1204</code>
+        on light grounds, white <code>#f6f7f8</code> / <code>#18181b</code> on
+        dark grounds. No outline variant and no accent fill.</li>
+      <li>The deploy stays Cloudflare static assets under the existing
+        <code>nimbus-docs</code> worker name and custom domains. No server
+        runtime.</li>
+      <li>Every published URL that existed on the Starlight site either still
+        resolves or is listed in the DR7 proof with its replacement.</li>
+      <li>Both <code>scripts/check-docs.sh</code> and
+        <code>scripts/verify-nimbus-docs-site.sh</code> pass on the final tree,
+        and the verify script keeps a fixed condition count with the
+        <code>Summary: N passed, M failed</code> shape.</li>
+      <li>Published copy follows the docs skill messaging canon and never
+        introduces a claim that is not in it.</li>
+    </ol>
+  </section>
+
+  <section id="decisions">
+    <h2>Decisions</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Date</th><th>Decision</th><th>Re-open when</th></tr></thead>
+      <tbody>
+        <tr><td>D1</td><td>2026-09-12</td><td>The mascot is always solid. Owner said the light-mode accent <code>#b45309</code> "looks yucky" on the mark and dark mode should fill white, not outline. Logos are exempt from the 3:1 non-text floor (WCAG 1.4.11), so the mark keeps the sticker gold on light grounds while the accent stays dark for buttons.</td><td>The owner asks for an outline mark.</td></tr>
+        <tr><td>D2</td><td>2026-09-12</td><td>Docs move to Next 16 with <code>output: 'export'</code> plus fumadocs core, ui, and mdx. Next is required because fumadocs-ui's layouts and search are Next-shaped; the static export keeps the Cloudflare static-asset deploy.</td><td>fumadocs ships a framework-neutral UI package, or the site needs server routes.</td></tr>
+        <tr><td>D3</td><td>2026-09-12</td><td>Odyssey ships on <code>/</code> themed on the console tokens (night <code>#0a0b0c</code>, paper <code>#ffffff</code>, accent <code>#f0b23e</code>); the old splash sections fold into the docs landing at <code>/docs</code>.</td><td>The owner wants a different homepage.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="ledger">
+    <h2>Status ledger</h2>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Task</th><th>Status</th><th>Evidence</th></tr>
+      </thead>
+      <tbody>
+        <tr id="DR0" data-status="done"><td>DR0</td><td>Baseline: pin main @ b527e1742, create the proof root, record the Starlight site state and the passing verifier as fail-before.</td><td><code>done</code></td><td>2026-09-12. <code>proof/nimbus-docs-restyle/dr0.md</code>: Starlight verify 17/17 passed on baseline, 108 pages.</td></tr>
+        <tr id="DR1" data-status="done"><td>DR1</td><td>Console mark: <code>--mark</code>/<code>--mark-ink</code> tokens, solid mascot, variant prop removed, specs, stories, DESIGN.md §Mascot.</td><td><code>done</code></td><td>2026-09-12. <code>b815b6b2c</code>, amended by <code>bb8b350be</code>: the mark is gold on every ground, <code>--accent</code> stops darkening to <code>#b45309</code> and <code>--accent-edge</code> carries every thin accent. vitest 130 files / 1126 tests, typecheck exit 0, biome lint exit 0. <code>proof/nimbus-docs-restyle/dr1.md</code>.</td></tr>
+        <tr id="DR2" data-status="done"><td>DR2</td><td>Desktop mark: setup card mascot and palette, app icon set, tray template from the solid mascot.</td><td><code>done</code></td><td>2026-09-12. <code>~/src/github.com/nimbus/desktop</code> <code>0127834</code> on <code>nimbus-mark</code>. Setup card captured light and dark. <code>proof/nimbus-docs-restyle/dr2.md</code>.</td></tr>
+        <tr id="DR3" data-status="done"><td>DR3</td><td>README banner: mascot image, brand SVGs under <code>docs/brand/mascot/</code>, canon headline.</td><td><code>done</code></td><td>2026-09-12. <code>2a5e188a2</code>, amended by <code>1ee5cd113</code>: <code>mascot-white.svg</code> retired with the per-theme mark, and <code>icon-512.png</code> rendered from <code>mascot-tile.svg</code> again. <code>proof/nimbus-docs-restyle/dr3.md</code>.</td></tr>
+        <tr id="DR4" data-status="done"><td>DR4</td><td>Fumadocs site: replace Starlight under <code>website/</code> with Next static export, console theme, Geist, mascot lockup, content loader over <code>docs/</code> with the private fence, sidebar tree.</td><td><code>done</code></td><td>2026-09-12. <code>13779aca1</code> and <code>550d50364</code>. <code>npm run build</code> exit 0, TypeScript clean, 112 static pages. 108 exported routes match the 108 Markdown sources one to one. No private path in <code>out/</code>. Angle-bracket tokens survive as text in <code>operators/troubleshooting</code> and <code>operators/hardening</code>. Retired logo set deleted. <code>proof/nimbus-docs-restyle/dr4.md</code>.</td></tr>
+        <tr id="DR5" data-status="done"><td>DR5</td><td>Search and llms: Orama static search, <code>llms.txt</code>, <code>llms-full.txt</code>, <code>llms-small.txt</code>, sitemap.</td><td><code>done</code></td><td>2026-09-12. <code>ff946e7b6</code>. <code>out/api/search</code> serves the index (7.8&nbsp;MB, 1.5&nbsp;MB gzipped) and the dialog answers "tenant isolation". 108 page headings in <code>llms-full.txt</code>, 71 in <code>llms-small.txt</code>, none under an excluded directory, none naming <code>docs/private</code>. 110 sitemap locations, every one slash-terminated. <code>proof/nimbus-docs-restyle/dr5.md</code>.</td></tr>
+        <tr id="DR6" data-status="done"><td>DR6</td><td>Odyssey on <code>/</code>: port the client page, retheme the palette stops on the console tokens, mascot lockup in the nav, fold the splash content into <code>/docs</code>.</td><td><code>done</code></td><td>2026-09-12. <code>5e74fef1a</code>. <code>out/index.html</code> is the Odyssey. <code>grep -rEn "5577ff|3047bd|3f57e8|070b11|f6f4ee" website/src out</code> prints nothing. The <code>/docs</code> landing holds the canonical sentence and all seven adapter tabs. Two contrast defects fixed: daylight accents take <code>--accent-edge</code> light, and the finale mixes toward <code>--accent-ink</code> rather than white (10.9:1). Nine screenshots including the reduced-motion storyboard. 117 static pages, build and <code>tsc --noEmit</code> clean. <code>proof/nimbus-docs-restyle/dr6.md</code>.</td></tr>
+        <tr id="DR7" data-status="done"><td>DR7</td><td>Gates and deploy: rewrite <code>check-docs.sh</code>, <code>verify-nimbus-docs-site.sh</code>, <code>docs.yml</code>, <code>wrangler.jsonc</code>, docs skill, DESIGN.md §Documentation Site, URL map.</td><td><code>done</code></td><td>2026-09-12. <code>ba724ed30</code>. Red baseline 11/17 with conditions 1, 2, 3, 5, 6, 14 failing, and <code>check-docs.sh</code> raising <code>FileNotFoundError</code> at exit 1. Green: <code>check-docs: PASS — 109 pages link-clean, source map resolves, private fence intact, titles unique</code> and <code>17/17 conditions green</code>, both exit 0. <code>actionlint .github/workflows/docs.yml</code> exit 0. Both new fences proved to fail loudly: <code>'private'</code> in <code>PUBLISHED_GROUPS</code> plus <code>#b45309</code> restored dropped the run to 14/17 naming conditions 3, 10 and 14. All 108 Markdown pages answer at their original URLs. <code>proof/nimbus-docs-restyle/dr7.md</code> and <code>dr7-urls.md</code>.</td></tr>
+        <tr id="DR8" data-status="done"><td>DR8</td><td>Closeout: full gate run, visual check of both themes, autoreview, pull request.</td><td><code>done</code></td><td>Gates green at <code>0a11d43a3</code>, fourteen proof frames, <a href="https://github.com/nimbus/nimbus/pull/351">PR #351</a> open. Full record in <a href="proof/nimbus-docs-restyle/closeout.md">closeout.md</a>. The adversarial pass returned six findings; a seventh, the shadcn bridge mapping <code>--color-ring</code> to the fill, was found by reading the bridge against <code>main</code>. Six repaired in <code>7f33f1762</code>, one declined as pre-existing, each new gate negative-tested. The owner then rejected the third accent literal <code>#866423</code> outright and chose option B, gold on dark carriers: <code>--accent-edge</code> and <code>--accent-link</code> are deleted, the palette is two colours and three roles, and the focus ring is two opaque strokes. That repair also closed a latent defect no token-level check could see -- the old ring token measured 4.61:1 while its composited stroke measured 1.77:1. New gate condition 18 holds the console and website sheets to the same roles and values in both themes. Nine negative tests, nine catches, all restores green. Visual verification of the Odyssey in both themes found four further defects invisible to every gate, including a <code>.beat p</code> specificity bug that meant the chapter label had never rendered as the accent; all four are fixed and the label measures 9.84:1 or better at every beat. Final: 130 files / 1136 tests, typecheck clean, check-docs 110 pages, verify-nimbus-docs-site 18/18, website build 117 static pages. The structured <code>autoreview</code> branch gate remains unrunnable -- the helper refuses the eleven binary assets and exposes no allow-list -- and the owner accepted the three clean per-commit runs plus the documented self-review as the pre-PR evidence, which closes the earlier <strong>UNVERIFIED</strong>.</td></tr>
+        <tr id="DR9" data-status="todo"><td>DR9</td><td>Cleanup after the final pull request merges: archive this plan, keep the proof root, update the index entry.</td><td><code>todo</code></td><td></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tasks">
+    <h2>Tasks</h2>
+
+    <h3 id="task-DR0">DR0 Baseline</h3>
+    <ul>
+      <li><strong>Problem:</strong> the plan needs a pinned baseline and a record of the site it replaces.</li>
+      <li><strong>Owning seam and paths:</strong> this plan and <code>proof/nimbus-docs-restyle/</code>.</li>
+      <li><strong>Steps:</strong> pin main @ b527e1742; record the Starlight page count, deps, and the 17-condition verifier result.</li>
+      <li><strong>Acceptance:</strong> <code>dr0.md</code> holds the verifier summary line and the page inventory.</li>
+      <li><strong>Fail-before:</strong> the current verifier passes on the Starlight tree, so the DR7 verifier is red by construction until DR4 lands.</li>
+      <li><strong>Verification:</strong> <code>bash scripts/verify-nimbus-docs-site.sh</code>.</li>
+    </ul>
+
+    <h3 id="task-DR1">DR1 Console mark</h3>
+    <ul>
+      <li><strong>Problem:</strong> the console drew an outline mascot in dark mode and an accent-coloured fill in light mode.</li>
+      <li><strong>Owning seam and paths:</strong> <code>packages/nimbus-ui/src/styles/tokens.css</code>, <code>src/components/mascot.tsx</code> and its call sites, specs, stories, <code>DESIGN.md</code>.</li>
+      <li><strong>Steps:</strong> add <code>--mark</code>/<code>--mark-ink</code>; make the body a solid fill; drop the variant prop; update specs and stories; document in DESIGN.md.</li>
+      <li><strong>Acceptance:</strong> <code>mascot.spec.tsx</code> "fills the body with the mark colour and inks the face, never the accent" passes; no call site passes <code>variant</code>.</li>
+      <li><strong>Fail-before:</strong> the new spec failed against the outline body.</li>
+      <li><strong>Verification:</strong> in <code>packages/nimbus-ui</code>: <code>npx vitest run</code>, <code>npm run typecheck</code>, <code>npm run lint</code>.</li>
+    </ul>
+
+    <h3 id="task-DR2">DR2 Desktop mark</h3>
+    <ul>
+      <li><strong>Problem:</strong> the desktop app still ships the wisp mark with a blue dark palette in its setup card, app icons, and tray icon.</li>
+      <li><strong>Owning seam and paths:</strong> <code>~/src/github.com/nimbus/desktop</code>: <code>buildResources/setup/cli-not-found.html</code>, <code>buildResources/icon.png</code>, <code>icon.icns</code>, <code>icon.ico</code>, <code>trayTemplate.png</code>, <code>trayTemplate@2x.png</code>.</li>
+      <li><strong>Steps:</strong> 1. inline the solid mascot SVG in the setup card with <code>--mark</code>/<code>--mark-ink</code> per scheme and move its palette to the tokens.css values; 2. render <code>icon.png</code> 512 from the gold mascot on a <code>#0a0b0c</code> rounded tile, then build <code>.icns</code> with iconutil and <code>.ico</code> with magick; 3. render the tray template as a black silhouette with the face cut out at 16 and 32 px.</li>
+      <li><strong>Acceptance:</strong> no <code>viewBox="0 0 322 201"</code> wisp remains in the desktop repo; <code>icon.png</code> is 512×512; tray PNGs are 16 and 32 px with alpha; the setup card renders the mascot in both schemes.</li>
+      <li><strong>Fail-before:</strong> <code>grep -rn "322 201" buildResources</code> finds the wisp.</li>
+      <li><strong>Verification:</strong> <code>sips -g pixelWidth -g pixelHeight</code> on each PNG; <code>iconutil</code> and <code>magick identify</code> exit 0; screenshot of the card in both schemes under the proof root.</li>
+    </ul>
+
+    <h3 id="task-DR3">DR3 README banner</h3>
+    <ul>
+      <li><strong>Problem:</strong> the README leads with the wisp banner.</li>
+      <li><strong>Owning seam and paths:</strong> <code>README.md</code>, <code>docs/brand/mascot/</code>.</li>
+      <li><strong>Steps:</strong> 1. write <code>mascot-gold.svg</code> and <code>mascot-white.svg</code> from the mascot geometry; 2. replace the banner with a <code>&lt;picture&gt;</code> that serves white under <code>prefers-color-scheme: dark</code> and gold by default; 3. keep the headline on the canonical sentence, the handoff, and the protocol table.</li>
+      <li><strong>Acceptance:</strong> README references only the new SVGs; verify condition 15 (README handoff and protocol table) still passes.</li>
+      <li><strong>Fail-before:</strong> README references the wisp asset.</li>
+      <li><strong>Verification:</strong> <code>grep -n "mascot" README.md</code>; <code>bash scripts/check-docs.sh</code>.</li>
+    </ul>
+
+    <h3 id="task-DR4">DR4 Fumadocs site</h3>
+    <ul>
+      <li><strong>Problem:</strong> the Starlight site carries the pre-rewrite theme and cannot take the console tokens without a fork.</li>
+      <li><strong>Owning seam and paths:</strong> <code>website/</code> (package.json, next.config.ts, source.config.ts, src/app, src/lib, src/styles, public), <code>website/.gitignore</code>.</li>
+      <li><strong>Steps:</strong> 1. remove the Astro project files; 2. scaffold Next 16 with <code>output: 'export'</code>, fumadocs core/ui/mdx, tailwind 4; 3. loader over <code>docs/</code> restricted to the six groups, with <code>meta.json</code> files that reproduce the Starlight sidebar order; 4. theme file that maps <code>--color-fd-*</code> to the tokens.css values for both schemes; 5. self-hosted Geist and Geist Mono; 6. nav lockup with the mascot and the console favicon set; 7. docs landing at <code>/docs</code>; 8. build to <code>out/</code>.</li>
+      <li><strong>Acceptance:</strong> <code>npm run build</code> in <code>website/</code> exits 0 and <code>out/</code> holds one HTML file for each of the 108 published pages; <code>out/</code> contains no path under <code>private</code>; the theme file declares every fd colour token for both schemes.</li>
+      <li><strong>Fail-before:</strong> <code>website/next.config.ts</code> does not exist.</li>
+      <li><strong>Verification:</strong> <code>cd website &amp;&amp; npm ci &amp;&amp; npm run build</code>; <code>find out -name '*.html' | wc -l</code>; <code>find out -path '*private*'</code> prints nothing.</li>
+    </ul>
+
+    <h3 id="task-DR5">DR5 Search and llms</h3>
+    <ul>
+      <li><strong>Problem:</strong> the static export needs client-side search and the three llms files that agents and the docs skill depend on.</li>
+      <li><strong>Owning seam and paths:</strong> <code>website/src/app/api/search/route.ts</code>, <code>website/src/app/llms.txt/route.ts</code>, <code>llms-full.txt</code>, <code>llms-small.txt</code>, <code>website/src/lib/llms.ts</code>, sitemap.</li>
+      <li><strong>Steps:</strong> 1. <code>staticGET</code> from <code>createFromSource</code> with <code>revalidate = false</code>; 2. <code>staticClient()</code> in the search dialog; 3. llms routes from processed Markdown, with llms-small excluding <code>concepts/architecture/**</code> and the per-protocol reference directories; 4. <code>sitemap.xml</code> route.</li>
+      <li><strong>Acceptance:</strong> <code>out/api/search</code> exists; the three llms files exist and contain no <code>docs/private</code>; <code>llms-small.txt</code> contains no <code>concepts/architecture</code> heading.</li>
+      <li><strong>Fail-before:</strong> the routes do not exist after DR4.</li>
+      <li><strong>Verification:</strong> <code>ls out/llms*.txt out/api/search*</code>; <code>grep -c "docs/private" out/llms*.txt</code> prints 0 for each.</li>
+    </ul>
+
+    <h3 id="task-DR6">DR6 Odyssey on /</h3>
+    <ul>
+      <li><strong>Problem:</strong> the homepage is the Starlight splash, and the Odyssey story lives in a separate marketing repository on its old blue palette.</li>
+      <li><strong>Owning seam and paths:</strong> <code>website/src/app/page.tsx</code>, <code>website/src/app/odyssey/</code> (scene, timeline, world), <code>website/src/styles/odyssey.css</code>, <code>website/src/app/layout.tsx</code>, <code>docs/get-started/</code> landing fold.</li>
+      <li><strong>Steps:</strong> 1. copy <code>page.tsx</code>, <code>odyssey/*.ts</code>, and the Odyssey CSS from <code>marketing-odyssey</code>; 2. rewrite the palette stops on the console tokens and delete the old blue defaults and the theme-preview page; 3. replace the diamond brand glyph with the mascot lockup; 4. point the nav links at <code>/docs</code>, GitHub, and discussions; 5. move the splash sections (install, adapter tabs, production verb, agents, tenants, find your path) into the <code>/docs</code> landing as fumadocs cards and tabs; 6. set <code>metadataBase</code> to nimbusdocs.com with the mascot OG image.</li>
+      <li><strong>Acceptance:</strong> <code>out/index.html</code> is the Odyssey page; the compiled CSS contains none of <code>#5577ff</code>, <code>#3047bd</code>, <code>#3f57e8</code>, <code>#070b11</code>, <code>#f6f4ee</code>; the <code>/docs</code> landing holds the canonical sentence and the seven adapter tabs.</li>
+      <li><strong>Fail-before:</strong> <code>grep -rn "5577ff" website/src</code> finds the old blue after the copy.</li>
+      <li><strong>Verification:</strong> <code>grep -rEn "5577ff|3047bd|3f57e8|070b11|f6f4ee" website/src out</code> prints nothing; browser screenshots of <code>/</code> at three scroll positions and of <code>/docs</code> in both schemes under the proof root.</li>
+    </ul>
+
+    <h3 id="task-DR7">DR7 Gates and deploy</h3>
+    <ul>
+      <li><strong>Problem:</strong> the gates, workflow, deploy config, docs skill, and DESIGN.md describe Astro Starlight.</li>
+      <li><strong>Owning seam and paths:</strong> <code>scripts/check-docs.sh</code>, <code>scripts/verify-nimbus-docs-site.sh</code>, <code>.github/workflows/docs.yml</code>, <code>website/wrangler.jsonc</code>, <code>.agents/skills/docs/SKILL.md</code>, <code>DESIGN.md</code> §Documentation Site, <code>docs/source-map.md</code>.</li>
+      <li><strong>Steps:</strong> 1. <code>check-docs.sh</code>: dead links against <code>out/</code>, private fence on the loader allow-list instead of symlinks, llms fence; 2. <code>verify-nimbus-docs-site.sh</code>: rewrite the 17 conditions for Next, fumadocs, the theme file, the loader allow-list, <code>out/</code>, the llms files, wrangler <code>./out</code>, docs.yml, the Odyssey home, and DESIGN.md; keep the summary shape; 3. <code>docs.yml</code>: same triggers, <code>npm ci &amp;&amp; npm run build</code>, preview and deploy on <code>out/</code>; 4. <code>wrangler.jsonc</code>: <code>assets.directory ./out</code>; 5. docs skill: replace the Starlight rules with the fumadocs rules (Markdown only, landing may use fumadocs components, meta.json ordering); 6. DESIGN.md §Documentation Site rewrite; 7. URL map of every moved page in <code>dr7-urls.md</code>.</li>
+      <li><strong>Acceptance:</strong> both gates pass with their summary lines; <code>actionlint</code> exit 0 on docs.yml; the verify script prints a fixed condition count.</li>
+      <li><strong>Fail-before:</strong> the rewritten verify script reports failed conditions on the DR3 tree before DR4 files exist (captured in <code>dr0.md</code> as the Starlight-shaped pass, and in <code>dr7.md</code> as the red run against the new expectations).</li>
+      <li><strong>Verification:</strong> <code>bash scripts/check-docs.sh</code>; <code>bash scripts/verify-nimbus-docs-site.sh</code>; <code>actionlint .github/workflows/docs.yml</code>.</li>
+    </ul>
+
+    <h3 id="task-DR8">DR8 Closeout</h3>
+    <ul>
+      <li><strong>Problem:</strong> the branch needs one evidence pass before review.</li>
+      <li><strong>Owning seam and paths:</strong> the branch and <code>proof/nimbus-docs-restyle/closeout.md</code>.</li>
+      <li><strong>Steps:</strong> 1. run the console specs, both docs gates, the website build; 2. visual check of <code>/</code> and <code>/docs</code> in both schemes; 3. <code>autoreview --gate pre-pr --mode auto</code>; 4. open the pull request.</li>
+      <li><strong>Acceptance:</strong> closeout proof records every command, count, and the PR number.</li>
+      <li><strong>Fail-before:</strong> not applicable.</li>
+      <li><strong>Verification:</strong> the commands in the closeout proof.</li>
+    </ul>
+
+    <h3 id="task-DR9">DR9 Cleanup</h3>
+    <ul>
+      <li><strong>Problem:</strong> a merged plan must not linger as a stale control plane.</li>
+      <li><strong>Owning seam and paths:</strong> this plan file, its proof root, and <code>docs/private/plans/README.md</code>.</li>
+      <li><strong>Steps:</strong> confirm the merge, move the plan to <code>archive/</code>, keep the proof root, rewrite the index entry as archived; kill the stray preview server if it still runs.</li>
+      <li><strong>Acceptance:</strong> the index lists the plan as archived and no active plan references it.</li>
+      <li><strong>Fail-before:</strong> not applicable.</li>
+      <li><strong>Verification:</strong> <code>grep -rn "nimbus-docs-restyle" docs/private/plans</code>.</li>
+    </ul>
+  </section>
+
+  <section id="goal">
+    <h2>Goal</h2>
+    <pre><code>Execute this plan to completion. This is a whole-plan goal, not a
+single-task goal. Read the compact plan fully, then the active task contract
+and relevant current proof. Required reference owners: DESIGN.md for the
+mark and the site; .agents/skills/docs/SKILL.md for content and messaging;
+scripts/verify-nimbus-docs-site.sh and scripts/check-docs.sh for the gates;
+~/src/github.com/open-e2ee/console for the fumadocs exemplar;
+~/src/github.com/nimbus/nimbus-marketing-2026-09-11/marketing-odyssey for
+the Odyssey source. Work in ~/src/github.com/nimbus/nimbus on branch
+nimbus-docs-restyle, and in ~/src/github.com/nimbus/desktop for DR2. Chat
+history is not progress state. Resume from Current resume state, the
+ledger, and verified git state. Read history only for a named evidence
+question. If compaction happens, continue from the plan and git state
+rather than restarting. Loop: keep one task in_progress, implement at the
+owning seam, capture fail-before evidence, run the verification commands,
+commit the work per the commit policy, write the proof file, append the
+execution log with the work commit, mark the task terminal with evidence,
+commit the plan update the same way, then advance to the next task. Decide
+rather than ask. Mark a wrong or already-satisfied task no-action with a
+one-line reason. Record a blocker and continue with the next eligible task.
+Binding constraints: the seven invariants; the non-goals; never commit
+examples/nimbus/agent-chat/package.json or package-lock.json changes that
+predate this plan; no AI attribution; ASD-STE100 prose. Commit policy: one
+commit per task on nimbus-docs-restyle with the trailer
+Claude-Session: https://claude.ai/code/session_01DTh474NjsKsPE8SAQ1XoB7,
+plan commits right after work commits, no push and no pull request before
+DR8, DR2 commits in the desktop repository on its own branch. Stop only at
+a valid stop state from the plans skill. Before you stop, update the ledger
+and the log, and replace Current resume state. The status line links to
+its exact next action. The goal is met when DR0 through DR8 are terminal,
+both docs gates pass, and the pull request is open.</code></pre>
+  </section>
+
+  <section id="execution-log">
+    <h2>Execution log</h2>
+    <p>History: none. Move older rows unchanged to the proof root when the
+      context budget requires it. Keep a link here.</p>
+    <!-- Append short rows at the end of this table.
+         This section stays last in the file. -->
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Item</th><th>Action</th><th>Evidence</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>2026-09-12</td><td>meta</td><td>authored</td><td>Plan authored after the design review of the mark and the fumadocs and Odyssey options. DR1 was implemented before the plan existed and is recorded from its test run.</td></tr>
+        <tr><td>2026-09-12</td><td>DR1</td><td>done</td><td>Console mark on the dirty tree: vitest 130 files / 1124 tests, typecheck 0, biome lint 0. Work commit pending on branch creation.</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+
+</body>
+</html>
