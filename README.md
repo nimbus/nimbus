@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/mascot/mascot-white.svg">
+  <img src="docs/brand/mascot/mascot-gold.svg" alt="The Nimbus mascot, a cloud with a face" width="132" height="88">
+</picture>
+
 # Nimbus
 
 **The single-binary backend for apps and AI agents.**

@@ -977,12 +977,12 @@ Rules:
 The brand palette is **distinct from the product palette above**. Use it
 only for:
 
-- The marketing logo variants (`docs/brand/logo/`)
+- The mascot mark files under `docs/brand/mascot/`
 - README hero images and marketing pages
 - The mascot in fixed gold as favicon, app icon, and sign-in sticker (see
   **Mascot** below)
-- The desktop "CLI not found" setup card (`cli-not-found.html`) — this is
-  the user's *first* contact with the app and is intentionally brand-tier
+- The desktop "CLI not found" setup card (`cli-not-found.html`), which
+  reads the product palette but draws the mark at the brand colours
 - Print, social-media images, and external touchpoints
 
 **Never** use brand-palette colors inside the operator console or native
@@ -1004,54 +1004,27 @@ One family crosses tiers, by design:
   colour that appears inside the product at full strength, and it appears
   only on the mascot body.
 
-No other colour crosses tiers. The blue, teal, and slate brand variants stay
-on the logo and marketing surfaces. The product has no blue identity and no
-teal accent.
+No other colour crosses tiers. The product has no blue identity and no
+teal accent, and the marketing surfaces take the same night and paper
+grounds as the product (`#0a0b0c` and `#ffffff`).
 
-#### Variants
+#### Mark files
 
-| Variant       | Stroke (`--logo-stroke`) | Fill (`--logo-fill`) | Background |
-|---------------|--------------------------|----------------------|------------|
-| `warm`        | `#0F172A`                | `#FFE7B3`            | `#FFFAF2`  |
-| `cool-blue`   | `#3B82F6`                | `#FFFFFF`            | `#F8FAFC`  |
-| `night-blue`  | `#60A5FA`                | `#1E293B`            | `#0B1220`  |
-| `monochrome`  | `#111827`                | `#FFFFFF`            | `#FFFFFF`  |
-| `reverse-mono`| `#FFFFFF`                | `#111827`            | `#111827`  |
-| `sunset-red`  | `#DC2626`                | `#FFFFFF`            | `#FEF2F2`  |
-| `soft-purple` | `#9333EA`                | `#FFFFFF`            | `#FAF5FF`  |
-| `golden-hour` | `#D97706`                | `#FFFFFF`            | `#FFFBEB`  |
-| `slate`       | `#475569`                | `#FFFFFF`            | `#F1F5F9`  |
+`docs/brand/mascot/` holds the static exports of the mascot. Every file is
+the same 120x92 drawing from `mascot.tsx`, cropped to `0 8 120 80` so a
+lockup controls its own spacing.
 
-The marketing variants under `docs/brand/logo/` still carry the original
-wisp cloud; they are the marketing tier and change on their own schedule.
-The console mark (`packages/nimbus-ui/public/nimbus-logo.svg`) is the
-mascot body with the idle face, and it accepts the same `--logo-stroke` and
-`--logo-fill` CSS variables. Variant rendering is parameter substitution — the
-path data is identical across all variants. `gen-variants.sh` also emits a
-`-transparent` companion for every variant (same colors, no background
-rect, viewBox cropped to the ink bounds so lockups control their own
-spacing) for placement on surfaces that own their own background: the
-docs hero, the docs top-nav, README badges. The wordmark is lowercase
-`nimbus` whenever it is set next to the mark.
+| File                    | What it is                                                   | Used by                                   |
+|-------------------------|--------------------------------------------------------------|-------------------------------------------|
+| `mascot-gold.svg`       | Gold `#f0b23e` body, `#1a1204` face                          | README (light), docs nav (light), OG art  |
+| `mascot-white.svg`      | White `#f6f7f8` body, `#18181b` face                         | README (dark), docs nav (dark)            |
+| `mascot-tile.svg`       | Gold mascot centred on a `#0a0b0c` tile with a 104 radius    | App icon, apple-touch-icon                |
+| `mascot-template.svg`   | Black silhouette with the face cut out, heavier face         | macOS tray template                       |
+| `render.sh`             | Renders `icon-512.png` and, with `DESKTOP_DIR`, the desktop `icon.png`, `icon.icns`, `icon.ico`, and tray PNGs | Release prep |
 
-#### Usage Guidelines
-
-- **Warm** — the light-mode identity: docs light-mode favicon/logo,
-  marketing pages, app icon, and the desktop setup card.
-- **Golden Hour** — brand-forward marketing accents; its `#D97706` stroke
-  is the tier bridge into the product `--accent`.
-- **Cool Blue** — cool-toned marketing touchpoints only. The product has no
-  blue palette.
-- **Night Blue** — docs dark-mode favicon/logo and dark marketing
-  surfaces. The product dark mode is neutral, not blue.
-- **Monochrome** / **Reverse Mono** — minimal, enterprise, print. Tray
-  icon uses monochrome on light menu bars; macOS auto-inverts for dark.
-- **Sunset Red**, **Soft Purple**, **Slate** — reserved for future
-  marketing variants and seasonal/event use; not currently wired in.
-
-The completed execution record for brand rollout, including the variant
-regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
-in `docs/private/plans/archive/brand-system-plan.md`.
+The wordmark is lowercase `nimbus` whenever it is set next to the mark, at
+semibold with `-0.01em` tracking, and the mark sits at 24 to 30px beside
+it.
 
 #### Mascot
 
@@ -1089,9 +1062,11 @@ second logo next to the filled one on the app icon, and at 24px its
   eyes 3.7 to 4.6) so it survives the tab bar.
 - **Static exports.** `favicon.svg` and `favicon.ico` (16, 32, 48) and
   `icon-512.png` (gold face on a `#0a0b0c` tile) under
-  `packages/nimbus-ui/public/`. The favicon is one fixed-colour drawing, so
-  the console does not swap it when the theme changes. The desktop app icon
-  and the docs favicon are the same export.
+  `packages/nimbus-ui/public/`, plus the brand set under
+  `docs/brand/mascot/` (see **Mark files** above). The favicon is one
+  fixed-colour drawing, so the console does not swap it when the theme
+  changes. The desktop app icon, the tray template, and the docs favicon
+  are renders of the same drawing.
 - **Mark rule.** `--mark` paints the mascot body and nothing else. It is
   not a second accent: no button, badge, wash, or text takes it. The
   accessories outside the body (thought dots, drop, zz, sparks) take

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 8 120 80" role="img" aria-label="Nimbus">
+  <mask id="face" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="92">
+    <rect width="120" height="92" fill="#fff"/>
+    <g fill="#000"><circle cx="48" cy="52" r="6.5"/><circle cx="72" cy="52" r="6.5"/></g>
+    <path d="M51 63 q9 9 18 0" fill="none" stroke="#000" stroke-width="7" stroke-linecap="round"/>
+  </mask>
+  <g fill="#000" mask="url(#face)"><circle cx="36" cy="50" r="20"/><circle cx="60" cy="40" r="28"/><circle cx="84" cy="50" r="20"/><rect x="14" y="50" width="92" height="34" rx="17"/></g>
+</svg>
