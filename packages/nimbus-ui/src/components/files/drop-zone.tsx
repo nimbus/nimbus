@@ -79,11 +79,16 @@ export function DropZone({
       {children}
       {active ? (
         <div
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-accent-edge bg-bg-panel/80"
+          // The dashes are gold with an `--accent-ink` hairline hugging them
+          // inside, so the frame is legible over the light panel too.
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-accent bg-bg-panel/80 shadow-[inset_0_0_0_1px_var(--accent-ink)]"
           data-testid={`${testid}-overlay`}
         >
-          <div className="flex items-center gap-2 rounded-md bg-bg-panel px-3 py-2 text-sm text-text-1 shadow-md">
-            <Upload className="size-4 text-accent-edge" aria-hidden />
+          {/* The drop label is the one focal element of this state, so it is
+              the accent carrier: gold on `--accent-ink`, one appearance in
+              both themes, rather than gold text at 1.81:1 on a light panel. */}
+          <div className="flex items-center gap-2 rounded-md bg-accent-ink px-3 py-2 text-sm text-accent shadow-md">
+            <Upload className="size-4" aria-hidden />
             {label}
           </div>
         </div>

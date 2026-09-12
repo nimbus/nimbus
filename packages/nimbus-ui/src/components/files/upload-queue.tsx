@@ -57,7 +57,10 @@ export function UploadQueue({
             {item.status === "uploading" ? (
               <>
                 <progress
-                  className="h-1.5 w-32 overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-bg-panel [&::-webkit-progress-value]:bg-accent-edge"
+                  // The track is the gold's carrier, not a panel tint: gold
+                  // on `--accent-ink` is 9.84:1 in either theme, where gold
+                  // on the light panel would be 1.81:1.
+                  className="h-1.5 w-32 overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-accent-ink [&::-webkit-progress-value]:bg-accent"
                   max={100}
                   value={percent}
                   aria-label={`Uploading ${item.name}`}

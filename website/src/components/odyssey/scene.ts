@@ -15,9 +15,11 @@ export type Palette = {
   muted: Rgb;
   // The accent carries two jobs the Nimbus palette answers with two tokens:
   // `accent` is the display tone that fills chips, lanes and diamonds, and
-  // `accentText` is the reading tone for accent-coloured labels.
+  // `accentText` is the reading tone for accent-coloured labels, and
+  // `accentCarrier` is the ground that makes it legible on a light beat.
   accent: Rgb;
   accentText: Rgb;
+  accentCarrier: Rgb;
   paperMix: number;
   washMix: number;
 };
@@ -69,17 +71,20 @@ const STOPS: PaletteStops = {
   washInk: [26, 18, 4],
   inkNight: [246, 247, 248], // --text-1 dark, #f6f7f8
   inkPaper: [24, 24, 27], // --text-1 light, #18181b
-  // Both accent jobs take the edge token. The world draws no large accent
-  // fill: a chip is a 1px stroke over a 12% tint and a panel is a stroke, so
-  // every accent in the frame is a thin one and has to be perceivable on its
-  // own. The gold clears that floor on the night ground and does not on the
-  // paper one, so the paper side darkens at the same hue, exactly as the
-  // console does. The display and reading tones therefore coincide here, as
-  // they did for the cobalt this palette replaced.
-  accentNight: [240, 178, 62], // --accent-edge dark, #f0b23e
-  accentPaper: [134, 100, 35], // --accent-edge light, #866423
-  accentTextNight: [240, 178, 62], // --accent-edge dark, #f0b23e
-  accentTextPaper: [134, 100, 35], // --accent-edge light, #866423
+  // The gold is the accent on every beat, paper included: every lane, panel,
+  // chip border and dot in the world stays #f0b23e as the page whitens.
+  // Darkening the gold at its own hue turns it olive, and the paper beat is
+  // the same page the mascot is standing on.
+  accentNight: [240, 178, 62], // --accent, #f0b23e
+  accentPaper: [240, 178, 62], // --accent, #f0b23e
+  // A caption drawn in the accent is the one accent mark in the world with no
+  // area behind it -- `tag` is 11px of mono on the bare ground, and `chip`,
+  // which does have a pill, already draws its label in the ink. The gold is
+  // 1.8:1 on paper, so a caption takes the same choice the console's
+  // `--accent-text` makes: the gold where the ground can show it, the
+  // accent's own ink where it cannot. Two colours, never a darkened third.
+  accentTextNight: [240, 178, 62], // --accent, #f0b23e
+  accentTextPaper: [26, 18, 4], // --accent-ink, #1a1204
 };
 
 // The two stops the world reaches for outside a mixed palette: the laptop
@@ -149,7 +154,18 @@ export function paletteFor(progress: number): Palette {
   // On the wash the ground is already the accent, so both accent jobs step
   // aside for its ink. Gold on gold is not a tone.
   const accent = mixRgb(mixRgb(STOPS.accentNight, STOPS.accentPaper, paperMix), STOPS.washInk, washMix);
-  const accentText = mixRgb(mixRgb(STOPS.accentTextNight, STOPS.accentTextPaper, paperMix), STOPS.washInk, washMix);
+  // `inkMix` and not `paperMix`, for the same reason the ink steps: a
+  // continuous fade from the gold to the accent's ink passes through the
+  // darkened golds this palette exists to keep out. The caption changes
+  // colour on the same frame the ground does.
+  const accentText = mixRgb(mixRgb(STOPS.accentTextNight, STOPS.accentTextPaper, inkMix), STOPS.washInk, washMix);
+  // The ground an accent label sits on, so the gold can stay gold on paper.
+  // It is the beat's own ground on night and on the wash -- night at one end,
+  // the gold at the other -- which makes the label read as bare text there,
+  // and it is the accent ink in between, where the ground is too light to
+  // show gold. So the carrier appears exactly as the page whitens and is
+  // invisible the rest of the way. Same trick as the focus ring's keyline.
+  const accentCarrier = mixRgb(mixRgb(STOPS.night, STOPS.washInk, paperMix), STOPS.wash, washMix);
   return {
     background,
     chromeBackground,
@@ -157,6 +173,7 @@ export function paletteFor(progress: number): Palette {
     muted: mixRgb(chromeBackground, ink, 0.56),
     accent,
     accentText,
+    accentCarrier,
     paperMix,
     washMix,
   };

@@ -28,15 +28,19 @@
 
   /*
    * Fumadocs paints "primary" as text far more often than as a fill: the
-   * active sidebar row, an active tab, a link chevron. Under the Nimbus rule a
-   * thin accent takes --accent-edge, which is measured on every ground, so
-   * that is the answer here and --accent is not. The canvas is the ink on the
-   * few fills, because --accent-ink is drawn for the gold and would go
-   * dark-on-dark on the edge.
+   * active sidebar row, an active tab, a link chevron. Those are marks with no
+   * area, and they are painted inside vendored components, so there is nowhere
+   * to put a carrier -- which is exactly the case --accent-text answers. The
+   * canvas is the ink on the few fills, because on light --accent-text is
+   * itself the ink and --accent-ink would go dark-on-dark.
+   *
+   * The ring is the exception: global.css overpaints :focus-visible with the
+   * gold and its keyline, so this token only shows through for a ring drawn
+   * some other way, and it names the gold.
    */
-  --color-fd-primary: var(--accent-edge);
+  --color-fd-primary: var(--accent-text);
   --color-fd-primary-foreground: var(--bg-canvas);
-  --color-fd-ring: var(--accent-edge);
+  --color-fd-ring: var(--accent);
 
   /*
    * Fumadocs means the hovered and pressed surface by "accent", and Nimbus
@@ -58,7 +62,7 @@
   --color-fd-warning: var(--warning);
   --color-fd-error: var(--error);
   --color-fd-success: var(--success);
-  --color-fd-idea: var(--accent-edge);
+  --color-fd-idea: var(--accent-text);
 
   /* The diff gutter in a code block. The tint carries the row, the solid role
      carries the plus or the minus in front of it. */
@@ -274,21 +278,21 @@
     left: calc(var(--spacing) * 1.5);
   }
 
-  /* The highlight is a wash and a bar. The wash is the gold, which is a fill;
-     the bar is thin, so it is the edge. */
+  /* The highlight is a wash and a bar. The wash is the gold at tint strength;
+     the counter is text and the bar is 2px, so both take --accent-text. */
   .highlighted {
-    --fd-counter-color: var(--accent-edge);
+    --fd-counter-color: var(--accent-text);
     background-color: var(--accent-tint);
   }
   .highlighted::after {
     position: absolute;
     content: '';
-    border-left: 2px solid var(--accent-edge);
+    border-left: 2px solid var(--accent-text);
     @apply inset-y-0 left-0;
   }
   .highlighted-word {
     padding: 1px;
-    border: 1px solid color-mix(in oklab, var(--accent-edge) 40%, transparent);
+    border: 1px solid color-mix(in oklab, var(--accent-text) 40%, transparent);
     border-radius: var(--radius-md);
     background-color: var(--accent-tint);
     font-weight: 500;

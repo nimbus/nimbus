@@ -250,7 +250,7 @@ function FilterEditor({
         // `:focus-visible` outline it used to cancel is what marks focus,
         // exactly as on every other input in the console (select.tsx,
         // -filters.tsx, tenants.tsx).
-        className="h-[26px] w-56 rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent-edge"
+        className="h-[26px] w-56 rounded-xs border border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent"
         data-testid="documents-filter-value"
       />
       <button

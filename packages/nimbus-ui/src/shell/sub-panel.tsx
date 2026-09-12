@@ -370,7 +370,11 @@ function ResizableGroup({
           // line with the accent, and the global :focus-visible ring is
           // switched off here because a ring around a 1px line reads as a
           // stray mark.
-          className="w-px shrink-0 bg-border-2 outline-none transition-colors duration-150 ease-standard data-[separator=active]:bg-accent-edge data-[separator=focus]:bg-accent-edge data-[separator=hover]:bg-accent-edge"
+          //
+          // That is also why the line cannot be gold in both themes: a
+          // keyline would triple it, and 1px of gold is 1.88:1 on white. A
+          // 1px line has no area, so it takes `--accent-text`.
+          className="w-px shrink-0 bg-border-2 outline-none transition-colors duration-150 ease-standard data-[separator=active]:bg-accent-text data-[separator=focus]:bg-accent-text data-[separator=hover]:bg-accent-text"
         />
       ) : null}
       <Panel id={MAIN_ID} style={PANEL_STYLE}>

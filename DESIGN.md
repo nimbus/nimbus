@@ -887,7 +887,7 @@ the override under `[data-theme="light"]`.
 
 Tokens live in `packages/nimbus-ui/src/styles/tokens.css` as hex and rgba
 literals. `@theme inline` bridges them to Tailwind utilities (`bg-bg-panel`,
-`text-text-3`, `border-border-2`, `text-accent-link`, ...) and to the shadcn
+`text-text-3`, `border-border-2`, `text-accent-text`, ...) and to the shadcn
 registry names (`background`, `muted`, `ring`, ...), so a registry component
 paints the same tokens without edits.
 
@@ -916,11 +916,10 @@ Accent:
 
 | Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--accent` | `#f0b23e` | `#f0b23e` | Nimbus gold. Fills only, always under `--accent-ink` |
+| `--accent` | `#f0b23e` | `#f0b23e` | Nimbus gold. Every accent mark, in both themes |
 | `--accent-hover` | `#f6c35c` | `#e0a230` | Hovered accent fill |
-| `--accent-ink` | `#1a1204` | `#1a1204` | Text on an accent fill |
-| `--accent-edge` | `#f0b23e` | `#866423` | The ring, a 1–2px bar, a dot, an icon, accent text |
-| `--accent-link` | `#f0b23e` | `#866423` | Hyperlinks only |
+| `--accent-ink` | `#1a1204` | `#1a1204` | Ink on a gold fill, and gold's carrier or keyline |
+| `--accent-text` | `#f0b23e` | `#1a1204` | Whichever of the pair the ground can show, for a mark with no area |
 | `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(240,178,62,.22)` | Selected-row wash |
 
 The mark:
@@ -950,44 +949,84 @@ Semantic tokens (each has a `-tint` at 14% for washes):
 
 Rules:
 
-- **One gold, and the gold is a fill.** `--accent` is `#f0b23e` in both
-  themes — the same literal as the mark, so the console has one identity
-  colour and light does not fork it. Gold cannot be darkened and stay
-  gold: at its own hue it turns olive, and the red-shifted ambers that
-  stay vivid (`#b45309`) are a different colour standing next to the
-  mascot. So the gold is never asked to carry contrast on its own. It
-  appears as a fill under `--accent-ink`, as `::selection`, and as the
-  `-tint` wash.
-- **`--accent-edge` carries every thin accent.** The focus ring, a 1–2px
-  selection bar, a 6px dot, an accent icon, accent text: all take
-  `--accent-edge`, which is measured against all four grounds. It is the
-  gold in dark, where the gold already clears the floors, and the gold
-  darkened at its own hue (`#866423`) in light. `--accent-link` is
-  hyperlinks and nothing else: never paint a button or a nav item with it.
+- **One gold, in both themes, and it never darkens.** `--accent` is
+  `#f0b23e` in dark and in light — the same literal as the mark, so the
+  console has one identity colour and light does not fork it. There is no
+  darkened variant, because gold cannot be darkened and stay gold: at its
+  own hue it turns olive, and the red-shifted ambers that stay vivid
+  (`#b45309`) are a different colour standing next to the mascot. The
+  accent is the one role the light theme does not restate in its own
+  values.
+- **The gold must name its carrier.** Because the hue is fixed, contrast
+  is bought with the ground instead of the hue. The gold is 10.45:1 on the
+  dark canvas and 1.88:1 on the white one, so every accent mark that has
+  area — a fill, a 1–2px bar, a 6px dot, a dashed frame, a progress track,
+  a chip — pairs the gold with `--accent-ink` as carrier or keyline in the
+  same rule, and the pair then reads on any ground in either theme at
+  9.84:1. This is Radix's own prescription for amber, whose step 9 is one
+  of the five solids "designed for dark foreground text".
+- **A mark with no area takes `--accent-text`.** A 1px rule, a counter, a
+  prose hyperlink, an active sidebar row a vendored component paints as
+  text: these have nowhere to put a carrier, so they take `--accent-text`,
+  which is **always exactly one of the other two tokens** — the gold in
+  dark, the accent's own ink in light. It is never a third colour, so it
+  cannot drift back into a darkened gold. Prefer giving a mark area and
+  using the pair; reach for this token when the shape, or a vendored
+  component, leaves no room. The affordance then cannot be the colour: an
+  inline link keeps a resting underline (SC 1.4.1).
 - **Semantic colours never use the accent hue.** `Running` is `--info`
   (blue), never amber. A state token and the accent are never the same
   literal, so a status never reads as "selected".
 - **Contrast is measured, not assumed.** `src/styles/contrast.spec.ts`
   reads `tokens.css` and holds every text token to 4.5:1 on all four
-  grounds, `--accent-edge` to 3:1 on all four grounds (SC 1.4.11), every
-  ink token to 4.5:1 on its own fill, and `--text-4` below `--text-3`. It
-  also asserts `--accent` and `--mark` are one literal in both themes, and
-  greps the components for a utility that would paint the gold as text or
-  as a hairline. `--accent` itself is deliberately ungated against the
-  grounds: it is 1.60:1 on light `--bg-hover`, which is why it is a fill.
-  The light deviations from the exemplar (`--text-3`, `--success`,
-  `--warning`, `--accent-edge`) exist to pass those gates.
+  grounds, every ink token to 4.5:1 on its own fill, and `--text-4` below
+  `--text-3`. For the accent it holds the palette rather than a floor:
+  `--accent-text` must be `--accent` or `--accent-ink` exactly, and must be
+  the gold wherever the gold clears 4.5:1 on every ground — which makes a
+  third gold structurally impossible. It asserts `--accent` and `--mark`
+  are one literal in both themes; that the focus ring is two opaque strokes
+  in one unlayered rule, with a regex that rejects `transparent`,
+  `color-mix`, `rgba(` and a `/ alpha` anywhere in the `box-shadow`; and
+  that the pair clears 3:1 against each other and against all eight
+  grounds. It then greps every component for a gold utility whose class
+  string does not also name `--accent-ink`. `--accent` itself is
+  deliberately ungated as a foreground: it is 1.60:1 on light
+  `--bg-hover`, which is the whole reason it names a carrier. The light
+  deviations from the exemplar (`--text-3`, `--success`, `--warning`) exist
+  to pass those gates; the accent is not among them, because it does not
+  deviate.
+
+  No sRGB colour clears 4.5:1 as text on both `#ffffff` and `#0a0b0c` — the
+  window is empty, not merely narrow — which is why one hue cannot be
+  accent *text* in both themes, and why `--accent-text` is a choice between
+  two colours rather than a colour of its own.
 - **Status colours must always have text or icon labels.** Colour alone is
   never the only signal.
 - **Surfaces never use the accent as a fill.** The accent appears as a
-  1–2px bar, an inline dot, the ring, a small icon, or a small CTA — never
-  as a section background. A wash uses the `-tint`.
-- **One focus ring.** The unlayered `:focus-visible` rule in `globals.css`
-  paints a 2px ring of `--accent` at 40% and a 4px halo at 20% on every
-  focusable element, registry primitives included. No Nimbus-owned
-  component binds its own ring or outline colour under a focus variant. A
-  text field may add `focus-visible:border-accent` so the edge and the ring
-  agree.
+  1–2px bar, an inline dot, the ring, a small icon, a chip, or a small CTA
+  — never as a section background. A wash uses the `-tint`.
+- **One focus ring, two strokes.** The unlayered `:focus-visible` rule in
+  `globals.css` paints `0 0 0 2px var(--accent), 0 0 0 3px
+  var(--accent-ink)` on every focusable element, registry primitives
+  included: the gold is the ring, and the `--accent-ink` hairline outside
+  it is what the ring is measured against on a light ground. SC 2.4.13
+  measures an indicator against the colour adjacent to it, so the same two
+  strokes serve both themes from opposite sides — on dark the gold carries
+  it at 10.45:1 and the keyline disappears into the page; on light the
+  keyline carries it at 18.55:1 and the gold reads as the brand inside it.
+  One rule, no theming.
+
+  Both strokes must stay opaque. The ring this replaced was
+  `color-mix(in srgb, var(--accent-edge) 40%, transparent)`: the token it
+  named measured 4.61:1 and the stroke that actually reached the screen
+  measured 1.77:1 on white. Token-level checks all passed while the pixels
+  failed, which is why `contrast.spec.ts` now reads the rule itself.
+
+  No Nimbus-owned component binds its own ring or outline colour under a
+  focus variant. A text field may add `focus-visible:border-accent` so the
+  edge and the ring agree; that focus variant is the one documented
+  exception to the carrier rule, because the global keyline is drawn
+  immediately outside the border and carries the contrast for it.
 ### Brand Palette
 
 The brand palette is **distinct from the product palette above**. Use it
@@ -1014,12 +1053,14 @@ One family crosses tiers, by design:
   product `--accent` in both themes. It is the one brand colour that
   appears inside the product at full strength, and it crosses the tier
   boundary unchanged because the console never asks it to do a job it
-  cannot do: it fills, and `--accent-ink` sits on it.
-- **Golden Hour.** Brand `#D97706` (Golden Hour stroke) is the amber the
-  darkened product tokens are built from. `--accent-edge` and
-  `--accent-link` are `#866423` in light — the gold taken down at its own
-  hue until it clears 4.5:1 on `--bg-hover`. These are measured against the
-  product grounds rather than copied from the brand sheet.
+  cannot do: it is always given a ground it can sit on, and `--accent-ink`
+  is that ground as often as it is the ink on top.
+- **Golden Hour stays outside.** Brand `#D97706` (Golden Hour stroke) has
+  no product token. The console once built darkened accents from it
+  (`#866423` in light); they are gone, because a darkened gold is a second
+  identity colour and the product now buys its contrast from the ground
+  instead. `--accent-ink` `#1a1204` is measured against the product
+  grounds, not copied from the brand sheet.
 
 No other colour crosses tiers. The product has no blue identity and no
 teal accent, and the marketing surfaces take the same night and paper
@@ -1102,9 +1143,12 @@ host theme in `website/src/styles/docs-theme.css`, and the home page in
   `--color-fd-*` custom property. `docs-theme.css` answers each one from a
   Nimbus role token rather than from the vendor gray scale, so the docs and
   the console they document share one set of roles. `--color-fd-primary`
-  takes `--accent-edge`, not `--accent`: fumadocs uses "primary" as text far
-  more often than as a fill, and a thin accent is `--accent-edge` under the
-  §Colour rule. `--color-fd-accent` is the hover ground, because fumadocs
+  takes `--accent-text`, not `--accent`: fumadocs paints "primary" as text
+  far more often than as a fill — an active sidebar row, an active tab, a
+  link chevron — and those are marks with no area drawn inside vendored
+  components, which is the case `--accent-text` answers under the §Colour
+  rule. `--color-fd-ring` takes the gold, because `global.css` overpaints
+  `:focus-visible` with the ring and its keyline. `--color-fd-accent` is the hover ground, because fumadocs
   means the hovered surface by that word where Nimbus means the brand
   colour. One identity family per mode — teal and blue stay out of the doc
   body, and the doc body carries no gradient.

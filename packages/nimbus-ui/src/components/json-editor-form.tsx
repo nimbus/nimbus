@@ -57,7 +57,7 @@ export function JsonEditorForm({
         value={json}
         onChange={(e) => setJson(e.target.value)}
         spellCheck={false}
-        className="min-h-[240px] flex-1 resize-none rounded-xs border border-border-2 bg-bg-raised p-2 font-mono text-xs text-text-1 focus-visible:border-accent-edge"
+        className="min-h-[240px] flex-1 resize-none rounded-xs border border-border-2 bg-bg-raised p-2 font-mono text-xs text-text-1 focus-visible:border-accent"
         data-testid={`${testidPrefix}-textarea`}
       />
       {error ? (

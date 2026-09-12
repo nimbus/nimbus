@@ -103,7 +103,10 @@ function NavRow({
       {active ? (
         <span
           aria-hidden
-          className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent-edge"
+          // Gold plus its keyline: the ring reasoning at rail scale. The
+          // hairline of `--accent-ink` is what the rail is measured against
+          // on the white sidebar, and it disappears into the dark one.
+          className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent ring-1 ring-accent-ink"
         />
       ) : null}
       <Icon size={16} aria-hidden className="shrink-0" />

@@ -12,7 +12,7 @@ export default function NotFound() {
       <p className="text-[14px] text-(--text-2)">
         The address is wrong, or the page moved.
       </p>
-      <Link href="/docs/" className="text-[14px] text-(--accent-link) underline">
+      <Link href="/docs/" className="text-[14px] text-(--accent-text) underline">
         Go to the documentation
       </Link>
     </main>

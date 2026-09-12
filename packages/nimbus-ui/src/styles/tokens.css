@@ -74,22 +74,37 @@
   --text-3: #8b909a;
   --text-4: #62666d; /* disabled only; documented non-AA */
 
-  /* Nimbus gold, the one identity colour, the same literal in both themes.
-     It is a fill: it carries `--accent-ink` on top and never paints text or a
-     hairline itself. Gold cannot be darkened and stay gold -- at its own hue
-     it turns olive, and the red-shifted ambers that stay vivid are a
-     different colour next to the mascot -- so light does not darken it.
-     `--accent-edge` carries the contrast instead. */
+  /* Nimbus gold, the one identity colour, the same literal in both themes and
+     the only accent hue in the sheet. There is no darkened variant: gold
+     cannot be darkened and stay gold -- at its own hue it turns olive, and the
+     red-shifted ambers that stay vivid are a different colour standing next to
+     the mascot -- so light does not darken it either.
+
+     Because the gold is fixed, contrast is bought with the ground instead of
+     the hue. The gold is 10.45:1 on the dark canvas and 1.88:1 on the white
+     one, so on light it must be given a ground it can sit on: every accent
+     mark with area (a bar, a badge, a dot, a rail, a pill) pairs the gold with
+     `--accent-ink` as carrier or keyline, and the pair is then legible on any
+     ground in either theme. This is Radix's own prescription for amber, whose
+     step 9 is one of the five solids "designed for dark foreground text".
+
+     The one mark that has no area is a hyperlink inside a line of prose. No
+     sRGB colour clears 4.5:1 as text on both #ffffff and #0a0b0c -- the window
+     is empty, not merely narrow -- so `.link-inline` in globals.css drops to
+     the page ink on light and keeps its resting underline as the affordance
+     (WCAG 1.4.1: never colour alone). */
   --accent: #f0b23e;
   --accent-hover: #f6c35c;
-  --accent-ink: #1a1204; /* text on accent fills */
+  --accent-ink: #1a1204; /* ink on gold, and gold's carrier on light */
 
-  /* The accent wherever it must be perceivable on its own: the focus ring,
-     a 1-2px bar, a small dot, an icon, accent text. Held to 4.5:1 on every
-     ground, which covers the 3:1 non-text floor (SC 1.4.11) as well. On the
-     dark grounds the gold already clears both, so this is the gold. */
-  --accent-edge: #f0b23e;
-  --accent-link: #f0b23e;
+  /* Whichever member of the pair above the ground can actually show, for the
+     accent marks that have no area to hold both: a 1px rule, a counter, a
+     method label, an active sidebar row a vendored component paints as text.
+     It is never a third colour -- contrast.spec.ts holds it to `--accent` or
+     `--accent-ink` exactly -- so it cannot drift into a darkened gold. Prefer
+     giving a mark area and using the pair; reach for this when the shape or a
+     vendored component leaves no room. */
+  --accent-text: #f0b23e;
 
   /* The mascot body and its face. Logos are exempt from the non-text floor
      (SC 1.4.11), so the mark is the unmeasured gold on every ground and the
@@ -122,8 +137,9 @@
      text-3      #71717a -> #66666e  (4.10:1 -> 4.82:1 on hover)
      success     #15803d -> #15753a  (4.25:1 -> 4.89:1 on hover)
      warning     #c2410c -> #b53b0a  (4.39:1 -> 4.95:1 on hover)
-     accent-edge #a16207 -> #866423  (4.17:1 -> 4.61:1 on hover)
-   --accent does not deviate: it is the gold, unchanged from the dark block. */
+   The accent is not in that list: it does not deviate, and it is not measured
+   as a foreground at all. It is the gold in both themes, and on light it is
+   carried on `--accent-ink` rather than darkened. */
 
 :root[data-theme="light"] {
   --bg-canvas: #ffffff;
@@ -140,15 +156,16 @@
   --text-3: #66666e;
   --text-4: #a1a1aa;
 
-  /* Identical to the dark block: one gold, and dark ink on it at 9.84:1. */
+  /* Identical to the dark block: one gold, and dark ink on it at 9.84:1. The
+     accent is the only role the light theme does not restate in its own
+     values, because it is the one role that does not theme. */
   --accent: #f0b23e;
   --accent-hover: #e0a230;
   --accent-ink: #1a1204;
 
-  /* The gold darkened at its own hue until it clears 4.5:1 on --bg-hover,
-     the binding ground. This is the only warm that theming moves. */
-  --accent-edge: #866423;
-  --accent-link: #866423;
+  /* The gold is 1.88:1 on this canvas, so here the readable member of the
+     pair is the ink. Same two colours as the dark block, opposite choice. */
+  --accent-text: #1a1204;
 
   /* Deliberately identical to the dark block: the mark does not theme. */
   --mark: #f0b23e;
@@ -219,8 +236,7 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
-  --color-accent-edge: var(--accent-edge);
-  --color-accent-link: var(--accent-link);
+  --color-accent-text: var(--accent-text);
   --color-accent-tint: var(--accent-tint);
   --color-mark: var(--mark);
   --color-mark-ink: var(--mark-ink);
@@ -270,11 +286,13 @@
   --color-destructive-foreground: var(--error-ink);
   --color-border: var(--border-2);
   --color-input: var(--border-2);
-  /* A focus ring is a hairline, so it takes the edge and not the fill. The
-   * registry primitives reach it through `ring-ring` and `outline-ring`,
-   * which no Nimbus-owned rule can intercept, so the bridge is the only
-   * place the split can be made for them. */
-  --color-ring: var(--accent-edge);
+  /* Registry primitives reach the ring through `ring-ring` and `outline-ring`.
+   * Both are layered utilities, so the unlayered `:focus-visible` rule in
+   * globals.css overpaints them -- it cancels the outline and draws the gold
+   * ring with its `--accent-ink` keyline, which is what makes the ring legible
+   * on white. This token is what shows through if that rule is ever deleted,
+   * so it names the gold rather than a hue nothing else in the sheet uses. */
+  --color-ring: var(--accent);
   --color-sidebar: var(--bg-panel);
   --color-sidebar-foreground: var(--text-1);
   --color-sidebar-primary: var(--accent);
@@ -282,10 +300,13 @@
   --color-sidebar-accent: var(--bg-hover);
   --color-sidebar-accent-foreground: var(--text-1);
   --color-sidebar-border: var(--border-1);
-  --color-sidebar-ring: var(--accent-edge);
-  /* A chart series is a graphical object, so it takes the edge: the fill
-   * is 1.88:1 on the light canvas and a series has no ink over it. */
-  --color-chart-1: var(--accent-edge);
+  --color-sidebar-ring: var(--accent);
+  /* Series 1 is the gold, like every other accent mark. A series is the one
+   * accent shape that carries no ink of its own, and the gold is 1.88:1 on the
+   * white canvas, so the first chart built here owes series 1 the same
+   * treatment every other gold mark gets: an `--accent-ink` hairline around the
+   * fill. Nothing in the console charts anything yet. */
+  --color-chart-1: var(--accent);
   --color-chart-2: var(--info);
   --color-chart-3: var(--success);
   --color-chart-4: var(--warning);

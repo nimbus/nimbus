@@ -240,7 +240,10 @@ function mountJourney(handles: JourneyHandles) {
     setVar('--stage-ink', rgb(palette.ink));
     setVar('--stage-muted', rgb(palette.muted));
     setVar('--stage-accent', rgb(palette.accent));
-    setVar('--stage-accent-text', rgb(palette.accentText));
+    // `accent` and not `accentText`: every accent label in the DOM has the
+    // carrier below it, so it keeps the gold. `accentText` is the tone for a
+    // caption the canvas draws straight onto the ground, which has none.
+    setVar('--stage-accent-carrier', rgb(palette.accentCarrier));
     // How far into the finale wash the frame is. The nav mark reads it to
     // trade its body and face over, because the wash ground is the accent.
     setVar('--wash-mix', palette.washMix.toFixed(4));
@@ -828,7 +831,8 @@ function mountStoryboard(section: HTMLElement) {
       const beat = canvas.closest<HTMLElement>('[data-beat]');
       beat?.style.setProperty('--beat-background', rgb(palette.background));
       beat?.style.setProperty('--beat-ink', rgb(palette.ink));
-      beat?.style.setProperty('--beat-accent', rgb(palette.accentText));
+      beat?.style.setProperty('--beat-accent', rgb(palette.accent));
+      beat?.style.setProperty('--beat-accent-carrier', rgb(palette.accentCarrier));
     });
   };
   draw();

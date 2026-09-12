@@ -253,21 +253,28 @@ fi
 # --- 14. the two entrances + the palette + DESIGN.md ------------------------
 # `/` is the Odyssey, the scroll-driven pitch. `/docs/` is the written entrance
 # to the same story. Neither has Markdown behind it, so both are checked as
-# source files. `#b45309` is the retired accent: it must appear nowhere in the
-# site, in either theme.
-C="14. / renders the Odyssey, /docs/ is the landing, the palette has no #b45309, DESIGN.md documents the surface"
-stale_accent="$(grep -rIl 'b45309' website/src 2>/dev/null | head -3 || true)"
+# source files.
+#
+# The banned list is every accent the palette has retired, by literal and by
+# token name: `#b45309` (the red-shifted amber) and `#866423` (the gold
+# darkened at its own hue), plus `--accent-edge` and `--accent-link`, the two
+# slots those literals lived in. The accent is now two colours -- the gold and
+# its ink -- and `--accent-text` picks between them, so a reappearance of any
+# of these is a third gold coming back.
+C="14. / renders the Odyssey, /docs/ is the landing, the palette has no retired accent, DESIGN.md documents the surface"
+stale_accent="$(grep -rIlE 'b45309|866423|accent-(edge|link)' website/src 2>/dev/null | head -3 || true)"
 if [[ -f "${HOME}" ]] \
   && grep -q 'Journey' "${HOME}" \
   && [[ -f "${LANDING}" ]] \
   && grep -q 'DocsPage' "${LANDING}" \
   && [[ -f "${TOKENS}" ]] \
   && grep -q '#f0b23e' "${TOKENS}" \
+  && grep -q -- '--accent-text' "${TOKENS}" \
   && [[ -z "${stale_accent}" ]] \
   && grep -q 'Documentation site' DESIGN.md 2>/dev/null; then
   pass "${C}"
 else
-  fail "${C}" "missing Odyssey home, /docs landing, gold accent token, DESIGN.md entry, or retired #b45309 still in [${stale_accent:-none}]"
+  fail "${C}" "missing Odyssey home, /docs landing, gold accent token, --accent-text, DESIGN.md entry, or a retired accent still in [${stale_accent:-none}]"
 fi
 
 # --- 15. README front door --------------------------------------------------------
@@ -329,6 +336,60 @@ if [[ ${#arch_missing[@]} -eq 0 && -f "${SOURCE_MAP}" ]]; then
   pass "${C}"
 else
   fail "${C}" "missing/unmapped systems: ${arch_missing[*]:-source-map absent}"
+fi
+
+# --- 18. the two token sheets agree ------------------------------------------
+# The website sheet's own header says the values are identical to the console's
+# and that "a change to one sheet belongs in the other". Nothing enforced it,
+# and the sheets are edited by different tasks: docs work touches one, console
+# work the other. So a role could drift in one theme only, which is exactly the
+# defect that is invisible until someone toggles the theme on the wrong
+# surface.
+#
+# The comparison is per theme, because the two sheets select the themes
+# oppositely: the console defaults to dark on bare `:root` and overrides light
+# under `[data-theme="light"]`, while the docs default to the reader's system
+# scheme, so light is the bare `:root` block and dark lives under `.dark`. Only
+# the role declarations are compared; `color-scheme` is a host concern and the
+# `@theme` blocks are each host's own utility namespace.
+C="18. the console and website token sheets declare the same roles and values in both themes"
+drift="$(
+  python3 - <<'DRIFT' 2>&1 || true
+import re, sys
+
+CONSOLE = "packages/nimbus-ui/src/styles/tokens.css"
+WEBSITE = "website/src/styles/tokens.css"
+
+def block(path, selector):
+    """The role declarations of one theme block, as {name: value}."""
+    src = open(path, encoding="utf-8").read()
+    start = src.index(selector) + len(selector)
+    body = src[start : src.index("\n}", start)]
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    return {
+        name: value.strip()
+        for name, value in re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;]+);", body)
+    }
+
+themes = {
+    "dark": (block(CONSOLE, ":root {"), block(WEBSITE, ":root:is(.dark) {")),
+    "light": (
+        block(CONSOLE, ':root[data-theme="light"] {'),
+        block(WEBSITE, ":root {"),
+    ),
+}
+
+for theme, (console, website) in themes.items():
+    for name in sorted(set(console) | set(website)):
+        here, there = console.get(name), website.get(name)
+        if here != there:
+            print(f"{theme} {name}: console={here or 'absent'} website={there or 'absent'}")
+DRIFT
+)"
+if [[ -z "${drift}" ]]; then
+  pass "${C}"
+else
+  fail "${C}" "$(printf '%s' "${drift}" | head -6 | tr '\n' ';')"
 fi
 
 # --- summary -------------------------------------------------------------------------

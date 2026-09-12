@@ -51,7 +51,7 @@
 /* ---- Role tokens: light ----
    Four values deviate from the Starport exemplar so every text token clears
    4.5:1 on the darkest light ground (--bg-hover #ececee), not only on the
-   white canvas: text-3, success, warning and accent-edge. */
+   white canvas: text-3, success and warning. */
 :root {
   --bg-canvas: #ffffff;
   --bg-panel: #fafafa;
@@ -67,17 +67,19 @@
   --text-3: #66666e;
   --text-4: #a1a1aa;
 
-  /* Nimbus gold. One literal in both themes. It is a fill: it carries
-     `--accent-ink` on top and never paints text or a hairline itself. */
+  /* Nimbus gold. One literal in both themes, and the only accent hue in the
+     sheet. An accent mark with area pairs it with `--accent-ink` as carrier or
+     keyline, which is what makes it legible on the white canvas, where the
+     gold alone is 1.88:1. */
   --accent: #f0b23e;
   --accent-hover: #e0a230;
   --accent-ink: #1a1204;
 
-  /* The accent wherever it must be perceivable on its own: the focus ring, a
-     1-2px bar, a dot, an icon, accent text. The gold darkened at its own hue
-     until it clears 4.5:1 on --bg-hover, the binding ground. */
-  --accent-edge: #866423;
-  --accent-link: #866423;
+  /* Whichever member of the pair the ground can show, for the marks with no
+     area to hold both: a 1px rule, a counter, a prose link, an active sidebar
+     row fumadocs paints as text. Never a third colour -- always `--accent` or
+     `--accent-ink` exactly. On this canvas that is the ink. */
+  --accent-text: #1a1204;
 
   /* The mascot body and its face. Logos are exempt from the non-text floor
      (SC 1.4.11), so the mark is the unmeasured gold on every ground. */
@@ -119,10 +121,9 @@
   --accent-hover: #f6c35c;
   --accent-ink: #1a1204;
 
-  /* On the dark grounds the gold already clears the text floor, so the edge
-     is the gold. */
-  --accent-edge: #f0b23e;
-  --accent-link: #f0b23e;
+  /* On the dark grounds the gold clears the text floor at 10.45:1, so here the
+     readable member of the pair is the gold itself. */
+  --accent-text: #f0b23e;
 
   --mark: #f0b23e;
   --mark-ink: #1a1204;

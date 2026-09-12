@@ -19,10 +19,28 @@
   --stage-chrome: var(--bg-canvas);
   --stage-ink: var(--text-1);
   --stage-muted: var(--text-3);
-  /* The display tone: the gold as a fill, under `--accent-ink`. */
+  /* The accent tone: the gold, as a fill and as a label, stepping aside for
+     `--accent-ink` only on the finale, where the ground is itself the gold. */
   --stage-accent: var(--accent);
-  /* The same gold as a reading tone; see `PaletteStops` in odyssey/scene.ts. */
-  --stage-accent-text: var(--accent-edge);
+  /* The ground a gold label sits on. Every accent label on the stage is gold
+     on this carrier, in every theme and at every beat -- what changes is
+     whether the carrier is visible against the ground behind it, and
+     `paletteFor` in odyssey/scene.ts moves it with the beat for exactly that
+     reason: it is the night ground on a night beat and the gold on the finale,
+     so the label reads as bare text at both ends, and it is the accent's ink
+     in between, where the page is too light to show gold.
+
+     The rest value covers the frames before the journey mounts and the static
+     fallback under reduced motion or a short viewport. It is the ink, not the
+     canvas: on the dark canvas the ink is 1.06:1 against the ground and so
+     reads as nothing, and on the white one it is the pill that makes the gold
+     legible. One value, both themes, no branch. */
+  --stage-accent-carrier: var(--accent-ink);
+  /* The code surface does not follow the beat. A snippet is a terminal, and a
+     terminal is night, which is also what lets its gold tokens stay gold on
+     every beat. The two literals are `night` and `inkNight` in scene.ts. */
+  --stage-screen: #0a0b0c;
+  --stage-screen-ink: #f6f7f8;
   --paper-mix: 0;
   --wash-mix: 0;
   --scroll-hint-opacity: 1;
@@ -476,9 +494,18 @@ body:has(.odyssey) {
   color: var(--stage-muted);
 }
 
+/* The three accent labels on the stage ground. Each one is gold on the
+   carrier, which is the ground itself on night and on the wash and the accent
+   ink on paper -- so the label reads as bare gold text for most of the scroll
+   and as a gold chip across the beats that whiten. The padding is paid back
+   in negative margin so adding the ground moves no layout. */
 .telemetry b {
   font-weight: 600;
-  color: var(--stage-accent-text);
+  color: var(--stage-accent);
+  background: var(--stage-accent-carrier);
+  padding: 1px 5px;
+  margin: -1px -1px;
+  border-radius: 4px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -576,12 +603,20 @@ body:has(.odyssey) {
   right: max(36px, calc((100vw - 1740px) / 2 + 28px));
 }
 
-.beat-eyebrow {
-  margin: 0 0 22px;
+/* The chapter label. Selected through `.beat` because the label is a `<p>`
+   and `.beat p` below is (0,1,1): a bare `.beat-eyebrow` loses the cascade to
+   the body copy and the label comes out as paragraph grey on its own carrier.
+   Every rule here that sets a colour has to clear that bar. */
+.beat .beat-eyebrow {
+  display: inline-block;
+  margin: 0 0 22px -7px;
+  padding: 4px 7px;
+  border-radius: 5px;
   font: 500 10.5px/1 var(--font-mono);
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--stage-accent-text);
+  color: var(--stage-accent);
+  background: var(--stage-accent-carrier);
 }
 
 .beat h1,
@@ -625,11 +660,11 @@ body:has(.odyssey) {
   margin: 24px 0 0;
   padding: 30px 18px 14px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--stage-ink) 16%, transparent);
-  background: color-mix(in srgb, var(--stage-ink) 5%, var(--stage-background));
+  border: 1px solid color-mix(in srgb, var(--stage-screen-ink) 16%, transparent);
+  background: color-mix(in srgb, var(--stage-screen-ink) 5%, var(--stage-screen));
   font: 400 12px/1.62 var(--font-mono);
   letter-spacing: 0;
-  color: color-mix(in srgb, var(--stage-ink) 88%, var(--stage-background));
+  color: color-mix(in srgb, var(--stage-screen-ink) 88%, var(--stage-screen));
   white-space: pre;
   overflow-x: auto;
   overflow-y: hidden;
@@ -644,7 +679,7 @@ body:has(.odyssey) {
   font: 500 9.5px/1 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--stage-muted);
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
 }
 
 .snippet code {
@@ -688,28 +723,30 @@ body:has(.odyssey) {
   font-style: normal;
 }
 
+/* The screen is night on every beat, so the tokens are the gold outright and
+   do not have to be mixed back towards a ground that moves. */
 .snippet .tk-keyword {
-  color: color-mix(in srgb, var(--stage-accent-text) 82%, var(--stage-ink));
+  color: var(--accent);
 }
 
 .snippet .tk-string {
-  color: color-mix(in srgb, var(--stage-accent-text) 55%, var(--stage-ink));
+  color: color-mix(in srgb, var(--accent) 62%, var(--stage-screen-ink));
 }
 
 .snippet .tk-comment {
-  color: var(--stage-muted);
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
 }
 
 .snippet .tk-prompt {
-  color: var(--stage-muted);
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
 }
 
 .snippet .tk-env {
-  color: color-mix(in srgb, var(--stage-ink) 92%, var(--stage-accent-text));
+  color: color-mix(in srgb, var(--stage-screen-ink) 92%, var(--accent));
 }
 
 .snippet .tk-ellipsis {
-  color: var(--stage-muted);
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
   padding: 0 1px;
 }
 
@@ -857,7 +894,11 @@ body:has(.odyssey) {
   }
 
   .status-location .state {
-    color: var(--stage-accent-text);
+    color: var(--stage-accent);
+    background: var(--stage-accent-carrier);
+    padding: 1px 5px;
+    margin: -1px -1px;
+    border-radius: 4px;
     /* The longest state label is wider than a 375px row leaves; clip it
        with an ellipsis instead of pushing past the frame edge. */
     flex: 0 1 auto;
@@ -953,7 +994,8 @@ body:has(.odyssey) {
     font-size: 8.5px;
   }
 
-  .beat-eyebrow {
+  /* Same bar as the base rule: `.beat p` at this width resets the margins. */
+  .beat .beat-eyebrow {
     margin-bottom: 14px;
   }
 
@@ -1140,36 +1182,17 @@ body:has(.odyssey) {
     color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 62%, var(--beat-background, var(--stage-background)));
   }
 
-  .beat-eyebrow {
-    color: var(--beat-accent, var(--blue));
+  .beat .beat-eyebrow {
+    color: var(--beat-accent, var(--stage-accent));
+    background: var(--beat-accent-carrier, var(--stage-accent-carrier));
   }
 
-  .snippet {
-    border-color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 16%, transparent);
-    background: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 5%, var(--beat-background, var(--stage-background)));
-    color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 88%, var(--beat-background, var(--stage-background)));
-  }
-
+  /* The snippet is night on every beat, so this block no longer re-themes it;
+     only the line reveal has to be switched off. */
   .snippet .line {
     opacity: 1;
     transform: none;
     transition: none;
-  }
-
-  .snippet-file,
-  .snippet .tk-comment,
-  .snippet .tk-prompt,
-  .snippet .tk-ellipsis {
-    color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 58%, var(--beat-background, var(--stage-background)));
-  }
-
-  .snippet .tk-keyword,
-  .snippet .tk-string {
-    color: var(--beat-accent, var(--blue));
-  }
-
-  .snippet .tk-env {
-    color: var(--beat-ink, var(--stage-ink));
   }
 
   .final-actions a.primary {

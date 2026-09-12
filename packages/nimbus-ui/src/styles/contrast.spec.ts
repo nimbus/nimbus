@@ -83,8 +83,7 @@ const TEXT_TOKENS = [
   "--text-1",
   "--text-2",
   "--text-3",
-  "--accent-link",
-  "--accent-edge",
+  "--accent-text",
   "--success",
   "--warning",
   "--error",
@@ -114,22 +113,39 @@ describe("role token contrast", () => {
     expect(failures).toEqual([]);
   });
 
-  // --accent-edge paints the focus ring, thin bars and dots, which are
-  // non-text UI components under SC 1.4.11: 3:1 on every ground. TEXT_TOKENS
-  // above already holds it to the stricter 4.5:1; this names the floor the
-  // token exists to clear, so the reason survives if the text use goes away.
-  it.each(COMBOS)("%s: --accent-edge clears the 3:1 non-text floor", (_, t) => {
-    for (const ground of GROUNDS) {
-      expect(contrast(t["--accent-edge"], t[ground])).toBeGreaterThanOrEqual(3);
-    }
+  /* --accent-text is the one accent role measured as a foreground, and the
+     rule that keeps it from becoming a third gold is that it is never a
+     colour of its own: it is whichever member of the accent pair the ground
+     can show. Without this the token is just `--accent-edge` again, and the
+     darkened gold that used to live in that slot (#866423) would pass the
+     4.5:1 check above while reading as a different colour standing next to
+     the mascot. TEXT_TOKENS holds the floor; this holds the palette. */
+  it.each(COMBOS)("%s: --accent-text is the accent or its ink", (_, t) => {
+    expect([t["--accent"], t["--accent-ink"]]).toContain(t["--accent-text"]);
   });
 
-  // --accent is the gold, and the gold is a fill. It is deliberately NOT held
-  // to a floor against the grounds: at 1.60:1 on light --bg-hover it would
-  // fail, and darkening it to pass is what turned the light accent into a
-  // different colour from the mark. What is held is the pair that makes a
-  // fill legible -- the ink on top of it -- and the grounds are covered by
-  // --accent-edge, which is what anything thin or textual uses instead.
+  /* Which one it is follows from the ground rather than from taste: on a
+     ground that can carry the gold as text the token must be the gold, and
+     only where the gold fails may it fall back to the ink. Asserting the
+     direction stops a theme from quietly dropping to the ink everywhere and
+     passing the two checks above with no accent left in it. */
+  it.each(
+    COMBOS,
+  )("%s: it keeps the gold wherever the gold can be read", (_, t) => {
+    const goldIsReadable = GROUNDS.every(
+      (ground) => contrast(t["--accent"], t[ground]) >= 4.5,
+    );
+    expect(t["--accent-text"]).toBe(
+      goldIsReadable ? t["--accent"] : t["--accent-ink"],
+    );
+  });
+
+  // --accent is the gold, and the gold is deliberately NOT held to a floor
+  // against the grounds: at 1.60:1 on light --bg-hover it would fail, and
+  // darkening it to pass is what turned the light accent into a different
+  // colour from the mark. What is held is the pair that makes it legible --
+  // the ink, which serves both as the ink on top of a gold fill and as the
+  // carrier or keyline under a gold mark that has no room for ink.
   it.each(COMBOS)("%s: every ink clears AA on its own fill", (_, t) => {
     for (const [ink, fill] of [
       ["--accent-ink", "--accent"],
@@ -194,7 +210,7 @@ describe("role token contrast", () => {
    written under components/ui.
 
    Two things keep that true. The rule itself must stay unlayered and must
-   name `--accent-edge` (the ring token, DESIGN.md accent job 3). And no Nimbus-owned
+   paint the gold with its keyline (DESIGN.md accent job 3). And no Nimbus-owned
    component may bind a ring or outline colour of its own under a focus
    variant: that would either duplicate the global ring or, on a token that
    misses 3:1, paint a worse one. */
@@ -222,13 +238,15 @@ function unlayeredRules(css: string): string[] {
 
 /* A ring or outline colour under a focus variant is a second focus ring by
    construction. A border colour under a focus variant is allowed on one
-   token only: `border-accent-edge`, the accent border a text field shows
-   together with the ring (DESIGN.md inputs). Any other focus border is a private
-   indicator on a token that was never measured for the job. */
+   token only: `border-accent`, the accent border a text field shows together
+   with the ring (DESIGN.md inputs). That one is admitted because the global
+   ring is drawn immediately outside it and carries the keyline, so the gold
+   border never has to answer the white canvas by itself. Any other focus
+   border is a private indicator on a token measured for something else. */
 const RING_COLOUR =
-  /\b(?:focus|focus-visible|focus-within):(?:ring|outline)-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent|accent-edge|accent-link|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
+  /\b(?:focus|focus-visible|focus-within):(?:ring|outline)-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent|accent-text|accent-ink|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
 const BORDER_COLOUR =
-  /\b(?:focus|focus-visible|focus-within):border-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent(?!-edge)\b|accent-link|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
+  /\b(?:focus|focus-visible|focus-within):border-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent-(?:text|ink|hover)|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
 
 /** Every .tsx under a directory, the vendored registry included. */
 function allTsxFiles(dir: string): string[] {
@@ -257,16 +275,50 @@ function tsxFiles(dir: string): string[] {
 }
 
 describe("focus indicators", () => {
-  it("paints the global ring from --accent-edge in one unlayered rule", () => {
+  it("paints the global ring as the gold plus its keyline, unlayered", () => {
     const rule = unlayeredRules(GLOBALS).find((r) =>
       r.startsWith(":focus-visible {"),
     );
     expect(rule).toBeDefined();
     expect(rule).toMatch(/outline:\s*none;/);
-    expect(rule).toMatch(/box-shadow:[\s\S]*var\(--accent-edge\)/);
-    // Two layers: an inner 2px band and an outer 4px halo.
-    expect(rule).toMatch(/0 0 0 2px/);
-    expect(rule).toMatch(/0 0 0 4px/);
+    // The gold inside, the keyline one pixel wider, so the keyline shows as
+    // a hairline around the gold rather than replacing it.
+    expect(rule).toMatch(/0 0 0 2px var\(--accent\)/);
+    expect(rule).toMatch(/0 0 0 3px var\(--accent-ink\)/);
+  });
+
+  /* Both strokes have to be opaque. The ring this replaced was
+     `color-mix(in srgb, var(--accent-edge) 40%, transparent)`: the token it
+     named measured 4.61:1 against the light canvas and the stroke that
+     actually reached the screen measured 1.77:1, because 40% of it was the
+     canvas. Every token-level check in this file passed throughout. Nothing
+     but this test can tell the difference, so it is the only thing standing
+     between the ring and that defect returning. */
+  it("composites no part of the ring against the ground", () => {
+    const rule = unlayeredRules(GLOBALS).find((r) =>
+      r.startsWith(":focus-visible {"),
+    );
+    const shadow = rule?.match(/box-shadow:([\s\S]*?);/)?.[1] ?? "";
+    expect(shadow).not.toMatch(/transparent|color-mix|\brgba?\(|\/\s*\d/);
+  });
+
+  /* And the pair has to work as an indicator in both themes. SC 2.4.13 reads
+     a focus indicator against the colour next to it, so what matters is that
+     the two strokes are distinct from each other and that whichever one meets
+     the page is distinct from the page. The gold answers the dark grounds and
+     the keyline answers the light ones, which is the whole reason the ring is
+     two strokes and not one. */
+  it.each(COMBOS)("%s: the ring reads against every ground", (_, t) => {
+    expect(contrast(t["--accent"], t["--accent-ink"])).toBeGreaterThanOrEqual(
+      3,
+    );
+    for (const ground of GROUNDS) {
+      const best = Math.max(
+        contrast(t["--accent"], t[ground]),
+        contrast(t["--accent-ink"], t[ground]),
+      );
+      expect(best).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it("names no other focus ring token in the stylesheet", () => {
@@ -295,7 +347,7 @@ describe("inline links", () => {
   it("identify themselves by a resting underline, not colour alone", () => {
     const rule = GLOBALS.match(/\.link-inline \{([\s\S]*?)\n {2}\}/);
     expect(rule).not.toBeNull();
-    expect(rule?.[1]).toMatch(/color:\s*var\(--accent-link\)/);
+    expect(rule?.[1]).toMatch(/color:\s*var\(--accent-text\)/);
     expect(rule?.[1]).toMatch(/text-decoration:\s*underline/);
   });
 });
@@ -314,83 +366,87 @@ describe("reduced motion", () => {
   });
 });
 
-// --- the gold is a fill ---------------------------------------------------
+// --- the gold names its carrier -------------------------------------------
 
 /* `--accent` is Nimbus gold in both themes, which means it is 1.60:1 on the
-   darkest light ground. It is legible only as a fill under `--accent-ink`.
-   Anything thin or textual -- an icon, a 2px bar, a dot, a hairline, accent
-   prose -- must take `--accent-edge`, which is measured against the grounds.
-   These utilities are the ways Tailwind can paint the gold where it cannot
-   carry itself, so they are named here rather than left to review. */
-const GOLD_MISUSE =
-  /\b(?:text|border|divide|outline|ring|decoration|fill|stroke|shadow)-accent(?![\w-])/g;
+   darkest light ground and 10.45:1 on the darkest dark one. It is never
+   legible on its own across both themes, in any shape -- as a fill, as a
+   hairline, or as text. What makes it legible is always the same thing: the
+   `--accent-ink` next to it, as ink on top of a fill, as a carrier behind
+   text, or as a keyline around a mark too thin to hold ink.
 
-/* `bg-accent` cannot be banned outright: painting a fill is the one thing the
-   gold is for. What separates a fill from a hairline is the ink on top of it,
-   so the rule is that ink -- a class string that paints the gold must also
-   name `--accent-ink`. A splitter, a progress bar and a focused row carry no
-   ink, so each one fails here and takes `bg-accent-edge` instead.
+   So the rule is not which utility may paint the gold -- it is that whatever
+   does must name the carrier in the same breath. A class string that paints
+   the gold and says nothing about `--accent-ink` is a gold mark with no
+   ground, which is the defect this whole section exists to catch, and the
+   one the retired `--accent-edge` used to paper over by darkening the hue.
 
    Matching runs over one string literal at a time rather than the file,
-   because a className is a literal and the ink has to be on the same
+   because a className is a literal and the carrier has to be on the same
    element, not merely somewhere in the module. */
-const GOLD_FILL = /\bbg-accent(?![\w-])/;
-const ACCENT_INK = /\btext-accent-ink(?![\w-])/;
+const GOLD =
+  /\b(?:bg|text|border|divide|outline|ring|decoration|fill|stroke|shadow)-accent(?:-hover)?(?![\w-])/;
+const CARRIER =
+  /\b(?:bg|text|border|divide|outline|ring|decoration|fill|stroke|shadow)-accent-ink(?![\w-])|var\(--accent-ink\)/;
+
+/* The exception, and the only one: the gold under a focus variant. The global
+   `:focus-visible` rule draws the keyline immediately outside whatever the
+   variant paints, so that gold is carried by a rule in globals.css rather
+   than by a class beside it. `focus indicators` above is what holds the
+   keyline in place, and BORDER_COLOUR is what keeps the exception down to the
+   one border it is written for. */
+const FOCUS_GOLD =
+  /\b(?:focus|focus-visible|focus-within):(?:bg|text|border|ring|outline)-accent(?:-hover)?(?![\w-])/g;
 const STRING_LITERAL =
   /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
 
-describe("the gold is a fill", () => {
-  it("never paints text or a hairline in a Nimbus-owned component", () => {
-    const offenders: string[] = [];
-    for (const file of tsxFiles(SRC)) {
-      const text = readFileSync(file, "utf8");
-      for (const match of text.matchAll(GOLD_MISUSE)) {
-        const line = text.slice(0, match.index).split("\n").length;
-        offenders.push(`${relative(SRC, file)}:${line} ${match[0]}`);
-      }
-    }
-    expect(offenders).toEqual([]);
-  });
-
-  /* This one rule runs over the registry as well. `components/ui` is exempt
-     from the Nimbus-owned rules above because it is vendored and speaks
-     shadcn's vocabulary, but "the gold needs its ink" is a contrast fact and
-     holds no matter who wrote the file. The registry is in fact where it was
-     broken: dropdown-menu painted the gold under `--text-1`, 1.76:1. */
-  it("paints the gold only under accent ink, registry included", () => {
+describe("the gold names its carrier", () => {
+  /* This runs over the registry as well. `components/ui` is exempt from the
+     Nimbus-owned rules elsewhere in this file because it is vendored and
+     speaks shadcn's vocabulary, but "the gold needs its ink" is a contrast
+     fact and holds no matter who wrote the file. The registry is in fact
+     where it was broken: dropdown-menu painted the gold under `--text-1`,
+     1.76:1. */
+  it("gives every gold mark a carrier, registry included", () => {
     const offenders: string[] = [];
     for (const file of allTsxFiles(SRC)) {
       const text = readFileSync(file, "utf8");
       for (const literal of text.matchAll(STRING_LITERAL)) {
-        if (!GOLD_FILL.test(literal[0])) continue;
-        if (ACCENT_INK.test(literal[0])) continue;
+        const classes = literal[0].replace(FOCUS_GOLD, "");
+        if (!GOLD.test(classes)) continue;
+        if (CARRIER.test(classes)) continue;
         const line = text.slice(0, literal.index).split("\n").length;
-        offenders.push(`${relative(SRC, file)}:${line} bg-accent with no ink`);
+        offenders.push(
+          `${relative(SRC, file)}:${line} ${GOLD.exec(classes)?.[0]} with no carrier`,
+        );
       }
     }
     expect(offenders).toEqual([]);
   });
 
   /* The shadcn bridge resolves the registry's vocabulary onto the role
-     tokens, and `ring`/`sidebar-ring` are the registry's focus indicator.
-     They are hairlines, so they take the edge. No rule in a Nimbus-owned
-     component can correct them: `ring-ring` is generated from the bridge, so
-     the bridge is where the split has to hold. */
-  it("routes the registry ring to the edge and not the fill", () => {
+     tokens. `ring`/`sidebar-ring` are the registry's focus indicator, and
+     the global `:focus-visible` rule overpaints both with the gold and its
+     keyline -- so what these tokens have to be is the gold, the colour that
+     shows through if that rule is ever removed. Naming a hue nothing else in
+     the sheet uses is how the palette grew a third gold the last time. */
+  it("routes the registry ring to the gold", () => {
     // The bridge is the `@theme inline` block, not `:root`: these are
     // Tailwind utility-namespace names, not role tokens.
     const bridge = block("@theme inline");
     for (const token of ["--color-ring", "--color-sidebar-ring"]) {
-      expect(bridge[token]).toBe("var(--accent-edge)");
+      expect(bridge[token]).toBe("var(--accent)");
     }
   });
 
-  // A chart series is a graphical object with no ink over it, so it is held
-  // to the same 3:1 floor as any other thin mark rather than to the fill.
-  it("routes the first chart series to the edge", () => {
-    expect(block("@theme inline")["--color-chart-1"]).toBe(
-      "var(--accent-edge)",
-    );
+  /* Series 1 is the gold, like every other accent mark. A series is the one
+     accent shape that carries no ink of its own and cannot be given a
+     carrier by a class beside it, so the first chart built here owes series 1
+     an `--accent-ink` hairline around the fill. Nothing charts anything yet;
+     what this holds is that the answer when something does is the gold and
+     not a second hue invented for the occasion. */
+  it("routes the first chart series to the gold", () => {
+    expect(block("@theme inline")["--color-chart-1"]).toBe("var(--accent)");
   });
 });
 

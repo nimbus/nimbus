@@ -56,12 +56,14 @@ type RouteDoc = {
   lastRequestAt?: number;
 };
 
-// HTTP method tone. `--link` is reserved for <a> elements per DESIGN.md;
-// POST uses the product accent (teal) instead, matching its "create" verb
-// being a primary action.
+// HTTP method tone. POST takes the accent, matching its "create" verb being a
+// primary action. A method cell spells its own name, so the tone is emphasis
+// and never the only thing that tells the methods apart -- which is what lets
+// it take `--accent-text`, which is the accent's ink on light where the gold
+// would be 1.88:1 as text.
 const METHOD_TONE: Record<string, string> = {
   GET: "text-success",
-  POST: "text-accent-edge",
+  POST: "text-accent-text",
   PUT: "text-warning",
   PATCH: "text-warning",
   DELETE: "text-error",

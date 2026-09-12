@@ -73,7 +73,7 @@ export function FacetInput({
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         className={cn(
-          "min-w-0 rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent-edge",
+          "min-w-0 rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3 focus-visible:border-accent",
           wide ? "w-[26ch]" : "w-[14ch]",
         )}
         data-testid={testid}
