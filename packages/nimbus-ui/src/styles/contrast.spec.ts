@@ -230,6 +230,18 @@ const RING_COLOUR =
 const BORDER_COLOUR =
   /\b(?:focus|focus-visible|focus-within):border-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent(?!-edge)\b|accent-link|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
 
+/** Every .tsx under a directory, the vendored registry included. */
+function allTsxFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...allTsxFiles(path));
+    else if (entry.name.endsWith(".tsx") && !entry.name.includes(".spec."))
+      out.push(path);
+  }
+  return out;
+}
+
 function tsxFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -340,9 +352,14 @@ describe("the gold is a fill", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("paints the gold only under accent ink", () => {
+  /* This one rule runs over the registry as well. `components/ui` is exempt
+     from the Nimbus-owned rules above because it is vendored and speaks
+     shadcn's vocabulary, but "the gold needs its ink" is a contrast fact and
+     holds no matter who wrote the file. The registry is in fact where it was
+     broken: dropdown-menu painted the gold under `--text-1`, 1.76:1. */
+  it("paints the gold only under accent ink, registry included", () => {
     const offenders: string[] = [];
-    for (const file of tsxFiles(SRC)) {
+    for (const file of allTsxFiles(SRC)) {
       const text = readFileSync(file, "utf8");
       for (const literal of text.matchAll(STRING_LITERAL)) {
         if (!GOLD_FILL.test(literal[0])) continue;
@@ -366,5 +383,77 @@ describe("the gold is a fill", () => {
     for (const token of ["--color-ring", "--color-sidebar-ring"]) {
       expect(bridge[token]).toBe("var(--accent-edge)");
     }
+  });
+
+  // A chart series is a graphical object with no ink over it, so it is held
+  // to the same 3:1 floor as any other thin mark rather than to the fill.
+  it("routes the first chart series to the edge", () => {
+    expect(block("@theme inline")["--color-chart-1"]).toBe(
+      "var(--accent-edge)",
+    );
+  });
+});
+
+// --- every ink is legible on its own ground -------------------------------
+
+/* The bridge names grounds and inks in pairs: `popover`/`popover-foreground`,
+   `primary`/`primary-foreground`. The pair is a promise that the ink can be
+   read on that ground, and nothing but this test keeps the promise -- a name
+   that points at a token which merely sounds related still compiles and still
+   renders. Both real failures looked exactly like that:
+   `accent-foreground` pointed at `--text-1` (1.76:1 on the gold, because the
+   gold is a light fill wanting dark ink) and `destructive-foreground` pointed
+   at `--error` itself (1.00:1, ink on its own colour).
+
+   Deriving the pairs from the sheet rather than listing them means a pair
+   added later is held to the floor without anyone remembering to add it. */
+function resolve(value: string, theme: Tokens): string {
+  const seen = new Set<string>();
+  let v = value.trim();
+  while (v.startsWith("var(")) {
+    const name = v.slice(4, v.indexOf(")"));
+    if (seen.has(name)) throw new Error(`cyclic token ${name}`);
+    seen.add(name);
+    const next = theme[name] ?? BRIDGE[name];
+    if (next === undefined) throw new Error(`unresolved token ${name}`);
+    v = next.trim();
+  }
+  return v;
+}
+
+const BRIDGE = block("@theme inline");
+
+/** Ground for each `<name>-foreground`. shadcn pairs the page ink with
+ *  `background`, which is the one pair whose ground is not its own prefix. */
+function groundFor(ink: string): string {
+  return ink === "--color-foreground"
+    ? "--color-background"
+    : ink.slice(0, -"-foreground".length);
+}
+
+const INK_PAIRS = Object.keys(BRIDGE)
+  .filter((name) => name.endsWith("-foreground"))
+  .map((ink) => [groundFor(ink), ink] as const);
+
+describe("every ink is legible on its own ground", () => {
+  it("pairs a ground with every ink the bridge names", () => {
+    // Guards the derivation itself: a rename that breaks the `-foreground`
+    // convention would otherwise empty this suite and look green.
+    expect(INK_PAIRS.length).toBeGreaterThanOrEqual(10);
+    for (const [ground] of INK_PAIRS) expect(BRIDGE[ground]).toBeDefined();
+  });
+
+  it.each(COMBOS)("%s: every bridge pair clears 4.5:1", (_, theme) => {
+    const failures: string[] = [];
+    for (const [ground, ink] of INK_PAIRS) {
+      const ratio = contrast(
+        resolve(BRIDGE[ink], theme),
+        resolve(BRIDGE[ground], theme),
+      );
+      if (ratio < 4.5) {
+        failures.push(`${ink} on ${ground} is ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures).toEqual([]);
   });
 });

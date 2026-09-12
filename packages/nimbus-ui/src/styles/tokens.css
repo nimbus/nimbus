@@ -241,9 +241,18 @@
 
   /* shadcn-vocabulary bridge for the registry primitives in components/ui.
    * Every name resolves to a role token above; no generated palette exists.
-   * shadcn's "accent" is a hover ground, not the one amber accent, so the
-   * primitives that say bg-accent paint the amber; port a primitive to
-   * bg-bg-hover / text-text-1 when the registry meant a hover ground. */
+   *
+   * Two rules hold here, and contrast.spec.ts enforces both.
+   *
+   * Every `<name>-foreground` must be legible on `<name>`: the pair is an
+   * ink and its ground, so it is held to 4.5:1 in both themes. A name that
+   * points at a token which merely sounds related is the failure mode --
+   * `accent-foreground` pointed at `--text-1`, which is 1.76:1 on the gold,
+   * and `destructive-foreground` pointed at `--error` itself, 1.00:1.
+   *
+   * shadcn's "accent" is a hover ground, not the one amber accent. The
+   * registry primitives that meant a hover ground are ported to
+   * bg-bg-hover / text-text-1 rather than left to paint the gold. */
   --color-background: var(--bg-canvas);
   --color-foreground: var(--text-1);
   --color-card: var(--bg-panel);
@@ -256,9 +265,9 @@
   --color-secondary-foreground: var(--text-1);
   --color-muted: var(--bg-raised);
   --color-muted-foreground: var(--text-3);
-  --color-accent-foreground: var(--text-1);
+  --color-accent-foreground: var(--accent-ink);
   --color-destructive: var(--error);
-  --color-destructive-foreground: var(--error);
+  --color-destructive-foreground: var(--error-ink);
   --color-border: var(--border-2);
   --color-input: var(--border-2);
   /* A focus ring is a hairline, so it takes the edge and not the fill. The
@@ -274,7 +283,9 @@
   --color-sidebar-accent-foreground: var(--text-1);
   --color-sidebar-border: var(--border-1);
   --color-sidebar-ring: var(--accent-edge);
-  --color-chart-1: var(--accent);
+  /* A chart series is a graphical object, so it takes the edge: the fill
+   * is 1.88:1 on the light canvas and a series has no ink over it. */
+  --color-chart-1: var(--accent-edge);
   --color-chart-2: var(--info);
   --color-chart-3: var(--success);
   --color-chart-4: var(--warning);
