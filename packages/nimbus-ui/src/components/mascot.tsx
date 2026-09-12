@@ -12,7 +12,13 @@ import { cn } from "@/lib/utils";
 // takes `--mark-ink`. Both hold the same gold on every ground, so the mark in
 // the sidebar, the favicon, the app icon and the sign-in card are one sticker
 // and not a set of per-theme variants.
-export type MascotState = "idle" | "working" | "error" | "empty" | "celebrate";
+export type MascotState =
+  | "idle"
+  | "working"
+  | "error"
+  | "empty"
+  | "celebrate"
+  | "wink";
 
 export const MASCOT_STATES: ReadonlyArray<MascotState> = [
   "idle",
@@ -20,6 +26,7 @@ export const MASCOT_STATES: ReadonlyArray<MascotState> = [
   "error",
   "empty",
   "celebrate",
+  "wink",
 ];
 
 export const MASCOT_VIEWBOX = "0 0 120 92";
@@ -44,28 +51,69 @@ function Body() {
 
 // Eyes are the only part that can move. `blink` attaches the keyframes;
 // the group scales about the eye line so a blink closes the dots in place.
+//
+// `wink` is the second, slower flourish: the right dot and the closed arc run
+// one cycle in counterphase, so the eye swaps to the arc for three quarters of
+// a second and back. The arc is only in the DOM while the wink is, so a face
+// that cannot wink carries no hidden shape.
 function DotEyes({
   ink,
   dx,
   blink,
+  wink,
   r,
+  w,
 }: {
   ink: string;
   dx: number;
   blink: boolean;
+  wink: boolean;
   r: number;
+  w: number;
 }) {
   const style: CSSProperties = { transformOrigin: `60px ${EYE_Y}px` };
   return (
     <g
       data-part="eyes"
       data-blink={blink ? "true" : undefined}
+      data-wink={wink ? "true" : undefined}
       className={cn(blink && "animate-blink")}
       style={style}
       fill={ink}
     >
       <circle cx={EYE_L + dx} cy={EYE_Y} r={r} />
-      <circle cx={EYE_R + dx} cy={EYE_Y} r={r} />
+      <circle
+        cx={EYE_R + dx}
+        cy={EYE_Y}
+        r={r}
+        className={cn(wink && "animate-wink-open")}
+      />
+      {wink ? (
+        <path
+          className="animate-wink-shut"
+          d={WINK}
+          fill="none"
+          stroke={ink}
+          strokeWidth={w}
+          strokeLinecap="round"
+        />
+      ) : null}
+    </g>
+  );
+}
+
+// The held wink: one eye open, the other the same arc the flourish swaps in.
+function WinkEyes({ ink, r, w }: { ink: string; r: number; w: number }) {
+  return (
+    <g data-part="eyes" fill={ink}>
+      <circle cx={EYE_L} cy={EYE_Y} r={r} />
+      <path
+        d={WINK}
+        fill="none"
+        stroke={ink}
+        strokeWidth={w}
+        strokeLinecap="round"
+      />
     </g>
   );
 }
@@ -112,6 +160,8 @@ function Mouth({ ink, d, w }: { ink: string; d: string; w: number }) {
   );
 }
 
+// The right eye closed: the same arc `ClosedEyes` draws, on its own.
+const WINK = "M66 54 q6 -7 12 0";
 const SMILE = `M52 ${MOUTH_Y - 2} q8 8 16 0`;
 const FLAT = "M55 65 h10";
 const WOBBLE = "M52 66 q4 -4 8 0 t8 0";
@@ -124,12 +174,14 @@ function Face({
   ink,
   spark,
   blink,
+  wink,
   weight,
 }: {
   state: MascotState;
   ink: string;
   spark: string;
   blink: boolean;
+  wink: boolean;
   weight: FaceWeight;
 }) {
   const { w, r } = weight;
@@ -137,14 +189,21 @@ function Face({
     case "idle":
       return (
         <>
-          <DotEyes ink={ink} dx={0} blink={blink} r={r} />
+          <DotEyes ink={ink} dx={0} blink={blink} wink={wink} r={r} w={w} />
+          <Mouth ink={ink} d={SMILE} w={w} />
+        </>
+      );
+    case "wink":
+      return (
+        <>
+          <WinkEyes ink={ink} r={r} w={w} />
           <Mouth ink={ink} d={SMILE} w={w} />
         </>
       );
     case "working":
       return (
         <>
-          <DotEyes ink={ink} dx={3} blink={blink} r={r} />
+          <DotEyes ink={ink} dx={3} blink={blink} wink={false} r={r} w={w} />
           <Mouth ink={ink} d={FLAT} w={w} />
           <g data-part="thinking" fill={spark}>
             <circle cx="96" cy="26" r="2" />
@@ -220,6 +279,10 @@ export function Mascot({
   // Only open dot eyes can blink, and only when the operating system allows
   // motion. Under reduced motion the animation is absent, not paused.
   const blink = !reducedMotion && (state === "idle" || state === "working");
+  // The wink is idle's alone. A mascot with work in flight, an error on screen
+  // or nothing to show does not wink at you; a resting one does, rarely enough
+  // that it reads as a greeting rather than a tic.
+  const wink = !reducedMotion && state === "idle";
   const ink = "var(--mark-ink)";
   // The accessories (thought dots, drop, zz, sparks) sit outside the body,
   // so they take the text colour of the surface rather than the mark.
@@ -247,6 +310,7 @@ export function Mascot({
         ink={ink}
         spark={spark}
         blink={blink}
+        wink={wink}
         weight={weight}
       />
     </svg>
