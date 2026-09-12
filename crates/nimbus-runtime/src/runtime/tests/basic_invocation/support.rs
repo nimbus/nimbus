@@ -994,16 +994,28 @@ pub(super) fn assert_host_heavy_canary_result(
             if host_heavy_string(actual, "surface")? != "persistent_filesystem" {
                 return Err(format!("persistent_filesystem surface mismatch: {actual}"));
             }
-            assert_denial_contains_any(
-                actual,
-                bundle_fixture_name,
-                &[
-                    "runtime write capability denied",
-                    "runtime read capability denied",
-                    "Requires write access",
-                    "Requires read access",
-                ],
-            )
+            for (field, tokens) in [
+                (
+                    "absoluteWriteDenied",
+                    ["runtime write capability denied", "Requires write access"],
+                ),
+                (
+                    "parentEscapeDenied",
+                    ["runtime write capability denied", "Requires write access"],
+                ),
+                (
+                    "absoluteReadDenied",
+                    ["runtime read capability denied", "Requires read access"],
+                ),
+            ] {
+                let denial = host_heavy_string(actual, field)?;
+                if !tokens.iter().any(|token| denial.contains(token)) {
+                    return Err(format!(
+                        "{bundle_fixture_name} {field} did not report a capability denial: {actual}"
+                    ));
+                }
+            }
+            Ok(())
         }
         "raw-server-listen.mjs" => {
             if host_heavy_string(actual, "surface")? != "raw_server_listen" {
@@ -1127,6 +1139,48 @@ fn host_heavy_diagnostic_rejects_fake_success_payloads() {
         denial_error.contains("expected token"),
         "unexpected fake-success denial rejection: {denial_error}"
     );
+}
+
+#[test]
+fn host_heavy_filesystem_requires_each_probe_to_be_denied() {
+    let denied = serde_json::json!({
+        "surface": "persistent_filesystem",
+        "supportStatus": "service_microvm_required",
+        "diagnostic": "NIMBUS_NODE_HOST_HEAVY_SERVICE_ROUTE_REQUIRED",
+        "denied": "runtime write capability denied | runtime read capability denied",
+        "absoluteWriteDenied": "runtime write capability denied",
+        "parentEscapeDenied": "Requires write access",
+        "absoluteReadDenied": "runtime read capability denied"
+    });
+    assert_host_heavy_canary_result("persistent-fs.mjs", &denied)
+        .expect("all filesystem probes report capability denials");
+
+    for field in [
+        "absoluteWriteDenied",
+        "parentEscapeDenied",
+        "absoluteReadDenied",
+    ] {
+        for replacement in [
+            Value::Null,
+            Value::String("EEXIST: file already exists".to_owned()),
+        ] {
+            let mut incomplete = denied.clone();
+            incomplete[field] = replacement;
+            assert!(
+                assert_host_heavy_canary_result("persistent-fs.mjs", &incomplete).is_err(),
+                "a sibling denial must not hide an allowed or unrelated failure in {field}"
+            );
+        }
+        let mut missing = denied.clone();
+        missing
+            .as_object_mut()
+            .expect("fixture object")
+            .remove(field);
+        assert!(
+            assert_host_heavy_canary_result("persistent-fs.mjs", &missing).is_err(),
+            "the payload must include {field}"
+        );
+    }
 }
 
 pub(super) struct ScopedProcessEnvVar {
