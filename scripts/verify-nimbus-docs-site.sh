@@ -392,6 +392,66 @@ else
   fail "${C}" "$(printf '%s' "${drift}" | head -6 | tr '\n' ';')"
 fi
 
+# --- 19. the two mascot drawings agree ---------------------------------------
+# `packages/nimbus-ui/src/components/mascot.tsx` is the single source of the
+# mark, but the docs site is a separate Next app and cannot import from the
+# console package, so it carries a hand copy -- the same arrangement as the two
+# token sheets above, and the same failure mode. A face added or a coordinate
+# nudged on one side alone splits the mark in two, which nobody sees until the
+# console and the site are open side by side.
+#
+# The comparison is of the drawing, not the file: the path data, the literal
+# geometry on each shape, the named eye and mouth coordinates, the two face
+# weights, and the set of states. The hosting differs on purpose -- the console
+# takes a pixel `size` and drops its animation classes under reduced motion,
+# the site sizes by class and leans on its stylesheet -- so none of that is
+# compared.
+C="19. the console and website mascot components draw the same mark and the same states"
+drift="$(
+  python3 - <<'DRIFT' 2>&1 || true
+import re
+from collections import Counter
+
+CONSOLE = "packages/nimbus-ui/src/components/mascot.tsx"
+WEBSITE = "website/src/components/mascot.tsx"
+SHAPE = ("cx", "cy", "r", "x", "y", "width", "height", "rx", "strokeWidth")
+
+def drawing(path):
+    src = re.sub(r"//[^\n]*", "", open(path, encoding="utf-8").read())
+    marks = []
+    # Path data under any of the three JavaScript quotes. (The quotes are
+    # spelled by code point because a literal backtick would close this
+    # command substitution.)
+    for q in ("'", '"', chr(96)):
+        for lit in re.findall(rf"{q}([Mm][ \-0-9][^{q}]*){q}", src):
+            marks.append("path " + " ".join(lit.split()))
+    # Literal geometry on the shapes themselves.
+    for name, value in re.findall(rf"\b({'|'.join(SHAPE)})=\"([^\"]+)\"", src):
+        marks.append(f"{name} {value}")
+    # The named coordinates and the two face weights.
+    for name, value in re.findall(r"\bconst (EYE_[LRY]|MOUTH_Y) = ([-0-9.]+);", src):
+        marks.append(f"{name} {value}")
+    for w, r in re.findall(r"\{ w: ([-0-9.]+), r: ([-0-9.]+) \}", src):
+        marks.append(f"weight {w} {r}")
+    # The state vocabulary, from the MascotState union.
+    union = re.search(r"export type MascotState =(.*?);", src, re.S).group(1)
+    for state in re.findall(r"[\"']([a-z]+)[\"']", union):
+        marks.append(f"state {state}")
+    return Counter(marks)
+
+console, website = drawing(CONSOLE), drawing(WEBSITE)
+for mark, n in (console - website).items():
+    print(f"{mark}: console has it {n} more time(s)")
+for mark, n in (website - console).items():
+    print(f"{mark}: website has it {n} more time(s)")
+DRIFT
+)"
+if [[ -z "${drift}" ]]; then
+  pass "${C}"
+else
+  fail "${C}" "$(printf '%s' "${drift}" | head -6 | tr '\n' ';')"
+fi
+
 # --- summary -------------------------------------------------------------------------
 printf '\n%d/%d conditions green\n' "${PASS}" "$((PASS + FAIL))"
 if [[ ${FAIL} -gt 0 ]]; then

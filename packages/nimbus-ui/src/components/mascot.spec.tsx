@@ -48,6 +48,7 @@ describe("Mascot", () => {
       error: "drop",
       empty: "sleep",
       celebrate: "sparks",
+      wink: null,
     };
     for (const [state, part] of Object.entries(accessories)) {
       const { container, unmount } = render(
@@ -70,19 +71,52 @@ describe("Mascot", () => {
     expect(eyes.getAttribute("class")).toContain("animate-blink");
   });
 
+  it("winks the right eye in idle, swapping the dot for the arc", () => {
+    stubReducedMotion(false);
+    const { container } = render(<Mascot state="idle" />);
+    const eyes = container.querySelector("[data-part='eyes']") as SVGElement;
+    expect(eyes).toHaveAttribute("data-wink", "true");
+    // The two halves of the swap: the right dot leaves as the arc arrives.
+    expect(eyes.querySelector(".animate-wink-open")).not.toBeNull();
+    expect(eyes.querySelector(".animate-wink-shut")).toHaveAttribute(
+      "d",
+      "M66 54 q6 -7 12 0",
+    );
+  });
+
+  it("winks only when idle", () => {
+    stubReducedMotion(false);
+    for (const state of MASCOT_STATES.filter((s) => s !== "idle")) {
+      const { container, unmount } = render(<Mascot state={state} />);
+      expect(container.querySelector("[data-wink]")).toBeNull();
+      expect(container.querySelector(".animate-wink-shut")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("holds the wink as a state, with one eye open and one arc", () => {
+    const { container } = render(<Mascot state="wink" size={48} />);
+    const eyes = container.querySelector("[data-part='eyes']") as SVGElement;
+    expect(eyes.querySelectorAll("circle")).toHaveLength(1);
+    expect(eyes.querySelector("circle")).toHaveAttribute("cx", "48");
+    expect(eyes.querySelector("path")).toHaveAttribute("d", "M66 54 q6 -7 12 0");
+    expect(eyes.getAttribute("class") ?? "").not.toContain("animate");
+  });
+
   it("carries no animation under reduced motion", () => {
     stubReducedMotion(true);
     for (const state of MASCOT_STATES) {
       const { container, unmount } = render(<Mascot state={state} />);
       expect(container.querySelector("[data-blink]")).toBeNull();
-      expect(container.querySelector(".animate-blink")).toBeNull();
+      expect(container.querySelector("[data-wink]")).toBeNull();
+      expect(container.querySelector("[class*='animate-']")).toBeNull();
       unmount();
     }
   });
 
   it("never blinks closed or crossed eyes", () => {
     stubReducedMotion(false);
-    for (const state of ["error", "empty", "celebrate"] as const) {
+    for (const state of ["error", "empty", "celebrate", "wink"] as const) {
       const { container, unmount } = render(<Mascot state={state} />);
       expect(container.querySelector("[data-blink]")).toBeNull();
       unmount();
