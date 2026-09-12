@@ -1033,8 +1033,7 @@ lockup controls its own spacing.
 
 | File                    | What it is                                                   | Used by                                   |
 |-------------------------|--------------------------------------------------------------|-------------------------------------------|
-| `mascot-gold.svg`       | Gold `#f0b23e` body, `#1a1204` face                          | README (light), docs nav (light), OG art  |
-| `mascot-white.svg`      | White `#f6f7f8` body, `#18181b` face                         | README (dark), docs nav (dark)            |
+| `mascot-gold.svg`       | Gold `#f0b23e` body, `#1a1204` face                          | README, docs nav, OG art                  |
 | `mascot-tile.svg`       | Gold mascot centred on a `#0a0b0c` tile with a 104 radius    | App icon, apple-touch-icon                |
 | `mascot-template.svg`   | Black silhouette with the face cut out, heavier face         | macOS tray template                       |
 | `render.sh`             | Renders `icon-512.png` and, with `DESKTOP_DIR`, the desktop `icon.png`, `icon.icns`, `icon.ico`, and tray PNGs | Release prep |
