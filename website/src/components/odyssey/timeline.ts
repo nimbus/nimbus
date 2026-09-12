@@ -284,7 +284,7 @@ export const chapters: Chapter[] = [
       lines: [
         '$ nimbus start                       # SQLite in ./data',
         '$ nimbus start --tenant-provider postgres \\',
-        '    --postgres-url postgresql://user:pass@db:5432/nimbus',
+        '    --postgres-url postgresql://db:5432/nimbus',
         '$ nimbus kv                          # RESP on 127.0.0.1:6380',
       ],
       compact: [
