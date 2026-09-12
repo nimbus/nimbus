@@ -35,7 +35,7 @@ Three merge selections reject absent inherited fields before a transport request
 | `bash scripts/verify-nimbus-docs-site.sh` | FAIL: 16/17 conditions pass. Existing docs/assets directory violates condition 5. |
 | `timeout 900 make ci` | UNVERIFIED: stopped with exit 143 after tests contacted the active development server |
 | CLI path-fixture recheck through Nextest | PASS: both tests after replacing the target symlink with a local directory |
-| Nimbus autoreview, `pre-pr` gate | Pending commit |
+| Nimbus autoreview, `pre-pr` gate | PASS: Claude Opus 5, high effort, configured P0 threshold. Secret scan clean. |
 
 Clippy first stopped because the shared development install lacked UI dependencies.
 A separate `npm ci` from the checked-in lockfile repaired the verification worktree.
@@ -76,4 +76,6 @@ Alerts #3 and #4 remain open until the merged commit passes GitHub CodeQL.
 
 Raw logs and the branch recovery bundle remain at `/Users/jack/nimbus-cleanup-2026-09-11` on this host.
 The proof binds these results to the changed source and regression named above.
-The final PR and review result will complete this record.
+Draft PR: [https://github.com/nimbus/nimbus/pull/345](https://github.com/nimbus/nimbus/pull/345).
+The review checked commit d0b05231f against origin/main and reported no findings at the configured threshold.
+Full CI remains UNVERIFIED for the reason above. Hosted CodeQL and merge remain required.

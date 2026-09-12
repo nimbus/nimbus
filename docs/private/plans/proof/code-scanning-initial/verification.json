@@ -51,6 +51,20 @@
       "exit": 0,
       "passed": 2,
       "setup": "local fixture target directory, shared absolute CARGO_TARGET_DIR"
+    },
+    "autoreview": {
+      "exit": 0,
+      "profile": "nimbus",
+      "reviewer": "claude-opus-5",
+      "effort": "high",
+      "threshold": "P0",
+      "reviewed_commit": "d0b05231f",
+      "findings": [],
+      "secret_scan": "clean"
     }
+  },
+  "pull_request": {
+    "url": "https://github.com/nimbus/nimbus/pull/345",
+    "draft": true
   }
 }

@@ -117,10 +117,10 @@
 
 
 <section id="current-resume-state"><h2>Current resume state</h2>
-<p>Updated: 2026-09-12 UTC. Active task: <a href="#CS2">CS2</a>.</p>
+<p>Updated: 2026-09-12 UTC. Next task: <a href="#CS3">CS3</a>, after the PR merges.</p>
 
 
-<p>Next action: commit the repair and run the pre-PR review.</p>
+<p>Next action: resolve the recorded CI limits, confirm hosted checks for <a href="https://github.com/nimbus/nimbus/pull/345">PR #345</a>, then merge and archive this plan.</p>
 
 
 <p>Worktree: <code>/Users/jack/src/github.com/nimbus/nimbus-firebase-security</code>. Branch: <code>codex/firebase-field-path-security</code>. Baseline HEAD: <code>b527e1742</code>.</p>
@@ -166,7 +166,7 @@
 <tr id="CS1" data-status="done"><td>CS1</td><td>Close reviewed critical alerts</td><td><code>done</code></td><td><a href="proof/code-scanning-initial/triage.json">41 confirmed dismissals</a>: 36 test fixtures and five initialized output buffers.</td></tr>
 
 
-<tr id="CS2" data-status="in_progress"><td>CS2</td><td>Protect Firebase field access</td><td><code>in_progress</code></td><td>Alerts #3 and #4. Baseline regression failed. Eight write cases and six inherited-field checks pass. Clippy and focused checks pass. Full CI is UNVERIFIED after live-server interference. Both CLI path-fixture rechecks pass after the target setup correction. The pre-PR review remains pending.</td></tr>
+<tr id="CS2" data-status="done"><td>CS2</td><td>Protect Firebase field access</td><td><code>done</code></td><td>Alerts #3 and #4. Baseline regression failed. Eight write cases and six inherited-field checks pass. Clippy and focused checks pass. Full CI is UNVERIFIED after live-server interference. Both CLI path-fixture rechecks pass after the target setup correction. Pre-PR review passed. <a href="https://github.com/nimbus/nimbus/pull/345">Draft PR #345</a> contains the repair.</td></tr>
 
 
 <tr id="CS3" data-status="todo"><td>CS3</td><td>Archive after merge</td><td><code>todo</code></td><td>Trigger: the Firebase repair PR merges.</td></tr>
@@ -221,6 +221,7 @@ CS3 waits for that PR to merge. Archive the plan after CS3 completes.</pre></sec
 
 </thead><tbody>
 <tr><td>2026-09-12</td><td>CS0, CS1</td><td>Recorded the baseline and closed reviewed alerts.</td><td>309 baseline alerts. 41 dismissals in triage.json. No source change.</td></tr>
+<tr><td>2026-09-12</td><td>CS2</td><td>Published <a href="https://github.com/nimbus/nimbus/pull/345">draft PR #345</a>.</td><td>14 regression cases pass. Package checks, Clippy, formatting, and Nimbus pre-PR review pass. Full CI remains UNVERIFIED after live-server interference. The baseline docs layout gate passes 16/17 conditions.</td></tr>
 
 
 </tbody></table></section>
