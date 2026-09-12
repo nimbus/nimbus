@@ -79,3 +79,11 @@ The proof binds these results to the changed source and regression named above.
 Draft PR: [https://github.com/nimbus/nimbus/pull/345](https://github.com/nimbus/nimbus/pull/345).
 The review checked commit d0b05231f against origin/main and reported no findings at the configured threshold.
 Full CI remains UNVERIFIED for the reason above. Hosted CodeQL and merge remain required.
+
+## CodeQL fixture follow-up
+
+The first PR analysis reported quality alert #7255 in the scalar field-name regression.
+CodeQL treated the computed `__proto__` key as a prototype declaration.
+The fixture now parses the same scalar field from JSON.
+The full Firebase selftest passes with all 14 regression cases unchanged.
+No assertion, query, or scan coverage changed.

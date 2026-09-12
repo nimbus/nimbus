@@ -31,7 +31,7 @@ export async function testFieldPathOwnPropertySurface(firestoreModule, appModule
     ["updateDoc", { [`__proto__.${marker}`]: "update" }, `__proto__.${marker}`, "update"],
     ["setDoc", { nested: { ["__proto__"]: { [marker]: "nested" } } }, `nested.__proto__.${marker}`, "nested"],
     ["updateDoc", { [`nested.__proto__.${marker}`]: "dotted" }, `nested.__proto__.${marker}`, "dotted"],
-    ["setDoc", { ["__proto__"]: "leaf" }, "__proto__", "leaf"],
+    ["setDoc", JSON.parse('{"__proto__":"leaf"}'), "__proto__", "leaf"],
     ["updateDoc", { [`constructor.prototype.${marker}`]: "constructor" }, `constructor.prototype.${marker}`, "constructor"],
     ["setDoc", { toString: "own" }, "toString", "own"],
     ["setDoc", { ["__proto__"]: { [marker]: "merge" } }, `__proto__.${marker}`, "merge", { mergeFields: [`__proto__.${marker}`] }],

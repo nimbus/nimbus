@@ -2,7 +2,7 @@
   "base": "b527e1742ab3c86f8e896765b7d4e63b964116ab",
   "source_sha256": {
     "packages/firebase/src/internal/document-data.ts": "a9baaf01141b71b241f9f9aacb68da8c21d2ecac05c6a7f0891129d4de16ac73",
-    "packages/firebase/src/selftest/field_paths.mjs": "23c7896a532dbe8b7fb029ac763c36f9e8803edd4b9cee7f6e2fd0c743f9d714",
+    "packages/firebase/src/selftest/field_paths.mjs": "07d0c9afe2e4d7db0660aa0f63a913256c7c7ac15f10bb5fab5053017e35475f",
     "packages/firebase/src/selftest/runtime_surface.mjs": "52e9d1043cdb6d830a5803be76c78748ac5c786fe9d6e0ea4c75a7e7f1c172e2"
   },
   "node": "24.19.0",
@@ -61,6 +61,12 @@
       "reviewed_commit": "d0b05231f",
       "findings": [],
       "secret_scan": "clean"
+    },
+    "codeql_fixture_followup": {
+      "alert": 7255,
+      "test_exit": 0,
+      "regression_cases": 14,
+      "change": "Parse the same scalar __proto__ field from JSON; retain every assertion."
     }
   },
   "pull_request": {
