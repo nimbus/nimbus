@@ -50,7 +50,7 @@ export function EmptyState({
       data-testid={testid}
     >
       {mascot ? (
-        <Mascot size={56} state={mascot} variant="solid" decorative />
+        <Mascot size={56} state={mascot} decorative />
       ) : (
         Icon && (
           <span

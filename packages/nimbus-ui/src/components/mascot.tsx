@@ -8,13 +8,11 @@ import { cn } from "@/lib/utils";
 // soft base in a 120×92 box, so it holds from 16px in a tab bar up to a
 // hero illustration. The face carries the state; nothing else moves.
 //
-// `outline` is the mark: a currentColor stroke on the panel ground, the one
-// that sits next to the wordmark and in the sidebar. `solid` is the sticker:
-// an amber body with an ink face, for the app icon, the first-run card and
-// empty-state illustrations at 32px and above. The amber is the accent, so
-// the solid variant appears only where the accent may.
+// There is one drawing, always filled: the body takes `--mark` and the face
+// takes `--mark-ink`. Both hold the same gold on every ground, so the mark in
+// the sidebar, the favicon, the app icon and the sign-in card are one sticker
+// and not a set of per-theme variants.
 export type MascotState = "idle" | "working" | "error" | "empty" | "celebrate";
-export type MascotVariant = "outline" | "solid";
 
 export const MASCOT_STATES: ReadonlyArray<MascotState> = [
   "idle",
@@ -31,43 +29,16 @@ const EYE_R = 72;
 const EYE_Y = 52;
 const MOUTH_Y = 64;
 
-function Body({
-  variant,
-  strokeWidth,
-}: {
-  variant: MascotVariant;
-  strokeWidth: number;
-}) {
-  const shapes = (
-    <>
+// Three lobes and a base, filled as one group so the overlaps vanish into a
+// single silhouette.
+function Body() {
+  return (
+    <g data-part="body" fill="var(--mark)">
       <circle cx="36" cy="50" r="20" />
       <circle cx="60" cy="40" r="28" />
       <circle cx="84" cy="50" r="20" />
       <rect x="14" y="50" width="92" height="34" rx="17" />
-    </>
-  );
-  if (variant === "solid") {
-    return (
-      <g data-part="body" fill="var(--accent)">
-        {shapes}
-      </g>
-    );
-  }
-  // Stroke every shape, then fill the same shapes on top: the inner seams
-  // vanish and only the union outline remains.
-  return (
-    <>
-      <g
-        data-part="body"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        strokeLinejoin="round"
-      >
-        {shapes}
-      </g>
-      <g fill="var(--bg-panel)">{shapes}</g>
-    </>
+    </g>
   );
 }
 
@@ -231,7 +202,6 @@ export type MascotProps = {
   /** Rendered width in CSS pixels; the height follows the 120:92 body. */
   size?: number;
   state?: MascotState;
-  variant?: MascotVariant;
   /** Accessible name. Pass `decorative` instead when the text beside the mascot already says what it says. */
   label?: string;
   decorative?: boolean;
@@ -241,7 +211,6 @@ export type MascotProps = {
 export function Mascot({
   size = 24,
   state = "idle",
-  variant = "outline",
   label = "Nimbus",
   decorative = false,
   className,
@@ -251,14 +220,13 @@ export function Mascot({
   // Only open dot eyes can blink, and only when the operating system allows
   // motion. Under reduced motion the animation is absent, not paused.
   const blink = !reducedMotion && (state === "idle" || state === "working");
-  const solid = variant === "solid";
-  const ink = solid ? "var(--accent-ink)" : "currentColor";
-  const spark = solid ? "currentColor" : "var(--accent)";
-  // A 5-unit stroke is 1px at 24px, too thin to sit next to a semibold
-  // wordmark. Below 40px the outline and the face thicken together so the
-  // mark keeps the weight of the text beside it.
+  const ink = "var(--mark-ink)";
+  // The accessories (thought dots, drop, zz, sparks) sit outside the body,
+  // so they take the text colour of the surface rather than the mark.
+  const spark = "currentColor";
+  // A 4-unit face line is under 1px at 24px. Below 40px the face thickens so
+  // the mark keeps the weight of the wordmark beside it.
   const small = size < 40;
-  const strokeWidth = small ? 7 : 5;
   const weight: FaceWeight = small ? { w: 5.5, r: 4.6 } : { w: 4, r: 3.7 };
   return (
     <svg
@@ -267,14 +235,13 @@ export function Mascot({
       width={size}
       height={Math.round(size * ASPECT)}
       className={cn("shrink-0", className)}
-      data-mascot={variant}
       data-state={state}
       role={decorative ? undefined : "img"}
       aria-label={decorative ? undefined : label}
       aria-hidden={decorative ? true : undefined}
       {...props}
     >
-      <Body variant={variant} strokeWidth={strokeWidth} />
+      <Body />
       <Face
         state={state}
         ink={ink}

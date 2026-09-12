@@ -484,7 +484,8 @@ export function DataTable<TData extends RowData>({
                         onDoubleClick={() => column.resetSize()}
                         className={cn(
                           "absolute top-0 right-0 h-full w-1 cursor-col-resize select-none touch-none hover:bg-border-3",
-                          column.getIsResizing() && "bg-accent",
+                          column.getIsResizing() &&
+                            "bg-accent ring-1 ring-accent-ink",
                         )}
                       />
                     )}

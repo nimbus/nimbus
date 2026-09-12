@@ -107,7 +107,7 @@ export function DisconnectedOverlay({
       data-testid="disconnected-overlay"
       className="pointer-events-none fixed left-1/2 top-3 z-30 flex w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-lg border border-border-2 bg-bg-raised px-3 py-2 text-text-1 shadow-overlay"
     >
-      <Mascot size={32} state="error" variant="solid" decorative />
+      <Mascot size={32} state="error" decorative />
       <span className="flex min-w-0 flex-col">
         <span className="text-sm font-medium">Reconnecting</span>
         <span className="text-xs text-text-3">

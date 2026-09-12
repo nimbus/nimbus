@@ -1,0 +1,358 @@
+/*
+ * The documentation host's theme.
+ *
+ * Fumadocs draws every colour through a --color-fd-* custom property, and its
+ * vendor sheets ship a gray scale as the answer. This file answers those
+ * properties from the Nimbus role tokens instead, so the docs and the console
+ * they document paint every surface from one set of roles.
+ */
+
+/*
+ * Static, so the properties reach the stylesheet even when no utility class
+ * names them. Fumadocs reads most of them from its own rules through var(),
+ * which Tailwind cannot see, and a swept property leaves a component with no
+ * colour at all.
+ */
+@theme static {
+  --color-fd-background: var(--bg-canvas);
+  --color-fd-foreground: var(--text-1);
+  --color-fd-muted: var(--bg-panel);
+  --color-fd-muted-foreground: var(--text-3);
+  --color-fd-popover: var(--bg-raised);
+  --color-fd-popover-foreground: var(--text-1);
+  --color-fd-card: var(--bg-raised);
+  --color-fd-card-foreground: var(--text-1);
+  --color-fd-border: var(--border-2);
+  --color-fd-secondary: var(--bg-panel);
+  --color-fd-secondary-foreground: var(--text-2);
+
+  /*
+   * Fumadocs paints "primary" as text far more often than as a fill: the
+   * active sidebar row, an active tab, a link chevron. Those are marks with no
+   * area, and they are painted inside vendored components, so there is nowhere
+   * to put a carrier -- which is exactly the case --accent-text answers. The
+   * canvas is the ink on the few fills, because on light --accent-text is
+   * itself the ink and --accent-ink would go dark-on-dark.
+   *
+   * The ring is the exception: global.css overpaints :focus-visible with the
+   * gold and its keyline, so this token only shows through for a ring drawn
+   * some other way, and it names the gold.
+   */
+  --color-fd-primary: var(--accent-text);
+  --color-fd-primary-foreground: var(--bg-canvas);
+  --color-fd-ring: var(--accent);
+
+  /*
+   * Fumadocs means the hovered and pressed surface by "accent", and Nimbus
+   * means the brand colour by the same word. The hover ground answers this
+   * one. Reading --accent here would paint every hovered row gold.
+   */
+  --color-fd-accent: var(--bg-hover);
+  --color-fd-accent-foreground: var(--text-1);
+
+  /*
+   * The scrim behind the search dialog. It is the canvas at partial opacity
+   * rather than black, so it darkens the dark theme and lightens the light one
+   * instead of dimming both toward the same gray.
+   */
+  --color-fd-overlay: color-mix(in oklab, var(--bg-canvas) 60%, transparent);
+
+  /* The callout roles. Each one is the status role that carries its meaning. */
+  --color-fd-info: var(--info);
+  --color-fd-warning: var(--warning);
+  --color-fd-error: var(--error);
+  --color-fd-success: var(--success);
+  --color-fd-idea: var(--accent-text);
+
+  /* The diff gutter in a code block. The tint carries the row, the solid role
+     carries the plus or the minus in front of it. */
+  --color-fd-diff-remove: var(--error-tint);
+  --color-fd-diff-remove-symbol: var(--error);
+  --color-fd-diff-add: var(--success-tint);
+  --color-fd-diff-add-symbol: var(--success);
+}
+
+/*
+ * The sidebar is a panel and the page is the canvas, so the two grounds
+ * separate the navigation from the page without a rule between them.
+ */
+#nd-sidebar {
+  background-color: var(--bg-panel);
+}
+
+/*
+ * The variant that Fumadocs layout classes write as "layout:". It reaches the
+ * layout element from a descendant, which is how a page sets a layout variable
+ * such as --fd-sidebar-width.
+ */
+@custom-variant layout {
+  #nd-docs-layout:has(&) {
+    @slot;
+  }
+}
+
+/*
+ * The motion the documentation chrome plays: a dialog, a popover, the mobile
+ * sidebar drawer, and the fades under them. The reduced-motion block in
+ * global.css stops all of it.
+ */
+@theme static {
+  --animate-fd-fade-in: fd-fade-in 220ms ease;
+  --animate-fd-fade-out: fd-fade-out 220ms ease;
+  --animate-fd-dialog-in: fd-dialog-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-fd-dialog-out: fd-dialog-out 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-fd-popover-in: fd-popover-in 120ms ease;
+  --animate-fd-popover-out: fd-popover-out 120ms ease;
+  --animate-fd-sidebar-in: fd-sidebar-in 220ms ease;
+  --animate-fd-sidebar-out: fd-sidebar-out 220ms ease;
+
+  @keyframes fd-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes fd-fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes fd-dialog-in {
+    from {
+      opacity: 0;
+      transform: scale(1.06);
+    }
+  }
+  @keyframes fd-dialog-out {
+    to {
+      opacity: 0;
+      transform: scale(1.04);
+    }
+  }
+  @keyframes fd-popover-in {
+    from {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+  }
+  @keyframes fd-popover-out {
+    to {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+  }
+  @keyframes fd-sidebar-in {
+    from {
+      transform: translateX(var(--fd-sidebar-drawer-offset));
+    }
+  }
+  @keyframes fd-sidebar-out {
+    to {
+      transform: translateX(var(--fd-sidebar-drawer-offset));
+    }
+  }
+}
+
+/* The drawer leaves toward the inline start edge, so it follows writing
+   direction rather than the physical left. */
+:root {
+  --fd-sidebar-drawer-offset: 100%;
+}
+
+[dir='rtl'] {
+  --fd-sidebar-drawer-offset: -100%;
+}
+
+/*
+ * The utilities Fumadocs components name in their class lists. Each one is
+ * markup this application never writes by hand, so the definitions live with
+ * the theme rather than in a component.
+ */
+@utility fd-scroll-container {
+  &::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: var(--radius-full);
+    background: var(--border-3);
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-corner {
+    display: none;
+  }
+}
+
+@utility fd-steps {
+  counter-reset: step;
+  position: relative;
+  @apply ms-2 border-s ps-6 sm:ms-4 sm:ps-7;
+}
+
+@utility fd-step {
+  &:before {
+    background-color: var(--bg-hover);
+    color: var(--text-2);
+    content: counter(step);
+    counter-increment: step;
+    display: flex;
+    position: absolute;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+    @apply -inset-s-4 size-8 rounded-full;
+  }
+}
+
+@utility prose-no-margin {
+  & > :first-child {
+    margin-top: 0;
+  }
+  & > :last-child {
+    margin-bottom: 0;
+  }
+}
+
+.fd-page-tree-item-name {
+  @apply inline-flex w-full items-center gap-1;
+}
+
+/* ── The code recipe ────────────────────────────────────────────────────────
+   One presentation for every code block on a documentation page. Shiki writes
+   the syntax colours onto each span, and the rules below own everything around
+   them: the gutter, the line numbers, the diff rows, and the highlight. */
+
+.shiki:not(.not-fumadocs-codeblock *) {
+  --padding-left: calc(var(--spacing) * 4);
+  --padding-right: calc(var(--spacing) * 4);
+
+  code span {
+    color: var(--shiki-light);
+    font-style: var(--shiki-light-font-style);
+  }
+
+  .line {
+    position: relative;
+    padding-left: var(--padding-left);
+    padding-right: var(--padding-right);
+  }
+
+  /* A blank line still occupies one line box, or the block loses its spacing. */
+  .line:empty {
+    height: 1lh;
+  }
+
+  &.has-focused .line:not(.focused) {
+    filter: blur(2px);
+    transition: filter 220ms;
+  }
+
+  &.has-focused:hover .line:not(.focused) {
+    filter: blur(0);
+  }
+
+  /* The diff rows read the status roles, so a removal and a failure carry the
+     same colour everywhere in the product. */
+  .diff.remove {
+    opacity: 0.7;
+    --fd-counter-color: var(--error);
+    background-color: var(--error-tint);
+  }
+  .diff.remove::before {
+    content: '-';
+    color: var(--error);
+  }
+  .diff.add {
+    --fd-counter-color: var(--success);
+    background-color: var(--success-tint);
+  }
+  .diff.add::before {
+    content: '+';
+    color: var(--success);
+  }
+  .diff::before {
+    position: absolute;
+    left: calc(var(--spacing) * 1.5);
+  }
+
+  /* The highlight is a wash and a bar. The wash is the gold at tint strength;
+     the counter is text and the bar is 2px, so both take --accent-text. */
+  .highlighted {
+    --fd-counter-color: var(--accent-text);
+    background-color: var(--accent-tint);
+  }
+  .highlighted::after {
+    position: absolute;
+    content: '';
+    border-left: 2px solid var(--accent-text);
+    @apply inset-y-0 left-0;
+  }
+  .highlighted-word {
+    padding: 1px;
+    border: 1px solid color-mix(in oklab, var(--accent-text) 40%, transparent);
+    border-radius: var(--radius-md);
+    background-color: var(--accent-tint);
+    font-weight: 500;
+    @apply -my-px;
+  }
+
+  /* The number column is seven spacing units wide, so the code starts at one
+     stop whatever the highest line number is. */
+  &[data-line-numbers] .line {
+    counter-increment: line;
+    padding-left: calc(var(--padding-left) + 7 * var(--spacing));
+  }
+  &[data-line-numbers] .line::after {
+    position: absolute;
+    content: counter(line);
+    color: color-mix(
+      in oklab,
+      var(--fd-counter-color, var(--text-3)) 60%,
+      transparent
+    );
+    @apply inset-y-0 left-0 w-7 text-right;
+  }
+}
+
+.dark .shiki:not(.not-fumadocs-codeblock *) {
+  code span {
+    color: var(--shiki-dark);
+    font-style: var(--shiki-dark-font-style);
+  }
+}
+
+/* Inline code is a separate element from a block, and it carries the same two
+   Shiki themes. */
+code.shiki:not(.not-fumadocs-code *) span {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
+}
+
+.dark code.shiki:not(.not-fumadocs-code *) span {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+}
+
+/* ── The table recipe ───────────────────────────────────────────────────────
+   The console reads a table as a set of records: hairline rules, aligned
+   columns, and no panel. A documentation table follows it, so a reader who
+   learns a table in the console reads a table here without learning a second
+   drawing. */
+
+.prose table {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.prose thead th {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.prose tbody td {
+  color: var(--text-1);
+  vertical-align: top;
+}

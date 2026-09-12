@@ -74,7 +74,7 @@ export function FirstRun({
       data-testid={testid}
     >
       <div className="flex flex-col items-center gap-3 text-center md:w-56">
-        <Mascot size={72} state="empty" variant="solid" decorative />
+        <Mascot size={72} state="empty" decorative />
         <h2
           id={`${testid}-title`}
           className="text-base font-medium text-text-1"
@@ -101,7 +101,7 @@ export function FirstRun({
                 className={cn(
                   "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium tabular-nums",
                   done
-                    ? "border-success bg-success text-accent-ink"
+                    ? "border-success bg-success text-success-ink"
                     : "border-border-2 text-text-3",
                 )}
               >

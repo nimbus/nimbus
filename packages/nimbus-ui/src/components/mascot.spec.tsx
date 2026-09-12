@@ -27,7 +27,6 @@ describe("Mascot", () => {
     expect(svg).toHaveAttribute("width", "48");
     expect(svg).toHaveAttribute("height", "37");
     expect(svg).toHaveAttribute("viewBox", "0 0 120 92");
-    expect(svg).toHaveAttribute("data-mascot", "outline");
   });
 
   it("renders every state with a body, eyes and a mouth", () => {
@@ -90,33 +89,19 @@ describe("Mascot", () => {
     }
   });
 
-  it("solid variant fills the body with the accent and inks the face", () => {
-    const { container } = render(<Mascot variant="solid" size={32} />);
+  it("fills the body with the mark colour and inks the face, never the accent", () => {
+    const { container } = render(<Mascot size={32} />);
     const body = container.querySelector("[data-part='body']") as SVGElement;
-    expect(body).toHaveAttribute("fill", "var(--accent)");
+    expect(body).toHaveAttribute("fill", "var(--mark)");
+    expect(body).not.toHaveAttribute("stroke");
     const eyes = container.querySelector("[data-part='eyes']") as SVGElement;
-    expect(eyes).toHaveAttribute("fill", "var(--accent-ink)");
-    expect(container.querySelector("svg")).toHaveAttribute(
-      "data-mascot",
-      "solid",
-    );
+    expect(eyes).toHaveAttribute("fill", "var(--mark-ink)");
+    expect(container.innerHTML).not.toContain("var(--accent)");
   });
 
-  it("outline variant strokes the body in currentColor on the panel ground", () => {
-    const { container } = render(<Mascot size={48} />);
-    const body = container.querySelector("[data-part='body']") as SVGElement;
-    expect(body).toHaveAttribute("stroke", "currentColor");
-    expect(body).toHaveAttribute("stroke-width", "5");
-    expect(container.querySelector("[fill='var(--bg-panel)']")).not.toBeNull();
-  });
-
-  it("thickens the outline and the face below 40px", () => {
+  it("thickens the face below 40px", () => {
     for (const size of [16, 24, 32]) {
       const { container, unmount } = render(<Mascot size={size} />);
-      expect(container.querySelector("[data-part='body']")).toHaveAttribute(
-        "stroke-width",
-        "7",
-      );
       expect(container.querySelector("[data-part='mouth']")).toHaveAttribute(
         "stroke-width",
         "5.5",
@@ -127,9 +112,9 @@ describe("Mascot", () => {
       unmount();
     }
     const { container } = render(<Mascot size={40} />);
-    expect(container.querySelector("[data-part='body']")).toHaveAttribute(
+    expect(container.querySelector("[data-part='mouth']")).toHaveAttribute(
       "stroke-width",
-      "5",
+      "4",
     );
   });
 

@@ -93,36 +93,62 @@
   }
 }
 
-/* Two-layer accent focus ring (DESIGN.md accent job 3), for every control,
-   registry primitives included. Tailwind emits utilities inside
-   `@layer utilities`, and an unlayered declaration beats every layered one,
-   so this wins over `focus-visible:ring-ring/50` and
-   `focus-visible:ring-destructive/20` alike. Files under components/ui are
-   CLI-owned and keep their shadcn ring classes as written; this rule is what
-   paints the ring. It applies under :focus-visible only, never bare :focus: a
-   pointer click shows no ring, keyboard reach does, and a text field (which
-   matches :focus-visible on every focus) shows it whenever it holds focus.
-   contrast.spec.ts asserts the rule stays here and stays unlayered. */
+/* The accent focus ring (DESIGN.md accent job 3), for every control, registry
+   primitives included. Tailwind emits utilities inside `@layer utilities`, and
+   an unlayered declaration beats every layered one, so this wins over
+   `focus-visible:ring-ring/50` and `focus-visible:ring-destructive/20` alike.
+   Files under components/ui are CLI-owned and keep their shadcn ring classes
+   as written; this rule is what paints the ring. It applies under
+   :focus-visible only, never bare :focus: a pointer click shows no ring,
+   keyboard reach does, and a text field (which matches :focus-visible on every
+   focus) shows it whenever it holds focus.
+
+   Two solid strokes, not one translucent one. The gold is the ring; the
+   `--accent-ink` hairline outside it is what the ring is measured against on a
+   light ground, where the gold alone is 1.88:1 on white. SC 2.4.13 measures a
+   focus indicator against the colour adjacent to it, and the two strokes are
+   adjacent to each other at 9.84:1, so the indicator is legible in both
+   themes from opposite sides: on dark the gold carries it (10.45:1 on the
+   canvas) and the near-black keyline disappears into the page; on light the
+   keyline carries it (18.55:1 on white) and the gold reads as the brand
+   inside it. One rule, no theming.
+
+   The strokes must stay opaque. The ring this replaced was
+   `color-mix(--accent-edge 40%, transparent)`, which measured 4.61:1 as a
+   token and composited to 1.77:1 as an actual stroke on white -- the token
+   cleared the floor and the pixels never did.
+
+   contrast.spec.ts asserts the rule stays here, stays unlayered, and keeps
+   both strokes. */
 :focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+    0 0 0 2px var(--accent),
+    0 0 0 3px var(--accent-ink);
 }
 
 @layer components {
-  /* Inline prose hyperlink. The resting underline, not the colour, is what
-     identifies it (WCAG 1.4.1: never colour alone). Reserve this for links
-     inside a line of text; a bordered chip that happens to navigate keeps
-     `text-accent-link` plus its border, where a resting underline would read
-     as a defect. */
+  /* Inline prose hyperlink -- the one accent mark with no area to put a
+     carrier behind, and so the one place the gold cannot go in both themes.
+     No sRGB colour clears 4.5:1 as text on both #ffffff and #0a0b0c: the
+     window is empty, so there is nothing to look for. So the link takes
+     `--accent-text`: the gold on dark at 10.45:1, the accent's own ink on
+     light, where the underline does the whole job.
+
+     The underline is the affordance either way, not the colour (WCAG 1.4.1:
+     never colour alone), which is what makes the light fallback a change of
+     emphasis rather than a loss of the link. Reserve this for links inside a
+     line of text; a chip or button that happens to navigate has area, so it
+     takes gold on an `--accent-ink` ground instead, where a resting underline
+     would read as a defect. */
   .link-inline {
-    color: var(--accent-link);
+    color: var(--accent-text);
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
     text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   }
+
 
   .link-inline:hover {
     text-decoration-color: currentColor;

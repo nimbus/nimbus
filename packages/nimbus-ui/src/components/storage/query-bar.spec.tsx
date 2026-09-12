@@ -146,7 +146,12 @@ describe("QueryBar", () => {
     // from matching.
     expect(field.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
     // The tint stays — as emphasis on top of the ring, not instead of it.
-    expect(field.className).toContain("focus-visible:border-accent");
+    // The gold, and only the gold: anchoring both ends keeps this from
+    // passing on `border-accent-ink` or `border-accent-text`, which would be
+    // a dark border where the accent belongs.
+    expect(field.className).toMatch(
+      /(^|\s)focus-visible:border-accent(?![\w-])/,
+    );
   });
 
   it("shows the sort as its own removable chip", async () => {

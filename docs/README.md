@@ -1,8 +1,9 @@
 # Documentation
 
 This tree is the source of truth for [nimbusdocs.com](https://nimbusdocs.com).
-Pages are plain Markdown rendered by the Astro Starlight project in
-[`website/`](../website/); the published groups are exactly:
+Pages are plain Markdown rendered by the Next and fumadocs project in
+[`website/`](../website/), which reads this tree in place; the published
+groups are exactly:
 
 - [`get-started/`](get-started/) — what Nimbus is, the developer quickstart,
   the self-host quickstart, and the Convex on-ramp
@@ -17,7 +18,9 @@ Pages are plain Markdown rendered by the Astro Starlight project in
 - [`reference/`](reference/) — CLI, configuration, APIs, compatibility
   matrices
 
-[`brand/`](brand/) holds logo assets. [`source-map.md`](source-map.md) maps
+[`brand/`](brand/) holds logo assets and [`assets/`](assets/) holds images
+the pages embed; neither is published as pages.
+[`source-map.md`](source-map.md) maps
 published behavior claims to the source files that implement them — update it
 when a page's load-bearing claim changes.
 

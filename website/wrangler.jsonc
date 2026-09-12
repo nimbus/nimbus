@@ -1,6 +1,6 @@
 {
-  // nimbusdocs.com — static Starlight site on Cloudflare Workers Static Assets.
-  // Pure asset serving with no worker script entry (plan DOC9/DOC10).
+  // nimbusdocs.com — the Next static export on Cloudflare Workers Static
+  // Assets. Pure asset serving with no worker script entry.
   "name": "nimbus-docs",
   "compatibility_date": "2026-06-10",
   // PR previews use version preview URLs on workers.dev; custom domains
@@ -11,7 +11,10 @@
     { "pattern": "www.nimbusdocs.com", "custom_domain": true }
   ],
   "assets": {
-    "directory": "./dist",
+    // `next build` with `output: 'export'` writes here.
+    "directory": "./out",
+    // The search index is served from `out/api/search`, an extensionless
+    // file. Static Assets serves it as-is; `404-page` only affects misses.
     "not_found_handling": "404-page"
   }
 }

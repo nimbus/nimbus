@@ -1,0 +1,1239 @@
+/* The Odyssey: the scroll-driven request journey on the site home page.
+   Ported from the marketing prototype and rethemed onto the role tokens in
+   `tokens.css` — the sheet carries no literal colour of its own.
+
+   The stage is a stage, not a themed document. It runs its own cinematic
+   cycle (night, daylight, the gold wash) through `--stage-*`, which
+   `paletteFor` in `odyssey/scene.ts` writes once per frame. That is why the
+   rules below read `--stage-ink` and not `--text-1`: the ground moves under
+   the type, so the type has to move with it.
+
+   Every rule is scoped under `.odyssey` or `.afterword`, because this sheet
+   loads on one route and must not reach the documentation. */
+
+/* The journey stops, defaulting to the first frame. `mountJourney` overwrites
+   all six on the stage element every frame. */
+.odyssey {
+  --journey-progress: 0;
+  --stage-background: var(--bg-canvas);
+  --stage-chrome: var(--bg-canvas);
+  --stage-ink: var(--text-1);
+  --stage-muted: var(--text-3);
+  /* The accent tone: the gold, as a fill and as a label, stepping aside for
+     `--accent-ink` only on the finale, where the ground is itself the gold. */
+  --stage-accent: var(--accent);
+  /* The ground a gold label sits on. Every accent label on the stage is gold
+     on this carrier, in every theme and at every beat -- what changes is
+     whether the carrier is visible against the ground behind it, and
+     `paletteFor` in odyssey/scene.ts moves it with the beat for exactly that
+     reason: it is the night ground on a night beat and the gold on the finale,
+     so the label reads as bare text at both ends, and it is the accent's ink
+     in between, where the page is too light to show gold.
+
+     The rest value covers the frames before the journey mounts and the static
+     fallback under reduced motion or a short viewport. It is the ink, not the
+     canvas: on the dark canvas the ink is 1.06:1 against the ground and so
+     reads as nothing, and on the white one it is the pill that makes the gold
+     legible. One value, both themes, no branch. */
+  --stage-accent-carrier: var(--accent-ink);
+  /* The code surface does not follow the beat. A snippet is a terminal, and a
+     terminal is night, which is also what lets its gold tokens stay gold on
+     every beat. The two literals are `night` and `inkNight` in scene.ts. */
+  --stage-screen: #0a0b0c;
+  --stage-screen-ink: #f6f7f8;
+  --paper-mix: 0;
+  --wash-mix: 0;
+  --scroll-hint-opacity: 1;
+  --frame-cursor-x: 0px;
+  --frame-cursor-y: 0px;
+}
+
+/* Overscroll past either end of the stage must not flash the document ground
+   through the scene. */
+html:has(.odyssey) {
+  background: var(--stage-background);
+  /* The scene owns smoothing. Browser smooth scrolling would fight it. */
+  scroll-behavior: auto;
+}
+
+body:has(.odyssey) {
+  overflow-x: hidden;
+  text-rendering: geometricPrecision;
+}
+
+.odyssey button,
+.afterword button {
+  cursor: pointer;
+}
+
+/* The document ring is a two-step shadow tuned for the documentation grounds.
+   The stage ground moves every frame, so the stage rings in its own accent. */
+.odyssey :focus-visible,
+.afterword :focus-visible,
+.skip-link:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--stage-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 16px;
+  z-index: 20;
+  padding: 10px 14px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 500 12px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.skip-link:focus-visible {
+  top: 16px;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The stage: one sticky, full-screen scene. The section height is the      */
+/* scroll distance that plays the journey.                                  */
+/* ---------------------------------------------------------------------- */
+
+.odyssey {
+  position: relative;
+  height: 3000vh;
+}
+
+.odyssey-stage {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  min-height: 620px;
+  overflow: hidden;
+  background: var(--stage-background);
+  color: var(--stage-ink);
+}
+
+.odyssey-stage canvas.world {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.halftone-field {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Film grain, not a colour: soft-light at 18% over whatever the frame
+     paints. It stays white because the blend mode, not the hue, is the
+     effect. */
+  background-image: radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.7) 0.6px, transparent 1.1px);
+  background-size: 4px 4px;
+  mix-blend-mode: soft-light;
+  opacity: 0.18;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Chrome: nav, run link, status, frame                                     */
+/* ---------------------------------------------------------------------- */
+
+.nav-shell {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 6;
+  width: min(calc(100% - 56px), 1740px);
+  height: 88px;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  align-items: center;
+  gap: 24px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  justify-self: start;
+  font: 500 13px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* The mark, not a glyph. A logo is exempt from the non-text contrast floor
+   (SC 1.4.11), so it keeps the literal gold across the night and daylight
+   grounds, exactly as the console does — it does not darken with the rest of
+   the frame's accents. Through the finale the ground is that gold, so the
+   body and the face trade places rather than the mark vanishing into it. */
+.brand .brand-mark {
+  width: 26px;
+  height: 22px;
+  --mark: color-mix(in srgb, var(--accent-ink) calc(var(--wash-mix) * 100%), var(--accent));
+  --mark-ink: color-mix(in srgb, var(--accent) calc(var(--wash-mix) * 100%), var(--accent-ink));
+}
+
+.brand small {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--stage-muted);
+}
+
+.chapter-nav {
+  display: flex;
+  gap: 8px;
+  justify-self: center;
+  align-items: flex-start;
+}
+
+/* The start item returns the reader to the beginning of the journey. */
+.start-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.start-button i,
+.start-return i {
+  width: 6px;
+  height: 6px;
+  rotate: 45deg;
+  border: 1px solid currentColor;
+  transition: background-color 160ms linear;
+}
+
+.start-button[aria-current='step'] i {
+  background: currentColor;
+}
+
+/* Where the chapter nav is not shown, the start item stands beside the run
+   link. */
+.start-return {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--stage-muted);
+  transition: color 160ms linear;
+}
+
+.start-return:hover {
+  color: var(--stage-ink);
+}
+
+/* Each act is a bucket: its label on top, its chapters in a row under it. The
+   bucket the journey is in carries an outline, and a line along its floor
+   fills as the journey moves through its chapters. The other buckets keep
+   their chapters folded until the reader hovers or tabs into them, so the row
+   fits between the brand and the run link. */
+.act-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  transition: border-color 220ms linear, background-color 220ms linear;
+}
+
+.act-group[data-current] {
+  border-color: color-mix(in srgb, var(--stage-muted) 28%, transparent);
+  background: color-mix(in srgb, var(--stage-ink) 4%, transparent);
+}
+
+.act-fill {
+  --act-fill: clamp(0, calc((var(--journey-progress, 0) - var(--act-start)) / (var(--act-end) - var(--act-start))), 1);
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 1px;
+  background: var(--stage-accent);
+  transform: scaleX(var(--act-fill));
+  transform-origin: left;
+  opacity: 0;
+  transition: opacity 220ms linear;
+}
+
+.act-group[data-current] .act-fill {
+  opacity: 1;
+}
+
+.chapter-nav button {
+  position: relative;
+  padding: 10px 10px 12px;
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--stage-muted);
+  transition: color 160ms linear;
+}
+
+.chapter-nav button::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.chapter-nav button[aria-current='step'] {
+  color: var(--stage-ink);
+}
+
+.chapter-nav button[aria-current='step']::after {
+  transform: scaleX(1);
+}
+
+/* The bucket outline and its floor line mark the act, so the act label keeps
+   no underline of its own. */
+.act-button::after {
+  display: none;
+}
+
+.act-chapters {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-top: -6px;
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-columns 360ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 200ms linear, visibility 0s linear 360ms;
+}
+
+.act-group[data-current] .act-chapters,
+.act-group:hover .act-chapters,
+.act-group:focus-within .act-chapters {
+  grid-template-columns: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition: grid-template-columns 360ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 200ms linear 120ms, visibility 0s linear;
+}
+
+.act-chapters-row {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.act-chapters button {
+  padding: 6px 5px 8px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: color-mix(in srgb, var(--stage-muted) 72%, transparent);
+}
+
+.act-chapters button::after {
+  bottom: 3px;
+}
+
+.act-chapters button[aria-current='step'] {
+  color: var(--stage-ink);
+}
+
+.act-group[data-current] .act-chapters button {
+  color: var(--stage-muted);
+}
+
+.act-group[data-current] .act-chapters button[aria-current='step'] {
+  color: var(--stage-ink);
+}
+
+.run-link {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  border-radius: 999px;
+  background: var(--stage-ink);
+  color: var(--stage-chrome);
+  font: 600 10.5px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 120ms linear, color 120ms linear;
+}
+
+.journey-status {
+  position: absolute;
+  left: 50%;
+  bottom: 30px;
+  translate: -50% 0;
+  z-index: 6;
+  width: min(calc(100% - 56px), 1740px);
+  display: grid;
+  grid-template-columns: minmax(380px, max-content) 1fr max-content;
+  align-items: center;
+  gap: 28px;
+  font: 500 10.5px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.status-location {
+  display: flex;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.status-location b {
+  font-weight: 600;
+  color: var(--stage-ink);
+}
+
+.status-location span {
+  color: var(--stage-muted);
+}
+
+.progress-track {
+  position: relative;
+  height: 28px;
+  margin-top: 10px;
+}
+
+.progress-track::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: color-mix(in srgb, var(--stage-ink) 26%, transparent);
+}
+
+.progress-track .played {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 1px;
+  width: calc(var(--journey-progress) * 100%);
+  background: var(--stage-accent);
+}
+
+.progress-track button {
+  position: absolute;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  translate: -50% 0;
+  display: grid;
+  place-items: center;
+}
+
+.progress-track button::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--stage-muted);
+  transition: background-color 120ms linear, transform 200ms ease;
+}
+
+.progress-track button[aria-current='step']::before {
+  background: var(--stage-ink);
+  transform: scale(1.4);
+}
+
+.progress-track .playhead {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--journey-progress) * 100%);
+  width: 9px;
+  height: 9px;
+  translate: -50% -50%;
+  rotate: 45deg;
+  background: var(--stage-accent);
+  box-shadow: 0 0 0 3px var(--stage-chrome);
+  cursor: grab;
+  touch-action: none;
+}
+
+/* The hit area reaches past the diamond. */
+.progress-track .playhead::before,
+.stage-frame i::before {
+  content: '';
+  position: absolute;
+  inset: -9px;
+}
+
+.progress-track .playhead:focus-visible {
+  outline-offset: 5px;
+}
+
+/* A drag in progress: the pointer holds the handle, and the page has no text
+   to select on the way. */
+.odyssey-stage.is-scrubbing {
+  user-select: none;
+}
+
+.odyssey-stage.is-scrubbing,
+.odyssey-stage.is-scrubbing .playhead,
+.odyssey-stage.is-scrubbing .stage-frame i {
+  cursor: grabbing;
+}
+
+.telemetry {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  white-space: nowrap;
+  color: var(--stage-muted);
+}
+
+/* The three accent labels on the stage ground. Each one is gold on the
+   carrier, which is the ground itself on night and on the wash and the accent
+   ink on paper -- so the label reads as bare gold text for most of the scroll
+   and as a gold chip across the beats that whiten. The padding is paid back
+   in negative margin so adding the ground moves no layout. */
+.telemetry b {
+  font-weight: 600;
+  color: var(--stage-accent);
+  background: var(--stage-accent-carrier);
+  padding: 1px 5px;
+  margin: -1px -1px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scroll-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 86px;
+  translate: -50% 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--stage-muted);
+  opacity: var(--scroll-hint-opacity);
+  pointer-events: none;
+}
+
+.scroll-prompt i {
+  width: 1px;
+  height: 34px;
+  background: var(--stage-accent);
+  transform-origin: top;
+  animation: scroll-pulse 1.8s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+}
+
+@keyframes scroll-pulse {
+  0% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  35% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(1) translateY(24px);
+    opacity: 0;
+  }
+}
+
+/* The frame is a hairline around the stage; its cursor travels the whole
+   perimeter exactly once across the journey, and the pointer can take it. */
+.stage-frame {
+  position: absolute;
+  top: 100px;
+  right: 14px;
+  bottom: 22px;
+  left: 14px;
+  z-index: 4;
+  border: 1px solid color-mix(in srgb, var(--stage-ink) 12%, transparent);
+  pointer-events: none;
+}
+
+.stage-frame i {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  width: 9px;
+  height: 9px;
+  background: var(--stage-accent);
+  box-shadow: 0 0 0 3px var(--stage-background);
+  transform: translate(var(--frame-cursor-x), var(--frame-cursor-y)) rotate(45deg);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Copy beats live in the negative space beside the world.                 */
+/* ---------------------------------------------------------------------- */
+
+.beats {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.beat {
+  position: absolute;
+  top: 22%;
+  width: min(580px, 41vw);
+  opacity: 0;
+  will-change: opacity, transform;
+  pointer-events: none;
+}
+
+.beat-left {
+  left: max(36px, calc((100vw - 1740px) / 2 + 28px));
+}
+
+.beat-right {
+  right: max(36px, calc((100vw - 1740px) / 2 + 28px));
+}
+
+/* The chapter label. Selected through `.beat` because the label is a `<p>`
+   and `.beat p` below is (0,1,1): a bare `.beat-eyebrow` loses the cascade to
+   the body copy and the label comes out as paragraph grey on its own carrier.
+   Every rule here that sets a colour has to clear that bar. */
+.beat .beat-eyebrow {
+  display: inline-block;
+  margin: 0 0 22px -7px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  font: 500 10.5px/1 var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--stage-accent);
+  background: var(--stage-accent-carrier);
+}
+
+.beat h1,
+.beat h2 {
+  margin: 0;
+  font-size: clamp(40px, 4.6vw, 82px);
+  font-weight: 390;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.beat p {
+  margin: 22px 0 0;
+  max-width: 440px;
+  font-size: clamp(15px, 1.15vw, 18px);
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--stage-ink) 78%, var(--stage-background));
+}
+
+.beat .proof {
+  display: block;
+  margin: 26px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid color-mix(in srgb, var(--stage-ink) 18%, transparent);
+  font: 500 10.5px/1.6 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--stage-muted);
+}
+
+.beat-final {
+  top: 18%;
+}
+
+/* The code beside each chapter. Lines rise in one after another when the
+   chapter is live; the block itself sits on a faint card so it reads as code
+   and not as more copy. */
+.snippet {
+  position: relative;
+  margin: 24px 0 0;
+  padding: 30px 18px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--stage-screen-ink) 16%, transparent);
+  background: color-mix(in srgb, var(--stage-screen-ink) 5%, var(--stage-screen));
+  font: 400 12px/1.62 var(--font-mono);
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--stage-screen-ink) 88%, var(--stage-screen));
+  white-space: pre;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  tab-size: 2;
+}
+
+.snippet-file {
+  position: absolute;
+  top: 9px;
+  left: 18px;
+  font: 500 9.5px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
+}
+
+.snippet code {
+  display: block;
+  font: inherit;
+}
+
+.snippet .snippet-compact {
+  display: none;
+}
+
+/* Below the wide column the long lines would clip, so the short variant of
+   each snippet takes over. */
+@media (max-width: 1279px) {
+  .snippet .snippet-wide {
+    display: none;
+  }
+
+  .snippet .snippet-compact {
+    display: block;
+  }
+}
+
+.snippet .line {
+  display: block;
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+  transition:
+    opacity 360ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 460ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition-delay: 0ms;
+}
+
+.beat.is-live .snippet .line {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(140ms + var(--i) * 55ms);
+}
+
+.snippet i {
+  font-style: normal;
+}
+
+/* The screen is night on every beat, so the tokens are the gold outright and
+   do not have to be mixed back towards a ground that moves. */
+.snippet .tk-keyword {
+  color: var(--accent);
+}
+
+.snippet .tk-string {
+  color: color-mix(in srgb, var(--accent) 62%, var(--stage-screen-ink));
+}
+
+.snippet .tk-comment {
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
+}
+
+.snippet .tk-prompt {
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
+}
+
+.snippet .tk-env {
+  color: color-mix(in srgb, var(--stage-screen-ink) 92%, var(--accent));
+}
+
+.snippet .tk-ellipsis {
+  color: color-mix(in srgb, var(--stage-screen-ink) 55%, var(--stage-screen));
+  padding: 0 1px;
+}
+
+/* Act labels sit above the rail, one per span. */
+.progress-track .rail-act {
+  position: absolute;
+  top: -12px;
+  padding-left: 14px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--stage-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  pointer-events: none;
+}
+
+.final-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.final-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 999px;
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border: 1px solid color-mix(in srgb, var(--stage-ink) 35%, transparent);
+}
+
+.final-actions a.primary {
+  background: var(--stage-ink);
+  color: var(--stage-chrome);
+  border-color: var(--stage-ink);
+}
+
+.beat.is-live {
+  pointer-events: auto;
+}
+
+/* Storyboard stills exist for the static narrative only. */
+.still {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Afterword                                                                */
+/* ---------------------------------------------------------------------- */
+
+.afterword {
+  position: relative;
+  min-height: 34svh;
+  display: grid;
+  align-content: end;
+  gap: 28px;
+  padding: 64px max(36px, calc((100vw - 1740px) / 2 + 28px)) 40px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.afterword-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px 32px;
+  font: 500 11px/1.6 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.afterword-row nav {
+  display: flex;
+  gap: 24px;
+}
+
+.afterword-row a {
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-ink) 40%, transparent);
+}
+
+.afterword-row a:hover {
+  border-bottom-color: var(--accent-ink);
+}
+
+.afterword-row .fine {
+  color: color-mix(in srgb, var(--accent-ink) 78%, var(--accent));
+  max-width: 640px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Responsive compositions                                                  */
+/* ---------------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .nav-shell {
+    grid-template-columns: 1fr auto auto;
+    height: 76px;
+    width: calc(100% - 48px);
+  }
+
+  .start-return {
+    display: inline-flex;
+  }
+
+  .chapter-nav {
+    display: none;
+  }
+
+  .progress-track .rail-act {
+    display: none;
+  }
+
+  .progress-track {
+    margin-top: 0;
+  }
+
+  .journey-status {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    width: calc(100% - 48px);
+    bottom: 22px;
+  }
+
+  .status-location {
+    order: 2;
+    justify-content: space-between;
+    /* Keep the row inside the rail: the grid track must not grow to the
+       row's min-content width, so the state label can clip instead. */
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .telemetry {
+    display: none;
+  }
+
+  .status-location .state {
+    color: var(--stage-accent);
+    background: var(--stage-accent-carrier);
+    padding: 1px 5px;
+    margin: -1px -1px;
+    border-radius: 4px;
+    /* The longest state label is wider than a 375px row leaves; clip it
+       with an ellipsis instead of pushing past the frame edge. */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .stage-frame {
+    top: 82px;
+    bottom: 18px;
+  }
+
+  .beat {
+    top: 18%;
+    width: min(560px, 44vw);
+  }
+
+  .snippet {
+    margin-top: 18px;
+    padding: 26px 14px 12px;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+
+  .beat-left {
+    left: 32px;
+  }
+
+  .beat-right {
+    right: 32px;
+  }
+
+  .beat h1,
+  .beat h2 {
+    font-size: clamp(36px, 4.9vw, 52px);
+  }
+
+  .beat p {
+    font-size: 15px;
+  }
+
+  .scroll-prompt {
+    bottom: 96px;
+  }
+}
+
+@media (max-width: 760px) {
+  .odyssey {
+    height: 2180vh;
+  }
+
+  .odyssey-stage {
+    min-height: 560px;
+  }
+
+  .nav-shell {
+    height: 64px;
+    width: calc(100% - 32px);
+  }
+
+  .run-link {
+    padding: 9px 12px;
+    font-size: 9.5px;
+  }
+
+  .brand small {
+    display: none;
+  }
+
+  /* Portrait composition: copy owns the upper band, the world the lower. */
+  .beat,
+  .beat-final {
+    top: 11%;
+    width: auto;
+    left: 18px;
+    right: 18px;
+    max-height: 50%;
+  }
+
+  .snippet {
+    margin-top: 12px;
+    padding: 24px 12px 10px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .snippet-file {
+    top: 8px;
+    left: 12px;
+    font-size: 8.5px;
+  }
+
+  /* Same bar as the base rule: `.beat p` at this width resets the margins. */
+  .beat .beat-eyebrow {
+    margin-bottom: 14px;
+  }
+
+  .beat h1,
+  .beat h2 {
+    font-size: clamp(30px, 8.6vw, 40px);
+  }
+
+  .beat p {
+    margin-top: 14px;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .beat .proof {
+    margin-top: 12px;
+    padding-top: 10px;
+    font-size: 9px;
+    line-height: 1.5;
+  }
+
+  .final-actions {
+    margin-top: 16px;
+    gap: 8px;
+  }
+
+  .final-actions a {
+    padding: 11px 14px;
+    font-size: 10px;
+  }
+
+  .stage-frame {
+    top: 70px;
+    right: 10px;
+    bottom: 16px;
+    left: 10px;
+  }
+
+  /* A phone frame has no margin for the cursor; it crosses the status rows. */
+  .stage-frame i {
+    display: none;
+  }
+
+  .journey-status {
+    width: calc(100% - 32px);
+    bottom: 18px;
+    font-size: 9.5px;
+  }
+
+  .scroll-prompt {
+    display: none;
+  }
+
+  .afterword {
+    padding: 48px 18px 28px;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Static narrative: reduced motion or a viewport too short to stage.       */
+/* Every chapter is a complete card with a storyboard still.                */
+/* ---------------------------------------------------------------------- */
+
+/* Short animated viewports (a 1440x768 or 1024x768 laptop): the beat keeps its
+   composition, but tighter, so the longest chapter (its code and its proof
+   line) stays clear of the progress rail. */
+/* A laptop browser viewport is about 815px tall on a 900px display; the
+   tallest beat (client adapters) needs the shorter layout up to 880px. */
+@media (min-width: 760px) and (max-height: 880px) {
+  .beat {
+    top: 15%;
+  }
+
+  .beat h1,
+  .beat h2 {
+    font-size: clamp(36px, 4vw, 64px);
+  }
+
+  .beat p {
+    margin-top: 16px;
+  }
+
+  .snippet {
+    margin-top: 18px;
+    padding: 26px 16px 12px;
+    line-height: 1.5;
+  }
+
+  .beat .proof {
+    margin-top: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (max-height: 620px), (max-width: 759px) and (max-height: 779px) {
+  .odyssey {
+    height: auto;
+  }
+
+  .odyssey-stage {
+    position: relative;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    background: var(--stage-background);
+  }
+
+  .odyssey-stage canvas.world,
+  .halftone-field,
+  .journey-status,
+  .scroll-prompt,
+  .stage-frame {
+    display: none;
+  }
+
+  .nav-shell {
+    position: sticky;
+    top: 0;
+    left: 0;
+    translate: 0;
+    width: 100%;
+    padding: 0 28px;
+    background: color-mix(in srgb, var(--stage-background) 88%, transparent);
+    backdrop-filter: blur(10px);
+    color: var(--stage-ink);
+  }
+
+  .chapter-nav {
+    display: flex;
+  }
+
+  .start-return {
+    display: none;
+  }
+
+  .chapter-nav button::after {
+    display: none;
+  }
+
+  .act-chapters {
+    display: none;
+  }
+
+  .beats {
+    position: static;
+    pointer-events: auto;
+  }
+
+  .beat,
+  .beat-final {
+    position: relative;
+    inset: auto;
+    top: auto;
+    left: auto;
+    right: auto;
+    width: 100%;
+    max-height: none;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    pointer-events: auto;
+    display: grid;
+    /* The still takes the wider column: the service chapter's frame spans the
+       tenant door to the ingress door at the detail zoom. */
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 40px;
+    align-items: center;
+    padding: 64px 28px;
+    border-top: 1px solid color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 12%, transparent);
+    background: var(--beat-background, var(--stage-background));
+    color: var(--beat-ink, var(--stage-ink));
+    will-change: auto;
+  }
+
+  .beat > * {
+    grid-column: 1;
+  }
+
+  .beat p {
+    color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 80%, var(--beat-background, var(--stage-background)));
+  }
+
+  .beat .proof {
+    border-top-color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 20%, transparent);
+    color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 62%, var(--beat-background, var(--stage-background)));
+  }
+
+  .beat .beat-eyebrow {
+    color: var(--beat-accent, var(--stage-accent));
+    background: var(--beat-accent-carrier, var(--stage-accent-carrier));
+  }
+
+  /* The snippet is night on every beat, so this block no longer re-themes it;
+     only the line reveal has to be switched off. */
+  .snippet .line {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .final-actions a.primary {
+    background: var(--beat-ink, var(--stage-ink));
+    color: var(--beat-background, var(--stage-background));
+    border-color: var(--beat-ink, var(--stage-ink));
+  }
+
+  .final-actions a {
+    border-color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 35%, transparent);
+  }
+
+  .still {
+    display: block;
+    grid-column: 2;
+    grid-row: 1 / span 6;
+    width: 100%;
+    aspect-ratio: var(--still-aspect, 16 / 10);
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 14%, transparent);
+  }
+
+  @media (max-width: 900px) {
+    .beat,
+    .beat-final {
+      grid-template-columns: 1fr;
+      padding: 48px 20px;
+    }
+
+    .still {
+      grid-column: 1;
+      grid-row: auto;
+      order: -1;
+    }
+
+    .chapter-nav {
+      display: none;
+    }
+
+    .start-return {
+      display: inline-flex;
+    }
+  }
+}

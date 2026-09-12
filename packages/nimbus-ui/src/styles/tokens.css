@@ -74,15 +74,51 @@
   --text-3: #8b909a;
   --text-4: #62666d; /* disabled only; documented non-AA */
 
+  /* Nimbus gold, the one identity colour, the same literal in both themes and
+     the only accent hue in the sheet. There is no darkened variant: gold
+     cannot be darkened and stay gold -- at its own hue it turns olive, and the
+     red-shifted ambers that stay vivid are a different colour standing next to
+     the mascot -- so light does not darken it either.
+
+     Because the gold is fixed, contrast is bought with the ground instead of
+     the hue. The gold is 10.45:1 on the dark canvas and 1.88:1 on the white
+     one, so on light it must be given a ground it can sit on: every accent
+     mark with area (a bar, a badge, a dot, a rail, a pill) pairs the gold with
+     `--accent-ink` as carrier or keyline, and the pair is then legible on any
+     ground in either theme. This is Radix's own prescription for amber, whose
+     step 9 is one of the five solids "designed for dark foreground text".
+
+     The one mark that has no area is a hyperlink inside a line of prose. No
+     sRGB colour clears 4.5:1 as text on both #ffffff and #0a0b0c -- the window
+     is empty, not merely narrow -- so `.link-inline` in globals.css drops to
+     the page ink on light and keeps its resting underline as the affordance
+     (WCAG 1.4.1: never colour alone). */
   --accent: #f0b23e;
   --accent-hover: #f6c35c;
-  --accent-ink: #1a1204; /* text on accent fills */
-  --accent-link: #f0b23e;
+  --accent-ink: #1a1204; /* ink on gold, and gold's carrier on light */
+
+  /* Whichever member of the pair above the ground can actually show, for the
+     accent marks that have no area to hold both: a 1px rule, a counter, a
+     method label, an active sidebar row a vendored component paints as text.
+     It is never a third colour -- contrast.spec.ts holds it to `--accent` or
+     `--accent-ink` exactly -- so it cannot drift into a darkened gold. Prefer
+     giving a mark area and using the pair; reach for this when the shape or a
+     vendored component leaves no room. */
+  --accent-text: #f0b23e;
+
+  /* The mascot body and its face. Logos are exempt from the non-text floor
+     (SC 1.4.11), so the mark is the unmeasured gold on every ground and the
+     mark in the sidebar, the tab bar and the sign-in card is one sticker. It
+     is declared apart from `--accent` because the exemption is the reason it
+     can stay gold, and the accent does not share that exemption. */
+  --mark: #f0b23e;
+  --mark-ink: #1a1204;
 
   --success: #4ade80;
   --warning: #fb923c;
   --error: #f87171;
   --error-ink: #1f0a0a; /* text on error fills */
+  --success-ink: #06210f; /* text on success fills */
   --info: #60a5fa;
   --success-tint: rgba(74, 222, 128, 0.14);
   --warning-tint: rgba(251, 146, 60, 0.14);
@@ -101,9 +137,9 @@
      text-3      #71717a -> #66666e  (4.10:1 -> 4.82:1 on hover)
      success     #15803d -> #15753a  (4.25:1 -> 4.89:1 on hover)
      warning     #c2410c -> #b53b0a  (4.39:1 -> 4.95:1 on hover)
-     accent-link #a16207 -> #975c06  (4.17:1 -> 4.62:1 on hover)
-   --accent stays #b45309: it paints fills and the focus ring, where 3:1 is the
-   floor, and it clears that on every ground (4.26:1 on hover). */
+   The accent is not in that list: it does not deviate, and it is not measured
+   as a foreground at all. It is the gold in both themes, and on light it is
+   carried on `--accent-ink` rather than darkened. */
 
 :root[data-theme="light"] {
   --bg-canvas: #ffffff;
@@ -120,21 +156,32 @@
   --text-3: #66666e;
   --text-4: #a1a1aa;
 
-  --accent: #b45309;
-  --accent-hover: #92400e;
-  --accent-ink: #ffffff;
-  --accent-link: #975c06;
+  /* Identical to the dark block: one gold, and dark ink on it at 9.84:1. The
+     accent is the only role the light theme does not restate in its own
+     values, because it is the one role that does not theme. */
+  --accent: #f0b23e;
+  --accent-hover: #e0a230;
+  --accent-ink: #1a1204;
+
+  /* The gold is 1.88:1 on this canvas, so here the readable member of the
+     pair is the ink. Same two colours as the dark block, opposite choice. */
+  --accent-text: #1a1204;
+
+  /* Deliberately identical to the dark block: the mark does not theme. */
+  --mark: #f0b23e;
+  --mark-ink: #1a1204;
 
   --success: #15753a;
   --warning: #b53b0a;
   --error: #b91c1c;
   --error-ink: #ffffff;
+  --success-ink: #ffffff;
   --info: #1d4ed8;
   --success-tint: rgba(21, 117, 58, 0.14);
   --warning-tint: rgba(181, 59, 10, 0.14);
   --error-tint: rgba(185, 28, 28, 0.14);
   --info-tint: rgba(29, 78, 216, 0.14);
-  --accent-tint: rgba(180, 83, 9, 0.14);
+  --accent-tint: rgba(240, 178, 62, 0.22); /* gold needs more of itself on paper */
 
   color-scheme: light;
 }
@@ -189,12 +236,15 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
-  --color-accent-link: var(--accent-link);
+  --color-accent-text: var(--accent-text);
   --color-accent-tint: var(--accent-tint);
+  --color-mark: var(--mark);
+  --color-mark-ink: var(--mark-ink);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-error: var(--error);
   --color-error-ink: var(--error-ink);
+  --color-success-ink: var(--success-ink);
   --color-info: var(--info);
   --color-success-tint: var(--success-tint);
   --color-warning-tint: var(--warning-tint);
@@ -207,9 +257,18 @@
 
   /* shadcn-vocabulary bridge for the registry primitives in components/ui.
    * Every name resolves to a role token above; no generated palette exists.
-   * shadcn's "accent" is a hover ground, not the one amber accent, so the
-   * primitives that say bg-accent paint the amber; port a primitive to
-   * bg-bg-hover / text-text-1 when the registry meant a hover ground. */
+   *
+   * Two rules hold here, and contrast.spec.ts enforces both.
+   *
+   * Every `<name>-foreground` must be legible on `<name>`: the pair is an
+   * ink and its ground, so it is held to 4.5:1 in both themes. A name that
+   * points at a token which merely sounds related is the failure mode --
+   * `accent-foreground` pointed at `--text-1`, which is 1.76:1 on the gold,
+   * and `destructive-foreground` pointed at `--error` itself, 1.00:1.
+   *
+   * shadcn's "accent" is a hover ground, not the one amber accent. The
+   * registry primitives that meant a hover ground are ported to
+   * bg-bg-hover / text-text-1 rather than left to paint the gold. */
   --color-background: var(--bg-canvas);
   --color-foreground: var(--text-1);
   --color-card: var(--bg-panel);
@@ -222,11 +281,17 @@
   --color-secondary-foreground: var(--text-1);
   --color-muted: var(--bg-raised);
   --color-muted-foreground: var(--text-3);
-  --color-accent-foreground: var(--text-1);
+  --color-accent-foreground: var(--accent-ink);
   --color-destructive: var(--error);
-  --color-destructive-foreground: var(--error);
+  --color-destructive-foreground: var(--error-ink);
   --color-border: var(--border-2);
   --color-input: var(--border-2);
+  /* Registry primitives reach the ring through `ring-ring` and `outline-ring`.
+   * Both are layered utilities, so the unlayered `:focus-visible` rule in
+   * globals.css overpaints them -- it cancels the outline and draws the gold
+   * ring with its `--accent-ink` keyline, which is what makes the ring legible
+   * on white. This token is what shows through if that rule is ever deleted,
+   * so it names the gold rather than a hue nothing else in the sheet uses. */
   --color-ring: var(--accent);
   --color-sidebar: var(--bg-panel);
   --color-sidebar-foreground: var(--text-1);
@@ -236,6 +301,11 @@
   --color-sidebar-accent-foreground: var(--text-1);
   --color-sidebar-border: var(--border-1);
   --color-sidebar-ring: var(--accent);
+  /* Series 1 is the gold, like every other accent mark. A series is the one
+   * accent shape that carries no ink of its own, and the gold is 1.88:1 on the
+   * white canvas, so the first chart built here owes series 1 the same
+   * treatment every other gold mark gets: an `--accent-ink` hairline around the
+   * fill. Nothing in the console charts anything yet. */
   --color-chart-1: var(--accent);
   --color-chart-2: var(--info);
   --color-chart-3: var(--success);

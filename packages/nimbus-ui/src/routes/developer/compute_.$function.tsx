@@ -558,9 +558,11 @@ function SymbolLink({
   title?: string;
   testid: string;
 }) {
-  // A bordered chip, not an inline link: the border plus the hover fill carry
-  // the affordance, so this keeps `text-accent-link` and stays off `.link-inline` —
-  // a resting underline inside a chip reads as a rendering defect.
+  // A chip, not an inline link: the fill plus the border carry the affordance,
+  // so this stays off `.link-inline` — a resting underline inside a chip reads
+  // as a rendering defect. Having area is also what lets it keep the gold in
+  // both themes: gold on `--accent-ink` is 9.84:1 either way, where gold text
+  // on the light panel would be 1.81:1.
   return (
     <Link
       to="/developer/compute/$function"
@@ -568,7 +570,7 @@ function SymbolLink({
       search={{ tab: "source" }}
       data-testid={testid}
       title={title}
-      className="rounded-xs border border-border-2 px-1.5 py-0.5 font-mono text-xs text-accent-link hover:bg-bg-raised"
+      className="rounded-xs border border-accent-ink bg-accent-ink px-1.5 py-0.5 font-mono text-xs text-accent hover:text-accent-hover"
     >
       {label}
     </Link>

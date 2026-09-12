@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 92" role="img" aria-label="Nimbus">
-  <g fill="none" stroke="var(--logo-stroke, currentColor)" stroke-width="5" stroke-linejoin="round"><circle cx="36" cy="50" r="20"/><circle cx="60" cy="40" r="28"/><circle cx="84" cy="50" r="20"/><rect x="14" y="50" width="92" height="34" rx="17"/></g>
-  <g fill="var(--logo-fill, transparent)"><circle cx="36" cy="50" r="20"/><circle cx="60" cy="40" r="28"/><circle cx="84" cy="50" r="20"/><rect x="14" y="50" width="92" height="34" rx="17"/></g>
-  <g fill="var(--logo-stroke, currentColor)"><circle cx="48" cy="52" r="3.7"/><circle cx="72" cy="52" r="3.7"/></g>
-  <path d="M52 62 q8 8 16 0" fill="none" stroke="var(--logo-stroke, currentColor)" stroke-width="4" stroke-linecap="round"/>
-</svg>

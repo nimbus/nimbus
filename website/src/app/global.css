@@ -1,0 +1,62 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/preset.css';
+@import '../styles/tokens.css';
+@import '../styles/docs-theme.css';
+
+@plugin '@fumadocs/tailwind/typography' {
+  disableRoundedTable: true;
+}
+
+/* Fumadocs ships its class names inside compiled JavaScript, which the
+   Tailwind scanner cannot read from source. */
+@source '../../node_modules/fumadocs-ui/dist';
+
+html {
+  /* The gutter is always reserved, so a short page and a long page put the
+     content in the same place. */
+  scrollbar-gutter: stable;
+}
+
+/* The scroll lock a dialog applies must not shift the page under it. */
+html > body[data-scroll-locked] {
+  margin-right: 0 !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+body {
+  background-color: var(--bg-canvas);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: var(--accent-tint);
+}
+
+/* Two solid strokes, matching the console. The gold is the ring; the
+   `--accent-ink` hairline outside it is what the ring is measured against on
+   the light canvas, where the gold alone is 1.88:1. On dark the gold carries
+   it and the keyline disappears into the page. Unlayered, so it overpaints
+   fumadocs' own `ring-fd-ring` utilities. Opacity is not an option here: the
+   translucent ring this replaced measured 4.61:1 as a token and composited to
+   1.77:1 as a stroke. */
+:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 0 3px var(--accent-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -739,8 +739,8 @@ sub-panel, and the page.
 The left column is the console's one navigation surface
 (`packages/nimbus-ui/src/shell/sidebar/`). Top to bottom:
 
-- **Brand row** (56px): the outline mascot next to the lowercase
-  wordmark; a link to the active view's home page.
+- **Brand row** (56px): the mascot next to the lowercase wordmark; a link
+  to the active view's home page.
 - **Scope row:** the **view switcher**, a two-segment `SegmentedControl`
   (Developer, Operator) at full width, then the **tenant selector**
   (Developer) or the **server identity line** (Operator: the hostname,
@@ -887,7 +887,7 @@ the override under `[data-theme="light"]`.
 
 Tokens live in `packages/nimbus-ui/src/styles/tokens.css` as hex and rgba
 literals. `@theme inline` bridges them to Tailwind utilities (`bg-bg-panel`,
-`text-text-3`, `border-border-2`, `text-accent-link`, ...) and to the shadcn
+`text-text-3`, `border-border-2`, `text-accent-text`, ...) and to the shadcn
 registry names (`background`, `muted`, `ring`, ...), so a registry component
 paints the same tokens without edits.
 
@@ -916,11 +916,25 @@ Accent:
 
 | Token | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `--accent` | `#f0b23e` | `#b45309` | Identity, selection, the focus ring, `::selection` |
-| `--accent-hover` | `#f6c35c` | `#92400e` | Hovered accent fill |
-| `--accent-ink` | `#1a1204` | `#ffffff` | Text on an accent fill |
-| `--accent-link` | `#f0b23e` | `#975c06` | Hyperlinks only |
-| `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(180,83,9,.14)` | Selected-row wash |
+| `--accent` | `#f0b23e` | `#f0b23e` | Nimbus gold. Every accent mark, in both themes |
+| `--accent-hover` | `#f6c35c` | `#e0a230` | Hovered accent fill |
+| `--accent-ink` | `#1a1204` | `#1a1204` | Ink on a gold fill, and gold's carrier or keyline |
+| `--accent-text` | `#f0b23e` | `#1a1204` | Whichever of the pair the ground can show, for a mark with no area |
+| `--accent-tint` | `rgba(240,178,62,.14)` | `rgba(240,178,62,.22)` | Selected-row wash |
+
+The mark:
+
+| Token | Dark | Light | Use |
+| --- | --- | --- | --- |
+| `--mark` | `#f0b23e` | `#f0b23e` | The mascot body, nothing else |
+| `--mark-ink` | `#1a1204` | `#1a1204` | The mascot face |
+
+`--mark` holds the same literal as `--accent`, and the two are still
+separate tokens. A logo is exempt from the 3:1 non-text floor (WCAG SC
+1.4.11); the accent is not. The mark can therefore be the gold anywhere,
+unmeasured, while the accent may only be the gold where `--accent-ink`
+sits on top of it. Collapsing them would lose the reason the mascot is
+allowed on a white sidebar at all.
 
 Semantic tokens (each has a `-tint` at 14% for washes):
 
@@ -930,46 +944,100 @@ Semantic tokens (each has a `-tint` at 14% for washes):
 | `--warning` | `#fb923c` | `#b53b0a` | `Degraded`, `Starting`, `Reconnecting` |
 | `--error` | `#f87171` | `#b91c1c` | `Failed`, destructive, removals |
 | `--error-ink` | `#1f0a0a` | `#ffffff` | Text on an error fill |
+| `--success-ink` | `#06210f` | `#ffffff` | Text on a success fill |
 | `--info` | `#60a5fa` | `#1d4ed8` | `Running`, informational |
 
 Rules:
 
-- **One accent, four jobs.** `--accent` carries identity (the active nav
-  item, the primary CTA), selection (the selected row's bar and wash), the
-  focus ring, and `::selection`. There is no second identity colour.
-  `--accent-link` is hyperlinks and nothing else: never paint a button or
-  a nav item with it.
+- **One gold, in both themes, and it never darkens.** `--accent` is
+  `#f0b23e` in dark and in light — the same literal as the mark, so the
+  console has one identity colour and light does not fork it. There is no
+  darkened variant, because gold cannot be darkened and stay gold: at its
+  own hue it turns olive, and the red-shifted ambers that stay vivid
+  (`#b45309`) are a different colour standing next to the mascot. The
+  accent is the one role the light theme does not restate in its own
+  values.
+- **The gold must name its carrier.** Because the hue is fixed, contrast
+  is bought with the ground instead of the hue. The gold is 10.45:1 on the
+  dark canvas and 1.88:1 on the white one, so every accent mark that has
+  area — a fill, a 1–2px bar, a 6px dot, a dashed frame, a progress track,
+  a chip — pairs the gold with `--accent-ink` as carrier or keyline in the
+  same rule, and the pair then reads on any ground in either theme at
+  9.84:1. This is Radix's own prescription for amber, whose step 9 is one
+  of the five solids "designed for dark foreground text".
+- **A mark with no area takes `--accent-text`.** A 1px rule, a counter, a
+  prose hyperlink, an active sidebar row a vendored component paints as
+  text: these have nowhere to put a carrier, so they take `--accent-text`,
+  which is **always exactly one of the other two tokens** — the gold in
+  dark, the accent's own ink in light. It is never a third colour, so it
+  cannot drift back into a darkened gold. Prefer giving a mark area and
+  using the pair; reach for this token when the shape, or a vendored
+  component, leaves no room. The affordance then cannot be the colour: an
+  inline link keeps a resting underline (SC 1.4.1).
 - **Semantic colours never use the accent hue.** `Running` is `--info`
   (blue), never amber. A state token and the accent are never the same
   literal, so a status never reads as "selected".
 - **Contrast is measured, not assumed.** `src/styles/contrast.spec.ts`
   reads `tokens.css` and holds every text token to 4.5:1 on all four
-  grounds, `--accent` to 3:1 on all four grounds (SC 1.4.11), the two ink
-  tokens to 4.5:1 on their fills, and `--text-4` below `--text-3`. The
-  light deviations from the exemplar (`--text-3`, `--success`, `--warning`,
-  `--accent-link`) exist to pass those gates.
+  grounds, every ink token to 4.5:1 on its own fill, and `--text-4` below
+  `--text-3`. For the accent it holds the palette rather than a floor:
+  `--accent-text` must be `--accent` or `--accent-ink` exactly, and must be
+  the gold wherever the gold clears 4.5:1 on every ground — which makes a
+  third gold structurally impossible. It asserts `--accent` and `--mark`
+  are one literal in both themes; that the focus ring is two opaque strokes
+  in one unlayered rule, with a regex that rejects `transparent`,
+  `color-mix`, `rgba(` and a `/ alpha` anywhere in the `box-shadow`; and
+  that the pair clears 3:1 against each other and against all eight
+  grounds. It then greps every component for a gold utility whose class
+  string does not also name `--accent-ink`. `--accent` itself is
+  deliberately ungated as a foreground: it is 1.60:1 on light
+  `--bg-hover`, which is the whole reason it names a carrier. The light
+  deviations from the exemplar (`--text-3`, `--success`, `--warning`) exist
+  to pass those gates; the accent is not among them, because it does not
+  deviate.
+
+  No sRGB colour clears 4.5:1 as text on both `#ffffff` and `#0a0b0c` — the
+  window is empty, not merely narrow — which is why one hue cannot be
+  accent *text* in both themes, and why `--accent-text` is a choice between
+  two colours rather than a colour of its own.
 - **Status colours must always have text or icon labels.** Colour alone is
   never the only signal.
 - **Surfaces never use the accent as a fill.** The accent appears as a
-  1–2px bar, an inline dot, the ring, a small icon, or a small CTA — never
-  as a section background. A wash uses the `-tint`.
-- **One focus ring.** The unlayered `:focus-visible` rule in `globals.css`
-  paints a 2px ring of `--accent` at 40% and a 4px halo at 20% on every
-  focusable element, registry primitives included. No Nimbus-owned
-  component binds its own ring or outline colour under a focus variant. A
-  text field may add `focus-visible:border-accent` so the edge and the ring
-  agree.
+  1–2px bar, an inline dot, the ring, a small icon, a chip, or a small CTA
+  — never as a section background. A wash uses the `-tint`.
+- **One focus ring, two strokes.** The unlayered `:focus-visible` rule in
+  `globals.css` paints `0 0 0 2px var(--accent), 0 0 0 3px
+  var(--accent-ink)` on every focusable element, registry primitives
+  included: the gold is the ring, and the `--accent-ink` hairline outside
+  it is what the ring is measured against on a light ground. SC 2.4.13
+  measures an indicator against the colour adjacent to it, so the same two
+  strokes serve both themes from opposite sides — on dark the gold carries
+  it at 10.45:1 and the keyline disappears into the page; on light the
+  keyline carries it at 18.55:1 and the gold reads as the brand inside it.
+  One rule, no theming.
+
+  Both strokes must stay opaque. The ring this replaced was
+  `color-mix(in srgb, var(--accent-edge) 40%, transparent)`: the token it
+  named measured 4.61:1 and the stroke that actually reached the screen
+  measured 1.77:1 on white. Token-level checks all passed while the pixels
+  failed, which is why `contrast.spec.ts` now reads the rule itself.
+
+  No Nimbus-owned component binds its own ring or outline colour under a
+  focus variant. A text field may add `focus-visible:border-accent` so the
+  edge and the ring agree; that focus variant is the one documented
+  exception to the carrier rule, because the global keyline is drawn
+  immediately outside the border and carries the contrast for it.
 ### Brand Palette
 
 The brand palette is **distinct from the product palette above**. Use it
 only for:
 
-- The marketing logo variants (`docs/brand/logo/`)
+- The mascot mark files under `docs/brand/mascot/`
 - README hero images and marketing pages
-- The solid mascot as favicon, app icon, and sign-in sticker (see
+- The mascot in fixed gold as favicon, app icon, and sign-in sticker (see
   **Mascot** below)
-- The desktop "CLI not found" setup card (`cli-not-found.html`) — this is
-  the user's *first* contact with the app and is intentionally brand-tier
+- The desktop "CLI not found" setup card (`cli-not-found.html`), which
+  reads the product palette but draws the mark at the brand colours
 - Print, social-media images, and external touchpoints
 
 **Never** use brand-palette colors inside the operator console or native
@@ -981,60 +1049,39 @@ surface, pick the equivalent product-tier token instead.
 
 One family crosses tiers, by design:
 
-- **Golden Hour.** Brand `#D97706` (Golden Hour stroke) is the amber the
-  product accent is built from. `--accent` is `#f0b23e` in dark and
-  `#b45309` in light, and `--accent-link` is `#975c06` in light. Each is
-  measured against the product grounds rather than copied from the brand
-  sheet.
+- **Nimbus gold.** `#f0b23e` is the sticker colour of the mascot and the
+  product `--accent` in both themes. It is the one brand colour that
+  appears inside the product at full strength, and it crosses the tier
+  boundary unchanged because the console never asks it to do a job it
+  cannot do: it is always given a ground it can sit on, and `--accent-ink`
+  is that ground as often as it is the ink on top.
+- **Golden Hour stays outside.** Brand `#D97706` (Golden Hour stroke) has
+  no product token. The console once built darkened accents from it
+  (`#866423` in light); they are gone, because a darkened gold is a second
+  identity colour and the product now buys its contrast from the ground
+  instead. `--accent-ink` `#1a1204` is measured against the product
+  grounds, not copied from the brand sheet.
 
-No other colour crosses tiers. The blue, teal, and slate brand variants stay
-on the logo and marketing surfaces. The product has no blue identity and no
-teal accent.
+No other colour crosses tiers. The product has no blue identity and no
+teal accent, and the marketing surfaces take the same night and paper
+grounds as the product (`#0a0b0c` and `#ffffff`).
 
-#### Variants
+#### Mark files
 
-| Variant       | Stroke (`--logo-stroke`) | Fill (`--logo-fill`) | Background |
-|---------------|--------------------------|----------------------|------------|
-| `warm`        | `#0F172A`                | `#FFE7B3`            | `#FFFAF2`  |
-| `cool-blue`   | `#3B82F6`                | `#FFFFFF`            | `#F8FAFC`  |
-| `night-blue`  | `#60A5FA`                | `#1E293B`            | `#0B1220`  |
-| `monochrome`  | `#111827`                | `#FFFFFF`            | `#FFFFFF`  |
-| `reverse-mono`| `#FFFFFF`                | `#111827`            | `#111827`  |
-| `sunset-red`  | `#DC2626`                | `#FFFFFF`            | `#FEF2F2`  |
-| `soft-purple` | `#9333EA`                | `#FFFFFF`            | `#FAF5FF`  |
-| `golden-hour` | `#D97706`                | `#FFFFFF`            | `#FFFBEB`  |
-| `slate`       | `#475569`                | `#FFFFFF`            | `#F1F5F9`  |
+`docs/brand/mascot/` holds the static exports of the mascot. Every file is
+the same 120x92 drawing from `mascot.tsx`, cropped to `0 8 120 80` so a
+lockup controls its own spacing.
 
-The marketing variants under `docs/brand/logo/` still carry the original
-wisp cloud; they are the marketing tier and change on their own schedule.
-The console mark (`packages/nimbus-ui/public/nimbus-logo.svg`) is the
-mascot body with the idle face, and it accepts the same `--logo-stroke` and
-`--logo-fill` CSS variables. Variant rendering is parameter substitution — the
-path data is identical across all variants. `gen-variants.sh` also emits a
-`-transparent` companion for every variant (same colors, no background
-rect, viewBox cropped to the ink bounds so lockups control their own
-spacing) for placement on surfaces that own their own background: the
-docs hero, the docs top-nav, README badges. The wordmark is lowercase
-`nimbus` whenever it is set next to the mark.
+| File                    | What it is                                                   | Used by                                   |
+|-------------------------|--------------------------------------------------------------|-------------------------------------------|
+| `mascot-gold.svg`       | Gold `#f0b23e` body, `#1a1204` face                          | README, docs nav, OG art                  |
+| `mascot-tile.svg`       | Gold mascot centred on a `#0a0b0c` tile with a 104 radius    | App icon, apple-touch-icon                |
+| `mascot-template.svg`   | Black silhouette with the face cut out, heavier face         | macOS tray template                       |
+| `render.sh`             | Renders `icon-512.png` and, with `DESKTOP_DIR`, the desktop `icon.png`, `icon.icns`, `icon.ico`, and tray PNGs | Release prep |
 
-#### Usage Guidelines
-
-- **Warm** — the light-mode identity: docs light-mode favicon/logo,
-  marketing pages, app icon, and the desktop setup card.
-- **Golden Hour** — brand-forward marketing accents; its `#D97706` stroke
-  is the tier bridge into the product `--accent`.
-- **Cool Blue** — cool-toned marketing touchpoints only. The product has no
-  blue palette.
-- **Night Blue** — docs dark-mode favicon/logo and dark marketing
-  surfaces. The product dark mode is neutral, not blue.
-- **Monochrome** / **Reverse Mono** — minimal, enterprise, print. Tray
-  icon uses monochrome on light menu bars; macOS auto-inverts for dark.
-- **Sunset Red**, **Soft Purple**, **Slate** — reserved for future
-  marketing variants and seasonal/event use; not currently wired in.
-
-The completed execution record for brand rollout, including the variant
-regenerator (`docs/brand/gen-variants.sh`) and per-surface wiring, lives
-in `docs/private/plans/archive/brand-system-plan.md`.
+The wordmark is lowercase `nimbus` whenever it is set next to the mark, at
+semibold with `-0.01em` tracking, and the mark sits at 24 to 30px beside
+it.
 
 #### Mascot
 
@@ -1044,10 +1091,20 @@ one shape from 16px up. The face carries the state; nothing else moves.
 `packages/nimbus-ui/src/components/mascot.tsx` is the single source of the
 drawing; the static assets are exports of it.
 
-| Variant   | Where                                                   | Colour                                                  |
-|-----------|---------------------------------------------------------|---------------------------------------------------------|
-| `outline` | The mark: sidebar brand row, mobile top bar, inline text | `currentColor` stroke, `--bg-panel` fill                |
-| `solid`   | The sticker: favicon, app icon, sign-in card, empty states at 32px and above | `--accent` body, `--accent-ink` face (fixed `#f0b23e` / `#1a1204` in static assets) |
+There is one drawing and it is always filled. In the console the body takes
+`--mark` and the face takes `--mark-ink`: Nimbus gold with an ink face on
+the light grounds, white with an ink face on the dark ones. Outside the
+console the same drawing is fixed at the sticker colours, `#f0b23e` on
+`#1a1204`, on a `#0a0b0c` tile where it needs a ground.
+
+| Where                                                       | Body / face                              |
+|-------------------------------------------------------------|------------------------------------------|
+| Sidebar brand row, mobile top bar, overview and nodes headlines, empty states, first run, disconnected banner | `--mark` / `--mark-ink` |
+| Favicon, app icon, desktop icon and tray, sign-in card, README, docs nav | Fixed `#f0b23e` / `#1a1204`; the README and docs swap to white / `#18181b` under a dark scheme |
+
+The outline variant is gone. A stroked cloud on the panel ground read as a
+second logo next to the filled one on the app icon, and at 24px its
+1px stroke lost to the semibold wordmark beside it.
 
 - **States.** `idle` (dot eyes, smile), `working` (eyes to the side, flat
   mouth, thought dots), `error` (crossed eyes, wobble, one drop), `empty`
@@ -1058,51 +1115,62 @@ drawing; the static assets are exports of it.
   `prefers-reduced-motion: reduce`; the `globals.css` backstop is the
   second net.
 - **Sizes.** 16 in a tab, 24 to 30 in the nav, 32 in a card header, 48 and
-  up in an empty state. Below 24px the outline stroke thickens from 5 to 7
-  units so it survives the tab bar.
+  up in an empty state. Below 40px the face thickens (mouth 4 to 5.5 units,
+  eyes 3.7 to 4.6) so it survives the tab bar.
 - **Static exports.** `favicon.svg` and `favicon.ico` (16, 32, 48) and
-  `icon-512.png` (solid face on a `#0a0b0c` tile) under
-  `packages/nimbus-ui/public/`. The favicon is one fixed-colour drawing, so
-  the console does not swap it when the theme changes.
-- **Accent rule.** The amber body is the accent, so the solid variant appears
-  only where the accent may appear: once per surface, never as a wash.
+  `icon-512.png` (gold face on a `#0a0b0c` tile) under
+  `packages/nimbus-ui/public/`, plus the brand set under
+  `docs/brand/mascot/` (see **Mark files** above). The favicon is one
+  fixed-colour drawing, so the console does not swap it when the theme
+  changes. The desktop app icon, the tray template, and the docs favicon
+  are renders of the same drawing.
+- **Mark rule.** `--mark` paints the mascot body and nothing else. It is
+  not a second accent: no button, badge, wash, or text takes it. The
+  accessories outside the body (thought dots, drop, zz, sparks) take
+  `currentColor`.
 
 ### Documentation Site (nimbusdocs.com)
 
 The Documentation site is the third brand surface, sitting between the
 product tier (operator console) and the brand tier (marketing). Its
-governing rule: **the doc body is product-tier; the splash hero is the
-site's single brand-tier moment.** Renderer: Astro Starlight in
-`website/`; tokens live in `website/src/styles/custom.css`.
+governing rule: **the doc body is product-tier; the home page is the site's
+single brand-tier moment.** Renderer: a Next static export drawn by
+fumadocs in `website/`; tokens live in `website/src/styles/tokens.css`, the
+host theme in `website/src/styles/docs-theme.css`, and the home page in
+`website/src/styles/odyssey.css`.
 
-- **Doc body = product tier.** Starlight's gray scale maps to the product
-  neutrals (`--bg-canvas`/`--bg-panel`/`--border-2`/`--text-1`/`--text-3`,
-  both modes verbatim). Starlight has a single accent family: light
-  `--sl-color-accent` ← `--accent-link` (#975c06) with accent-high deepened
-  for link text on paper; dark `--sl-color-accent` ← `--accent` (#f0b23e).
-  One identity family per mode — teal and blue stay out of the doc body.
-  No gradients in the doc body.
-- **Splash hero = brand tier, once.** Dark mode renders the hero title in
-  the canonical brand "Interactive Elements" gradient `#67E8F9 → #06B6D4`
-  over Night Blue. Light mode is golden daylight, so its hero composes
-  the warm identity instead: `#F59E0B → #B45309` (amber-500 → amber-700)
-  on warm paper. These are the only gradient sites on the docs surface.
-- **Logo + wordmark + favicon.** The top nav renders the transparent mark
-  next to the lowercase wordmark `nimbus` (Starlight `title` +
-  `logo.light/dark`). Hero and nav use `warm-transparent` (light) /
-  `night-blue-transparent` (dark) so the mark sits on the page's own
-  background. The favicon follows the **page's resolved theme**, not the
-  OS scheme: a head script swaps `favicon-warm.svg` / `favicon-night.svg`
-  on `data-theme` changes (an SVG `prefers-color-scheme` query can only
-  see the OS, so a light page on a dark OS would otherwise show the night
-  favicon). The auto media-query `favicon.svg` stays as the no-JS
-  fallback. The docs site keeps its own copies of these files; the
-  operator console ships the solid mascot as its favicon instead (see
-  **Mascot** above) and swaps nothing.
-- **Typography.** Body uses the system UI stack; code/IDs/paths use
-  JetBrains Mono (`@fontsource-variable/jetbrains-mono`) with `-0.01em`
-  letter spacing; tables apply `tabular-nums`. Radius 6px default / 8px
-  cards, per §Spacing And Shape.
+- **Doc body = product tier.** Fumadocs paints every surface through a
+  `--color-fd-*` custom property. `docs-theme.css` answers each one from a
+  Nimbus role token rather than from the vendor gray scale, so the docs and
+  the console they document share one set of roles. `--color-fd-primary`
+  takes `--accent-text`, not `--accent`: fumadocs paints "primary" as text
+  far more often than as a fill — an active sidebar row, an active tab, a
+  link chevron — and those are marks with no area drawn inside vendored
+  components, which is the case `--accent-text` answers under the §Colour
+  rule. `--color-fd-ring` takes the gold, because `global.css` overpaints
+  `:focus-visible` with the ring and its keyline. `--color-fd-accent` is the hover ground, because fumadocs
+  means the hovered surface by that word where Nimbus means the brand
+  colour. One identity family per mode — teal and blue stay out of the doc
+  body, and the doc body carries no gradient.
+- **Home page = brand tier, once.** `/` is the Odyssey: one scroll-driven
+  canvas that follows a request from an app through the binary and back,
+  twenty chapters mixed from a single progress value. It is the only place
+  on the surface that leaves the role tokens, and it ends on Nimbus gold.
+  Under reduced motion, or on a viewport too short to hold the stage, it
+  renders as a storyboard of stills carrying the same arc. `/docs/` is the
+  written entrance to the same story and is product tier throughout.
+- **Logo + wordmark + favicon.** The top nav renders the mascot next to the
+  lowercase wordmark `nimbus`. The mark is the mascot in fixed gold —
+  `--mark` `#f0b23e` body on `--mark-ink` `#1a1204` face, the same
+  `favicon.svg` the operator console ships (see **Mascot** above). The mark
+  does not theme, so the docs site swaps nothing on `data-theme` and needs
+  no per-theme copies: one sticker on every surface, at every size. The
+  social card at `/og.png` is the same mark on Night, rendered from
+  `docs/brand/mascot/og.svg` by `docs/brand/mascot/render.sh`.
+- **Typography.** Body and headings use Geist; code, IDs and paths use Geist
+  Mono. Both are self-hosted woff2 under `website/public/fonts/`, so the
+  site loads no third-party font. Tables apply `tabular-nums`. Radius 6px
+  default / 8px cards, per §Spacing And Shape.
 
 #### Messaging canon — one sentence, three surfaces
 

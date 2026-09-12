@@ -316,6 +316,9 @@ const LINE_CLASS: Record<ConsoleLine["kind"], string> = {
   stderr: "whitespace-pre-wrap text-warning",
   exit: "text-text-3",
   closed: "text-text-3",
-  input: "whitespace-pre-wrap text-accent",
+  // Accent text has no area to carry a ground, so light takes the accent's
+  // ink. The row is identified by its "› " prefix either way, never by
+  // colour alone (WCAG 1.4.1).
+  input: "whitespace-pre-wrap text-accent-text",
   error: "text-error",
 };

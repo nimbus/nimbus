@@ -83,7 +83,7 @@ const TEXT_TOKENS = [
   "--text-1",
   "--text-2",
   "--text-3",
-  "--accent-link",
+  "--accent-text",
   "--success",
   "--warning",
   "--error",
@@ -113,22 +113,57 @@ describe("role token contrast", () => {
     expect(failures).toEqual([]);
   });
 
-  // --accent paints fills and the focus ring, which are non-text UI
-  // components under SC 1.4.11: 3:1 on every ground it can sit on.
-  it.each(COMBOS)("%s: --accent clears the 3:1 non-text floor", (_, t) => {
-    for (const ground of GROUNDS) {
-      expect(contrast(t["--accent"], t[ground])).toBeGreaterThanOrEqual(3);
+  /* --accent-text is the one accent role measured as a foreground, and the
+     rule that keeps it from becoming a third gold is that it is never a
+     colour of its own: it is whichever member of the accent pair the ground
+     can show. Without this the token is just `--accent-edge` again, and the
+     darkened gold that used to live in that slot (#866423) would pass the
+     4.5:1 check above while reading as a different colour standing next to
+     the mascot. TEXT_TOKENS holds the floor; this holds the palette. */
+  it.each(COMBOS)("%s: --accent-text is the accent or its ink", (_, t) => {
+    expect([t["--accent"], t["--accent-ink"]]).toContain(t["--accent-text"]);
+  });
+
+  /* Which one it is follows from the ground rather than from taste: on a
+     ground that can carry the gold as text the token must be the gold, and
+     only where the gold fails may it fall back to the ink. Asserting the
+     direction stops a theme from quietly dropping to the ink everywhere and
+     passing the two checks above with no accent left in it. */
+  it.each(
+    COMBOS,
+  )("%s: it keeps the gold wherever the gold can be read", (_, t) => {
+    const goldIsReadable = GROUNDS.every(
+      (ground) => contrast(t["--accent"], t[ground]) >= 4.5,
+    );
+    expect(t["--accent-text"]).toBe(
+      goldIsReadable ? t["--accent"] : t["--accent-ink"],
+    );
+  });
+
+  // --accent is the gold, and the gold is deliberately NOT held to a floor
+  // against the grounds: at 1.60:1 on light --bg-hover it would fail, and
+  // darkening it to pass is what turned the light accent into a different
+  // colour from the mark. What is held is the pair that makes it legible --
+  // the ink, which serves both as the ink on top of a gold fill and as the
+  // carrier or keyline under a gold mark that has no room for ink.
+  it.each(COMBOS)("%s: every ink clears AA on its own fill", (_, t) => {
+    for (const [ink, fill] of [
+      ["--accent-ink", "--accent"],
+      ["--accent-ink", "--accent-hover"],
+      ["--error-ink", "--error"],
+      ["--success-ink", "--success"],
+    ]) {
+      expect(contrast(t[ink], t[fill])).toBeGreaterThanOrEqual(4.5);
     }
   });
 
-  // Text on an accent fill (primary buttons, the selected segment).
-  it.each(COMBOS)("%s: --accent-ink clears AA on --accent", (_, t) => {
-    expect(contrast(t["--accent-ink"], t["--accent"])).toBeGreaterThanOrEqual(
-      4.5,
-    );
-    expect(contrast(t["--error-ink"], t["--error"])).toBeGreaterThanOrEqual(
-      4.5,
-    );
+  // The gold is the same literal in both themes. The accent is the identity,
+  // the mark is the identity, and light must not fork them again.
+  it("uses one gold for --accent and --mark in both themes", () => {
+    for (const t of Object.values(THEMES)) {
+      expect(t["--accent"]).toBe(t["--mark"]);
+    }
+    expect(THEMES.light["--accent"]).toBe(THEMES.dark["--accent"]);
   });
 
   // --text-4 is the one documented non-AA token (disabled only, which WCAG
@@ -175,7 +210,7 @@ describe("role token contrast", () => {
    written under components/ui.
 
    Two things keep that true. The rule itself must stay unlayered and must
-   name `--accent` (the ring token, DESIGN.md accent job 3). And no Nimbus-owned
+   paint the gold with its keyline (DESIGN.md accent job 3). And no Nimbus-owned
    component may bind a ring or outline colour of its own under a focus
    variant: that would either duplicate the global ring or, on a token that
    misses 3:1, paint a worse one. */
@@ -204,12 +239,26 @@ function unlayeredRules(css: string): string[] {
 /* A ring or outline colour under a focus variant is a second focus ring by
    construction. A border colour under a focus variant is allowed on one
    token only: `border-accent`, the accent border a text field shows together
-   with the ring (DESIGN.md inputs). Any other focus border is a private
-   indicator on a token that was never measured for the job. */
+   with the ring (DESIGN.md inputs). That one is admitted because the global
+   ring is drawn immediately outside it and carries the keyline, so the gold
+   border never has to answer the white canvas by itself. Any other focus
+   border is a private indicator on a token measured for something else. */
 const RING_COLOUR =
-  /\b(?:focus|focus-visible|focus-within):(?:ring|outline)-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent|accent-link|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
+  /\b(?:focus|focus-visible|focus-within):(?:ring|outline)-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent|accent-text|accent-ink|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
 const BORDER_COLOUR =
-  /\b(?:focus|focus-visible|focus-within):border-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent-link|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
+  /\b(?:focus|focus-visible|focus-within):border-(?:\[color:var\((--[a-z0-9-]+)\)\]|(?:accent-(?:text|ink|hover)|success|warning|error|info|text-[1-4]|border-[1-3]|ring|destructive|bg-[a-z]+))(?:\/\d+)?(?![\w-])/g;
+
+/** Every .tsx under a directory, the vendored registry included. */
+function allTsxFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...allTsxFiles(path));
+    else if (entry.name.endsWith(".tsx") && !entry.name.includes(".spec."))
+      out.push(path);
+  }
+  return out;
+}
 
 function tsxFiles(dir: string): string[] {
   const out: string[] = [];
@@ -226,16 +275,50 @@ function tsxFiles(dir: string): string[] {
 }
 
 describe("focus indicators", () => {
-  it("paints the global ring from --accent in one unlayered rule", () => {
+  it("paints the global ring as the gold plus its keyline, unlayered", () => {
     const rule = unlayeredRules(GLOBALS).find((r) =>
       r.startsWith(":focus-visible {"),
     );
     expect(rule).toBeDefined();
     expect(rule).toMatch(/outline:\s*none;/);
-    expect(rule).toMatch(/box-shadow:[\s\S]*var\(--accent\)/);
-    // Two layers: an inner 2px band and an outer 4px halo.
-    expect(rule).toMatch(/0 0 0 2px/);
-    expect(rule).toMatch(/0 0 0 4px/);
+    // The gold inside, the keyline one pixel wider, so the keyline shows as
+    // a hairline around the gold rather than replacing it.
+    expect(rule).toMatch(/0 0 0 2px var\(--accent\)/);
+    expect(rule).toMatch(/0 0 0 3px var\(--accent-ink\)/);
+  });
+
+  /* Both strokes have to be opaque. The ring this replaced was
+     `color-mix(in srgb, var(--accent-edge) 40%, transparent)`: the token it
+     named measured 4.61:1 against the light canvas and the stroke that
+     actually reached the screen measured 1.77:1, because 40% of it was the
+     canvas. Every token-level check in this file passed throughout. Nothing
+     but this test can tell the difference, so it is the only thing standing
+     between the ring and that defect returning. */
+  it("composites no part of the ring against the ground", () => {
+    const rule = unlayeredRules(GLOBALS).find((r) =>
+      r.startsWith(":focus-visible {"),
+    );
+    const shadow = rule?.match(/box-shadow:([\s\S]*?);/)?.[1] ?? "";
+    expect(shadow).not.toMatch(/transparent|color-mix|\brgba?\(|\/\s*\d/);
+  });
+
+  /* And the pair has to work as an indicator in both themes. SC 2.4.13 reads
+     a focus indicator against the colour next to it, so what matters is that
+     the two strokes are distinct from each other and that whichever one meets
+     the page is distinct from the page. The gold answers the dark grounds and
+     the keyline answers the light ones, which is the whole reason the ring is
+     two strokes and not one. */
+  it.each(COMBOS)("%s: the ring reads against every ground", (_, t) => {
+    expect(contrast(t["--accent"], t["--accent-ink"])).toBeGreaterThanOrEqual(
+      3,
+    );
+    for (const ground of GROUNDS) {
+      const best = Math.max(
+        contrast(t["--accent"], t[ground]),
+        contrast(t["--accent-ink"], t[ground]),
+      );
+      expect(best).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it("names no other focus ring token in the stylesheet", () => {
@@ -264,7 +347,7 @@ describe("inline links", () => {
   it("identify themselves by a resting underline, not colour alone", () => {
     const rule = GLOBALS.match(/\.link-inline \{([\s\S]*?)\n {2}\}/);
     expect(rule).not.toBeNull();
-    expect(rule?.[1]).toMatch(/color:\s*var\(--accent-link\)/);
+    expect(rule?.[1]).toMatch(/color:\s*var\(--accent-text\)/);
     expect(rule?.[1]).toMatch(/text-decoration:\s*underline/);
   });
 });
@@ -280,5 +363,153 @@ describe("reduced motion", () => {
     expect(rule).toBeDefined();
     expect(rule).toMatch(/animation-duration:\s*0\.01ms !important/);
     expect(rule).toMatch(/transition-duration:\s*0\.01ms !important/);
+  });
+});
+
+// --- the gold names its carrier -------------------------------------------
+
+/* `--accent` is Nimbus gold in both themes, which means it is 1.60:1 on the
+   darkest light ground and 10.45:1 on the darkest dark one. It is never
+   legible on its own across both themes, in any shape -- as a fill, as a
+   hairline, or as text. What makes it legible is always the same thing: the
+   `--accent-ink` next to it, as ink on top of a fill, as a carrier behind
+   text, or as a keyline around a mark too thin to hold ink.
+
+   So the rule is not which utility may paint the gold -- it is that whatever
+   does must name the carrier in the same breath. A class string that paints
+   the gold and says nothing about `--accent-ink` is a gold mark with no
+   ground, which is the defect this whole section exists to catch, and the
+   one the retired `--accent-edge` used to paper over by darkening the hue.
+
+   Matching runs over one string literal at a time rather than the file,
+   because a className is a literal and the carrier has to be on the same
+   element, not merely somewhere in the module. */
+const GOLD =
+  /\b(?:bg|text|border|divide|outline|ring|decoration|fill|stroke|shadow)-accent(?:-hover)?(?![\w-])/;
+const CARRIER =
+  /\b(?:bg|text|border|divide|outline|ring|decoration|fill|stroke|shadow)-accent-ink(?![\w-])|var\(--accent-ink\)/;
+
+/* The exception, and the only one: the gold under a focus variant. The global
+   `:focus-visible` rule draws the keyline immediately outside whatever the
+   variant paints, so that gold is carried by a rule in globals.css rather
+   than by a class beside it. `focus indicators` above is what holds the
+   keyline in place, and BORDER_COLOUR is what keeps the exception down to the
+   one border it is written for. */
+const FOCUS_GOLD =
+  /\b(?:focus|focus-visible|focus-within):(?:bg|text|border|ring|outline)-accent(?:-hover)?(?![\w-])/g;
+const STRING_LITERAL =
+  /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
+
+describe("the gold names its carrier", () => {
+  /* This runs over the registry as well. `components/ui` is exempt from the
+     Nimbus-owned rules elsewhere in this file because it is vendored and
+     speaks shadcn's vocabulary, but "the gold needs its ink" is a contrast
+     fact and holds no matter who wrote the file. The registry is in fact
+     where it was broken: dropdown-menu painted the gold under `--text-1`,
+     1.76:1. */
+  it("gives every gold mark a carrier, registry included", () => {
+    const offenders: string[] = [];
+    for (const file of allTsxFiles(SRC)) {
+      const text = readFileSync(file, "utf8");
+      for (const literal of text.matchAll(STRING_LITERAL)) {
+        const classes = literal[0].replace(FOCUS_GOLD, "");
+        if (!GOLD.test(classes)) continue;
+        if (CARRIER.test(classes)) continue;
+        const line = text.slice(0, literal.index).split("\n").length;
+        offenders.push(
+          `${relative(SRC, file)}:${line} ${GOLD.exec(classes)?.[0]} with no carrier`,
+        );
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  /* The shadcn bridge resolves the registry's vocabulary onto the role
+     tokens. `ring`/`sidebar-ring` are the registry's focus indicator, and
+     the global `:focus-visible` rule overpaints both with the gold and its
+     keyline -- so what these tokens have to be is the gold, the colour that
+     shows through if that rule is ever removed. Naming a hue nothing else in
+     the sheet uses is how the palette grew a third gold the last time. */
+  it("routes the registry ring to the gold", () => {
+    // The bridge is the `@theme inline` block, not `:root`: these are
+    // Tailwind utility-namespace names, not role tokens.
+    const bridge = block("@theme inline");
+    for (const token of ["--color-ring", "--color-sidebar-ring"]) {
+      expect(bridge[token]).toBe("var(--accent)");
+    }
+  });
+
+  /* Series 1 is the gold, like every other accent mark. A series is the one
+     accent shape that carries no ink of its own and cannot be given a
+     carrier by a class beside it, so the first chart built here owes series 1
+     an `--accent-ink` hairline around the fill. Nothing charts anything yet;
+     what this holds is that the answer when something does is the gold and
+     not a second hue invented for the occasion. */
+  it("routes the first chart series to the gold", () => {
+    expect(block("@theme inline")["--color-chart-1"]).toBe("var(--accent)");
+  });
+});
+
+// --- every ink is legible on its own ground -------------------------------
+
+/* The bridge names grounds and inks in pairs: `popover`/`popover-foreground`,
+   `primary`/`primary-foreground`. The pair is a promise that the ink can be
+   read on that ground, and nothing but this test keeps the promise -- a name
+   that points at a token which merely sounds related still compiles and still
+   renders. Both real failures looked exactly like that:
+   `accent-foreground` pointed at `--text-1` (1.76:1 on the gold, because the
+   gold is a light fill wanting dark ink) and `destructive-foreground` pointed
+   at `--error` itself (1.00:1, ink on its own colour).
+
+   Deriving the pairs from the sheet rather than listing them means a pair
+   added later is held to the floor without anyone remembering to add it. */
+function resolve(value: string, theme: Tokens): string {
+  const seen = new Set<string>();
+  let v = value.trim();
+  while (v.startsWith("var(")) {
+    const name = v.slice(4, v.indexOf(")"));
+    if (seen.has(name)) throw new Error(`cyclic token ${name}`);
+    seen.add(name);
+    const next = theme[name] ?? BRIDGE[name];
+    if (next === undefined) throw new Error(`unresolved token ${name}`);
+    v = next.trim();
+  }
+  return v;
+}
+
+const BRIDGE = block("@theme inline");
+
+/** Ground for each `<name>-foreground`. shadcn pairs the page ink with
+ *  `background`, which is the one pair whose ground is not its own prefix. */
+function groundFor(ink: string): string {
+  return ink === "--color-foreground"
+    ? "--color-background"
+    : ink.slice(0, -"-foreground".length);
+}
+
+const INK_PAIRS = Object.keys(BRIDGE)
+  .filter((name) => name.endsWith("-foreground"))
+  .map((ink) => [groundFor(ink), ink] as const);
+
+describe("every ink is legible on its own ground", () => {
+  it("pairs a ground with every ink the bridge names", () => {
+    // Guards the derivation itself: a rename that breaks the `-foreground`
+    // convention would otherwise empty this suite and look green.
+    expect(INK_PAIRS.length).toBeGreaterThanOrEqual(10);
+    for (const [ground] of INK_PAIRS) expect(BRIDGE[ground]).toBeDefined();
+  });
+
+  it.each(COMBOS)("%s: every bridge pair clears 4.5:1", (_, theme) => {
+    const failures: string[] = [];
+    for (const [ground, ink] of INK_PAIRS) {
+      const ratio = contrast(
+        resolve(BRIDGE[ink], theme),
+        resolve(BRIDGE[ground], theme),
+      );
+      if (ratio < 4.5) {
+        failures.push(`${ink} on ${ground} is ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures).toEqual([]);
   });
 });

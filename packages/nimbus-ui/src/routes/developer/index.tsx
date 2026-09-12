@@ -312,7 +312,6 @@ function Headline({
         <Mascot
           size={40}
           state={reading.mascot}
-          variant="outline"
           decorative
           className="shrink-0 text-text-1"
           data-testid="overview-mascot"
