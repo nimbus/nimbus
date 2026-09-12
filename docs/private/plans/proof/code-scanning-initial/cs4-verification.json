@@ -1,0 +1,150 @@
+{
+  "baseline": "b527e1742ab3c86f8e896765b7d4e63b964116ab",
+  "publication_status": "complete",
+  "repairs": [
+    {
+      "branch": "codex/codegen-prototype-security",
+      "head": "fb8faa301c1c18f41f35ce680856eb3af6957deb",
+      "pr": "https://github.com/nimbus/nimbus/pull/346",
+      "alerts": [
+        1,
+        2,
+        6919
+      ],
+      "checks": {
+        "npm test --workspace @nimbus/codegen": "pass; full selftest runner, no count reported",
+        "npm run typecheck --workspace @nimbus/codegen": "pass",
+        "npm run build --workspace @nimbus/codegen": "pass",
+        "cargo fmt --all --check": "pass",
+        "make clippy": "pass; workspace/all targets",
+        "Nimbus autoreview --gate pre-pr --mode auto": "pass; Claude Opus 5 high, configured P0 threshold"
+      },
+      "raw_logs": {
+        "codegen-clippy.log": "85cec0b3410939b02766e88d5a7489ecb9e2b8f24d58faa2dd8cca5ebc37a01c",
+        "codegen-autoreview.log": "43f762b576e7e62e30f4bdc58eaf19bbb93c8cc6fbc91de6d5d7b65e22401440"
+      }
+    },
+    {
+      "branch": "codex/bootc-argument-security",
+      "head": "5159c842137e48e0ae88da7d69641a326abd57dd",
+      "pr": "https://github.com/nimbus/nimbus/pull/347",
+      "alerts": [
+        7244
+      ],
+      "checks": {
+        "focused_tests": "4 bootc tests passed",
+        "cargo fmt --all --check": "pass",
+        "make clippy": "pass; workspace/all targets",
+        "Nimbus autoreview --gate pre-pr --mode auto": "pass; Claude Opus 5 high, configured P0 threshold"
+      },
+      "raw_logs": {
+        "bootc-clippy.log": "f16f051d0f2eb5d3bdb24cef1ccc1fbd0648f01b4cc3f8b836aecb765da70e73",
+        "bootc-autoreview.log": "73b535d193e36c5a0c312f0c4efb09334e0e49574bcaa046c38a43a2cee22dc2"
+      }
+    },
+    {
+      "branch": "codex/runtime-filesystem-canary-security",
+      "head": "017036b48e2d38e1bf0147bce24e3b1dfb767bac",
+      "pr": "https://github.com/nimbus/nimbus/pull/348",
+      "alerts": [
+        1942
+      ],
+      "checks": {
+        "focused_tests": "2 verifier tests and 1 Node 24 diagnostic batch passed",
+        "cargo fmt --all --check": "pass",
+        "make clippy": "pass; workspace/all targets",
+        "Nimbus autoreview --gate pre-pr --mode auto": "pass; Claude Opus 5 high, configured P0 threshold"
+      },
+      "raw_logs": {
+        "runtime-clippy.log": "85ecf57b398302bf946b80db978dee5deced56522f93750d9dcd311104865f78",
+        "runtime-autoreview.log": "8eb26b23620620dde03829712d355a716b0da92ed8289a4f23daa8a4e638385a"
+      }
+    },
+    {
+      "branch": "codex/brotli-workpool-ownership",
+      "head": "b7bd837132dc1b9f9a3824645b50da9a50b34737",
+      "pr": "https://github.com/nimbus/nimbus/pull/349",
+      "alerts": [
+        7100
+      ],
+      "checks": {
+        "isolated_ffi_tests": "8 passed, 0 failed, 29 filtered out; features ffi-api and brotli-decompressor/ffi-api",
+        "cargo fmt --all --check": "pass",
+        "rustfmt --edition 2015 --check (changed Rust files)": "pass",
+        "make clippy": "pass; workspace/all targets",
+        "make verify-third-party-attribution": "pass; 1 guarded crate and 8 vendor patches",
+        "Nimbus autoreview --gate pre-pr --mode auto": "pass; Claude Opus 5 high, configured P0 threshold"
+      },
+      "source_hashes": {
+        "src/ffi/compressor.rs": "8ba5aaee4cf25b30bb52fb91f76ab4e281cd0dce69f6c8118023a2254b19102a",
+        "src/ffi/multicompress/mod.rs": "f2e77e0101d6578ffabe51b54589b6fb98aa172c92e9a2b706b6500c1da0c565",
+        "src/ffi/multicompress/test.rs": "b286e9b52e80d12b02920300cf95bd9536fbaaebe4234f708e959999deec1901"
+      },
+      "verification_lock_sha256": "59a19ad637e640fe5f3d44f559ab93a7fd663c8f618d07143251d285e0ce6952",
+      "raw_logs": {
+        "brotli-ffi-tests.log": "e7dcf58de0d64ad5fd00191e7f81885b98e7d1f0e65e27abd9d824b4ae87f2f6",
+        "brotli-clippy.log": "0cd02cdbd22cb445275c331290e41c75c6ce43c42763bdfa131d20d9f895423b",
+        "brotli-autoreview.log": "9641e58a6da81aa4b6d6833c4823f207efdb9a14be97a9e468a217566ce2d4d0"
+      },
+      "review_disposition": "No accepted findings. The reviewer mentioned speculative aliasing and null-pointer test concerns below the configured threshold. Root verified trace reads occur after destruction and worker teardown; the tracking allocator accepts only its own live pointers."
+    },
+    {
+      "branch": "codex/object-store-tls-verification",
+      "head": "7ce00a71413bb25ede76d5f5f90f2247e6b719e8",
+      "pr": "https://github.com/nimbus/nimbus/pull/350",
+      "alerts": [
+        7141
+      ],
+      "checks": {
+        "isolated_configuration_tests": "2 rejection tests and 1 existing client configuration roundtrip test passed",
+        "cargo fmt --all --check": "pass",
+        "rustfmt --check (changed Rust files)": "pass",
+        "make clippy": "pass; workspace/all targets",
+        "make verify-third-party-attribution": "pass; 1 guarded crate and 8 vendor patches",
+        "Nimbus autoreview --gate pre-pr --mode auto": "pass; Claude Opus 5 high, configured P0 threshold"
+      },
+      "source_hashes": {
+        "src/client/mod.rs": "380643eb61b73a8602ce25a2c1bd2ec71bb3759d4f16bf0c5e0eb55dd972f328",
+        "src/aws/builder.rs": "5f1c03259fefe5515c43adf9fcca47b6425160a4e0cbd3c90f68b0b1341aac0d",
+        "src/aws/mod.rs": "635bf90ca2185b0963a81f73fa81b6defb93a90fff685f713f5ac533c0e32a3b"
+      },
+      "verification_lock_sha256": "5368a5c384c74cc3b8f5e910ee7e28d3618ceab4570b2a998d239ff90dc31b68",
+      "raw_logs": {
+        "tls-tests.log": "8caa55900ad50461858a15259a554b58095a71253c58074e8f64415d1d36b410",
+        "tls-config-roundtrip.log": "814dc5afd6b4979e83ef83dee070e32141190953c22b63c4ab7b7970f9cd8484",
+        "tls-clippy.log": "7dfb1e1f86b7f525790a54cad4120e77ded32a5f53068a14cfc4335028fdec51",
+        "tls-autoreview.log": "fdcac38f8c32be8ed2a76a0dadde9909dce49647844ab9d996ffe7aa1e86225b"
+      },
+      "review_disposition": "No accepted findings. Workspace Clippy and symbol search cover removed API references. The external SSE-C fixture now requires a trusted certificate; that intentional change is documented. Its integration run remains unverified."
+    }
+  ],
+  "global_limitations": [
+    "Full local CI remains unverified after the earlier run contacted an active development server.",
+    "No hosted CI, Actions, or CodeQL completion wait was performed.",
+    "Repair alerts remain open until merged code receives confirming CodeQL analysis."
+  ],
+  "docs_checks": {
+    "bash scripts/check-docs.sh": "pass; 109 pages",
+    "writing_lint": "plan, new proof, PR prose, and changed index entry pass",
+    "full_index_writing_lint": "74 pre-existing diagnostics, same as unchanged baseline"
+  },
+  "coverage": {
+    "initial_security": 147,
+    "dismissed": 138,
+    "security_with_open_prs": 9,
+    "remaining_quality": 162,
+    "security_pr_alerts": [
+      1,
+      2,
+      3,
+      4,
+      1942,
+      6919,
+      7100,
+      7141,
+      7244
+    ],
+    "complete_coverage": true
+  },
+  "github_heads_verified_at_utc": "2026-09-12T06:03:43.767364+00:00"
+}

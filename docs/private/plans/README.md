@@ -41,8 +41,8 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 1 - Launch Safety And Egress Trust
 
-- `code-scanning-initial-plan.html` - `active`. Owns the initial CodeQL triage
-  and Firebase field-path repair for alerts #3 and #4.
+- `code-scanning-initial-plan.html` - `active`. Owns the CodeQL security closeout
+  queue, evidence-based triage, and the Firebase, codegen, bootc, runtime canary, Brotli, and TLS repair PRs.
 
 - `architecture-review-2026-07-plan.md` - `active`. Control plane for the
   2026-07 full-workspace architecture review: guarantee/fail-closed repairs

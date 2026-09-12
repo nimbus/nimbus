@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Initial code-scanning repair</title>
+<title>Code-scanning security closeout</title>
 <style>
   :root {
     --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
@@ -112,31 +112,31 @@
 </head>
 <body>
 <header id="overview">
-<h1>Initial code-scanning repair</h1>
+<h1>Code-scanning security closeout</h1>
 <p id="status-line">Status: <code data-plan-status="active">active</code> · Owner: this plan · Created: 2026-09-12 · Baseline: main @ b527e1742 · Proof root: <code>proof/code-scanning-initial/</code> · Next action: <a href="#current-resume-state">Current resume state</a></p>
 
 
 <section id="current-resume-state"><h2>Current resume state</h2>
-<p>Updated: 2026-09-12 UTC. Next task: <a href="#CS3">CS3</a>, after the PR merges.</p>
+<p>Updated: 2026-09-12 UTC. Next task: <a href="#CS3">CS3</a>, after all six PRs merge.</p>
 
 
-<p>Next action: resolve the recorded CI limits, confirm hosted checks for <a href="https://github.com/nimbus/nimbus/pull/345">PR #345</a>, then merge and archive this plan.</p>
+<p>Publication is complete. PRs #345 through #350 cover the nine remaining security alerts. The API confirmed 138 dismissals across both batches. Do not wait for CI or Actions in this run.</p>
 
 
 <p>Worktree: <code>/Users/jack/src/github.com/nimbus/nimbus-firebase-security</code>. Branch: <code>codex/firebase-field-path-security</code>. Baseline HEAD: <code>b527e1742</code>.</p>
 
 
-<p>Owned changes: this plan, its index entry, its proof files, and the Firebase document-data module and selftests.</p>
+<p>Owned changes: this plan, its index entry, its proof files, and the six security repair PRs listed in CS4.</p>
 
 
-<p>Verification: Firebase tests, typecheck, build, Rust formatting, and Clippy passed. Full CI is UNVERIFIED: it stopped after CLI tests contacted the active development server.</p>
+<p>Verification: focused tests, workspace formatting, Clippy, and required pre-PR reviews passed for all six PRs. Full CI remains UNVERIFIED after the earlier live-server interference.</p>
 
 
-<p>Required reads: CS2, <code>docs/private/operating/verification.md</code>, and the Firebase write and snapshot callers.</p>
+<p>Required reads: CS4, <code>docs/private/operating/verification.md</code>, and the Firebase write and snapshot callers.</p>
 
 
 </section>
-<section id="outcome"><h2>Outcome</h2><blockquote>Each reviewed alert has a source-based disposition. Firebase document field access uses own properties and cannot change inherited prototypes through field names.</blockquote></section>
+<section id="outcome"><h2>Outcome</h2><blockquote>All 147 baseline security alerts have evidence-backed dismissals or repair PRs. Nine await merged CodeQL confirmation. The 162 quality alerts remain outside this security batch.</blockquote></section>
 <section id="progress"><h2>Progress</h2><div class="bar"><div class="fill"></div></div><p class="counts">The status ledger defines progress.</p>
 
 </section>
@@ -147,7 +147,7 @@
   → document fields</pre></figure></div></section>
 </header>
 <section id="scope"><h2>Scope</h2>
-<p>This initial batch owns 41 reviewed critical alerts and Firebase alerts #3 and #4. GitHub retains the remaining alert backlog.</p>
+<p>This plan owns the security closeout PR queue. The completed batches cover critical-alert triage, Firebase and codegen field names, bootc arguments, runtime filesystem checks, Brotli ownership, and TLS verification.</p>
 
 
 <p>The cleanup record remains outside the repository at <code>/Users/jack/nimbus-cleanup-2026-09-11</code>. The release-readiness plan owns Node Compatibility failures.</p>
@@ -157,7 +157,7 @@
 
 
 </section>
-<section id="status-ledger"><h2>Status ledger</h2><table><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Evidence</th></tr>
+<section id="status-ledger"><h2>Status ledger</h2><table id="ledger"><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Evidence</th></tr>
 
 </thead><tbody>
 <tr id="CS0" data-status="done"><td>CS0</td><td>Pin the alert baseline</td><td><code>done</code></td><td>main b527e1742: 309 open alerts, including 147 security alerts and 162 quality alerts.</td></tr>
@@ -169,24 +169,31 @@
 <tr id="CS2" data-status="done"><td>CS2</td><td>Protect Firebase field access</td><td><code>done</code></td><td>Alerts #3 and #4. Baseline regression failed. Eight write cases and six inherited-field checks pass. Clippy and focused checks pass. Full CI is UNVERIFIED after live-server interference. Both CLI path-fixture rechecks pass after the target setup correction. Pre-PR review passed. <a href="https://github.com/nimbus/nimbus/pull/345">Draft PR #345</a> contains the repair.</td></tr>
 
 
-<tr id="CS3" data-status="todo"><td>CS3</td><td>Archive after merge</td><td><code>todo</code></td><td>Trigger: the Firebase repair PR merges.</td></tr>
+<tr id="CS4" data-status="done"><td>CS4</td><td>Publish security closeout batches</td><td><code>done</code></td><td><a href="proof/code-scanning-initial/cs4.md">Batch proof</a>: 97 more confirmed dismissals. PRs #345–#350 cover all nine remaining security findings. Focused tests, formatting, Clippy, and required reviews pass. The 162 quality findings remain.</td></tr>
+<tr id="CS3" data-status="todo"><td>CS3</td><td>Archive after merge</td><td><code>todo</code></td><td>Trigger: all security closeout PRs merge.</td></tr>
 
 
 </tbody></table></section>
 <section id="tasks"><h2>Tasks</h2>
-<h3>CS0 Pin the alert baseline</h3><p>Problem: the queue mixes security findings, quality findings, and test fixtures. Owner: GitHub code scanning.</p>
+<h3>CS0 Pin the alert baseline</h3>
+
+<p>Problem: the queue mixes security findings, quality findings, and test fixtures. Owner: GitHub code scanning.</p>
 
 <p>Acceptance: retain the full paginated alert inventory and its source commit. Verification: <code>gh api --paginate repos/nimbus/nimbus/code-scanning/alerts?state=open</code>.</p>
 
 
-<h3>CS1 Close reviewed critical alerts</h3><p>Problem: 36 fixed test fixtures and five buffers produce critical alerts. Owning paths and dispositions appear in <code>triage.json</code>.</p>
+<h3>CS1 Close reviewed critical alerts</h3>
+
+<p>Problem: 36 fixed test fixtures and five buffers produce critical alerts. Owning paths and dispositions appear in <code>triage.json</code>.</p>
 
 <p>Steps: inspect each source, verify its guard or overwrite, record the reason, and confirm the API response.</p>
 
 <p>Acceptance: 41 alert responses report <code>dismissed</code> with individual evidence. Fail-before: all 41 report <code>open</code>.</p>
 
 
-<h3>CS2 Protect Firebase field access</h3><p>Problem: document writes can follow inherited <code>__proto__</code> properties. Snapshot reads can expose inherited fields.</p>
+<h3>CS2 Protect Firebase field access</h3>
+
+<p>Problem: document writes can follow inherited <code>__proto__</code> properties. Snapshot reads can expose inherited fields.</p>
 
 <p>Owner: <code>packages/firebase/src/internal/document-data.ts</code>, consumed by writes and snapshots.</p>
 
@@ -200,13 +207,20 @@
 <p>Publication requires the repository's <code>pre-pr</code> autoreview gate after the final commit. Hosted CodeQL must confirm the repair after merge.</p>
 
 
-<h3>CS3 Archive after merge</h3><p>Problem: completed plans must leave the active index. Trigger: the final PR merges.</p>
+<h3>CS4 Publish security closeout batches</h3>
+
+<p>Acceptance: every baseline security alert has a reviewed PR, a verified dismissal with evidence, or a named unresolved blocker. Each code PR includes focused regression evidence and the required pre-PR review. Rust validation shares one target directory and runs serially.</p>
+
+<p>Worktrees: nimbus-security-bootc, nimbus-security-codegen, nimbus-security-batches, nimbus-security-brotli, and nimbus-security-tls. Root retains the plan in nimbus-firebase-security. Preserve the active primary checkout. Do not wait for CI or Actions.</p>
+<h3>CS3 Archive after merge</h3>
+
+<p>Problem: completed plans must leave the active index. Trigger: the final PR merges.</p>
 
 <p>Steps: confirm the merge, archive this plan, and update the index. Acceptance: the archive records completion and names the remaining GitHub backlog. Verification: inspect the merge and the index link.</p>
 
 
 </section>
-<section id="goal"><h2>Goal</h2><pre>Execute this initial batch through CS2 and publish its reviewed PR.
+<section id="goal"><h2>Goal</h2><pre>Execute the security closeout queue through CS4. Publish locally verified, reviewed PRs without waiting for hosted CI.
 Read this plan, the active task, and the verification runbook.
 Work in /Users/jack/src/github.com/nimbus/nimbus-firebase-security
 on codex/firebase-field-path-security.
@@ -215,8 +229,8 @@ Keep one task in_progress. Capture fail-before evidence and run named checks.
 Commit only intended changes. Update the proof and ledger at completion.
 Preserve the primary checkout and every recovery worktree.
 Keep other alerts open until their evidence supports closure.
-Stop when CS2 passes and its PR exists, or record a real blocker.
-CS3 waits for that PR to merge. Archive the plan after CS3 completes.</pre></section>
+Review every remaining security alert. Publish each verified fix or record an evidence-based disposition or concrete blocker. Continue to the next independent batch.
+CS3 waits for the final security closeout PR to merge. Archive the plan after CS3 completes.</pre></section>
 <section id="execution-log"><h2>Execution log</h2><table><thead><tr><th>Date</th><th>Item</th><th>Action</th><th>Evidence</th></tr>
 
 </thead><tbody>
@@ -225,5 +239,6 @@ CS3 waits for that PR to merge. Archive the plan after CS3 completes.</pre></sec
 
 
 <tr><td>2026-09-12</td><td>CS2</td><td>Corrected the scalar field-name fixture after CodeQL quality alert #7255.</td><td>The fixture parses the same JSON data. All 14 regression cases pass. The next PR analysis must confirm the alert is fixed.</td></tr>
+<tr><td>2026-09-12</td><td>CS4</td><td>Published five independent draft PRs and recorded 97 further dismissals.</td><td><a href="proof/code-scanning-initial/cs4.md">PR map and verification</a>. All 147 baseline security alerts now have a dismissal or repair PR. No CI or Actions wait.</td></tr>
 </tbody></table></section>
 </body></html>
