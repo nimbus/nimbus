@@ -29,8 +29,32 @@ export const MASCOT_STATES: ReadonlyArray<MascotState> = [
   "wink",
 ];
 
-export const MASCOT_VIEWBOX = "0 0 120 92";
-const ASPECT = 92 / 120;
+// The states that draw nothing outside the body. Their box can close in on
+// the drawing; every other state keeps the accessory room. A new state that
+// forgets to list itself here gets the reserved box, which is only wasteful --
+// never a clipped accessory.
+const FACE_ONLY: ReadonlySet<MascotState> = new Set(["idle", "wink"]);
+
+// The drawing lives in a 120x92 box. The body fills x 14..106 and y 12..84 --
+// the union of the three lobes with the base below them. The room left over
+// is where the accessories go: the thought dots, the drop, the zz, the
+// sparks. Nothing else ever draws there.
+const BOX = { x: 0, y: 0, w: 120, h: 92 };
+const INK = { x: 14, y: 12, w: 92, h: 72 };
+
+// Fitted, the box closes in on the body and keeps an even margin: 2 across
+// and 4 down, the least that does not crowd the base, which lands the crop on
+// a round 6:5. A fitted mark draws a quarter wider than a reserved one at the
+// same `size`, which is the whole reason a brand slot wants it.
+const FIT_PAD_X = 2;
+const FIT_PAD_Y = 4;
+const FIT = {
+  x: INK.x - FIT_PAD_X,
+  y: INK.y - FIT_PAD_Y,
+  w: INK.w + FIT_PAD_X * 2,
+  h: INK.h + FIT_PAD_Y * 2,
+};
+
 const EYE_L = 48;
 const EYE_R = 72;
 const EYE_Y = 52;
@@ -258,9 +282,16 @@ function Face({
 }
 
 export type MascotProps = {
-  /** Rendered width in CSS pixels; the height follows the 120:92 body. */
+  /** Rendered width in CSS pixels; the height follows the box the state uses. */
   size?: number;
   state?: MascotState;
+  /**
+   * Keep the accessory room in the box even where the state does not use it.
+   * A slot whose state changes needs one box for every state, or the mark
+   * jumps a quarter of its width when the reading changes. A slot that only
+   * ever shows a face leaves this off and gets the larger mark.
+   */
+  reserveAccessories?: boolean;
   /** Accessible name. Pass `decorative` instead when the text beside the mascot already says what it says. */
   label?: string;
   decorative?: boolean;
@@ -270,6 +301,7 @@ export type MascotProps = {
 export function Mascot({
   size = 24,
   state = "idle",
+  reserveAccessories = false,
   label = "Nimbus",
   decorative = false,
   className,
@@ -287,16 +319,23 @@ export function Mascot({
   // The accessories (thought dots, drop, zz, sparks) sit outside the body,
   // so they take the text colour of the surface rather than the mark.
   const spark = "currentColor";
-  // A 4-unit face line is under 1px at 24px. Below 40px the face thickens so
-  // the mark keeps the weight of the wordmark beside it.
-  const small = size < 40;
+  // The box: fitted to the body by default, reserved -- the whole 120x92 --
+  // whenever the state draws an accessory or the caller asked for one box
+  // across state changes. Reserving on the state as well as on the prop is
+  // what makes a clipped accessory impossible rather than merely unlikely.
+  const view = FACE_ONLY.has(state) && !reserveAccessories ? FIT : BOX;
+  // A 4-unit face line is under 1px below a third of a pixel per viewBox
+  // unit, and there the face thickens so the mark keeps the weight of the
+  // wordmark beside it. The rule is the drawn scale rather than the width, so
+  // a fitted mark and a reserved one thicken at the same size on screen.
+  const small = size * 3 < view.w;
   const weight: FaceWeight = small ? { w: 5.5, r: 4.6 } : { w: 4, r: 3.7 };
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={MASCOT_VIEWBOX}
+      viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
       width={size}
-      height={Math.round(size * ASPECT)}
+      height={Math.round((size * view.h) / view.w)}
       className={cn("shrink-0", className)}
       data-state={state}
       role={decorative ? undefined : "img"}

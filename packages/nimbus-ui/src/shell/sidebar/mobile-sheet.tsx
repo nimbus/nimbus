@@ -67,7 +67,7 @@ export function MobileTopBar() {
         data-testid="mobile-brand"
         className="flex items-center gap-2 rounded-sm px-1 text-text-1 outline-none"
       >
-        <Mascot size={26} decorative />
+        <Mascot size={38} decorative />
         <span className="text-base font-semibold tracking-tight">nimbus</span>
       </Link>
     </header>

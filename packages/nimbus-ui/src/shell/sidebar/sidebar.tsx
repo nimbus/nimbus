@@ -108,7 +108,10 @@ function Brand({
         data-testid="sidebar-brand"
         className="flex items-center gap-2.5 rounded-sm text-text-1 outline-none"
       >
-        <Mascot size={28} decorative />
+        {/* 38 wide is 32 tall on the fitted box: the same mark the docs nav
+            lockup and the Odyssey brand row carry, and the largest that keeps
+            air on both sides of a 56px band and a 64px rail. */}
+        <Mascot size={38} decorative />
         {collapsed ? null : (
           <span className="text-base font-semibold tracking-tight">nimbus</span>
         )}

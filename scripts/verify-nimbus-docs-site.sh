@@ -401,11 +401,12 @@ fi
 # console and the site are open side by side.
 #
 # The comparison is of the drawing, not the file: the path data, the literal
-# geometry on each shape, the named eye and mouth coordinates, the two face
-# weights, and the set of states. The hosting differs on purpose -- the console
-# takes a pixel `size` and drops its animation classes under reduced motion,
-# the site sizes by class and leans on its stylesheet -- so none of that is
-# compared.
+# geometry on each shape, the named eye and mouth coordinates, the box the
+# drawing sits in and the crop fitted to it, the states that take that crop,
+# the two face weights, and the set of states. The hosting differs on purpose
+# -- the console takes a pixel `size` and drops its animation classes under
+# reduced motion, the site sizes by class and leans on its stylesheet -- so
+# none of that is compared.
 C="19. the console and website mascot components draw the same mark and the same states"
 drift="$(
   python3 - <<'DRIFT' 2>&1 || true
@@ -421,7 +422,9 @@ def drawing(path):
     marks = []
     # Path data under any of the three JavaScript quotes. (The quotes are
     # spelled by code point because a literal backtick would close this
-    # command substitution.)
+    # command substitution. For the same reason nothing below may carry a
+    # stray apostrophe: bash scans this heredoc for the closing paren before
+    # it ever reaches the here-document, so an odd quote is a syntax error.)
     for q in ("'", '"', chr(96)):
         for lit in re.findall(rf"{q}([Mm][ \-0-9][^{q}]*){q}", src):
             marks.append("path " + " ".join(lit.split()))
@@ -431,6 +434,15 @@ def drawing(path):
     # The named coordinates and the two face weights.
     for name, value in re.findall(r"\bconst (EYE_[LRY]|MOUTH_Y) = ([-0-9.]+);", src):
         marks.append(f"{name} {value}")
+    # The box, the bounds of the drawing inside it, the crop fitted to those
+    # bounds and the states that take the crop. A copy that agrees on every
+    # shape but crops differently still draws two marks at the same size.
+    BOXES = ("BOX", "INK", "FIT_PAD_X", "FIT_PAD_Y", "FIT", "FACE_ONLY")
+    for name, value in re.findall(
+        rf"\bconst ({'|'.join(BOXES)})(?::[^=]+)? = (.*?);", src, re.S
+    ):
+        flat = " ".join(value.replace('"', "").replace("'", "").split())
+        marks.append(f"{name} {flat}")
     for w, r in re.findall(r"\{ w: ([-0-9.]+), r: ([-0-9.]+) \}", src):
         marks.append(f"weight {w} {r}")
     # The state vocabulary, from the MascotState union.
