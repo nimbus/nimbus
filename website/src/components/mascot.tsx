@@ -1,40 +1,309 @@
-import type { SVGProps } from 'react';
+import type { CSSProperties, SVGProps } from 'react';
 
 // The Nimbus mark: the same drawing as `packages/nimbus-ui/src/components/
-// mascot.tsx`, in its resting state. The console owns the animated states; the
-// docs site only ever shows the mark.
+// mascot.tsx`, which owns it. The docs site is a separate Next app and cannot
+// import from the console package, so this is a hand copy in the way the two
+// token sheets are hand copies — condition 19 of
+// `scripts/verify-nimbus-docs-site.sh` compares the two drawings shape by
+// shape and fails if either side moves alone.
 //
 // The body takes `--mark` and the face takes `--mark-ink`. Both hold the gold
 // on every ground, so this is the same sticker as the favicon and the app icon.
+//
+// Two things differ from the console copy, both because this is a server
+// component in a static export:
+//
+//   * Motion is CSS, not React. The console omits the animation classes under
+//     `prefers-reduced-motion: reduce`; here the reduced-motion block in
+//     `app/global.css` stops them, as it does for every other animation on the
+//     site.
+//   * The face weight is a prop, not a function of `size`. The docs site sizes
+//     the mark with utility classes rather than a pixel count, so the caller
+//     says which weight it needs; pass `small` below 40px.
+export type MascotState =
+  | 'idle'
+  | 'working'
+  | 'error'
+  | 'empty'
+  | 'celebrate'
+  | 'wink';
+
+// The accessories sit outside the body, up in the corners of the full box, so
+// a state that has one needs the whole 120×92. The face-only states crop to the
+// silhouette instead, which is what keeps the mark large in the lockup.
+const VIEWBOX_FULL = '0 0 120 92';
+const VIEWBOX_FACE = '12 8 96 80';
+
+const EYE_L = 48;
+const EYE_R = 72;
+const EYE_Y = 52;
+const MOUTH_Y = 64;
+
+// Three lobes and a base, filled as one group so the overlaps vanish into a
+// single silhouette.
+function Body() {
+  return (
+    <g data-part="body" fill="var(--mark)">
+      <circle cx="36" cy="50" r="20" />
+      <circle cx="60" cy="40" r="28" />
+      <circle cx="84" cy="50" r="20" />
+      <rect x="14" y="50" width="92" height="34" rx="17" />
+    </g>
+  );
+}
+
+// Eyes are the only part that can move. `blink` attaches the keyframes; the
+// group scales about the eye line so a blink closes the dots in place.
+//
+// `wink` is the second, slower flourish: the right dot and the closed arc run
+// one cycle in counterphase, so the eye swaps to the arc for three quarters of
+// a second and back. The arc is only in the DOM while the wink is, so a face
+// that cannot wink carries no hidden shape.
+function DotEyes({
+  ink,
+  dx,
+  blink,
+  wink,
+  r,
+  w,
+}: {
+  ink: string;
+  dx: number;
+  blink: boolean;
+  wink: boolean;
+  r: number;
+  w: number;
+}) {
+  const style: CSSProperties = { transformOrigin: `60px ${EYE_Y}px` };
+  return (
+    <g
+      data-part="eyes"
+      data-blink={blink ? 'true' : undefined}
+      data-wink={wink ? 'true' : undefined}
+      className={blink ? 'mascot-blink' : undefined}
+      style={style}
+      fill={ink}
+    >
+      <circle cx={EYE_L + dx} cy={EYE_Y} r={r} />
+      <circle
+        cx={EYE_R + dx}
+        cy={EYE_Y}
+        r={r}
+        className={wink ? 'mascot-wink-open' : undefined}
+      />
+      {wink ? (
+        <path
+          className="mascot-wink-shut"
+          d={WINK}
+          fill="none"
+          stroke={ink}
+          strokeWidth={w}
+          strokeLinecap="round"
+        />
+      ) : null}
+    </g>
+  );
+}
+
+// The held wink: one eye open, the other the same arc the flourish swaps in.
+function WinkEyes({ ink, r, w }: { ink: string; r: number; w: number }) {
+  return (
+    <g data-part="eyes" fill={ink}>
+      <circle cx={EYE_L} cy={EYE_Y} r={r} />
+      <path
+        d={WINK}
+        fill="none"
+        stroke={ink}
+        strokeWidth={w}
+        strokeLinecap="round"
+      />
+    </g>
+  );
+}
+
+function ClosedEyes({ ink, up, w }: { ink: string; up: boolean; w: number }) {
+  const d = up
+    ? 'M42 54 q6 -7 12 0 M66 54 q6 -7 12 0'
+    : 'M42 51 q6 6 12 0 M66 51 q6 6 12 0';
+  return (
+    <path
+      data-part="eyes"
+      d={d}
+      fill="none"
+      stroke={ink}
+      strokeWidth={w}
+      strokeLinecap="round"
+    />
+  );
+}
+
+function CrossEyes({ ink, w }: { ink: string; w: number }) {
+  return (
+    <path
+      data-part="eyes"
+      d="M44 48 l8 8 M52 48 l-8 8 M68 48 l8 8 M76 48 l-8 8"
+      fill="none"
+      stroke={ink}
+      strokeWidth={w}
+      strokeLinecap="round"
+    />
+  );
+}
+
+function Mouth({ ink, d, w }: { ink: string; d: string; w: number }) {
+  return (
+    <path
+      data-part="mouth"
+      d={d}
+      fill="none"
+      stroke={ink}
+      strokeWidth={w}
+      strokeLinecap="round"
+    />
+  );
+}
+
+// The right eye closed: the same arc `ClosedEyes` draws, on its own.
+const WINK = 'M66 54 q6 -7 12 0';
+const SMILE = `M52 ${MOUTH_Y - 2} q8 8 16 0`;
+const FLAT = 'M55 65 h10';
+const WOBBLE = 'M52 66 q4 -4 8 0 t8 0';
+
+// weight is the face line width in viewBox units; the dot radius follows it.
+type FaceWeight = { w: number; r: number };
+
+function Face({
+  state,
+  ink,
+  spark,
+  blink,
+  wink,
+  weight,
+}: {
+  state: MascotState;
+  ink: string;
+  spark: string;
+  blink: boolean;
+  wink: boolean;
+  weight: FaceWeight;
+}) {
+  const { w, r } = weight;
+  switch (state) {
+    case 'idle':
+      return (
+        <>
+          <DotEyes ink={ink} dx={0} blink={blink} wink={wink} r={r} w={w} />
+          <Mouth ink={ink} d={SMILE} w={w} />
+        </>
+      );
+    case 'wink':
+      return (
+        <>
+          <WinkEyes ink={ink} r={r} w={w} />
+          <Mouth ink={ink} d={SMILE} w={w} />
+        </>
+      );
+    case 'working':
+      return (
+        <>
+          <DotEyes ink={ink} dx={3} blink={blink} wink={false} r={r} w={w} />
+          <Mouth ink={ink} d={FLAT} w={w} />
+          <g data-part="thinking" fill={spark}>
+            <circle cx="96" cy="26" r="2" />
+            <circle cx="104" cy="20" r="2.6" />
+            <circle cx="113" cy="13" r="3.2" />
+          </g>
+        </>
+      );
+    case 'error':
+      return (
+        <>
+          <CrossEyes ink={ink} w={w} />
+          <Mouth ink={ink} d={WOBBLE} w={w} />
+          <path
+            data-part="drop"
+            d="M98 30 c0 -4 5 -10 5 -10 s5 6 5 10 a5 5 0 0 1 -10 0z"
+            fill={spark}
+          />
+        </>
+      );
+    case 'empty':
+      return (
+        <>
+          <ClosedEyes ink={ink} up={false} w={w} />
+          <Mouth ink={ink} d={FLAT} w={w} />
+          <g
+            data-part="sleep"
+            fill="none"
+            stroke={spark}
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M92 24 h8 l-8 8 h8" />
+            <path d="M104 12 h6 l-6 6 h6" />
+          </g>
+        </>
+      );
+    case 'celebrate':
+      return (
+        <>
+          <ClosedEyes ink={ink} up w={w} />
+          <path data-part="mouth" d="M50 62 q10 12 20 0 z" fill={ink} />
+          <g data-part="sparks" fill={spark}>
+            <path d="M100 14 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2z" />
+            <path d="M18 22 l1.5 4 4 1.5 -4 1.5 -1.5 4 -1.5 -4 -4 -1.5 4 -1.5z" />
+            <path d="M110 40 l1 3 3 1 -3 1 -1 3 -1 -3 -3 -1 3 -1z" />
+          </g>
+        </>
+      );
+  }
+}
+
+export type MascotProps = SVGProps<SVGSVGElement> & {
+  state?: MascotState;
+  /** Accessible name. Leave it off when the text beside the mark already says it. */
+  title?: string;
+  /** Thickens the face, the way the console does below 40px. */
+  small?: boolean;
+};
+
 export function Mascot({
+  state = 'idle',
   title,
+  small = false,
   ...props
-}: SVGProps<SVGSVGElement> & { title?: string }) {
+}: MascotProps) {
+  // Only open dot eyes can blink, and the wink is idle's alone. A mascot with
+  // work in flight, an error on screen or nothing to show does not wink at
+  // you; a resting one does, rarely enough that it reads as a greeting rather
+  // than a tic.
+  const blink = state === 'idle' || state === 'working';
+  const wink = state === 'idle';
+  const ink = 'var(--mark-ink)';
+  // The accessories (thought dots, drop, zz, sparks) sit outside the body, so
+  // they take the text colour of the surface rather than the mark.
+  const spark = 'currentColor';
+  const weight: FaceWeight = small ? { w: 5.5, r: 4.6 } : { w: 4, r: 3.7 };
+  const face = state === 'idle' || state === 'wink';
   return (
     <svg
-      viewBox="12 8 96 80"
+      viewBox={face ? VIEWBOX_FACE : VIEWBOX_FULL}
       xmlns="http://www.w3.org/2000/svg"
+      data-state={state}
       role={title ? 'img' : undefined}
       aria-label={title}
       aria-hidden={title ? undefined : true}
       {...props}
     >
-      <g fill="var(--mark)">
-        <circle cx="36" cy="50" r="20" />
-        <circle cx="60" cy="40" r="28" />
-        <circle cx="84" cy="50" r="20" />
-        <rect x="14" y="50" width="92" height="34" rx="17" />
-      </g>
-      <g fill="var(--mark-ink)">
-        <circle cx="48" cy="52" r="3.8" />
-        <circle cx="72" cy="52" r="3.8" />
-      </g>
-      <path
-        d="M52 62 q8 8 16 0"
-        fill="none"
-        stroke="var(--mark-ink)"
-        strokeWidth="4"
-        strokeLinecap="round"
+      <Body />
+      <Face
+        state={state}
+        ink={ink}
+        spark={spark}
+        blink={blink}
+        wink={wink}
+        weight={weight}
       />
     </svg>
   );

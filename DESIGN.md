@@ -1089,7 +1089,10 @@ The Nimbus mark is a cloud with a face. The body is the union of three
 circles and a rounded base in a 120×92 box, with no wisp, so it reads as
 one shape from 16px up. The face carries the state; nothing else moves.
 `packages/nimbus-ui/src/components/mascot.tsx` is the single source of the
-drawing; the static assets are exports of it.
+drawing; the static assets are exports of it, and
+`website/src/components/mascot.tsx` is a hand copy of it held by condition 19
+of `scripts/verify-nimbus-docs-site.sh`, because the docs site is a separate
+Next app that cannot import from the console package.
 
 There is one drawing and it is always filled. In the console the body takes
 `--mark` and the face takes `--mark-ink`: Nimbus gold with an ink face on
@@ -1106,17 +1109,34 @@ The outline variant is gone. A stroked cloud on the panel ground read as a
 second logo next to the filled one on the app icon, and at 24px its
 1px stroke lost to the semibold wordmark beside it.
 
-- **States.** `idle` (dot eyes, smile), `working` (eyes to the side, flat
-  mouth, thought dots), `error` (crossed eyes, wobble, one drop), `empty`
-  (closed eyes, flat mouth, zz), `celebrate` (arc eyes, grin, sparks). A
-  state is a prop, never a separate asset.
-- **Motion.** The eyes blink once every six seconds and nothing else
-  animates. The component leaves the animation out of the DOM under
-  `prefers-reduced-motion: reduce`; the `globals.css` backstop is the
-  second net.
-- **Sizes.** 16 in a tab, 24 to 30 in the nav, 32 in a card header, 48 and
+- **States.** `idle` (dot eyes, smile), `wink` (one dot eye, one arc,
+  smile), `working` (eyes to the side, flat mouth, thought dots), `error`
+  (crossed eyes, wobble, one drop), `empty` (closed eyes, flat mouth, zz),
+  `celebrate` (arc eyes, grin, sparks). A state is a prop, never a separate
+  asset. Both surfaces carry all six.
+- **Motion.** Two animations, both on the eyes, and nothing else moves. The
+  eyes blink once every six seconds, in `idle` and `working`. In `idle`
+  alone the mascot also winks: once every nineteen seconds the right eye
+  trades its dot for the arc for three quarters of a second and back. Six
+  and nineteen share no factor, so the two never settle into a rhythm; the
+  swap is `steps(1, end)`, so the eye changes rather than dissolving. A
+  mascot with work in flight, an error on screen or nothing to show does
+  not wink at you.
+
+  The wink is idle personality, not a signal: nothing in the product means
+  anything by it, and no state depends on the reader catching it. The
+  console leaves both animations out of the DOM under
+  `prefers-reduced-motion: reduce` and the `globals.css` backstop is the
+  second net; the docs site is a static export with no client component
+  here, so its `app/global.css` reduced-motion block is the first net and
+  the only one.
+- **Sizes.** 16 in a tab, 24 to 32 in the nav, 32 in a card header, 48 and
   up in an empty state. Below 40px the face thickens (mouth 4 to 5.5 units,
-  eyes 3.7 to 4.6) so it survives the tab bar.
+  eyes 3.7 to 4.6) so it survives the tab bar. The nav band starts at 24
+  because that is where the blink and the wink start to read: the eye is a
+  tenth of the mark, so a 22px mark animates a face nobody can see. The
+  Odyssey brand row takes the top of the band, where the mark is the whole
+  of the brand.
 - **Static exports.** `favicon.svg` and `favicon.ico` (16, 32, 48) and
   `icon-512.png` (gold face on a `#0a0b0c` tile) under
   `packages/nimbus-ui/public/`, plus the brand set under

@@ -5,7 +5,7 @@ import { Mascot } from '@/components/mascot';
 export default function NotFound() {
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-      <Mascot className="h-16 w-[85px]" />
+      <Mascot className="h-16 w-auto" />
       <h1 className="text-[24px] leading-8 font-semibold tracking-[-0.01em] text-(--text-1)">
         This page is not here
       </h1>

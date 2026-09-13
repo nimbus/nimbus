@@ -202,6 +202,15 @@
    * leaves the class out under reduced motion, so the backstop below is a
    * second net, not the first. */
   --animate-blink: blink 6s ease-in-out infinite;
+  /* Mascot wink: in idle the right eye trades its dot for the closed arc for
+   * three quarters of a second, once every nineteen. Nineteen and the blink's
+   * six share no factor, so the two never settle into a rhythm and the wink
+   * lands somewhere new each time. The dot and the arc run the same cycle in
+   * counterphase, and `steps(1, end)` holds each stop, so the eye swaps
+   * rather than dissolving. The mascot leaves both classes out under reduced
+   * motion, so the backstop in globals.css is a second net, not the first. */
+  --animate-wink-open: wink-open 19s steps(1, end) infinite;
+  --animate-wink-shut: wink-shut 19s steps(1, end) infinite;
   @keyframes blink {
     0%,
     94%,
@@ -210,6 +219,28 @@
     }
     97% {
       transform: scaleY(0.08);
+    }
+  }
+  @keyframes wink-open {
+    0% {
+      opacity: 1;
+    }
+    90% {
+      opacity: 0;
+    }
+    94% {
+      opacity: 1;
+    }
+  }
+  @keyframes wink-shut {
+    0% {
+      opacity: 0;
+    }
+    90% {
+      opacity: 1;
+    }
+    94% {
+      opacity: 0;
     }
   }
   @keyframes shimmer {

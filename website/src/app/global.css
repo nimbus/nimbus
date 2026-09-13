@@ -60,3 +60,62 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Mascot motion. The console carries the same two animations as Tailwind
+   theme keys (`--animate-blink`, `--animate-wink-*` in
+   `packages/nimbus-ui/src/styles/tokens.css`); the docs site has no such
+   theme entry for them, so they are plain classes here with the same names,
+   timings and stops.
+
+   The eye group closes once every six seconds. The wink runs a second, slower
+   cycle: the right dot and the closed arc swap for three quarters of a second
+   once every nineteen. Nineteen and six share no factor, so the two never
+   settle into a rhythm and the wink lands somewhere new each time.
+   `steps(1, end)` holds each stop, so the eye swaps rather than dissolving.
+   The reduced-motion block above stops all three. */
+.mascot-blink {
+  animation: blink 6s ease-in-out infinite;
+}
+
+.mascot-wink-open {
+  animation: wink-open 19s steps(1, end) infinite;
+}
+
+.mascot-wink-shut {
+  animation: wink-shut 19s steps(1, end) infinite;
+}
+
+@keyframes blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.08);
+  }
+}
+
+@keyframes wink-open {
+  0% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 0;
+  }
+  94% {
+    opacity: 1;
+  }
+}
+
+@keyframes wink-shut {
+  0% {
+    opacity: 0;
+  }
+  90% {
+    opacity: 1;
+  }
+  94% {
+    opacity: 0;
+  }
+}

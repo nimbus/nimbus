@@ -28,6 +28,7 @@ export const Working: Story = { args: { state: "working" } };
 export const ErrorState: Story = { args: { state: "error" } };
 export const Empty: Story = { args: { state: "empty" } };
 export const Celebrate: Story = { args: { state: "celebrate" } };
+export const Wink: Story = { args: { state: "wink" } };
 
 const SIZES = [16, 24, 32, 48] as const;
 
