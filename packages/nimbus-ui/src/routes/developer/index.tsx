@@ -313,6 +313,7 @@ function Headline({
           size={40}
           state={reading.mascot}
           decorative
+          reserveAccessories
           className="shrink-0 text-text-1"
           data-testid="overview-mascot"
           data-state={reading.mascot}

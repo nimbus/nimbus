@@ -918,7 +918,7 @@ export function Journey() {
               onClick={() => travelRegistry.current(0)}
               aria-label="Nimbus. Return to the start."
             >
-              <Mascot className="brand-mark" small />
+              <Mascot className="brand-mark" />
               nimbus
               <small>beta</small>
             </button>

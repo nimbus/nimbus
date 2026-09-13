@@ -1130,13 +1130,35 @@ second logo next to the filled one on the app icon, and at 24px its
   second net; the docs site is a static export with no client component
   here, so its `app/global.css` reduced-motion block is the first net and
   the only one.
-- **Sizes.** 16 in a tab, 24 to 32 in the nav, 32 in a card header, 48 and
-  up in an empty state. Below 40px the face thickens (mouth 4 to 5.5 units,
-  eyes 3.7 to 4.6) so it survives the tab bar. The nav band starts at 24
-  because that is where the blink and the wink start to read: the eye is a
-  tenth of the mark, so a 22px mark animates a face nobody can see. The
-  Odyssey brand row takes the top of the band, where the mark is the whole
-  of the brand.
+- **Box.** The drawing sits in a 120×92 box, but the body only fills
+  x 14..106, y 12..84. The room left over is where the accessories go, and a
+  state without one does not need it. So the box has two settings. *Fitted*
+  is the default: the crop closes to the body plus an even margin, 2 across
+  and 4 down, which is a 96×80 box on a round 6:5. *Reserved* is the whole
+  120×92. A mark is reserved when its state draws an accessory, and when the
+  caller passes `reserveAccessories` — which a slot whose state changes must
+  do, or the mark jumps a quarter of its width when the reading changes.
+  Reserving on the state as well as on the prop is what makes a clipped
+  accessory impossible rather than merely unlikely.
+
+  The crop is derived from the body's bounds rather than typed as a second
+  set of numbers, and `mascot.spec.tsx` reads the bounds back off the shapes
+  and asserts the crop still frames them. Move a lobe and the test fails
+  instead of the crop going quietly stale.
+- **Sizes.** 16 in a tab, 24 in a row, 32 in a card header, 48 and up in an
+  empty state. The brand row is 32 tall on all three surfaces — the console
+  sidebar (`size={38}`, which is 32 tall fitted), the docs nav lockup and
+  the Odyssey brand row — so the mark is one size wherever it stands beside
+  the wordmark. 32 is what the blink and the wink need: the eye is a tenth
+  of the mark, so a 22px mark animates a face nobody can see. It is also the
+  ceiling, set by the 56px band the console header and the docs mobile
+  header both use.
+
+  The face thickens (mouth 4 to 5.5 units, eyes 3.7 to 4.6) below a third of
+  a pixel per viewBox unit, so that it survives the tab bar. The rule is the
+  drawn scale rather than the width, which puts the boundary at a third of
+  whichever box the state uses — 32px fitted, 40px reserved — and means a
+  fitted mark and a reserved one of the same drawn size carry the same face.
 - **Static exports.** `favicon.svg` and `favicon.ico` (16, 32, 48) and
   `icon-512.png` (gold face on a `#0a0b0c` tile) under
   `packages/nimbus-ui/public/`, plus the brand set under

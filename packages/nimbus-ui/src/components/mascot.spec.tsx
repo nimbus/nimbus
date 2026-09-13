@@ -21,12 +21,78 @@ afterEach(() => {
 });
 
 describe("Mascot", () => {
-  it("is an image named Nimbus at the asked width with the body aspect", () => {
+  it("is an image named Nimbus at the asked width, fitted to the body", () => {
     render(<Mascot size={48} />);
     const svg = screen.getByRole("img", { name: "Nimbus" });
     expect(svg).toHaveAttribute("width", "48");
-    expect(svg).toHaveAttribute("height", "37");
-    expect(svg).toHaveAttribute("viewBox", "0 0 120 92");
+    expect(svg).toHaveAttribute("height", "40");
+    expect(svg).toHaveAttribute("viewBox", "12 8 96 80");
+  });
+
+  // The fitted box is derived from where the body actually draws, so the two
+  // have to stay in step: move a lobe and the crop has to move with it. This
+  // reads the bounds back off the shapes and checks that the crop still frames
+  // them with the 2-across, 4-down margin it claims. Condition 19 of
+  // `scripts/verify-nimbus-docs-site.sh` holds the website copy to the same
+  // shapes and the same crop, so this covers both drawings.
+  it("fits the box to the bounds the body actually draws", () => {
+    const { container } = render(<Mascot />);
+    const svg = container.querySelector("svg") as SVGSVGElement;
+    const num = (el: Element, name: string) => Number(el.getAttribute(name));
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const shape of svg.querySelectorAll("[data-part='body'] > *")) {
+      const box =
+        shape.tagName === "circle"
+          ? {
+              x: num(shape, "cx") - num(shape, "r"),
+              y: num(shape, "cy") - num(shape, "r"),
+              w: 2 * num(shape, "r"),
+              h: 2 * num(shape, "r"),
+            }
+          : {
+              x: num(shape, "x"),
+              y: num(shape, "y"),
+              w: num(shape, "width"),
+              h: num(shape, "height"),
+            };
+      left = Math.min(left, box.x);
+      top = Math.min(top, box.y);
+      right = Math.max(right, box.x + box.w);
+      bottom = Math.max(bottom, box.y + box.h);
+    }
+    expect([left, top, right - left, bottom - top]).toEqual([14, 12, 92, 72]);
+    expect(svg.getAttribute("viewBox")).toBe(
+      `${left - 2} ${top - 4} ${right - left + 4} ${bottom - top + 8}`,
+    );
+  });
+
+  it("reserves the accessory room for every state that draws outside the body", () => {
+    for (const state of MASCOT_STATES.filter(
+      (s) => s !== "idle" && s !== "wink",
+    )) {
+      const { container, unmount } = render(
+        <Mascot state={state} size={48} />,
+      );
+      const svg = container.querySelector("svg") as SVGSVGElement;
+      expect(svg).toHaveAttribute("viewBox", "0 0 120 92");
+      expect(svg).toHaveAttribute("height", "37");
+      unmount();
+    }
+  });
+
+  it("reserves the accessory room on request, so a changing state keeps one box", () => {
+    for (const state of MASCOT_STATES) {
+      const { container, unmount } = render(
+        <Mascot state={state} size={48} reserveAccessories />,
+      );
+      const svg = container.querySelector("svg") as SVGSVGElement;
+      expect(svg).toHaveAttribute("viewBox", "0 0 120 92");
+      expect(svg).toHaveAttribute("height", "37");
+      unmount();
+    }
   });
 
   it("renders every state with a body, eyes and a mouth", () => {
@@ -133,23 +199,32 @@ describe("Mascot", () => {
     expect(container.innerHTML).not.toContain("var(--accent)");
   });
 
-  it("thickens the face below 40px", () => {
-    for (const size of [16, 24, 32]) {
-      const { container, unmount } = render(<Mascot size={size} />);
-      expect(container.querySelector("[data-part='mouth']")).toHaveAttribute(
-        "stroke-width",
-        "5.5",
+  // The rule is the drawn scale, not the width: the face thickens below a
+  // third of a pixel per viewBox unit, so the boundary is a third of the box
+  // the state uses -- 32px fitted, 40px reserved. A fitted mark and a reserved
+  // one of the same drawn size therefore carry the same face.
+  it("thickens the face below a third of a pixel per viewBox unit", () => {
+    const thick = (size: number, reserve: boolean) => {
+      const { container, unmount } = render(
+        <Mascot size={size} reserveAccessories={reserve} />,
       );
-      expect(
-        container.querySelector("[data-part='eyes'] circle"),
-      ).toHaveAttribute("r", "4.6");
+      const width = container
+        .querySelector("[data-part='mouth']")
+        ?.getAttribute("stroke-width");
+      const radius = container
+        .querySelector("[data-part='eyes'] circle")
+        ?.getAttribute("r");
       unmount();
+      return `${width}/${radius}`;
+    };
+    for (const size of [16, 24, 31]) {
+      expect(thick(size, false)).toBe("5.5/4.6");
     }
-    const { container } = render(<Mascot size={40} />);
-    expect(container.querySelector("[data-part='mouth']")).toHaveAttribute(
-      "stroke-width",
-      "4",
-    );
+    expect(thick(32, false)).toBe("4/3.7");
+    for (const size of [16, 24, 32, 39]) {
+      expect(thick(size, true)).toBe("5.5/4.6");
+    }
+    expect(thick(40, true)).toBe("4/3.7");
   });
 
   it("can be decorative when the neighbouring text names it", () => {

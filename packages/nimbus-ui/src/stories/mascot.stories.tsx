@@ -61,18 +61,46 @@ function MascotRow({ state }: { state: MascotState }) {
   );
 }
 
-// Every state at the four sizes the console uses: 16 in a tab, 24 in the
-// nav, 32 in a card header, 48 in an empty state.
+// Every state at the four sizes the console uses: 16 in a tab, 24 in a row,
+// 32 in a card header, 48 in an empty state. The face-only states are wider
+// than the rest at the same size because their box is fitted to the body.
 export const Gallery: Story = {
   render: () => <StateGallery />,
 };
 
-// The mark next to the wordmark, as the top nav sets it.
+// The mark beside the wordmark, at the 38 the sidebar sets -- 32 tall on the
+// fitted box, the same mark the docs nav and the Odyssey brand row carry.
 export const Lockup: Story = {
   render: () => (
-    <div className="flex items-center gap-2 text-text-1">
-      <Mascot size={30} />
-      <span className="text-sm font-semibold tracking-tight">nimbus</span>
+    <div className="flex items-center gap-2.5 text-text-1">
+      <Mascot size={38} decorative />
+      <span className="text-base font-semibold tracking-tight">nimbus</span>
+    </div>
+  ),
+};
+
+// The two boxes at one size. Fitted is the default and is what a brand slot
+// wants; reserved keeps the accessory room, which is what a slot whose state
+// changes needs so the mark does not jump when the reading does.
+export const Boxes: Story = {
+  render: () => (
+    <div className="flex items-start gap-10 text-xs text-text-3">
+      {([false, true] as const).map((reserve) => (
+        <span key={String(reserve)} className="flex flex-col items-start gap-2">
+          <span className="font-mono">{reserve ? "reserved" : "fitted"}</span>
+          <span className="flex items-center gap-6 text-text-1">
+            {(["idle", "working"] as const).map((state) => (
+              <Mascot
+                key={state}
+                size={48}
+                state={state}
+                reserveAccessories={reserve}
+                decorative
+              />
+            ))}
+          </span>
+        </span>
+      ))}
     </div>
   ),
 };

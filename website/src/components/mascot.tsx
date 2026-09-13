@@ -19,7 +19,9 @@ import type { CSSProperties, SVGProps } from 'react';
 //     site.
 //   * The face weight is a prop, not a function of `size`. The docs site sizes
 //     the mark with utility classes rather than a pixel count, so the caller
-//     says which weight it needs; pass `small` below 40px.
+//     says which weight it needs. The console thickens the face below a third
+//     of a pixel per viewBox unit; for a fitted mark, whose 80 units of height
+//     map to the CSS height, that is below 27px.
 export type MascotState =
   | 'idle'
   | 'working'
@@ -28,11 +30,31 @@ export type MascotState =
   | 'celebrate'
   | 'wink';
 
-// The accessories sit outside the body, up in the corners of the full box, so
-// a state that has one needs the whole 120×92. The face-only states crop to the
-// silhouette instead, which is what keeps the mark large in the lockup.
-const VIEWBOX_FULL = '0 0 120 92';
-const VIEWBOX_FACE = '12 8 96 80';
+// The states that draw nothing outside the body. Their box can close in on
+// the drawing; every other state keeps the accessory room. A new state that
+// forgets to list itself here gets the reserved box, which is only wasteful --
+// never a clipped accessory.
+const FACE_ONLY: ReadonlySet<MascotState> = new Set(['idle', 'wink']);
+
+// The drawing lives in a 120x92 box. The body fills x 14..106 and y 12..84 --
+// the union of the three lobes with the base below them. The room left over
+// is where the accessories go: the thought dots, the drop, the zz, the
+// sparks. Nothing else ever draws there.
+const BOX = { x: 0, y: 0, w: 120, h: 92 };
+const INK = { x: 14, y: 12, w: 92, h: 72 };
+
+// Fitted, the box closes in on the body and keeps an even margin: 2 across
+// and 4 down, the least that does not crowd the base, which lands the crop on
+// a round 6:5. A fitted mark draws a quarter wider than a reserved one at the
+// same height, which is the whole reason a brand slot wants it.
+const FIT_PAD_X = 2;
+const FIT_PAD_Y = 4;
+const FIT = {
+  x: INK.x - FIT_PAD_X,
+  y: INK.y - FIT_PAD_Y,
+  w: INK.w + FIT_PAD_X * 2,
+  h: INK.h + FIT_PAD_Y * 2,
+};
 
 const EYE_L = 48;
 const EYE_R = 72;
@@ -264,14 +286,22 @@ export type MascotProps = SVGProps<SVGSVGElement> & {
   state?: MascotState;
   /** Accessible name. Leave it off when the text beside the mark already says it. */
   title?: string;
-  /** Thickens the face, the way the console does below 40px. */
+  /** Thickens the face, the way the console does below a third of a pixel per viewBox unit. */
   small?: boolean;
+  /**
+   * Keep the accessory room in the box even where the state does not use it.
+   * A slot whose state changes needs one box for every state, or the mark
+   * jumps a quarter of its width when the reading changes. A slot that only
+   * ever shows a face leaves this off and gets the larger mark.
+   */
+  reserveAccessories?: boolean;
 };
 
 export function Mascot({
   state = 'idle',
   title,
   small = false,
+  reserveAccessories = false,
   ...props
 }: MascotProps) {
   // Only open dot eyes can blink, and the wink is idle's alone. A mascot with
@@ -285,10 +315,14 @@ export function Mascot({
   // they take the text colour of the surface rather than the mark.
   const spark = 'currentColor';
   const weight: FaceWeight = small ? { w: 5.5, r: 4.6 } : { w: 4, r: 3.7 };
-  const face = state === 'idle' || state === 'wink';
+  // The box: fitted to the body by default, reserved -- the whole 120x92 --
+  // whenever the state draws an accessory or the caller asked for one box
+  // across state changes. Reserving on the state as well as on the prop is
+  // what makes a clipped accessory impossible rather than merely unlikely.
+  const view = FACE_ONLY.has(state) && !reserveAccessories ? FIT : BOX;
   return (
     <svg
-      viewBox={face ? VIEWBOX_FACE : VIEWBOX_FULL}
+      viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
       xmlns="http://www.w3.org/2000/svg"
       data-state={state}
       role={title ? 'img' : undefined}

@@ -169,13 +169,13 @@ body:has(.odyssey) {
    the frame's accents. Through the finale the ground is that gold, so the
    body and the face trade places rather than the mark vanishing into it. */
 .brand .brand-mark {
-  /* Height only: the mascot's box narrows for the face-only states, so the
+  /* Height only: a fitted mark's box is 96 by 80 rather than 120 by 92, so the
      width has to follow the drawing rather than pin it.
 
      32px, not the 22 this started at. The mascot blinks and winks here, and
-     under 30 the face is too small for either to register -- the eye is about
-     a tenth of the mark. This is the top of the nav band, and the Odyssey is
-     the one page where the mark is the whole brand row. */
+     the eye is a tenth of the mark -- under 30 neither registers. It is the
+     same 32 the docs nav lockup and the console sidebar carry, so the mark is
+     one size wherever it stands beside the wordmark. */
   height: 32px;
   width: auto;
   --mark: color-mix(in srgb, var(--accent-ink) calc(var(--wash-mix) * 100%), var(--accent));
