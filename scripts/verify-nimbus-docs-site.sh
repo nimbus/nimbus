@@ -464,6 +464,54 @@ else
   fail "${C}" "$(printf '%s' "${drift}" | head -6 | tr '\n' ';')"
 fi
 
+# --- 20. the wordmark is never recased ---------------------------------------
+# The Odyssey frame writes its chrome in mono uppercase, and that voice sat on
+# the brand row rather than on the labels inside it, so the lowercase `nimbus`
+# in the markup rendered as NIMBUS. The same rule in the afterword did the same
+# to the colophon. Neither is visible in the source, which spells the wordmark
+# correctly -- only the cascade recased it.
+#
+# So the wordmark holds its own case: `.wordmark` in `app/global.css` declares
+# `text-transform: none`, and every place that renders the brand name as a word
+# wears that class. This checks both halves. Chrome that uppercases its labels
+# is fine and stays; what it may not do is reach the wordmark.
+C="20. the wordmark declares its own case and every rendering of it wears the class"
+drift="$(
+  python3 - <<'DRIFT' 2>&1 || true
+import re
+
+GLOBAL = "website/src/app/global.css"
+# The components that render the brand name as a word rather than as prose or
+# as a command in a code span.
+LOCKUPS = (
+    "website/src/components/lockup.tsx",
+    "website/src/components/odyssey/journey.tsx",
+)
+
+src = open(GLOBAL, encoding="utf-8").read()
+rule = re.search(r"\.wordmark\s*\{([^}]*)\}", src)
+if not rule:
+    print(f"{GLOBAL}: no .wordmark rule")
+elif not re.search(r"text-transform\s*:\s*none", rule.group(1)):
+    print(f"{GLOBAL}: .wordmark does not set text-transform: none")
+
+for path in LOCKUPS:
+    text = open(path, encoding="utf-8").read()
+    # A JSX text node that is the brand name on its own. Anything else -- prose,
+    # a code span, an accessible name -- is a sentence and not the wordmark.
+    for tag, attrs in re.findall(
+        r"<(\w+)([^>]*)>\s*[Nn]imbus\s*<", text
+    ):
+        if "wordmark" not in attrs:
+            print(f"{path}: <{tag}> renders the wordmark without the class")
+DRIFT
+)"
+if [[ -z "${drift}" ]]; then
+  pass "${C}"
+else
+  fail "${C}" "$(printf '%s' "${drift}" | head -6 | tr '\n' ';')"
+fi
+
 # --- summary -------------------------------------------------------------------------
 printf '\n%d/%d conditions green\n' "${PASS}" "$((PASS + FAIL))"
 if [[ ${FAIL} -gt 0 ]]; then

@@ -919,7 +919,7 @@ export function Journey() {
               aria-label="Nimbus. Return to the start."
             >
               <Mascot className="brand-mark" />
-              nimbus
+              <span className="wordmark">nimbus</span>
               <small>beta</small>
             </button>
             <nav className="chapter-nav" aria-label="Chapters">
@@ -1052,7 +1052,9 @@ export function Journey() {
             <a href={GITHUB}>GitHub ↗</a>
             <a href={DISCUSS}>Discuss ↗</a>
           </nav>
-          <span>nimbus · one binary backend</span>
+          <span>
+            <span className="wordmark">nimbus</span> · one binary backend
+          </span>
         </div>
         <div className="afterword-row">
           <p className="fine">
