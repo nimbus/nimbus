@@ -94,6 +94,8 @@ the operator side covers nodes, tenants, and settings.
 ## Two clients, one binary
 
 Server-side TypeScript with reactive queries, and a stock MongoDB driver —
+
+[![Nimbus on StartupScores](https://startupscores.com/badge/nimbus.svg?style=shield&v=combo&theme=dark)](https://startupscores.com/open-source/nimbus)
 both against the same running `nimbus` process:
 
 ```typescript
