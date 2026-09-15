@@ -41,9 +41,6 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 1 - Launch Safety And Egress Trust
 
-- `code-scanning-initial-plan.html` - `active`. Owns the CodeQL security closeout
-  queue, evidence-based triage, and the Firebase, codegen, bootc, runtime canary, Brotli, and TLS repair PRs.
-
 - `architecture-review-2026-07-plan.md` - `active`. Control plane for the
   2026-07 full-workspace architecture review: guarantee/fail-closed repairs
   (storage write-path unification, EgressGateway pairing, decision-log
@@ -73,6 +70,22 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   gap on native and runtime paths, the generated-history read-visibility race,
   and the CodeQL path-injection alerts on `deploy_artifacts.rs` awaiting
   dismissal. Final evidence stays in `proof/nimbus-ui-rebuild/`.
+- `archive/code-scanning-initial-plan.html` - `complete, archived`
+  (2026-09-15; PRs #345-#350). Closed the CodeQL security queue: 138 of 147
+  security alerts dismissed with individual evidence, and the remaining nine
+  repaired. Firebase field paths and codegen reference trees now read own
+  properties and write data properties, with `__proto__` emitted as a computed
+  key. Bootc binds `--transport=` and `--tag=` and terminates option parsing
+  with `--`. The runtime filesystem canary requires a denial from each probe
+  instead of one across three. Brotli FFI destruction reads the allocator
+  opaque from the moved container. The vendored object-store client lost its
+  TLS verification bypass, an intentional vendor API break under the
+  pre-launch policy. Merged on focused per-PR evidence rather than hosted CI,
+  on the owner's instruction. Two of the six repairs carry a mutation check
+  that fails on the baseline. Still with GitHub and owned by nobody here:
+  CodeQL must confirm closure of the nine repaired alerts on `main`, and the
+  162 quality alerts stay open. Final evidence stays in
+  `proof/code-scanning-initial/`.
 - `archive/nimbus-docs-restyle-plan.html` - `complete, archived`
   (2026-09-12; PR #351). Rebuilt nimbusdocs.com on fumadocs with Next in
   `output: 'export'` behind Cloudflare static assets, replacing Starlight, and
