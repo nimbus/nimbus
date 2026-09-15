@@ -1257,11 +1257,13 @@ jobs:
                 nimbus start               # Start the server
 
               Optional macOS microVM dev flow ('nimbus machine'):
-              it needs the krunkit chain (krunkit + gvproxy + libkrun) from the
-              libkrun/krun tap. Trust the krunkit formula before installation:
+              it needs the krunkit chain from the libkrun/krun tap. Homebrew 6
+              will not load a third-party tap until you trust it, and krunkit
+              pulls gvproxy, libkrun, libkrunfw and virglrenderer from that same
+              tap, so trust the tap rather than the single formula:
 
                 brew tap libkrun/krun
-                brew trust --formula libkrun/krun/krunkit
+                brew trust --tap libkrun/krun
                 brew install libkrun/krun/krunkit
 
               The 'nimbus' server itself runs fine without this chain.
