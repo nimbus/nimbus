@@ -37,7 +37,7 @@ const doors = [
 const REQUEST_DOOR = 0;
 
 const terminalLines = [
-  '$ brew install nimbus/tap/nimbus',
+  '$ brew install --cask nimbus/tap/nimbus',
   '$ nimbus init convex my-app',
   '$ cd my-app',
   '$ nimbus dev',

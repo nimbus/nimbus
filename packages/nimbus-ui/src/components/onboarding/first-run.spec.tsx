@@ -34,7 +34,7 @@ describe("FirstRun step transitions", () => {
       "0 of 3 steps done",
     );
     expect(screen.getByTestId("first-run-step-install")).toHaveTextContent(
-      "brew install nimbus/tap/nimbus",
+      "brew install --cask nimbus/tap/nimbus",
     );
     expect(screen.getByTestId("first-run-step-dev")).toHaveTextContent(
       "nimbus init convex my-app && cd my-app && nimbus dev",
