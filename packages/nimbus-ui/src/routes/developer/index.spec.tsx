@@ -405,7 +405,7 @@ describe("empty tenant", () => {
     ).toHaveTextContent("0 of 3 steps done");
     expect(
       within(panel).getByTestId("overview-onboarding-step-install"),
-    ).toHaveTextContent("brew install --cask nimbus/tap/nimbus");
+    ).toHaveTextContent("brew install nimbus/tap/nimbus");
     expect(screen.queryByTestId("overview-stats")).toBeNull();
     expect(screen.queryByTestId("overview-runs")).toBeNull();
     // The connect panel stays: it is how the numbers start moving.
