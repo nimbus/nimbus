@@ -31,7 +31,7 @@ const STEPS: ReadonlyArray<Step> = [
     id: "install",
     title: "Install the CLI",
     body: "Homebrew on macOS and Linux. Other platforms are on the releases page.",
-    snippet: "brew install nimbus/tap/nimbus",
+    snippet: "brew install --cask nimbus/tap/nimbus",
     // The console cannot see a local install. A deployed function proves it.
     done: (p) => p.functions > 0,
   },
