@@ -1080,8 +1080,15 @@ lockup controls its own spacing.
 | `render.sh`             | Renders `icon-512.png` and, with `DESKTOP_DIR`, the desktop `icon.png`, `icon.icns`, `icon.ico`, and tray PNGs | Release prep |
 
 The wordmark is lowercase `nimbus` whenever it is set next to the mark, at
-semibold with `-0.01em` tracking, and the mark sits at 24 to 30px beside
-it.
+semibold with `-0.01em` tracking, and the mark sits at 32px beside it.
+
+Lowercase belongs to the wordmark, not to the type around it. The Odyssey
+frame sets its chrome in mono uppercase, tracked out a tenth of an em; the
+wordmark standing in that chrome holds its own case, while the labels beside
+it — the beta tag, the colophon — keep the frame's voice. On the docs site
+the `.wordmark` class carries this, and condition 20 of
+`scripts/verify-nimbus-docs-site.sh` requires it on every rendering of the
+word.
 
 #### Mascot
 

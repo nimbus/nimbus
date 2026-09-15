@@ -10,7 +10,7 @@ export function Lockup() {
   return (
     <span className="flex items-center gap-2">
       <Mascot className="h-[32px] w-auto" />
-      <span className="text-[15px] font-semibold tracking-[-0.01em] text-(--text-1)">
+      <span className="wordmark text-[15px] font-semibold tracking-[-0.01em] text-(--text-1)">
         nimbus
       </span>
     </span>

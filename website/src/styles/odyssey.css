@@ -153,14 +153,27 @@ body:has(.odyssey) {
   gap: 24px;
 }
 
+/* The brand row holds three things: the mark, the wordmark and the beta tag.
+   It owns their arrangement and nothing else. The frame writes its chrome in
+   mono uppercase tracked out a tenth of an em, and that voice used to sit
+   here, on the row -- which meant it captured the wordmark. A wordmark is not
+   a label, so the voice belongs to the two things inside the row rather than
+   to the row. */
 .brand {
   display: inline-flex;
   align-items: center;
   gap: 12px;
   justify-self: start;
-  font: 500 13px/1 var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+}
+
+/* `.wordmark` in `app/global.css` holds the case. In the brand lockup the
+   wordmark also takes the brand's own type -- Geist at semibold, tracked in
+   rather than out -- which is what the docs nav lockup and the console sidebar
+   carry, so the three surfaces show one wordmark beside one mark. In the
+   afterword it keeps the colophon's type and only the case is its own. */
+.brand .wordmark {
+  font: 600 15px/1 var(--font-sans);
+  letter-spacing: -0.01em;
 }
 
 /* The mark, not a glyph. A logo is exempt from the non-text contrast floor
@@ -182,9 +195,12 @@ body:has(.odyssey) {
   --mark-ink: color-mix(in srgb, var(--accent) calc(var(--wash-mix) * 100%), var(--accent-ink));
 }
 
+/* The beta tag is a label, so it keeps the chrome voice the row no longer
+   carries for it. */
 .brand small {
-  font-size: 10px;
+  font: 500 10px/1 var(--font-mono);
   letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--stage-muted);
 }
 
