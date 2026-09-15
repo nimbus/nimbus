@@ -1954,6 +1954,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn aws_rejects_certificate_verification_bypass_config() {
+        for key in [
+            "allow_invalid_certificates",
+            "aws_allow_invalid_certificates",
+        ] {
+            let error = key
+                .parse::<AmazonS3ConfigKey>()
+                .expect_err("certificate verification bypass must not be configurable");
+
+            match error {
+                crate::Error::UnknownConfigurationKey {
+                    store,
+                    key: rejected_key,
+                } => {
+                    assert_eq!(store, STORE);
+                    assert_eq!(rejected_key, key);
+                }
+                error => panic!("unexpected error: {error}"),
+            }
+        }
+    }
+
     #[cfg(feature = "reqwest")]
     #[test]
     fn test_builder_eks_with_config() {
