@@ -87,7 +87,7 @@ export function readValueAtFieldPath(
 ): unknown {
   let cursor: unknown = source;
   for (const segment of segments) {
-    if (!isPlainObject(cursor) || !(segment in cursor)) {
+    if (!isPlainObject(cursor) || !Object.hasOwn(cursor, segment)) {
       return undefined;
     }
     cursor = cursor[segment];
@@ -102,16 +102,26 @@ export function setValueAtFieldPath(
 ): void {
   let cursor: DocumentData = target;
   for (const segment of segments.slice(0, -1)) {
-    const existing = cursor[segment];
+    const existing = Object.hasOwn(cursor, segment) ? cursor[segment] : undefined;
     if (isPlainObject(existing)) {
       cursor = existing;
       continue;
     }
     const next: DocumentData = {};
-    cursor[segment] = next;
+    Object.defineProperty(cursor, segment, {
+      value: next,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
     cursor = next;
   }
-  cursor[segments.at(-1) ?? ""] = value;
+  Object.defineProperty(cursor, segments.at(-1) ?? "", {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
 }
 
 export function hasFieldValueSentinel(value: unknown): boolean {

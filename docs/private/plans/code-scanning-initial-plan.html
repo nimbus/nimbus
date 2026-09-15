@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code-scanning security closeout</title>
+<style>
+  :root {
+    --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
+    --page: #ffffff; --accent: #2563eb;
+    --todo: #6b7280; --in-progress: #2563eb; --blocked: #dc2626;
+    --deferred: #7c3aed; --done: #16a34a; --no-action: #64748b;
+    --rejected: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e5e9ee; --muted: #9aa4af; --line: #333a43; --soft: #1b2027;
+      --page: #11151a; --accent: #60a5fa;
+      --todo: #9aa4af; --in-progress: #60a5fa; --blocked: #f87171;
+      --deferred: #a78bfa; --done: #4ade80; --no-action: #94a3b8;
+      --rejected: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 1080px;
+    background: var(--page); color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      sans-serif;
+  }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; border-bottom: 1px solid
+    var(--line); padding-bottom: 0.25rem; }
+  h3 { font-size: 1rem; margin: 1.25rem 0 0.4rem; }
+  code { background: var(--soft); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0.05rem 0.35rem; font-size: 0.85em; }
+  pre { background: var(--soft); border: 1px solid var(--line);
+    border-radius: 6px; padding: 0.9rem 1rem; overflow-x: auto;
+    line-height: 1.45; }
+  pre code { background: none; border: none; padding: 0; }
+  blockquote { margin: 0.75rem 0; padding: 0.6rem 1rem; border-left: 3px
+    solid var(--accent); background: var(--soft); }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0;
+    font-size: 0.92rem; }
+  th, td { border: 1px solid var(--line); padding: 0.35rem 0.55rem;
+    text-align: left; vertical-align: top; }
+  th { background: var(--soft); }
+  #status-line { color: var(--muted); font-size: 0.92rem; margin: 0 0 1rem; }
+  .bar { height: 0.75rem; border: 1px solid var(--line); border-radius:
+    999px; overflow: hidden; background: var(--soft); }
+  .bar .fill { height: 100%; width: 0; background: var(--done);
+    transition: width 0.3s; }
+  .counts { color: var(--muted); font-size: 0.92rem; margin: 0.4rem 0 0; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit,
+    minmax(280px, 1fr)); gap: 1rem; }
+  figure { margin: 0; border: 1px solid var(--line); border-radius: 8px;
+    padding: 0.75rem; background: var(--soft); }
+  figcaption { font-weight: 600; margin-bottom: 0.5rem; }
+  figure svg { max-width: 100%; height: auto; }
+  tr[data-status] td:nth-child(3) code { font-weight: 600; }
+  tr[data-status="todo"] td:nth-child(3) code,
+  tr[data-status^="todo("] td:nth-child(3) code { color: var(--todo); }
+  tr[data-status="in_progress"] td:nth-child(3) code,
+  tr[data-status^="in_progress("] td:nth-child(3) code {
+    color: var(--in-progress); }
+  tr[data-status="blocked"] td:nth-child(3) code,
+  tr[data-status^="blocked("] td:nth-child(3) code {
+    color: var(--blocked); }
+  tr[data-status="deferred"] td:nth-child(3) code,
+  tr[data-status^="deferred("] td:nth-child(3) code {
+    color: var(--deferred); }
+  tr[data-status="done"] td:nth-child(3) code,
+  tr[data-status^="done("] td:nth-child(3) code { color: var(--done); }
+  tr[data-status="no-action"] td:nth-child(3) code,
+  tr[data-status^="no-action("] td:nth-child(3) code {
+    color: var(--no-action); }
+  tr[data-status="rejected"] td:nth-child(3) code,
+  tr[data-status^="rejected("] td:nth-child(3) code {
+    color: var(--rejected); }
+  @page { margin: 0.7in 0.6in; size: letter; }
+  @media print {
+    :root {
+      --ink: #1a1e24; --muted: #5c6570; --line: #d8dde3; --soft: #f4f6f8;
+      --page: #ffffff; --accent: #2563eb;
+      --todo: #6b7280; --in-progress: #2563eb; --blocked: #dc2626;
+      --deferred: #7c3aed; --done: #16a34a; --no-action: #64748b;
+      --rejected: #b45309;
+    }
+    body { max-width: none; padding: 0; }
+  }
+</style>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var rows = document.querySelectorAll("#ledger tbody tr");
+    var terminal = { "done": 1, "no-action": 1, "rejected": 1 };
+    var total = rows.length, closed = 0, current = "";
+    rows.forEach(function (row) {
+      var raw = row.getAttribute("data-status") || "";
+      var status = raw.split("(")[0].trim();
+      if (terminal[status]) { closed += 1; }
+      if (status === "in_progress" && !current) {
+        current = row.id + " " + row.cells[1].textContent.trim();
+      }
+    });
+    var pct = total ? Math.round((closed / total) * 100) : 0;
+    document.querySelector("#progress .fill").style.width = pct + "%";
+    var text = closed + " of " + total + " tasks terminal (" + pct + "%).";
+    if (current) { text += " In progress: " + current; }
+    document.querySelector("#progress .counts").textContent = text;
+  });
+</script>
+</head>
+<body>
+<header id="overview">
+<h1>Code-scanning security closeout</h1>
+<p id="status-line">Status: <code data-plan-status="active">active</code> · Owner: this plan · Created: 2026-09-12 · Baseline: main @ b527e1742 · Proof root: <code>proof/code-scanning-initial/</code> · Next action: <a href="#current-resume-state">Current resume state</a></p>
+
+
+<section id="current-resume-state"><h2>Current resume state</h2>
+<p>Updated: 2026-09-12 UTC. Next task: <a href="#CS3">CS3</a>, after all six PRs merge.</p>
+
+
+<p>Publication is complete. PRs #345 through #350 cover the nine remaining security alerts. The API confirmed 138 dismissals across both batches. Do not wait for CI or Actions in this run.</p>
+
+
+<p>Worktree: <code>/Users/jack/src/github.com/nimbus/nimbus-firebase-security</code>. Branch: <code>codex/firebase-field-path-security</code>. Baseline HEAD: <code>b527e1742</code>.</p>
+
+
+<p>Owned changes: this plan, its index entry, its proof files, and the six security repair PRs listed in CS4.</p>
+
+
+<p>Verification: focused tests, workspace formatting, Clippy, and required pre-PR reviews passed for all six PRs. Full CI remains UNVERIFIED after the earlier live-server interference.</p>
+
+
+<p>Required reads: CS4, <code>docs/private/operating/verification.md</code>, and the Firebase write and snapshot callers.</p>
+
+
+</section>
+<section id="outcome"><h2>Outcome</h2><blockquote>All 147 baseline security alerts have evidence-backed dismissals or repair PRs. Nine await merged CodeQL confirmation. The 162 quality alerts remain outside this security batch.</blockquote></section>
+<section id="progress"><h2>Progress</h2><div class="bar"><div class="fill"></div></div><p class="counts">The status ledger defines progress.</p>
+
+</section>
+<section id="architecture"><h2>Architecture</h2><div class="pair"><figure><figcaption>Before</figcaption><pre>Firestore write / snapshot
+  → inherited property access
+  → Object.prototype</pre></figure><figure><figcaption>After</figcaption><pre>Firestore write / snapshot
+  → own property access
+  → document fields</pre></figure></div></section>
+</header>
+<section id="scope"><h2>Scope</h2>
+<p>This plan owns the security closeout PR queue. The completed batches cover critical-alert triage, Firebase and codegen field names, bootc arguments, runtime filesystem checks, Brotli ownership, and TLS verification.</p>
+
+
+<p>The cleanup record remains outside the repository at <code>/Users/jack/nimbus-cleanup-2026-09-11</code>. The release-readiness plan owns Node Compatibility failures.</p>
+
+
+<p>This batch preserves field names and the Firestore wire format. It adds no scan exclusions and changes no server commit paths.</p>
+
+
+</section>
+<section id="status-ledger"><h2>Status ledger</h2><table id="ledger"><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Evidence</th></tr>
+
+</thead><tbody>
+<tr id="CS0" data-status="done"><td>CS0</td><td>Pin the alert baseline</td><td><code>done</code></td><td>main b527e1742: 309 open alerts, including 147 security alerts and 162 quality alerts.</td></tr>
+
+
+<tr id="CS1" data-status="done"><td>CS1</td><td>Close reviewed critical alerts</td><td><code>done</code></td><td><a href="proof/code-scanning-initial/triage.json">41 confirmed dismissals</a>: 36 test fixtures and five initialized output buffers.</td></tr>
+
+
+<tr id="CS2" data-status="done"><td>CS2</td><td>Protect Firebase field access</td><td><code>done</code></td><td>Alerts #3 and #4. Baseline regression failed. Eight write cases and six inherited-field checks pass. Clippy and focused checks pass. Full CI is UNVERIFIED after live-server interference. Both CLI path-fixture rechecks pass after the target setup correction. Pre-PR review passed. <a href="https://github.com/nimbus/nimbus/pull/345">Draft PR #345</a> contains the repair.</td></tr>
+
+
+<tr id="CS4" data-status="done"><td>CS4</td><td>Publish security closeout batches</td><td><code>done</code></td><td><a href="proof/code-scanning-initial/cs4.md">Batch proof</a>: 97 more confirmed dismissals. PRs #345–#350 cover all nine remaining security findings. Focused tests, formatting, Clippy, and required reviews pass. The 162 quality findings remain.</td></tr>
+<tr id="CS3" data-status="todo"><td>CS3</td><td>Archive after merge</td><td><code>todo</code></td><td>Trigger: all security closeout PRs merge.</td></tr>
+
+
+</tbody></table></section>
+<section id="tasks"><h2>Tasks</h2>
+<h3>CS0 Pin the alert baseline</h3>
+
+<p>Problem: the queue mixes security findings, quality findings, and test fixtures. Owner: GitHub code scanning.</p>
+
+<p>Acceptance: retain the full paginated alert inventory and its source commit. Verification: <code>gh api --paginate repos/nimbus/nimbus/code-scanning/alerts?state=open</code>.</p>
+
+
+<h3>CS1 Close reviewed critical alerts</h3>
+
+<p>Problem: 36 fixed test fixtures and five buffers produce critical alerts. Owning paths and dispositions appear in <code>triage.json</code>.</p>
+
+<p>Steps: inspect each source, verify its guard or overwrite, record the reason, and confirm the API response.</p>
+
+<p>Acceptance: 41 alert responses report <code>dismissed</code> with individual evidence. Fail-before: all 41 report <code>open</code>.</p>
+
+
+<h3>CS2 Protect Firebase field access</h3>
+
+<p>Problem: document writes can follow inherited <code>__proto__</code> properties. Snapshot reads can expose inherited fields.</p>
+
+<p>Owner: <code>packages/firebase/src/internal/document-data.ts</code>, consumed by writes and snapshots.</p>
+
+<ol><li>Add public API regressions for prototype-sensitive field names.</li><li>Capture a failing baseline.</li><li>Use own property lookup and data property assignment.</li><li>Run package tests, typecheck, build, formatting, and required review.</li></ol>
+<p>Acceptance: setDoc, updateDoc, mergeFields, and snapshot reads preserve own fields without prototype mutation. Cover nested <code>__proto__</code>, constructor.prototype, leaf names, inherited reads, and inherited merge selections.</p>
+
+<p>Fail-before: <code>npm run test -w firebase</code> fails the new regression on the baseline.</p>
+
+<p>Verification: <code>npm run test -w firebase</code>, <code>npm run typecheck -w firebase</code>, <code>npm run build -w firebase</code>, <code>cargo fmt --all --check</code>, and <code>make clippy</code>. Run <code>make ci</code> when feasible. Mark unavailable checks UNVERIFIED.</p>
+
+<p>Publication requires the repository's <code>pre-pr</code> autoreview gate after the final commit. Hosted CodeQL must confirm the repair after merge.</p>
+
+
+<h3>CS4 Publish security closeout batches</h3>
+
+<p>Acceptance: every baseline security alert has a reviewed PR, a verified dismissal with evidence, or a named unresolved blocker. Each code PR includes focused regression evidence and the required pre-PR review. Rust validation shares one target directory and runs serially.</p>
+
+<p>Worktrees: nimbus-security-bootc, nimbus-security-codegen, nimbus-security-batches, nimbus-security-brotli, and nimbus-security-tls. Root retains the plan in nimbus-firebase-security. Preserve the active primary checkout. Do not wait for CI or Actions.</p>
+<h3>CS3 Archive after merge</h3>
+
+<p>Problem: completed plans must leave the active index. Trigger: the final PR merges.</p>
+
+<p>Steps: confirm the merge, archive this plan, and update the index. Acceptance: the archive records completion and names the remaining GitHub backlog. Verification: inspect the merge and the index link.</p>
+
+
+</section>
+<section id="goal"><h2>Goal</h2><pre>Execute the security closeout queue through CS4. Publish locally verified, reviewed PRs without waiting for hosted CI.
+Read this plan, the active task, and the verification runbook.
+Work in /Users/jack/src/github.com/nimbus/nimbus-firebase-security
+on codex/firebase-field-path-security.
+Resume from the ledger, proof, and verified git state after compaction.
+Keep one task in_progress. Capture fail-before evidence and run named checks.
+Commit only intended changes. Update the proof and ledger at completion.
+Preserve the primary checkout and every recovery worktree.
+Keep other alerts open until their evidence supports closure.
+Review every remaining security alert. Publish each verified fix or record an evidence-based disposition or concrete blocker. Continue to the next independent batch.
+CS3 waits for the final security closeout PR to merge. Archive the plan after CS3 completes.</pre></section>
+<section id="execution-log"><h2>Execution log</h2><table><thead><tr><th>Date</th><th>Item</th><th>Action</th><th>Evidence</th></tr>
+
+</thead><tbody>
+<tr><td>2026-09-12</td><td>CS0, CS1</td><td>Recorded the baseline and closed reviewed alerts.</td><td>309 baseline alerts. 41 dismissals in triage.json. No source change.</td></tr>
+<tr><td>2026-09-12</td><td>CS2</td><td>Published <a href="https://github.com/nimbus/nimbus/pull/345">draft PR #345</a>.</td><td>14 regression cases pass. Package checks, Clippy, formatting, and Nimbus pre-PR review pass. Full CI remains UNVERIFIED after live-server interference. The baseline docs layout gate passes 16/17 conditions.</td></tr>
+
+
+<tr><td>2026-09-12</td><td>CS2</td><td>Corrected the scalar field-name fixture after CodeQL quality alert #7255.</td><td>The fixture parses the same JSON data. All 14 regression cases pass. The next PR analysis must confirm the alert is fixed.</td></tr>
+<tr><td>2026-09-12</td><td>CS4</td><td>Published five independent draft PRs and recorded 97 further dismissals.</td><td><a href="proof/code-scanning-initial/cs4.md">PR map and verification</a>. All 147 baseline security alerts now have a dismissal or repair PR. No CI or Actions wait.</td></tr>
+</tbody></table></section>
+</body></html>

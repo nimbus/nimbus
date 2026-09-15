@@ -1,0 +1,248 @@
+[
+  {
+    "number": 7243,
+    "state": "dismissed",
+    "reason": "false positive",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-crypto/src/master_key_file.rs:100 initializes a nonce buffer, then OsRng.fill_bytes overwrites every byte before Nonce::from_slice and encryption. The nonce is generated from OS entropy."
+  },
+  {
+    "number": 7242,
+    "state": "dismissed",
+    "reason": "false positive",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-crypto/src/key_directory.rs:116 initializes a nonce buffer, then OsRng.fill_bytes overwrites every byte before Nonce::from_slice and encryption. The nonce is generated from OS entropy."
+  },
+  {
+    "number": 7240,
+    "state": "dismissed",
+    "reason": "false positive",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/encryption/rotate.rs:740 initializes a nonce buffer, then OsRng.fill_bytes overwrites every byte before Nonce::from_slice and encryption. The nonce is generated from OS entropy."
+  },
+  {
+    "number": 7239,
+    "state": "dismissed",
+    "reason": "false positive",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/encryption/migrate.rs:432 initializes a nonce buffer, then OsRng.fill_bytes overwrites every byte before Nonce::from_slice and encryption. The nonce is generated from OS entropy."
+  },
+  {
+    "number": 7139,
+    "state": "dismissed",
+    "reason": "false positive",
+    "comment": "Reviewed main at b527e1742. master_key_file.rs:77 initializes an output buffer. HKDF-SHA256 expand overwrites all 32 bytes before cipher construction, using the file-backed master key and subject derivation context. Failure aborts before use."
+  },
+  {
+    "number": 7138,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:1107 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7137,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:1068 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7136,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:1032 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7135,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:1000 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7134,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:999 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7133,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:940 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7132,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:898 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7131,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:873 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7130,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:845 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7129,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:844 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7128,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:789 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7127,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:769 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7126,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-storage/src/encrypted_redb.rs:751 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7125,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-kv/src/server.rs:1159 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7124,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-kv/src/server.rs:1154 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7123,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-kv/src/server.rs:1153 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7120,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/kv.rs:775 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7119,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/kv.rs:729 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7118,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/kv.rs:697 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7117,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/kv.rs:541 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7116,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/kv.rs:489 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 7115,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-cli/src/kv.rs:438 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6945,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/lib.rs:100 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6914,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-server/src/tests/mongodb_wire.rs:18 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code. The parent tests module is gated in crates/nimbus-server/src/lib.rs."
+  },
+  {
+    "number": 6841,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-server/src/tests/mongodb_wire.rs:270 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code. The parent tests module is gated in crates/nimbus-server/src/lib.rs."
+  },
+  {
+    "number": 6823,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:604 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6822,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:376 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6821,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/commands/mod.rs:324 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6812,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:687 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6811,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:675 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6810,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:676 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6809,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:642 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 6739,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/commands/mod.rs:236 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 931,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:621 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 930,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:620 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  },
+  {
+    "number": 928,
+    "state": "dismissed",
+    "reason": "used in tests",
+    "comment": "Reviewed main at b527e1742. crates/nimbus-mongodb/src/auth.rs:509 uses a fixed test fixture inside a cfg(test) module. Production builds exclude this code."
+  }
+]
