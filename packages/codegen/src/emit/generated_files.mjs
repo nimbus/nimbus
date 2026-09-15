@@ -8,6 +8,7 @@ import {
   renderObjectBlock,
   renderTableNames,
   renderTree,
+  setTreeValue,
 } from "./type_helpers.mjs";
 
 function generateApiFile(modules, schema, packageNamespace) {
@@ -26,7 +27,11 @@ function generateApiFile(modules, schema, packageNamespace) {
       usedHelpers.add(fn.kind);
       const targetTree = fn.visibility === "internal" ? internalTree : publicTree;
       const moduleNode = ensureModuleTree(targetTree, moduleInfo.moduleName);
-      moduleNode[fn.exportName] = helperCall(fn, schema, functionIndex, audit);
+      setTreeValue(
+        moduleNode,
+        fn.exportName,
+        helperCall(fn, schema, functionIndex, audit),
+      );
     }
   }
 
@@ -60,8 +65,11 @@ function generateApiCjsFile(modules, packageNamespace) {
       usedHelpers.add(fn.kind);
       const targetTree = fn.visibility === "internal" ? internalTree : publicTree;
       const moduleNode = ensureModuleTree(targetTree, moduleInfo.moduleName);
-      moduleNode[fn.exportName] =
-        `${helperName(fn.kind)}(${JSON.stringify(fn.name)}, ${JSON.stringify(fn.visibility)})`;
+      setTreeValue(
+        moduleNode,
+        fn.exportName,
+        `${helperName(fn.kind)}(${JSON.stringify(fn.name)}, ${JSON.stringify(fn.visibility)})`,
+      );
     }
   }
 
@@ -104,7 +112,11 @@ function generateScheduledFunctionsFile(modules, schema, packageNamespace) {
 
       const targetTree = fn.visibility === "internal" ? internalTree : publicTree;
       const moduleNode = ensureModuleTree(targetTree, moduleInfo.moduleName);
-      moduleNode[fn.exportName] = helperCall(fn, schema, functionIndex, undefined);
+      setTreeValue(
+        moduleNode,
+        fn.exportName,
+        helperCall(fn, schema, functionIndex, undefined),
+      );
     }
   }
 

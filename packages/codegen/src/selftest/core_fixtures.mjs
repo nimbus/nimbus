@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+
+import {
+  generateApiCjsFile,
+  generateApiFile,
+  generateScheduledFunctionsFile,
+} from "../emit/generated_files.mjs";
 
 import {
   createAppFixture,
@@ -29,6 +36,125 @@ async function runCoreFixtures() {
   await testUnsafeCompileTimeSchemaFixture();
   await testUnsafeCompileTimeArgsFixture();
   await testUnsafeCompileTimeReturnsFixture();
+  await testGeneratedReferenceTreesTreatPropertyNamesAsData();
+}
+
+async function testGeneratedReferenceTreesTreatPropertyNamesAsData() {
+  const makeFunction = (moduleName, exportName, kind, visibility) => ({
+    exportName,
+    name: `${moduleName}:${exportName}`,
+    kind,
+    visibility,
+    argsSchema: {},
+    returnsSchema: null,
+    plan: null,
+  });
+  const modules = [
+    {
+      moduleName: "__proto__.constructor",
+      functions: [
+        makeFunction("__proto__.constructor", "toString", "query", "public"),
+        makeFunction(
+          "__proto__.constructor",
+          "__proto__",
+          "mutation",
+          "public",
+        ),
+      ],
+    },
+    {
+      moduleName: "constructor.toString",
+      functions: [
+        makeFunction("constructor.toString", "__proto__", "mutation", "internal"),
+      ],
+    },
+    {
+      moduleName: "constructor.prototype.codegenPolluted",
+      functions: [
+        makeFunction(
+          "constructor.prototype.codegenPolluted",
+          "safe",
+          "mutation",
+          "public",
+        ),
+      ],
+    },
+    {
+      moduleName: "toString.__proto__",
+      functions: [
+        makeFunction("toString.__proto__", "constructor", "mutation", "public"),
+      ],
+    },
+  ];
+  const schema = { tables: {} };
+
+  const packageNamespace = "codegen-test-browser";
+  const generatedApi = generateApiFile(modules, schema, packageNamespace);
+  const generatedCjsApi = generateApiCjsFile(modules, packageNamespace);
+  const generatedScheduled = generateScheduledFunctionsFile(
+    modules,
+    schema,
+    packageNamespace,
+  );
+
+  for (const generated of [generatedApi, generatedCjsApi, generatedScheduled]) {
+    assert.match(generated, /\["__proto__"\]:/);
+    assert.match(generated, /constructor: \{/);
+    assert.match(generated, /toString: \{/);
+  }
+  assert.match(
+    generatedApi,
+    /"__proto__\.constructor:toString", "public"/,
+  );
+  assert.match(
+    generatedScheduled,
+    /"__proto__\.constructor:__proto__", "public"/,
+  );
+  assert.match(
+    generatedScheduled,
+    /"constructor\.toString:__proto__", "internal"/,
+  );
+  assert.doesNotMatch(generatedScheduled, /"__proto__\.constructor:toString"/);
+  assert.equal(Object.hasOwn(Object.prototype, "codegenPolluted"), false);
+
+  const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus_codegen_tree_"));
+  const packageDir = path.join(fixtureDir, "node_modules", packageNamespace);
+  await fs.mkdir(packageDir, { recursive: true });
+  await fs.writeFile(
+    path.join(packageDir, "package.json"),
+    JSON.stringify({ exports: { "./browser": "./browser.cjs" } }),
+  );
+  await fs.writeFile(
+    path.join(packageDir, "browser.cjs"),
+    "const makeReference = (name, visibility) => ({ name, visibility });\n" +
+      "module.exports = { makeMutationReference: makeReference, makeQueryReference: makeReference };\n",
+  );
+  const generatedCjsPath = path.join(fixtureDir, "api_cjs.cjs");
+  await fs.writeFile(generatedCjsPath, generatedCjsApi);
+
+  const { api, internal } = createRequire(import.meta.url)(generatedCjsPath);
+  assert.equal(
+    api.__proto__.constructor.toString.name,
+    "__proto__.constructor:toString",
+  );
+  assert.equal(
+    api.__proto__.constructor.__proto__.name,
+    "__proto__.constructor:__proto__",
+  );
+  assert.equal(
+    internal.constructor.toString.__proto__.visibility,
+    "internal",
+  );
+  assert.equal(
+    api.toString.__proto__.constructor.name,
+    "toString.__proto__:constructor",
+  );
+  assert.equal(Object.hasOwn(api, "__proto__"), true);
+  assert.equal(Object.hasOwn(api.__proto__, "constructor"), true);
+  assert.equal(Object.hasOwn(internal, "constructor"), true);
+  assert.equal(Object.hasOwn(internal.constructor, "toString"), true);
+  assert.equal(Object.hasOwn(api.toString.__proto__, "constructor"), true);
+  assert.equal(Object.getPrototypeOf(api), Object.prototype);
 }
 
 async function testSupportedDefineFixture() {
