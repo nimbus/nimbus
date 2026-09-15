@@ -193,12 +193,7 @@ export default function Page() {
           Compose file, no sidecar services, no managed account.
         </p>
         <p>Install it first:</p>
-        <Code
-          lang="bash"
-          code={
-            'brew trust --cask nimbus/tap/nimbus\nbrew install --cask nimbus/tap/nimbus'
-          }
-        />
+        <Code lang="bash" code="brew install nimbus/tap/nimbus" />
         <p>
           Other platforms ship via the install script and release binaries — see
           the{' '}

@@ -17,8 +17,7 @@ The shell does not bundle the server. Install the `nimbus` CLI first:
 
 ```bash
 # macOS / Linux (Homebrew)
-brew trust --cask nimbus/tap/nimbus
-brew install --cask nimbus/tap/nimbus
+brew install nimbus/tap/nimbus
 
 # Linux (install script)
 curl -fsSL https://github.com/nimbus/nimbus/releases/latest/download/install.sh | sh
@@ -35,9 +34,7 @@ Requires macOS 14 (Sonoma) or later.
 ### Homebrew Cask (recommended)
 
 ```bash
-brew tap nimbus/tap
-brew trust --cask nimbus/tap/nimbus-desktop
-brew install --cask nimbus/tap/nimbus-desktop
+brew install nimbus/tap/nimbus-desktop
 ```
 
 The cask installs `nimbus-desktop.app` into `/Applications` from a

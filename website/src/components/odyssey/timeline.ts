@@ -649,7 +649,7 @@ export const chapters: Chapter[] = [
     proof: 'BREW INSTALL · NIMBUS INIT · NIMBUS DEV · LOCALHOST:3210',
     snippet: {
       file: 'shell',
-      lines: ['$ brew install --cask nimbus/tap/nimbus', '$ nimbus init convex my-app', '$ cd my-app', '$ nimbus dev', '  Local:  http://localhost:3210'],
+      lines: ['$ brew install nimbus/tap/nimbus', '$ nimbus init convex my-app', '$ cd my-app', '$ nimbus dev', '  Local:  http://localhost:3210'],
     },
     start: 0.9606,
     end: 1,

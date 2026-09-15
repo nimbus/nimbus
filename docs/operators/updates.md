@@ -30,7 +30,7 @@ Use the same channel you installed with.
 ### Homebrew (macOS and Linux)
 
 ```bash
-brew upgrade --cask nimbus/tap/nimbus
+brew upgrade nimbus/tap/nimbus
 ```
 
 ### Install script
