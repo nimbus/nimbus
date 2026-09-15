@@ -3,6 +3,101 @@
 use super::*;
 use core;
 use enc::encode::BrotliEncoderParameter;
+use std::alloc::{alloc, dealloc, Layout};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::vec::Vec;
+
+#[derive(Default)]
+struct CustomAllocatorTrace {
+    allocations: Mutex<HashMap<usize, Layout>>,
+    frees: Mutex<Vec<(usize, usize)>>,
+}
+
+extern "C" fn tracking_alloc(opaque: *mut c_void, size: usize) -> *mut c_void {
+    let layout = Layout::from_size_align(size.max(1), 64).expect("tracking layout should be valid");
+    let ptr = unsafe { alloc(layout) };
+    assert!(!ptr.is_null(), "tracking allocation should succeed");
+    let trace = unsafe { &*(opaque as *const CustomAllocatorTrace) };
+    trace
+        .allocations
+        .lock()
+        .expect("allocation trace should lock")
+        .insert(ptr as usize, layout);
+    ptr.cast()
+}
+
+extern "C" fn tracking_free(opaque: *mut c_void, ptr: *mut c_void) {
+    let trace = unsafe { &*(opaque as *const CustomAllocatorTrace) };
+    let layout = trace
+        .allocations
+        .lock()
+        .expect("allocation trace should lock")
+        .remove(&(ptr as usize))
+        .expect("freed pointer should come from the tracking allocator");
+    trace
+        .frees
+        .lock()
+        .expect("free trace should lock")
+        .push((opaque as usize, ptr as usize));
+    unsafe { dealloc(ptr.cast(), layout) };
+}
+
+fn assert_container_was_freed(
+    trace: &CustomAllocatorTrace,
+    opaque: *mut c_void,
+    container: *mut c_void,
+) {
+    assert!(
+        trace
+            .frees
+            .lock()
+            .expect("free trace should lock")
+            .contains(&(opaque as usize, container as usize)),
+        "destroy should free the container with its original allocator opaque"
+    );
+    assert!(
+        trace
+            .allocations
+            .lock()
+            .expect("allocation trace should lock")
+            .is_empty(),
+        "destroy should release every custom allocation"
+    );
+}
+
+#[test]
+fn destroy_encoder_instance_uses_moved_allocators_opaque() {
+    let mut trace = CustomAllocatorTrace::default();
+    let opaque = (&mut trace as *mut CustomAllocatorTrace).cast::<c_void>();
+    let state = unsafe {
+        super::super::compressor::BrotliEncoderCreateInstance(
+            Some(tracking_alloc),
+            Some(tracking_free),
+            opaque,
+        )
+    };
+    assert!(!state.is_null(), "encoder state should be allocated");
+
+    unsafe { super::super::compressor::BrotliEncoderDestroyInstance(state) };
+
+    assert_container_was_freed(&trace, opaque, state.cast());
+}
+
+#[test]
+fn destroy_work_pool_uses_moved_allocators_opaque() {
+    let mut trace = CustomAllocatorTrace::default();
+    let opaque = (&mut trace as *mut CustomAllocatorTrace).cast::<c_void>();
+    let work_pool = unsafe {
+        BrotliEncoderCreateWorkPool(2, Some(tracking_alloc), Some(tracking_free), opaque)
+    };
+    assert!(!work_pool.is_null(), "work pool should be allocated");
+
+    unsafe { BrotliEncoderDestroyWorkPool(work_pool) };
+
+    assert_container_was_freed(&trace, opaque, work_pool.cast());
+}
+
 #[test]
 fn test_compress_workpool() {
     let input = [
