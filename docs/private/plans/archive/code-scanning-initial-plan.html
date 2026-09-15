@@ -113,29 +113,15 @@
 <body>
 <header id="overview">
 <h1>Code-scanning security closeout</h1>
-<p id="status-line">Status: <code data-plan-status="active">active</code> · Owner: this plan · Created: 2026-09-12 · Baseline: main @ b527e1742 · Proof root: <code>proof/code-scanning-initial/</code> · Next action: <a href="#current-resume-state">Current resume state</a></p>
+<p id="status-line">Status: <code data-plan-status="done">complete, archived</code> · Owner: this plan · Created: 2026-09-12 · Closed: 2026-09-15 · Baseline: main @ b527e1742 · Proof root: <code>proof/code-scanning-initial/</code> · Next action: none</p>
 
 
 <section id="current-resume-state"><h2>Current resume state</h2>
-<p>Updated: 2026-09-12 UTC. Next task: <a href="#CS3">CS3</a>, after all six PRs merge.</p>
+<p>Closed: 2026-09-15 UTC. No next task. Every ledger item is terminal.</p>
 
+<p>All six repairs are on <code>main</code>: #345 <code>3824e4f60</code>, #346 <code>e02d060a9</code>, #347 <code>2c2ddcd9a</code>, #348 <code>11384e0a0</code>, #349 <code>ae7dd5694</code>, #350 <code>cca50ec48</code>. The six branches and their worktrees are deleted.</p>
 
-<p>Publication is complete. PRs #345 through #350 cover the nine remaining security alerts. The API confirmed 138 dismissals across both batches. Do not wait for CI or Actions in this run.</p>
-
-
-<p>Worktree: <code>/Users/jack/src/github.com/nimbus/nimbus-firebase-security</code>. Branch: <code>codex/firebase-field-path-security</code>. Baseline HEAD: <code>b527e1742</code>.</p>
-
-
-<p>Owned changes: this plan, its index entry, its proof files, and the six security repair PRs listed in CS4.</p>
-
-
-<p>Verification: focused tests, workspace formatting, Clippy, and required pre-PR reviews passed for all six PRs. Full CI remains UNVERIFIED after the earlier live-server interference.</p>
-
-
-<p>Required reads: CS4, <code>docs/private/operating/verification.md</code>, and the Firebase write and snapshot callers.</p>
-
-
-</section>
+<p>Two things outlive this plan and belong to GitHub, not to a task here: CodeQL must re-analyse <code>main</code> and confirm closure of the nine repaired security alerts, and the 162 quality alerts stay open without an owner. <a href="proof/code-scanning-initial/cs3.md">CS3 proof</a> records both.</p></section>
 <section id="outcome"><h2>Outcome</h2><blockquote>All 147 baseline security alerts have evidence-backed dismissals or repair PRs. Nine await merged CodeQL confirmation. The 162 quality alerts remain outside this security batch.</blockquote></section>
 <section id="progress"><h2>Progress</h2><div class="bar"><div class="fill"></div></div><p class="counts">The status ledger defines progress.</p>
 
@@ -170,7 +156,7 @@
 
 
 <tr id="CS4" data-status="done"><td>CS4</td><td>Publish security closeout batches</td><td><code>done</code></td><td><a href="proof/code-scanning-initial/cs4.md">Batch proof</a>: 97 more confirmed dismissals. PRs #345–#350 cover all nine remaining security findings. Focused tests, formatting, Clippy, and required reviews pass. The 162 quality findings remain.</td></tr>
-<tr id="CS3" data-status="todo"><td>CS3</td><td>Archive after merge</td><td><code>todo</code></td><td>Trigger: all security closeout PRs merge.</td></tr>
+<tr id="CS3" data-status="done"><td>CS3</td><td>Archive after merge</td><td><code>done</code></td><td><a href="proof/code-scanning-initial/cs3.md">CS3 proof</a>: all six PRs merged on 2026-09-15 with per-PR targeted verification. Two mutation checks failed on the baseline and pass on the repair. The archive entry names the remaining GitHub backlog.</td></tr>
 
 
 </tbody></table></section>
@@ -240,5 +226,6 @@ CS3 waits for the final security closeout PR to merge. Archive the plan after CS
 
 <tr><td>2026-09-12</td><td>CS2</td><td>Corrected the scalar field-name fixture after CodeQL quality alert #7255.</td><td>The fixture parses the same JSON data. All 14 regression cases pass. The next PR analysis must confirm the alert is fixed.</td></tr>
 <tr><td>2026-09-12</td><td>CS4</td><td>Published five independent draft PRs and recorded 97 further dismissals.</td><td><a href="proof/code-scanning-initial/cs4.md">PR map and verification</a>. All 147 baseline security alerts now have a dismissal or repair PR. No CI or Actions wait.</td></tr>
+<tr><td>2026-09-15</td><td>CS3</td><td>Merged all six repairs and archived the plan.</td><td><a href="proof/code-scanning-initial/cs3.md">CS3 proof</a>. Focused tests per PR, not hosted CI, on the owner's instruction. CodeQL confirmation and the 162 quality alerts stay with GitHub.</td></tr>
 </tbody></table></section>
 </body></html>
