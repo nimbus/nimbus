@@ -140,10 +140,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download observed corpus results
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: node-compat-observed-*
           path: target/node-compat/observed-shards
@@ -196,7 +196,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Verify vendored fixtures against their pinned upstream tags
         run: make node-compat-verify-fixture-upstream ALLOW_FETCH=1
