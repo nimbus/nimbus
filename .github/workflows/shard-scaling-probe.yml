@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Free runner disk for archive build
         run: |
@@ -57,13 +57,13 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -78,7 +78,7 @@ jobs:
         run: make build-packages
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -173,10 +173,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -251,7 +251,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Prepare timing directory
         run: mkdir -p "$RUNNER_TEMP/shard-scaling-probe-results"

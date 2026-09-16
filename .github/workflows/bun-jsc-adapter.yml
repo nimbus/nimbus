@@ -57,7 +57,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -69,7 +69,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -126,10 +126,10 @@ jobs:
 
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check out Bun source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.bun_repository }}
           ref: ${{ inputs.bun_source_ref }}
@@ -202,7 +202,7 @@ jobs:
 
       - name: Cache WebKit source
         id: webkit-src-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ steps.webkit.outputs.src }}
           key: webkit-src-${{ steps.webkit.outputs.version }}
@@ -219,7 +219,7 @@ jobs:
           git -C "${src}" checkout -q FETCH_HEAD
 
       - name: Cache WebKit build (JSC/WTF from source)
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ steps.webkit.outputs.webkit_build }}
           key: webkit-build-${{ matrix.platform_arch }}-${{ steps.webkit.outputs.version }}-release-local-nimbus_bun_simdutf-v1
@@ -234,7 +234,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -335,7 +335,7 @@ jobs:
 
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download adapter artifacts
         uses: actions/download-artifact@v8

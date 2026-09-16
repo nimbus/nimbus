@@ -194,12 +194,12 @@ runs:
         git config --global core.longpaths true
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         components: ${{ inputs.toolchain-components }}
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
     - name: Assert sccache is installed
       shell: bash
@@ -344,7 +344,7 @@ runs:
     - name: Restore prebuilt V8 payload cache
       id: restore-prebuilt-v8-cache
       if: inputs.consume-prebuilt-v8 != 'false'
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       with:
         path: ~/.cache/rusty_v8
         key: prebuilt-v8-${{ steps.resolve-prebuilt-v8.outputs.release-tag }}-${{ inputs.consume-prebuilt-v8 }}-${{ steps.resolve-prebuilt-v8.outputs.target }}-${{ hashFiles('.cargo/rusty-v8-digests.toml') }}
@@ -504,13 +504,13 @@ runs:
 
     - name: Save prebuilt V8 payload cache
       if: inputs.consume-prebuilt-v8 != 'false' && github.ref == 'refs/heads/main' && steps.restore-prebuilt-v8-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       with:
         path: ~/.cache/rusty_v8
         key: ${{ steps.restore-prebuilt-v8-cache.outputs.cache-primary-key }}
 
     - name: Cache cargo artifacts
-      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         shared-key: ${{ inputs.shared-key }}
         cache-directories: |

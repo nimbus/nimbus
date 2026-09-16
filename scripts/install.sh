@@ -1382,7 +1382,7 @@ install_macos_microvm_deps() {
     say_warn "Homebrew not found — skipping the optional macOS microVM dependency chain"
     say_warn "The 'nimbus' server is installed and runs without it."
     say_warn "The 'nimbus machine' dev flow needs krunkit, gvproxy, and libkrun."
-    say_warn "Install Homebrew (https://brew.sh), then run: brew install libkrun/krun/krunkit"
+    say_warn "Install Homebrew (https://brew.sh), then run: brew trust libkrun/krun && brew install libkrun/krun/krunkit"
     return 0
   fi
 
@@ -1394,13 +1394,15 @@ install_macos_microvm_deps() {
   say_info "Tapping libkrun/krun..."
   brew tap libkrun/krun 2>/dev/null || true
 
-  # Homebrew 6.0 won't load formulae from third-party taps until they are
+  # Homebrew won't load formulae from third-party taps until they are
   # explicitly trusted (HOMEBREW_REQUIRE_TAP_TRUST, default true since 6.0). An
   # untrusted tap is a hard error (UntrustedTapError) with no interactive
   # prompt. `brew trust` is idempotent and records to trust.json whether or not
-  # the tap is yet tapped. One trust of libkrun/krun covers the whole microVM
-  # chain: krunkit -> libkrun + gvproxy -> virglrenderer/libepoxy/libkrunfw.
-  say_info "Trusting the libkrun/krun tap (Homebrew 6.0 tap-trust gate)..."
+  # the tap is yet tapped. Trust the whole tap, not the one formula: installing
+  # by full name auto-trusts only krunkit itself and then fails on
+  # libkrun/krun/gvproxy. One tap trust covers the whole microVM chain:
+  # krunkit -> libkrun + gvproxy -> virglrenderer/libepoxy/libkrunfw.
+  say_info "Trusting the libkrun/krun tap (Homebrew tap-trust gate)..."
   brew trust --tap libkrun/krun || true
 
   # The whole microVM chain is an optional fast-path. Under `set -eu` an install
@@ -1413,7 +1415,7 @@ install_macos_microvm_deps() {
   else
     say_warn "Could not install the krunkit chain via Homebrew (exit $?)"
     say_warn "The 'nimbus' server is installed and runs without it."
-    say_warn "Retry later with: brew install libkrun/krun/krunkit"
+    say_warn "Retry later with: brew trust libkrun/krun && brew install libkrun/krun/krunkit"
   fi
   return 0
 }

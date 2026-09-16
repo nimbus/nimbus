@@ -13,7 +13,10 @@ ships from its own repository,
 [`nimbus/desktop`](https://github.com/nimbus/desktop), on a release
 cadence independent of the `nimbus` CLI.
 
-The shell does not bundle the server. Install the `nimbus` CLI first:
+The shell does not bundle the server. Install the `nimbus` CLI first. The CLI
+ships for Apple Silicon macOS 14 (Sonoma) or later, Linux arm64, and Linux
+x86_64. There is no Intel macOS build of the CLI, although the desktop DMG
+below is universal.
 
 ```bash
 # macOS / Linux (Homebrew)

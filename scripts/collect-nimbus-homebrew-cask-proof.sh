@@ -13,7 +13,7 @@ without touching the user's shipped `nimbus` cask token or default machine
 roots. The collector packages a local release binary together with the bundled,
 pinned `gvproxy` and `vfkit` helpers into a temporary proof cask that mirrors the
 shipped `nimbus` cask (no `depends_on formula` for the third-party libkrun/krun
-tap, matching the non-transitive Homebrew 6.0 tap-trust model), installs it under
+tap, because Homebrew tap trust is non-transitive), installs it under
 an isolated token, and then exercises the packaged `nimbus machine ...` path
 against isolated machine roots. It proves that `gvproxy` resolves bundled-first
 from the cask's staged `libexec/gvproxy` inside the Caskroom rather than from a
@@ -549,24 +549,25 @@ printf '%s\n' "${tap_repo}" > "${tap_info_file}"
 mkdir -p "${tap_repo}/Casks"
 cat > "${cask_rendered}" <<EOF
 cask "${cask_token}" do
-  name "${cask_token}"
-  desc "Local proof cask for the Nimbus macOS machine contract"
-  homepage "https://github.com/nimbus/nimbus"
   version "${host_version}"
+  sha256 "${archive_sha}"
+
+  url "file://${archive_path}"
+  name "${cask_token}"
+  desc "Local proof cask for the Nimbus machine contract"
+  homepage "https://github.com/nimbus/nimbus"
 
   livecheck do
     skip "Local proof cask."
   end
 
-  depends_on arch: :arm64
-  depends_on macos: :sonoma
   # Mirrors the shipped cask: no cross-tap depends_on formula. gvproxy and the
   # opt-in vfkit backend are bundled into the staged archive's libexec and
   # resolved bundled-first from the Caskroom, verified below via the
-  # staged-helper and machine-status resolution assertions.
-
-  url "file://${archive_path}"
-  sha256 "${archive_sha}"
+  # staged-helper and machine-status resolution assertions. Stanza order also
+  # mirrors the shipped cask, which CI holds to `brew style --cask`.
+  depends_on arch: :arm64
+  depends_on macos: :sonoma
 
   binary "nimbus", target: "${cask_token}"
 

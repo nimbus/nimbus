@@ -1,0 +1,91 @@
+{
+  "$comment": [
+    "The coverage lane's shard plan. Two consumers read this file: the",
+    "`coverage-plan` job in .github/workflows/coverage.yml builds the shard",
+    "matrix from `shards`, and scripts/check-coverage-scope.py asserts that",
+    "every workspace member in Cargo.toml appears in exactly one of `shards`",
+    "or `excluded`. Adding a crate to the workspace therefore fails the guard",
+    "until someone decides, in this file, whether its lines are measured.",
+    "The reducer instruments the whole workspace, so a member that is in",
+    "neither list still lands in the denominator at 0% and quietly lowers the",
+    "reported number.",
+    "Shards are balanced by test count, not by wall clock; rebalance when a",
+    "shard starts to bound the lane."
+  ],
+  "shards": [
+    {
+      "shard": "server",
+      "packages": ["nimbus-server", "nimbus-bridge"]
+    },
+    {
+      "shard": "engine",
+      "packages": ["nimbus-engine", "nimbus-sandbox", "nimbus-machine"]
+    },
+    {
+      "shard": "cli",
+      "packages": [
+        "nimbus-cli",
+        "nimbus-bin",
+        "nimbus-system",
+        "nimbus-operator",
+        "nimbus-node",
+        "nimbus-process-harness"
+      ]
+    },
+    {
+      "shard": "adapters",
+      "packages": [
+        "nimbus-adapters",
+        "nimbus-convex",
+        "nimbus-firebase",
+        "nimbus-cloud-functions",
+        "nimbus-mongodb",
+        "nimbus-dynamodb",
+        "nimbus-s3",
+        "nimbus-object-storage"
+      ]
+    },
+    {
+      "shard": "storage",
+      "packages": [
+        "nimbus-core",
+        "nimbus-storage",
+        "nimbus-blob",
+        "nimbus-kv",
+        "nimbus-crypto",
+        "nimbus-fs",
+        "nimbus-artifacts",
+        "nimbus-provenance",
+        "nimbus-testing"
+      ]
+    },
+    {
+      "shard": "platform",
+      "packages": [
+        "nimbus",
+        "nimbus-compute",
+        "nimbus-network",
+        "nimbus-workloads",
+        "nimbus-proxy",
+        "nimbus-services",
+        "nimbus-tenant",
+        "nimbus-egress",
+        "nimbus-workload-identity",
+        "nimbus-assets",
+        "nimbus-code-index",
+        "nimbus-auth",
+        "nimbus-license"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "package": "nimbus-runtime",
+      "reason": "Excluded from the instrumented build too (`cargo test --no-run --workspace --exclude nimbus-runtime` in the reducer), so its lines are not in the denominator either. Building V8 under LLVM instrumentation does not fit the lane's budget. Its suite runs in the rust-runtime-tests and harness-runtime jobs in ci.yml."
+    },
+    {
+      "package": "workspace-hack",
+      "reason": "Generated dependency-unification crate. It carries no code to cover."
+    }
+  ]
+}

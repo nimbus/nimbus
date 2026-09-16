@@ -9,7 +9,8 @@ sources exist.
 
 Homebrew installation examples install by full `user/tap/name`, which taps and
 trusts the cask in one step under [Homebrew tap trust](https://docs.brew.sh/Tap-Trust).
-The release workflow generates the Nimbus cask.
+`scripts/render-homebrew-cask.sh` generates the Nimbus cask; the release
+workflow publishes it and CI lints it with `brew style --cask`.
 
 ## Get started + landing
 
@@ -188,6 +189,7 @@ this tree, and its adapter tabs make the same claims a page here would.
 | `operators/node-lifecycle.md` | `machine status` / `machine os upgrade` / `machine os apply`; `ghcr.io/nimbus/machine-os` | `crates/nimbus-cli/src/machine/command.rs` |
 | `operators/updates.md` | No auto-upgrade; `brew upgrade nimbus/tap/nimbus`; install-method detection | `crates/nimbus-server/src/system/install_method.rs` |
 | `operators/updates.md` | Update check: 24h TTL, cache path, `NIMBUS_DISABLE_UPDATE_CHECK=1`, `/api/system/version-info` admin-gated | `crates/nimbus-server/src/system/version_check.rs`, `crates/nimbus-server/src/system/cache.rs`, `crates/nimbus-server/src/router.rs` |
+| `operators/desktop-install.md` | CLI targets: Apple Silicon macOS 14+, Linux arm64, Linux x86_64; no Intel macOS CLI build | `scripts/render-homebrew-cask.sh`, `scripts/install.sh` |
 | `operators/desktop-install.md` | Casks `nimbus/tap/nimbus` + `nimbus/tap/nimbus-desktop`; macOS 14+; notarized DMG | external repo nimbus/homebrew-tap Casks (live), `scripts/install.sh` |
 | `operators/desktop-install.md` | Desktop Linux x64 AppImage/deb/rpm; Windows NSIS unsigned; spawn-on-demand; updater on quit | external repo nimbus/desktop electron-builder.yml + release assets (live) |
 

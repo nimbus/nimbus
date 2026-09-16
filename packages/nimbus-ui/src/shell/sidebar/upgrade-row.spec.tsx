@@ -51,7 +51,7 @@ const VERSION_INFO: VersionInfo = {
   checkStatus: "fresh",
   upgrade: {
     method: "brew",
-    command: "brew upgrade nimbus",
+    command: "brew upgrade nimbus/tap/nimbus",
     needsSudo: false,
     interactive: false,
     fallbackUrl: "https://example.invalid/INSTALL.md",

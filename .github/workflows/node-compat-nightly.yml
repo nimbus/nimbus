@@ -31,16 +31,34 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
         with:
           shared-key: node-compat-rust-corpus-ubuntu-stable-no-bin-v2
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+          # CC10: this slot does not save. GitHub applies a 10 GiB
+          # least-recently-used cap to the whole repository. Measured on
+          # 2026-09-16, the pool held 10.84 GiB in 3,865 entries: this slot at
+          # 4.54 GiB and the coverage slot at 4.26 GiB together held 81% of the
+          # budget, which left 1.84 GiB for 3,862 sccache objects. sccache then
+          # thrashed (207 of 207 write errors and a 0% hit rate on the coverage
+          # reducer), so the two largest slots were starving every other lane.
+          #
+          # This workflow runs only on a schedule and on manual dispatch, so its
+          # wall-clock time is off the pull-request critical path, and a schedule
+          # runs on refs/heads/main, which is exactly when "auto" saves. It is
+          # the correct slot to give up. The lane keeps sccache through
+          # RUSTC_WRAPPER and gains a working sccache pool, so it does not fall
+          # back to a fully cold build. Recent runs take 48 to 58 minutes against
+          # the 120-minute timeout above.
+          #
+          # Caching contract: docs/private/operating/ci-caching.md.
+          save-cache: never
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -63,7 +81,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -72,7 +90,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js 22 for seeded slices and canaries
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -115,7 +133,7 @@ jobs:
           make node-compat-canaries PRESET=tooling
 
       - name: Set up Node.js 20 for oracle sample
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -124,7 +142,7 @@ jobs:
           make node-compat-oracle LANE=node20 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
 
       - name: Set up Node.js 22 for oracle sample
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -133,7 +151,7 @@ jobs:
           make node-compat-oracle LANE=node22 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
 
       - name: Set up Node.js 24 for oracle sample
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -142,7 +160,7 @@ jobs:
           make node-compat-oracle LANE=node24 SAMPLE=test/parallel/test-buffer-alloc.js NODE_BIN="$(which node)"
 
       - name: Set up Node.js 26 for current-line oracle sample
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 26
 

@@ -45,10 +45,10 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -88,7 +88,7 @@ jobs:
         id: preview_comment
         if: github.event_name == 'pull_request' && steps.preview.outputs.url != ''
         continue-on-error: true
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           retries: 3
           retry-exempt-status-codes: 400,401,403,404,422
