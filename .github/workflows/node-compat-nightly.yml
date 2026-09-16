@@ -63,7 +63,12 @@ jobs:
           tool: nextest@0.9.143
           fallback: none
 
+      # NCT2: each fixture appends one JSON object here. nextest runs every
+      # test in its own process, so an in-memory buffer would not survive. The
+      # shards merge in the corpus-baseline-reconciliation job.
       - name: Run Rust Node compatibility corpus
+        env:
+          NIMBUS_NODE_COMPAT_OBSERVED_RESULTS: target/node-compat/observed/partition-${{ strategy.job-index }}.jsonl
         run: >
           cargo nextest run -p nimbus-runtime --lib
           runtime::tests::node_compat::
@@ -73,6 +78,67 @@ jobs:
           --failure-output immediate-final
           --success-output never
           --final-status-level slow
+
+      # The corpus lane can fail, and its measurement is exactly what the next
+      # job needs in that case. Uploading on failure is not a way to ignore the
+      # failure: the job still reports its own status.
+      - name: Upload observed corpus results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-compat-observed-${{ strategy.job-index }}
+          path: target/node-compat/observed
+          if-no-files-found: warn
+
+  # NCT5: this job turns the corpus measurement into a reconciliation report.
+  #
+  # `watchpoints.py validate --observed-results` has always known how to detect
+  # an unexpected pass: a cataloged #[ignore] watchpoint that now passes. No
+  # producer of that file existed, so the check ran blind against 150 cataloged
+  # entries. The corpus lane now produces one, so the loop closes.
+  #
+  # The job depends on the corpus lane but runs even when it fails, because a
+  # failing corpus is the case that most needs the reconciliation report.
+  corpus-baseline-reconciliation:
+    name: Node Compatibility Corpus Reconciliation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: rust-corpus
+    if: always()
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download observed corpus results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: node-compat-observed-*
+          path: target/node-compat/observed-shards
+          merge-multiple: true
+
+      - name: Merge the partition shards
+        run: |
+          make node-compat-baseline-aggregate \
+            OBSERVED_SHARDS=target/node-compat/observed-shards \
+            OBSERVED_RESULTS=target/node-compat/observed-results.json
+
+      - name: Guard the recorded baseline
+        run: make node-compat-baseline-verify
+
+      - name: Reconcile ignored watchpoints against the measurement
+        run: |
+          make node-compat-validate-watchpoints \
+            OBSERVED_RESULTS=target/node-compat/observed-results.json
+
+      # Seeding and refreshing the baseline both read this artifact.
+      - name: Upload merged observed results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-compat-observed-results
+          path: target/node-compat/observed-results.json
+          if-no-files-found: error
 
   # NCT1: this job owns one question: is the vendored Node inventory correct
   # and current? It is separate from measurement on purpose.

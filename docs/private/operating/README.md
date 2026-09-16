@@ -15,6 +15,7 @@ delivery state belongs in [`../plans/README.md`](../plans/README.md).
 | Build and operate the container image | [`container-image.md`](container-image.md) |
 | Configure encryption and key custody | [`encryption.md`](encryption.md) |
 | Configure, observe, or recover metadata retention | [`metadata-retention.md`](metadata-retention.md) |
+| Diagnose the Node Compatibility nightly or refresh the corpus baseline | [`node-compat-nightly.md`](node-compat-nightly.md) |
 | Operate the RESP-compatible Nimbus KV listener | [`nimbus-kv.md`](nimbus-kv.md) |
 | Validate tenant-isolation operations | [`tenant-isolation.md`](tenant-isolation.md) |
 

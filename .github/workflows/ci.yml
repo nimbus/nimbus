@@ -1683,6 +1683,12 @@ jobs:
           make node-compat-validate-fixtures
           make node-compat-validate-claims
 
+      # NCT6: the recorded baseline decides which corpus failures stop the
+      # nightly, so a hand-written, stale, or required-surface entry must fail
+      # here rather than in the nightly. The check is local and takes seconds.
+      - name: Guard the Node compatibility corpus baseline
+        run: make node-compat-baseline-verify
+
   node-faas-canaries:
     name: Node FaaS Canaries (${{ matrix.preset }} ${{ matrix.lane }})
     runs-on: ubuntu-24.04
