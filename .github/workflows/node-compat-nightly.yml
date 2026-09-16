@@ -79,6 +79,38 @@ jobs:
           --success-output never
           --final-status-level slow
 
+      # NCT5: the 150 cataloged watchpoints are #[ignore]d because they are
+      # expected to fail, so the run above never executes them and the
+      # unexpected-pass check had nothing to read. Measure them here.
+      #
+      # A test result is data for this step, not its verdict: the gate is
+      # `watchpoints.py validate --observed-results` in the next job, which
+      # fails when a cataloged watchpoint passes. nextest returns 0 when every
+      # test passed and 100 when at least one failed, and both are valid
+      # measurements. Any other exit code is a build or harness failure, and it
+      # still stops the job.
+      - name: Measure the ignored watchpoints
+        if: always()
+        env:
+          NIMBUS_NODE_COMPAT_OBSERVED_RESULTS: target/node-compat/observed/watchpoints-${{ strategy.job-index }}.jsonl
+        run: |
+          set +e
+          cargo nextest run -p nimbus-runtime --lib \
+            runtime::tests::node_compat:: \
+            --run-ignored only \
+            --partition hash:${{ matrix.partition }} \
+            --test-threads 1 \
+            --no-fail-fast \
+            --success-output never \
+            --failure-output never
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ] && [ "$status" -ne 100 ]; then
+            echo "::error::nextest exited $status, which is not a test result" >&2
+            exit "$status"
+          fi
+          echo "watchpoint measurement finished with nextest status $status"
+
       # The corpus lane can fail, and its measurement is exactly what the next
       # job needs in that case. Uploading on failure is not a way to ignore the
       # failure: the job still reports its own status.

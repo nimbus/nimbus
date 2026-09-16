@@ -103,12 +103,22 @@ fn node_compat_baseline_lane_key(lane: Option<NodeCompatLane>) -> &'static str {
     lane.map_or(NODE_COMPAT_LANELESS_BASELINE_KEY, node_compat_lane_name)
 }
 
-/// The Rust test that is running, as nextest and libtest name the thread.
-fn node_compat_current_test_name() -> String {
+/// The full module path of the running Rust test, as libtest names the thread.
+fn node_compat_current_test_path() -> String {
     std::thread::current()
         .name()
         .unwrap_or("unknown")
         .to_string()
+}
+
+/// The bare function name of the running Rust test.
+///
+/// `tests/runtime/node/expectations/rust-watchpoints.json` keys its entries on
+/// this form, so an observed result must use it too. The full module path would
+/// never match, and `detect_unexpected_passes` would silently find nothing.
+fn node_compat_current_test_name() -> String {
+    let path = node_compat_current_test_path();
+    path.rsplit("::").next().unwrap_or(&path).to_string()
 }
 
 fn record_node_compat_observed_result(
@@ -129,6 +139,7 @@ fn record_node_compat_observed_result(
         "lane": lane_key,
         "test_relative_path": test_relative_path,
         "test_name": node_compat_current_test_name(),
+        "rust_test_path": node_compat_current_test_path(),
         "outcome": decision.outcome_label(),
     });
     if let Some(detail) = decision.detail() {
@@ -412,7 +423,17 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
     assert_eq!(first["lane"], "node20");
     assert_eq!(first["test_relative_path"], "test/parallel/test-one.js");
     assert_eq!(first["outcome"], "passed");
-    assert!(first.get("test_name").is_some(), "the Rust test name is recorded");
+    let test_name = first["test_name"].as_str().expect("the Rust test name is recorded");
+    assert!(
+        !test_name.contains("::"),
+        "the watchpoint catalog keys on the bare function name, not the module path: {test_name}"
+    );
+    assert!(
+        first["rust_test_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with(test_name)),
+        "the full module path is recorded beside the bare name"
+    );
 
     let second: serde_json::Value = serde_json::from_str(lines[1]).expect("line 2 is JSON");
     assert_eq!(second["lane"], "node22");

@@ -112,3 +112,85 @@ changes which failures stop the build, and nothing else.
 The build volume was full (196 MB free of 926 GB). With the user's approval,
 `target/debug/deps` (95 GB of stale Cargo artifacts) was removed from the main
 tree. No source file and no modified file was touched.
+
+---
+
+# NCT5 proof: the unexpected-pass loop was decorative, and now it is not
+
+## The key format made detection impossible
+
+`rust-watchpoints.json` keys every entry on the bare Rust function name:
+
+```
+"test_name": "node22_process_env_delete_application_preset_watchpoint"
+```
+
+`std::thread::current().name()` returns the full module path:
+
+```
+runtime::tests::node_compat::node22_process_env_delete_application_preset_watchpoint
+```
+
+`detect_unexpected_passes` matches on equality, so the first version of the
+observed-results writer would have matched nothing and reported success on
+every run. The writer now emits the bare name as `test_name` and keeps the full
+path as `rust_test_path`.
+
+`node_compat_observed_results_append_one_json_line_per_fixture` asserts that
+`test_name` holds no `::`, so this cannot regress silently.
+
+## The cataloged watchpoints never ran
+
+The 150 cataloged watchpoints carry `#[ignore]`, so the corpus command never
+executed them. Even with correct keys, the observed results could not contain
+one. The corpus job now measures them with `--run-ignored only` in the same
+partition.
+
+That step treats a test result as data and an unexpected exit code as a
+failure: nextest returns 0 when every test passed and 100 when at least one
+failed, and both are valid measurements. Any other status stops the job. The
+gate is `watchpoints.py validate --observed-results` in the next job.
+
+## First real measurement found a stale catalog entry
+
+```
+cargo nextest run -p nimbus-runtime --lib \
+  -E 'test(node22_process_env_delete_application_preset_watchpoint)' \
+  --run-ignored only
+Summary [3.904s] 1 test run: 1 passed, 1329 skipped
+```
+
+The catalog records that fixture as `expected_failure`. It passes. Feeding the
+real measurement through the pipeline reports it:
+
+```
+make node-compat-validate-watchpoints OBSERVED_RESULTS=.../observed-wp.json
+error: {"action": "remove_ignore_and_promote_or_reclassify_expectation",
+        "classification": "watchpoint", "expectation": "expected_failure",
+        "kind": "unexpected_pass", "outcome": "passed",
+        "test_name": "node22_process_env_delete_application_preset_watchpoint"}
+```
+
+This is the first unexpected pass the repository has ever detected. The check
+existed and reported success for as long as it has been in the workflow,
+because nothing gave it data.
+
+Expect the first instrumented run to report more of these. Each one is an
+`#[ignore]` to remove or an expectation to reclassify, and NCT4 owns the list.
+
+## Checks
+
+| check | result |
+| --- | --- |
+| `cargo fmt --all --check` | clean |
+| `cargo clippy -p nimbus-runtime --lib --tests` | no warnings |
+| 8 unit tests | pass |
+| `actionlint` on both workflows | clean |
+| `make node-compat-baseline-verify` | ok, 0 recorded gaps |
+| `bash scripts/check-docs.sh` | PASS, 110 pages |
+| guard rejects a required-surface entry | proven |
+| guard rejects a non-vendored fixture | proven |
+| guard rejects a duplicate, an unordered entry, an empty reason | proven |
+| guard rejects a missing lane | proven |
+| `refresh` refuses a partial run | proven |
+| `aggregate` merged 219 attempts into 136 fixtures | proven |
