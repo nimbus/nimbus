@@ -10,6 +10,7 @@ delivery state belongs in [`../plans/README.md`](../plans/README.md).
 | --- | --- |
 | Bootstrap a checkout, choose the correct build entry point, or run Nimbus locally | [`local-dev.md`](local-dev.md) |
 | Select tests, diagnose a false green or hang, or capture acceptance evidence | [`verification.md`](verification.md) |
+| Add, resize, or diagnose a hosted CI cache, or check the 10 GiB budget | [`ci-caching.md`](ci-caching.md) |
 | Configure or verify Cloudflare adapter behavior | [`cloudflare-adapters.md`](cloudflare-adapters.md) |
 | Build and operate the container image | [`container-image.md`](container-image.md) |
 | Configure encryption and key custody | [`encryption.md`](encryption.md) |

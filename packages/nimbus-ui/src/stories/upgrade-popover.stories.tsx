@@ -22,7 +22,7 @@ const HOMEBREW_INFO: VersionInfo = {
   checkStatus: "fresh",
   upgrade: {
     method: "brew",
-    command: "brew upgrade nimbus",
+    command: "brew upgrade nimbus/tap/nimbus",
     needsSudo: false,
     interactive: false,
     fallbackUrl: "https://github.com/nimbus/nimbus/blob/main/INSTALL.md",

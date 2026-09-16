@@ -128,7 +128,7 @@ cd my-app
 nimbus dev
 ```
 
-Homebrew 6 requires package trust for third-party taps; installing by the full
+Homebrew requires trust for third-party taps; installing by the full
 `nimbus/tap/nimbus` name taps and trusts the cask as it installs, so no separate
 `brew trust` step is needed. See [Homebrew tap trust](https://docs.brew.sh/Tap-Trust).
 To upgrade an installed cask:
@@ -180,6 +180,9 @@ for the full status matrix, including what is not built yet.
 ```bash
 brew install nimbus/tap/nimbus
 ```
+
+The cask covers Apple Silicon macOS 14 (Sonoma) or later, Linux arm64, and
+Linux x86_64. There is no Intel macOS build.
 
 **Binary download:** grab the archive for your platform from
 [GitHub Releases](https://github.com/nimbus/nimbus/releases/latest).

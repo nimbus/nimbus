@@ -369,6 +369,8 @@ proof-helpers:
 	bash -n scripts/collect-nimbus-machine-guest-proof.sh
 	bash -n scripts/collect-nimbus-machine-service-proof.sh
 	bash -n scripts/collect-nimbus-homebrew-cask-proof.sh
+	bash -n scripts/render-homebrew-cask.sh
+	python3 scripts/check-coverage-scope.py
 	bash -n scripts/prove-linux-cgroup-memory-limit.sh
 	bash -n scripts/verify-tenant-isolation-conformance.sh
 	bash -n scripts/verify-runtime-tenant-isolation.sh

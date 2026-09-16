@@ -46,10 +46,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           components: rustfmt
 
@@ -64,7 +64,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -81,7 +81,7 @@ jobs:
       # and nimbus-assets' SPA embed inputs resolve. Node is therefore a build
       # prerequisite for any Rust target that touches nimbus-server.
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -99,7 +99,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -108,7 +108,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: cargo-deny@0.19.0
 
@@ -177,7 +177,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -313,7 +313,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -325,7 +325,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -355,7 +355,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -386,7 +386,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -401,7 +401,7 @@ jobs:
         run: bash scripts/ci/verify-prebuilt-v8-consumption.sh ptrcomp
 
       - name: Cache Node22 anchor snapshot (pointer-compression)
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.pc.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-on-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -448,7 +448,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -473,7 +473,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -489,7 +489,7 @@ jobs:
       # This lane touches nimbus-server runtime diagnostics and the operator UI
       # contract, so it needs the same Node/UI prerequisites as workspace lanes.
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -526,7 +526,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -562,7 +562,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -597,7 +597,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -633,13 +633,13 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -746,7 +746,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Free runner disk for archive build
         run: |
@@ -771,13 +771,13 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
 
       - name: Install cargo-hakari
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: cargo-hakari@0.9.38
           fallback: cargo-install
@@ -808,7 +808,7 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -1151,7 +1151,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Free runner disk for nimbus-bin build
         run: |
@@ -1194,7 +1194,7 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -1238,7 +1238,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Free runner disk for release build
         run: |
@@ -1341,7 +1341,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -1377,13 +1377,13 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -1430,7 +1430,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -1462,7 +1462,7 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -1491,7 +1491,7 @@ jobs:
           - provider: libsql
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -1527,7 +1527,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -1546,7 +1546,7 @@ jobs:
     needs: [archive]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -1582,13 +1582,13 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
 
       - name: Set up Java
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: "25"
@@ -1619,7 +1619,7 @@ jobs:
             label: 4
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus tests archive
         uses: actions/download-artifact@v8
@@ -1637,7 +1637,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -1673,7 +1673,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Verify Node support docs, release metadata, fixtures, and claims
         run: |
@@ -1708,7 +1708,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Free runner disk for Node compatibility evidence
         run: |
@@ -1740,7 +1740,7 @@ jobs:
         run: chmod +x target/ci-archive/nimbus
 
       - name: Set up Node.js 24 for package canaries
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -1827,7 +1827,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Free runner disk for Node compatibility evidence
         run: |
@@ -1859,7 +1859,7 @@ jobs:
         run: chmod +x target/ci-archive/nimbus
 
       - name: Set up Node.js ${{ matrix.node-version }} for oracle sample
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -1901,7 +1901,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download Node compatibility reports
         uses: actions/download-artifact@v8
@@ -1941,7 +1941,7 @@ jobs:
     if: github.event_name != 'schedule'
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2151,13 +2151,13 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Record ui-artifacts start
         run: date +%s%3N > "$RUNNER_TEMP/ui-artifacts-start-ms"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -2255,7 +2255,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2338,7 +2338,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus tests archive
         uses: actions/download-artifact@v8
@@ -2356,7 +2356,7 @@ jobs:
         run: bash scripts/ci/install-nextest-archive-artifacts.sh "$RUNNER_TEMP/nimbus-tests-archive" "$RUNNER_TEMP/nextest-config"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -2376,7 +2376,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2405,7 +2405,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -2443,7 +2443,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2457,7 +2457,7 @@ jobs:
       # `make build-ui` runs codegen + SPA build via the Makefile dependency
       # graph so the nimbus-server crate compiles regardless of matrix surface.
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -2469,7 +2469,7 @@ jobs:
         run: make build-ui
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -2491,10 +2491,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -2526,7 +2526,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download nimbus-bin binary
         uses: actions/download-artifact@v8
@@ -2598,10 +2598,10 @@ jobs:
       # compilation happens (`cargo fetch` never runs build scripts), so this
       # stays cheap relative to nimbus-bin-build's real build.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Cache vendored deno checkout
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-ubuntu-stable-examples-verify-no-bin-v1
           cache-directories: ~/.cargo/git/checkouts
@@ -2617,7 +2617,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -2650,7 +2650,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check helper script syntax
         run: |
@@ -2658,6 +2658,7 @@ jobs:
           bash -n scripts/collect-nimbus-machine-guest-proof.sh
           bash -n scripts/collect-nimbus-machine-service-proof.sh
           bash -n scripts/collect-nimbus-homebrew-cask-proof.sh
+          bash -n scripts/render-homebrew-cask.sh
           bash -n scripts/verify-bun-jsc-runtime-contract.sh
           bash -n scripts/verify-bun-jsc-in-process-lockdown.sh
           bash -n scripts/bun-jsc-adapter-contract.sh
@@ -2697,8 +2698,16 @@ jobs:
           bash -n scripts/verify-install-helper.sh
           python3 -m py_compile \
             scripts/run_bun_jsc_shared_smoke.py \
+            scripts/check-coverage-scope.py \
             scripts/ci/detect-nextest-flakes.py \
             scripts/ci/shard-scaling-probe-summary.py
+
+      # CS1: coverage.yml owns the shard matrix, but it does not run on pull
+      # requests. Run the drift guard here so a new workspace member fails the
+      # pull request that adds it, rather than silently joining the coverage
+      # denominator at 0% after the merge.
+      - name: Verify every workspace member is sharded or excluded
+        run: python3 scripts/check-coverage-scope.py
 
       - name: Verify SQLCipher proof bundle collector helper
         run: bash scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
@@ -2767,6 +2776,63 @@ jobs:
 
       - name: Verify CI Ubuntu mirror resilience
         run: bash scripts/verify-ci-apt-mirror-resilience.sh
+
+  homebrew-cask:
+    name: Homebrew Cask Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # Homebrew ships preinstalled on the runner image but is pinned to
+      # whatever release that image snapshot carried, and it is not on PATH.
+      # The point of this job is to catch a *new* Homebrew whose cask rubocops
+      # or DSL reject the cask we publish, so update to the current release
+      # first. That makes the job deliberately non-hermetic: a Homebrew change
+      # can turn it red on an unrelated pull request, which is where we want
+      # to find out rather than in `brew install` on a user's machine.
+      - name: Update Homebrew
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          echo "${HOMEBREW_PREFIX}/bin" >> "${GITHUB_PATH}"
+          brew update --quiet
+          brew --version
+
+      # `brew style` and `brew audit` refuse a cask outside a tap, so stage the
+      # rendered file in a scratch tap. Drop the generated Formula and .github
+      # directories: `brew style <tap>` would also lint the tap's own workflow
+      # through actionlint and shellcheck, which is not what this gate is for.
+      # The checksums are placeholders; neither check fetches them offline.
+      - name: Render and lint the shipped cask
+        env:
+          HOMEBREW_NO_ANALYTICS: "1"
+          HOMEBREW_NO_ENV_HINTS: "1"
+        run: |
+          brew tap-new nimbusci/cask-lint --no-git
+          tap_repo="$(brew --repository nimbusci/cask-lint)"
+          rm -rf "${tap_repo}/Formula" "${tap_repo}/.github"
+          mkdir -p "${tap_repo}/Casks"
+
+          placeholder=$(printf '0%.0s' $(seq 64))
+          bash scripts/render-homebrew-cask.sh \
+            --version 0.0.0 \
+            --sha-darwin-arm64 "${placeholder}" \
+            --sha-linux-arm64 "${placeholder}" \
+            --sha-linux-x86_64 "${placeholder}" \
+            --output "${tap_repo}/Casks/nimbus.rb"
+
+          cat "${tap_repo}/Casks/nimbus.rb"
+
+          # `brew style` is rubocop over the cask source: it catches stanza
+          # order and grouping drift. `brew audit` evaluates the cask through
+          # the real DSL, so it is what catches a stanza Homebrew has removed
+          # or renamed -- `postflight_steps` on a Homebrew that predates it
+          # fails here as "Unexpected method".
+          brew style --cask "${tap_repo}/Casks/nimbus.rb"
+          brew audit --cask --strict nimbusci/cask-lint/nimbus
 
 # PW2: Coverage moved to .github/workflows/coverage.yml.
 # Not a merge gate (rust-gate-summary.needs excludes it); now fires on

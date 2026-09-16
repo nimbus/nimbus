@@ -44,10 +44,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -91,7 +91,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -124,6 +124,41 @@ jobs:
         if: always()
         run: sccache --show-stats
 
+  coverage-plan:
+    # CS1: the shard matrix is data, not YAML. `.github/coverage-shards.json`
+    # assigns every workspace member to exactly one shard or records an
+    # explicit exclusion with a reason, and this job turns that file into the
+    # matrix below.
+    #
+    # The split matters because the reducer instruments the whole workspace.
+    # Before CS1 the matrix named 9 of 43 members while
+    # `cargo llvm-cov report` reported on 42, so about 31 crates and roughly
+    # 4,000 tests sat in the denominator at 0% and pulled the headline number
+    # down for a reason that had nothing to do with test quality.
+    #
+    # `check-coverage-scope.py` is the drift guard. A new workspace member
+    # fails this job until somebody shards it or excludes it on purpose, so
+    # the gap cannot reopen silently. ci.yml runs the same guard on pull
+    # requests, because this workflow does not run on them.
+    name: Coverage Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Verify every workspace member is sharded or excluded
+        run: python3 scripts/check-coverage-scope.py
+
+      - name: Emit the shard matrix
+        id: plan
+        run: |
+          shards="$(jq -c '[.shards[] | {shard, packages: (.packages | map("-p " + .) | join(" "))}]' .github/coverage-shards.json)"
+          echo "shards=${shards}" >> "${GITHUB_OUTPUT}"
+          jq -r '.shards[] | "\(.shard): \(.packages | length) packages"' .github/coverage-shards.json
+
   # CA3: Coverage is sharded across N parallel lanes plus a dependent
   # reducer. Each shard runs `cargo llvm-cov --no-report` over its
   # workspace member group and uploads its profraw artifact;
@@ -140,17 +175,11 @@ jobs:
     # `cargo test` used to interleave. Both are correctness requirements, not
     # regressions, so the bound accommodates them rather than the reverse.
     timeout-minutes: 45
-    needs: [ui-artifacts, warm-sccache]
+    needs: [ui-artifacts, warm-sccache, coverage-plan]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - shard: server
-            packages: "-p nimbus-server"
-          - shard: engine
-            packages: "-p nimbus-engine -p nimbus-sandbox -p nimbus-machine"
-          - shard: rest
-            packages: "-p nimbus-core -p nimbus-storage -p nimbus-testing -p nimbus-bin -p nimbus"
+        include: ${{ fromJSON(needs.coverage-plan.outputs.shards) }}
     env:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
@@ -163,6 +192,15 @@ jobs:
       # single-label host (`localhost`) never triggers that codepath.
       NIMBUS_LIBSQL_URL: http://localhost:18080
       NIMBUS_LIBSQL_ADMIN_URL: http://localhost:18081
+      # The reducer downloads every shard artifact concurrently into one
+      # directory (`merge-multiple: true`), so a filename produced by two
+      # shards is two writers racing on one path. cargo-llvm-cov's default
+      # name is `nimbus-%p-%Nm.profraw`, which repeats whenever a pid repeats
+      # on a binary both shards build. The shard name makes the namespaces
+      # disjoint. cargo-llvm-cov reads this variable in `show-env` and still
+      # collects `target/*.profraw`, so only the names change. %4m matches the
+      # ubuntu-24.04 vCPU count, which is what cargo-llvm-cov would pick.
+      LLVM_PROFILE_FILE_NAME: nimbus-${{ matrix.shard }}-%p-%4m.profraw
     services:
       postgres:
         image: postgres:16
@@ -191,7 +229,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -202,7 +240,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: cargo-llvm-cov
 
@@ -210,7 +248,7 @@ jobs:
       # coverage shards must run tests the same way the merge gate does; see
       # the "Run coverage shard" step for why.
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -236,7 +274,7 @@ jobs:
       # PW1: pin libsql image + cache docker layer.
       - name: Restore cached libsql docker image
         id: libsql-image-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/libsql-image.tar.gz
           key: libsql-image-v0.24.33
@@ -301,7 +339,7 @@ jobs:
         # jobs; test concurrency is left at the profile default (num-cpus).
         run: |
           # shellcheck disable=SC1090
-          source <(cargo llvm-cov show-env --export-prefix)
+          source <(cargo llvm-cov show-env --sh)
           cargo-nextest nextest run \
             --profile coverage \
             ${{ matrix.packages }} \
@@ -315,7 +353,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: coverage-profraw-${{ matrix.shard }}
-          path: target/nimbus-*.profraw
+          path: target/nimbus-${{ matrix.shard }}-*.profraw
           if-no-files-found: error
           retention-days: 1
 
@@ -326,7 +364,7 @@ jobs:
     needs: [coverage, ui-artifacts]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -337,7 +375,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
         with:
           tool: cargo-llvm-cov
 
@@ -365,7 +403,7 @@ jobs:
         # per-crate units the shards already populated.
         run: |
           # shellcheck disable=SC1090
-          source <(cargo llvm-cov show-env --export-prefix)
+          source <(cargo llvm-cov show-env --sh)
           cargo test --no-run --workspace --exclude nimbus-runtime -j 4
 
       - name: Download every shard's profraw
@@ -376,10 +414,35 @@ jobs:
           merge-multiple: true
 
       - name: Generate combined coverage report
+        # `--failure-mode all` is load-bearing. Several suites spawn
+        # instrumented child processes and kill them during teardown; a child
+        # killed inside the profiling runtime's exit flush leaves a truncated
+        # .profraw behind (one page written, counters missing). llvm-profdata
+        # defaults to `-failure-mode=any`, which rejects the entire merge over
+        # a single unreadable input, so one such file discarded every profile
+        # from every shard and failed this job. `all` excludes the
+        # unreadable files and fails only when no profile can be read.
+        # The count of excluded files is surfaced below rather than hidden.
         run: |
+          set -o pipefail
           # shellcheck disable=SC1090
-          source <(cargo llvm-cov show-env --export-prefix)
-          cargo llvm-cov report --lcov --output-path lcov.info
+          source <(cargo llvm-cov show-env --sh)
+          cargo llvm-cov report --lcov --output-path lcov.info \
+            --failure-mode all 2>&1 | tee llvm-profdata.log
+          profraw_total=$(find target -maxdepth 1 -name '*.profraw' | wc -l | tr -d ' ')
+          profraw_rejected=$(grep -c 'invalid instrumentation profile data' llvm-profdata.log || true)
+          echo "PROFRAW_TOTAL=${profraw_total}" >> "${GITHUB_ENV}"
+          echo "PROFRAW_REJECTED=${profraw_rejected}" >> "${GITHUB_ENV}"
+          if [ "${profraw_rejected}" -gt 0 ]; then
+            echo "::warning::${profraw_rejected} of ${profraw_total} profraw files were unreadable and excluded from the merge."
+          fi
+          # `--failure-mode all` makes an empty report a success, so assert the
+          # report carries data rather than shipping a silent 0% to Codecov.
+          instrumented=$(awk -F: '/^LF:/ {sum += $2} END {print sum+0}' lcov.info)
+          if [ "${instrumented}" -eq 0 ]; then
+            echo "::error::lcov.info instruments 0 lines; the merge produced no usable coverage."
+            exit 1
+          fi
 
       - name: Show sccache stats
         if: always()
@@ -419,12 +482,14 @@ jobs:
             echo "| lines hit | ${covered} |"
             echo "| lines total | ${total} |"
             echo "| line coverage | ${pct} |"
+            echo "| profraw files found | ${PROFRAW_TOTAL:-unknown} |"
+            echo "| profraw files rejected | ${PROFRAW_REJECTED:-unknown} |"
             echo
             echo "_Codecov upload is best-effort; see the Codecov tab for trend graphs._"
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
