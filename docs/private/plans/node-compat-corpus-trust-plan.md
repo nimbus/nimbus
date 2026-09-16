@@ -1,0 +1,201 @@
+# Node Compatibility Corpus Trust
+
+Status: `active` | Owner: this plan | Created: 2026-09-16
+Baseline: main @ `f743836c6`
+Proof root: `proof/node-compat-corpus-trust/`
+
+Next action: NCT2 - emit observed results from the Rust corpus lane
+
+## Current resume state
+
+- Updated: 2026-09-16. Active task: NCT2.
+- Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `f743836c6`.
+- Dirty files owned by this task: none yet.
+- Fail-before evidence is captured. See `proof/node-compat-corpus-trust/nct0-baseline.md`.
+- Running commands: none.
+
+## Outcome
+
+> A red Node Compatibility run means one of two things: measured Node behavior
+> moved away from its recorded baseline, or the vendored release train is stale.
+> A green run means the measured corpus matches the baseline exactly. No job is
+> made non-gating to reach green.
+
+## Architecture
+
+Before:
+
+```text
+[node-compat-evidence job]
+  step 4 release_train.py probe-live  --(upstream published a patch)--> exit 1
+  steps 5..11 seeded slices, canaries, oracle, dashboard, trends, upload  NEVER RUN
+
+[rust-corpus job x6 partitions]
+  nextest runtime::tests::node_compat::  -> 294 failing tests -> exit 100
+  no expectation data is read; every fixture must pass
+```
+
+After:
+
+```text
+[release-train-freshness job]          [node-compat-evidence job]
+  probe-live -> fails on real drift      slices, canaries, oracle,
+  owns vendored-inventory freshness      dashboard, trends, upload
+                                         owns measured compatibility
+
+[rust-corpus job x6 partitions]
+  nextest -> reconcile each fixture against the recorded baseline
+    expected fail + observed fail -> known gap, lane stays green
+    expected fail + observed pass -> FAIL, baseline must shrink
+    expected pass + observed fail -> FAIL, real regression
+  emits observed-results JSON per partition
+
+[corpus-gate job]
+  aggregates partitions -> watchpoints.py validate --observed-results
+```
+
+## Scope
+
+- Owns: the Node Compatibility nightly workflow and its two failure causes.
+- Owns: the per-fixture expectation baseline and the harness seam that reads it.
+- Owns: the observed-results artifact contract between the Rust lane and the
+  existing Python validators.
+- Does not own: closing the Node API gaps themselves. The baseline records them.
+  A later plan must burn them down.
+- Does not own: the `v8_isolate_required` surface. It is already at zero gaps and
+  stays a hard gate.
+- Non-goal: `continue-on-error`, `|| true`, or any change that makes a lane
+  advisory.
+
+## Invariants
+
+1. No lane becomes non-gating. A weaker gate is never the fix.
+2. A fixture in the required surface must never enter the baseline.
+3. An unexpected pass fails the lane. The baseline can only shrink through a
+   recorded, reviewed change.
+4. Release-train drift stays a failing signal. It stops destroying measurement.
+5. The baseline records observed behavior only. It never records a wish.
+
+## Status ledger
+
+| ID | Task | Status | Evidence |
+|---|---|---|---|
+| NCT0 | Capture fail-before evidence | done | `proof/node-compat-corpus-trust/nct0-baseline.md`; run 35095026629; 294 failing tests; evidence job exit 1 at 76s |
+| NCT1 | Split release-train freshness from measurement | done | `actionlint` clean; 3 jobs; the 5 retained local commands all exit 0 |
+| NCT2 | Emit observed results from the Rust corpus lane | todo | |
+| NCT3 | Add the expectation baseline and the reconciliation seam | todo | |
+| NCT4 | Seed the baseline from a full instrumented run | todo | |
+| NCT5 | Close the unexpected-pass loop for ignored watchpoints | todo | |
+| NCT6 | Guard the baseline | todo | |
+| NCT7 | Document the contract | todo | |
+| NCT8 | Cleanup | todo | |
+
+## Tasks
+
+### NCT0 Capture fail-before evidence
+
+- Problem: the nightly has never been green. The cause was not recorded.
+- Acceptance: both causes are measured and reproduced.
+- Evidence: `proof/node-compat-corpus-trust/nct0-baseline.md`.
+
+### NCT1 Split release-train freshness from measurement
+
+- Problem: `release_train.py probe-live` runs as step 4 of 11 in the evidence
+  job and exits 1 when upstream Node publishes any patch release. Steps 5
+  through 11 never run, so the night produces no dashboard, no trends, and no
+  artifact. On 2026-09-16 the drift was node24 `v24.21.0` against registry
+  `v24.20.0`, and node26 `v26.8.2` against registry `v26.8.1`.
+- Owning seam and paths: `.github/workflows/node-compat-nightly.yml`.
+- Steps:
+  1. Move the release-train and latest-suite verification into a new
+     `release-train-freshness` job.
+  2. Keep the local, deterministic fixture validation in the evidence job.
+  3. Confirm the evidence job no longer depends on a live upstream probe.
+- Acceptance: `actionlint` is clean, and the evidence job reaches
+  `Upload node-compat artifacts` when `probe-live` reports drift.
+- Fail-before: run 35095026629 evidence job exits 1 before any measurement step.
+- Verification: `actionlint .github/workflows/node-compat-nightly.yml`.
+
+### NCT2 Emit observed results from the Rust corpus lane
+
+- Problem: the Python validators accept `--observed-results`, but nothing
+  produces that file. `make node-compat-validate-watchpoints` therefore runs
+  static-only, and an unexpected pass is never detected.
+- Owning seam and paths: `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`.
+- Steps:
+  1. Record every fixture attempt as `{lane, test_relative_path, test_name,
+     outcome}`.
+  2. Write the records when `NIMBUS_NODE_COMPAT_OBSERVED_RESULTS` names a path.
+  3. Keep the file valid for `observed_result_entries` in `watchpoints.py`.
+- Acceptance: a focused run writes a file that `watchpoints.py validate
+  --observed-results` accepts.
+- Fail-before: no observed-results producer exists in the repository.
+
+### NCT3 Add the expectation baseline and the reconciliation seam
+
+- Problem: all seven call sites of `execute_manifested_node_compat_test` treat
+  any fixture failure as a test failure. The corpus is aspirational, so the lane
+  gates on a condition that cannot hold.
+- Owning seam and paths: `crates/nimbus-runtime/src/runtime/tests/node/mod.rs`,
+  `tests/runtime/node/expectations/corpus-baseline.json`.
+- Steps:
+  1. Add `tests/runtime/node/expectations/corpus-baseline.json`, keyed by lane
+     and `test_relative_path`, with a reason for each entry.
+  2. Add one reconciliation function that maps a raw fixture result plus its
+     baseline entry to a reconciled result.
+  3. Route all seven call sites through it.
+- Acceptance: an expected-failure fixture keeps the lane green; a baseline entry
+  that passes fails the lane with an "unexpected pass" message.
+- Fail-before: `node20_readline_promises_interface_fixture` fails locally.
+- Verification: `cargo nextest run -p nimbus-runtime --lib -E 'test(node_compat)'`.
+
+### NCT4 Seed the baseline from a full instrumented run
+
+- Problem: a baseline invented from a log parse is not evidence.
+- Steps:
+  1. Run the full corpus with observed-results recording.
+  2. Generate the baseline from the recorded results.
+  3. Record the producing run in the baseline header.
+- Acceptance: a second full run is green against the committed baseline.
+- Verification: the Node Compatibility workflow run is green.
+
+### NCT5 Close the unexpected-pass loop for ignored watchpoints
+
+- Problem: `rust-watchpoints.json` states that a passing cataloged entry must
+  remove the `#[ignore]`, but nothing checks. 152 ignored watchpoints never run.
+- Steps: run the ignored watchpoints in the nightly and feed the results to
+  `make node-compat-validate-watchpoints OBSERVED_RESULTS=...`.
+- Acceptance: the workflow fails when a cataloged watchpoint passes.
+
+### NCT6 Guard the baseline
+
+- Problem: a baseline can rot into a dumping ground.
+- Steps:
+  1. Reject a baseline entry whose fixture file does not exist.
+  2. Reject a baseline entry that covers a required-surface fixture.
+  3. Run the guard in the pull-request lane, not only in the nightly.
+- Acceptance: each rejection has a test.
+
+### NCT7 Document the contract
+
+- Steps: write the runbook and route it from
+  `docs/private/operating/README.md`.
+
+### NCT8 Cleanup
+
+- Trigger: the final pull request of this plan merges.
+- Steps: archive this plan and update `docs/private/plans/README.md`.
+
+## Goal
+
+Execute NCT1 through NCT7 in order. Keep one task `in_progress`. Record
+evidence with exact counts. Do not weaken a gate to reach green. Stop and report
+if a task needs a new schema, a new public contract, or an owner decision.
+
+## Execution log
+
+| Date | Item | Action | Evidence |
+|---|---|---|---|
+| 2026-09-16 | NCT0 | Measured both failure causes and reproduced one locally | Run 35095026629; 294 failing tests; `node20_readline_promises_interface_fixture` fails locally |
+| 2026-09-16 | plan | Promoted this plan as the node-compat owner | No prior plan owned the topic |
+| 2026-09-16 | NCT1 | Moved `probe-live` and `verify-fixture-upstream` into a `release-train-freshness` job | `actionlint` clean; local commands `verify-node-lts-docs.sh`, `verify-node-latest-suite-tags.sh` (x2), `verify-node-release-train.sh`, `node-compat-validate-fixtures`, `node-compat-validate-watchpoints` (150 entries) all exit 0 |
