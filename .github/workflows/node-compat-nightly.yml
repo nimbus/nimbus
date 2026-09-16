@@ -74,6 +74,38 @@ jobs:
           --success-output never
           --final-status-level slow
 
+  # NCT1: this job owns one question: is the vendored Node inventory correct
+  # and current? It is separate from measurement on purpose.
+  #
+  # "probe-live" compares the live Node dist index with the checked-in lane
+  # registry and exits non-zero on any difference. Node publishes patch
+  # releases continuously, so this check goes red on upstream's schedule, not
+  # on ours. It used to run as step 4 of 11 inside the evidence job. On
+  # 2026-09-16 it reported node24 v24.21.0 against registry v24.20.0 and
+  # node26 v26.8.2 against registry v26.8.1, and the seven measurement steps
+  # after it never ran. A routine upstream patch release discarded the whole
+  # night's compatibility evidence.
+  #
+  # Splitting the probe keeps the drift signal red and actionable while the
+  # dashboard, the trends, and the artifact still get produced. The job needs
+  # only git and python3, so it does not restore the Rust cache.
+  #
+  # Contract: docs/private/operating/node-compat-nightly.md.
+  release-train-freshness:
+    name: Node Release Train Freshness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify vendored fixtures against their pinned upstream tags
+        run: make node-compat-verify-fixture-upstream ALLOW_FETCH=1
+
+      - name: Probe the live Node release train for drift
+        run: python3 scripts/runtime/node/release_train.py probe-live
+
   node-compat-evidence:
     name: Node Compatibility Evidence
     runs-on: ubuntu-24.04
@@ -105,6 +137,10 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      # NCT1: every command here is local and deterministic. It validates the
+      # checked-in metadata that the dashboard reads. The two commands that
+      # reach upstream moved to the release-train-freshness job, so upstream
+      # publishing a patch release can no longer discard this job's evidence.
       - name: Verify release-train metadata and docs
         run: |
           bash scripts/verify-node-lts-docs.sh
@@ -112,8 +148,6 @@ jobs:
           NIMBUS_ENFORCE_CURRENT_NODE_CORPORA=1 bash scripts/verify-node-latest-suite-tags.sh
           bash scripts/verify-node-release-train.sh
           make node-compat-validate-fixtures
-          make node-compat-verify-fixture-upstream ALLOW_FETCH=1
-          python3 scripts/runtime/node/release_train.py probe-live
           make node-compat-validate-watchpoints
 
       - name: Emit seeded slice reports
