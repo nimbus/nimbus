@@ -79,6 +79,11 @@ Never hand-edit the baseline. Every entry must come from a real run.
    nextest runs every test in its own process, so an in-memory buffer would not
    survive.
 
+   A relative path resolves against the repository root, not the working
+   directory. Cargo and nextest run a test binary from the package root, so an
+   unanchored path would write the shard under `crates/nimbus-runtime/target/`
+   where no collector looks.
+
 2. Merge the shards:
 
    ```bash
@@ -103,6 +108,17 @@ Never hand-edit the baseline. Every entry must come from a real run.
 4. Review the diff. Removed entries are improvements, and they belong in the
    commit message. Added entries are regressions, and they need a cause before
    they are recorded.
+
+The refresh reports, and does not record, two kinds of observed failure:
+
+| Kind | Why it is not recordable |
+| --- | --- |
+| required surface (`v8_isolate_required`) | The gate that already means something must stay intact. Fix the runtime. |
+| a fixture that is not vendored | A synthetic `__nimbus-` probe tests Nimbus behavior, not upstream compatibility. Fix the probe or the runtime. |
+
+Both keep the lane red until the runtime changes, which is the intended
+behavior. The refresh skips them so that it cannot write a baseline that
+`verify` then rejects.
 
 `make node-compat-baseline-verify` runs in the PR lane, so a stale or invalid
 entry fails before merge, not at night.

@@ -143,6 +143,20 @@ def merge_observed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def command_aggregate(args: argparse.Namespace) -> int:
     records = merge_observed_records(read_jsonl_shards([Path(p) for p in args.input]))
+    if not records:
+        # An empty merge means the corpus measured nothing, which is never a
+        # real state for a run that executed tests. Writing the document anyway
+        # would let the reconciliation job compare the catalog against silence
+        # and report success, which is the failure this whole lane exists to
+        # remove. Refuse instead, and name the likely cause.
+        print(
+            "no observed results in the shards. The corpus produced no "
+            "measurement, so there is nothing to reconcile. Check that "
+            "NIMBUS_NODE_COMPAT_OBSERVED_RESULTS reached the test process and "
+            "that its shards are the files passed to --input.",
+            file=sys.stderr,
+        )
+        return 1
     counts = Counter(str(record.get("outcome")) for record in records)
     payload = {
         "catalog_kind": "node_compat_observed_results",
@@ -187,6 +201,18 @@ def command_refresh(args: argparse.Namespace) -> int:
         lane: list(existing.get("lanes", {}).get(lane, [])) for lane in LANES
     }
 
+    # `verify` rejects a required-surface entry and a non-vendored entry, so
+    # `refresh` must not write one. Without this, a refresh from a real run
+    # writes a baseline that the guard immediately rejects, and the operator is
+    # left with a bad file on disk and an error naming a fixture that they did
+    # not choose to record.
+    #
+    # Skipping is not muting. These two kinds are exactly the failures that the
+    # baseline must never absorb, so they are reported as work to do.
+    surface = required_surface(root)
+    fixture_root = root / FIXTURE_ROOT_RELATIVE_PATH
+    not_recordable: list[str] = []
+
     for lane in lanes_to_write:
         entries: dict[str, str] = {}
         for record in records:
@@ -196,6 +222,20 @@ def command_refresh(args: argparse.Namespace) -> int:
                 continue
             test_path = str(record.get("test_relative_path", ""))
             if not test_path:
+                continue
+            if test_path in surface.get(lane, set()):
+                not_recordable.append(
+                    f"{lane}: {test_path} is required surface (v8_isolate_required). "
+                    "Fix the runtime; the baseline may not record it."
+                )
+                continue
+            if not (fixture_root / lane / test_path).is_file():
+                not_recordable.append(
+                    f"{lane}: {test_path} is not vendored under "
+                    f"{FIXTURE_ROOT_RELATIVE_PATH}/{lane}. A synthetic probe tests "
+                    "Nimbus behavior, not upstream compatibility, so fix it "
+                    "rather than record it."
+                )
                 continue
             entries[test_path] = summarize_reason(record)
         lanes[lane] = [
@@ -214,6 +254,19 @@ def command_refresh(args: argparse.Namespace) -> int:
         },
     )
     print(f"wrote {baseline_path.relative_to(root)}")
+    if not_recordable:
+        print(
+            f"\n{len(not_recordable)} observed failure(s) were left out because "
+            "the baseline may not record them:",
+            file=sys.stderr,
+        )
+        for line in sorted(not_recordable):
+            print(f"  {line}", file=sys.stderr)
+        print(
+            "These keep the lane red until the runtime changes. That is the "
+            "intended behavior.",
+            file=sys.stderr,
+        )
     return verify_baseline(root)
 
 

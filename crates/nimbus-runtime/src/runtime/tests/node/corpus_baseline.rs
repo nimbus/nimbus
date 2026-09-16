@@ -121,6 +121,26 @@ fn node_compat_current_test_name() -> String {
     path.rsplit("::").next().unwrap_or(&path).to_string()
 }
 
+/// Resolve the observed-results path that `NIMBUS_NODE_COMPAT_OBSERVED_RESULTS`
+/// names.
+///
+/// Cargo and nextest run a test binary with its working directory set to the
+/// package root, so a relative path resolves under `crates/nimbus-runtime`
+/// rather than the repository root. A caller that sets
+/// `target/node-compat/observed/partition-0.jsonl` means the workspace
+/// `target/`, which is also where the CI upload step looks, so an unresolved
+/// relative path writes the shard where nothing collects it.
+///
+/// That failure is silent by construction: the tests still run, the file is
+/// still created, and only the artifact is empty. Anchoring a relative path to
+/// the repository root keeps the writer and its reader on the same file.
+fn node_compat_observed_results_path(configured: &Path) -> PathBuf {
+    if configured.is_absolute() {
+        return configured.to_path_buf();
+    }
+    node_compat_repo_root().join(configured)
+}
+
 fn record_node_compat_observed_result(
     lane_key: &str,
     test_relative_path: &str,
@@ -129,7 +149,7 @@ fn record_node_compat_observed_result(
     let Some(path) = std::env::var_os(NODE_COMPAT_OBSERVED_RESULTS_ENV) else {
         return;
     };
-    let path = PathBuf::from(path);
+    let path = node_compat_observed_results_path(Path::new(&path));
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -454,4 +474,34 @@ fn node_compat_observed_results_stay_silent_without_the_env_var() {
     );
     // The call must not panic and must not create a file anywhere.
     record_node_compat_observed_result("node20", "test/parallel/test-one.js", &decision);
+}
+
+/// The CI upload step collects `target/node-compat/observed` from the
+/// repository root. A relative shard path must therefore land there, and not
+/// under the crate directory that Cargo makes the working directory.
+#[test]
+fn node_compat_relative_observed_results_anchor_to_the_repo_root() {
+    let resolved = node_compat_observed_results_path(Path::new(
+        "target/node-compat/observed/partition-0.jsonl",
+    ));
+    assert_eq!(
+        resolved,
+        node_compat_repo_root().join("target/node-compat/observed/partition-0.jsonl"),
+        "a relative shard path must resolve against the repo root"
+    );
+    assert!(
+        !resolved.starts_with(runtime_crate_root().join("target")),
+        "a relative shard path must not land under the crate target directory"
+    );
+}
+
+/// An absolute path is already unambiguous, so it is used as given.
+#[test]
+fn node_compat_absolute_observed_results_are_left_alone() {
+    let absolute = std::env::temp_dir().join("nimbus-node-compat-observed.jsonl");
+    assert_eq!(
+        node_compat_observed_results_path(&absolute),
+        absolute,
+        "an absolute shard path must be used verbatim"
+    );
 }

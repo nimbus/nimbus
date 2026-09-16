@@ -114,13 +114,21 @@ jobs:
       # The corpus lane can fail, and its measurement is exactly what the next
       # job needs in that case. Uploading on failure is not a way to ignore the
       # failure: the job still reports its own status.
+      #
+      # `if-no-files-found: error` is the point of this step. A partition that
+      # ran its tests and produced no shard has measured nothing, and the
+      # reconciliation job would then reconcile against silence and pass. On
+      # 2026-09-16 that happened: the shard path was relative, the test process
+      # resolved it under the crate directory, this step found an empty
+      # directory, and `warn` reported success while uploading nothing. An
+      # empty measurement must stop the lane, not travel as evidence.
       - name: Upload observed corpus results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: node-compat-observed-${{ strategy.job-index }}
           path: target/node-compat/observed
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # NCT5: this job turns the corpus measurement into a reconciliation report.
   #
