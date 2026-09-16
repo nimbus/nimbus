@@ -4,11 +4,11 @@ Status: `active` | Owner: this plan | Created: 2026-09-16
 Baseline: main @ `f743836c6`
 Proof root: `proof/node-compat-corpus-trust/`
 
-Next action: NCT2 - emit observed results from the Rust corpus lane
+Next action: NCT4 - seed the baseline from a full instrumented CI run
 
 ## Current resume state
 
-- Updated: 2026-09-16. Active task: NCT2.
+- Updated: 2026-09-16. Active task: NCT4.
 - Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `f743836c6`.
 - Dirty files owned by this task: none yet.
 - Fail-before evidence is captured. See `proof/node-compat-corpus-trust/nct0-baseline.md`.
@@ -82,12 +82,12 @@ After:
 |---|---|---|---|
 | NCT0 | Capture fail-before evidence | done | `proof/node-compat-corpus-trust/nct0-baseline.md`; run 35095026629; 294 failing tests; evidence job exit 1 at 76s |
 | NCT1 | Split release-train freshness from measurement | done | `actionlint` clean; 3 jobs; the 5 retained local commands all exit 0 |
-| NCT2 | Emit observed results from the Rust corpus lane | todo | |
-| NCT3 | Add the expectation baseline and the reconciliation seam | todo | |
-| NCT4 | Seed the baseline from a full instrumented run | todo | |
-| NCT5 | Close the unexpected-pass loop for ignored watchpoints | todo | |
-| NCT6 | Guard the baseline | todo | |
-| NCT7 | Document the contract | todo | |
+| NCT2 | Emit observed results from the Rust corpus lane | done | `proof/node-compat-corpus-trust/nct2-nct3-reconciliation.md`; JSONL verified on a real fixture run |
+| NCT3 | Add the expectation baseline and the reconciliation seam | done | 8 unit tests pass; 3 end-to-end fixture scenarios pass; all 4 policy branches named |
+| NCT4 | Seed the baseline from a full instrumented run | in_progress | Must run on ubuntu-24.04: a macOS-seeded baseline would not match the gate platform |
+| NCT5 | Close the unexpected-pass loop for ignored watchpoints | done | `corpus-baseline-reconciliation` job feeds `--observed-results` to the 150-entry catalog |
+| NCT6 | Guard the baseline | done | 4 guard rejections proven; runs in the PR lane via `make node-compat-baseline-verify` |
+| NCT7 | Document the contract | done | `docs/private/operating/node-compat-nightly.md`; routed from the operating README; `check-docs.sh` PASS |
 | NCT8 | Cleanup | todo | |
 
 ## Tasks
@@ -199,3 +199,16 @@ if a task needs a new schema, a new public contract, or an owner decision.
 | 2026-09-16 | NCT0 | Measured both failure causes and reproduced one locally | Run 35095026629; 294 failing tests; `node20_readline_promises_interface_fixture` fails locally |
 | 2026-09-16 | plan | Promoted this plan as the node-compat owner | No prior plan owned the topic |
 | 2026-09-16 | NCT1 | Moved `probe-live` and `verify-fixture-upstream` into a `release-train-freshness` job | `actionlint` clean; local commands `verify-node-lts-docs.sh`, `verify-node-latest-suite-tags.sh` (x2), `verify-node-release-train.sh`, `node-compat-validate-fixtures`, `node-compat-validate-watchpoints` (150 entries) all exit 0 |
+| 2026-09-16 | NCT2+NCT3 | Made `execute_upstream_node_compat_test_with_extra_files` a reconciling wrapper over a `_raw` body; added `corpus_baseline.rs` and an empty `corpus-baseline.json` | 8 unit tests pass; unrecorded failure red, recorded failure green (`known_gap`), recorded pass red with an actionable message; `cargo fmt`/`clippy` clean |
+| 2026-09-16 | NCT5+NCT6+NCT7 | Added `corpus_baseline.py` (aggregate/refresh/verify), the `corpus-baseline-reconciliation` job, the PR-lane guard, and the runbook | `actionlint` clean on both workflows; 4 guard rejections proven; aggregate merged 219 attempts to 136 fixtures; refresh refused a partial run; `check-docs.sh` PASS |
+
+## NCT4 platform constraint
+
+The baseline records observed behavior, so it must be seeded on the platform
+that runs the gate. The nightly runs on `ubuntu-24.04`. A baseline seeded from
+a macOS developer machine would disagree with the gate on every
+platform-sensitive fixture, and the first CI run would report that disagreement
+as a mix of regressions and unexpected passes.
+
+Seeding therefore needs one `workflow_dispatch` run of `Node Compatibility` on
+this branch, and the `node-compat-observed-results` artifact from it.
