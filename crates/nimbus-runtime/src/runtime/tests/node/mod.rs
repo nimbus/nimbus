@@ -11,6 +11,7 @@ use crate::{RuntimeCompatibilityTarget, RuntimeLimits};
 
 mod supplementary_batches;
 
+include!("corpus_baseline.rs");
 include!("batches.rs");
 
 include!("behavior.rs");
@@ -102,8 +103,14 @@ pub(super) struct NodeCompatBatchEntrySnapshot {
     pub(super) node24_fixture_source_path: Option<&'static str>,
 }
 
+#[derive(Debug)]
 struct NodeCompatFixtureOutcome {
     skipped: bool,
+    /// The fixture failed, and the corpus baseline records that failure.
+    ///
+    /// The lane stays green, and batch summaries count the fixture separately
+    /// so a recorded gap is never reported as a pass. See `corpus_baseline.rs`.
+    known_gap: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,6 +224,19 @@ impl ScopedProcessEnvVar {
         // embedded runtime without concurrent mutation from sibling tests.
         unsafe {
             std::env::set_var(key, value);
+        }
+        Self {
+            key,
+            previous_value,
+        }
+    }
+
+    fn unset(key: &'static str) -> Self {
+        let previous_value = std::env::var(key).ok();
+        // SAFETY: see ScopedProcessEnvVar::set. Callers hold the serialized
+        // node_compat execution scope for the lifetime of the guard.
+        unsafe {
+            std::env::remove_var(key);
         }
         Self {
             key,
@@ -1778,7 +1798,33 @@ async fn invoke_node_compat_fixture_with_async_main_module(
     driver.finalize(result).await
 }
 
+/// Executes one upstream fixture and reconciles the result with the baseline.
+///
+/// Every corpus execution reaches the runtime through this function, so this is
+/// the only place that has to know about recorded gaps. The raw execution below
+/// stays free of that concern.
 fn execute_upstream_node_compat_test_with_extra_files(
+    test_relative_path: &str,
+    test_source: &str,
+    extra_files: &[(&str, &[u8])],
+    capture_top_level_skip: bool,
+    lane: Option<NodeCompatLane>,
+    prelude_script: Option<&str>,
+    postlude_script: Option<&str>,
+) -> std::result::Result<NodeCompatFixtureOutcome, String> {
+    let observed = execute_upstream_node_compat_test_with_extra_files_raw(
+        test_relative_path,
+        test_source,
+        extra_files,
+        capture_top_level_skip,
+        lane,
+        prelude_script,
+        postlude_script,
+    );
+    reconcile_node_compat_fixture_result(lane, test_relative_path, observed)
+}
+
+fn execute_upstream_node_compat_test_with_extra_files_raw(
     test_relative_path: &str,
     test_source: &str,
     extra_files: &[(&str, &[u8])],
@@ -1912,7 +1958,10 @@ fn execute_upstream_node_compat_test_with_extra_files(
             ) && let Some(exit_code) = node_compat_process_exit_code_from_error(&error)
             {
                 if exit_code == 0 {
-                    return Ok(NodeCompatFixtureOutcome { skipped: false });
+                    return Ok(NodeCompatFixtureOutcome {
+                        skipped: false,
+                        known_gap: false,
+                    });
                 }
                 let artifact = write_node_compat_fixture_diagnostic(
                     lane_name,
@@ -1984,6 +2033,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
 
     Ok(NodeCompatFixtureOutcome {
         skipped: result.get("skipped") == Some(&serde_json::json!(true)),
+        known_gap: false,
     })
 }
 
@@ -3230,6 +3280,13 @@ pub(super) fn observe_seeded_fixture_runtime_outcome(
     }));
     snapshot.restore();
     let outcome = match execution {
+        // A baseline-recorded gap keeps the Rust lane green, but the report
+        // must still count it as a measured failure. The baseline suppresses a
+        // red test, never a red pass rate.
+        Ok(Ok(outcome)) if outcome.known_gap => NodeCompatSeededFixtureObservedOutcome {
+            state: node_compat_manifest_report::NodeCompatObservedFixtureState::Fail,
+            detail: Some("recorded corpus baseline gap".to_string()),
+        },
         Ok(Ok(outcome)) if outcome.skipped => NodeCompatSeededFixtureObservedOutcome {
             state: node_compat_manifest_report::NodeCompatObservedFixtureState::Skip,
             detail: None,
@@ -3558,6 +3615,7 @@ fn run_manifested_subset_for_lane_excluding(
     let mut passed = 0usize;
     let mut skipped = Vec::new();
     let mut excluded = Vec::new();
+    let mut known_gaps = Vec::new();
     let mut failures = Vec::new();
 
     for fixture in fixtures {
@@ -3585,7 +3643,11 @@ fn run_manifested_subset_for_lane_excluding(
             snapshot.restore();
             match execution {
                 Ok(Ok(outcome)) => {
-                    if outcome.skipped {
+                    if outcome.known_gap {
+                        // Recorded in the corpus baseline. It is not a pass, and
+                        // it does not fail the lane. See corpus_baseline.rs.
+                        known_gaps.push(fixture.test_relative_path);
+                    } else if outcome.skipped {
                         skipped.push(fixture.test_relative_path);
                     } else {
                         passed += 1;
@@ -3602,11 +3664,18 @@ fn run_manifested_subset_for_lane_excluding(
     }
 
     eprintln!(
-        "node_compat {batch_name} {lane_name} summary -> passed: {passed}, skipped: {}, excluded: {}, failed: {}",
+        "node_compat {batch_name} {lane_name} summary -> passed: {passed}, skipped: {}, known gaps: {}, excluded: {}, failed: {}",
         skipped.len(),
+        known_gaps.len(),
         excluded.len(),
         failures.len()
     );
+    if !known_gaps.is_empty() {
+        eprintln!(
+            "node_compat {batch_name} {lane_name} known gap fixtures:\n{}",
+            known_gaps.join("\n")
+        );
+    }
     if !skipped.is_empty() {
         eprintln!(
             "node_compat {batch_name} {lane_name} skipped fixtures:\n{}",
@@ -3723,6 +3792,7 @@ fn run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
     let mut failures = Vec::new();
     let mut passed_paths = Vec::new();
     let mut skipped_paths = Vec::new();
+    let mut known_gap_paths = Vec::new();
     let mut failed_paths = Vec::new();
 
     eprintln!(
@@ -3745,6 +3815,12 @@ fn run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         }));
         snapshot.restore();
         match execution {
+            Ok(Ok(outcome)) if outcome.known_gap => {
+                // Not a pass and not a lane failure. The summary artifact still
+                // records it as failed, so the measured rate stays honest.
+                known_gap_paths.push(test_relative_path.clone());
+                failed_paths.push(test_relative_path.clone());
+            }
             Ok(Ok(outcome)) => {
                 if outcome.skipped {
                     skipped_paths.push(test_relative_path.clone());
@@ -3767,12 +3843,19 @@ fn run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
     }
 
     eprintln!(
-        "node_compat {batch_name} {lane_name} summary: selected={}, passed={}, skipped={}, failed={}",
+        "node_compat {batch_name} {lane_name} summary: selected={}, passed={}, skipped={}, known gaps={}, failed={}",
         fixture_paths.len(),
         passed_paths.len(),
         skipped_paths.len(),
+        known_gap_paths.len(),
         failures.len()
     );
+    if !known_gap_paths.is_empty() {
+        eprintln!(
+            "node_compat {batch_name} {lane_name} known gap fixtures:\n{}",
+            known_gap_paths.join("\n")
+        );
+    }
     if !skipped_paths.is_empty() {
         eprintln!(
             "node_compat {batch_name} {lane_name} skipped fixtures:\n{}",
@@ -3909,6 +3992,16 @@ pub(super) fn collect_seeded_slice_observed_result_records(
             }));
             snapshot.restore();
             let state = match execution {
+                // See the seeded path above: a recorded gap stays a measured
+                // failure in the report even though the lane stays green.
+                Ok(Ok(outcome)) if outcome.known_gap => {
+                    failed += 1;
+                    eprintln!(
+                        "node_compat report live {family}:{slice} {lane_name} fixture {} is a recorded corpus baseline gap",
+                        batch_entry.test_relative_path
+                    );
+                    node_compat_manifest_report::NodeCompatObservedFixtureState::Fail
+                }
                 Ok(Ok(outcome)) if outcome.skipped => {
                     skipped += 1;
                     node_compat_manifest_report::NodeCompatObservedFixtureState::Skip

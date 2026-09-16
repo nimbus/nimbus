@@ -1,0 +1,11 @@
+{
+  "catalog_kind": "node_compat_corpus_baseline",
+  "contract": "Records which vendored upstream fixtures are known to fail in the non-ignored Rust compatibility lane. An entry keeps the lane green for that fixture and nothing else. A fixture that is not recorded and fails is a regression, and it fails the lane. A recorded fixture that passes is an unexpected pass, and it also fails the lane until the entry is removed. Entries record observed behavior only. Generate them with `make node-compat-baseline-refresh`; never write one by hand. Reports and the dashboard keep counting a recorded gap as a measured failure, so the published pass rate stays honest. Contract and refresh procedure: docs/private/operating/node-compat-nightly.md.",
+  "generated_from": "instrumented_rust_corpus_run",
+  "lanes": {
+    "node20": [],
+    "node22": [],
+    "node24": [],
+    "node26": []
+  }
+}
