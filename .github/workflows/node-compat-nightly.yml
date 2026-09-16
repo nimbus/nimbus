@@ -115,13 +115,18 @@ jobs:
       # job needs in that case. Uploading on failure is not a way to ignore the
       # failure: the job still reports its own status.
       #
-      # `if-no-files-found: error` is the point of this step. A partition that
-      # ran its tests and produced no shard has measured nothing, and the
-      # reconciliation job would then reconcile against silence and pass. On
-      # 2026-09-16 that happened: the shard path was relative, the test process
-      # resolved it under the crate directory, this step found an empty
-      # directory, and `warn` reported success while uploading nothing. An
-      # empty measurement must stop the lane, not travel as evidence.
+      # `if-no-files-found: error` is the point of this step. On 2026-09-16 the
+      # shard path was relative, the test process resolved it under the crate
+      # directory, this step found an empty directory, and `warn` reported
+      # success while uploading nothing.
+      #
+      # When every partition does that, the merge step still fails, because
+      # `aggregate` refuses an input that does not exist. The dangerous case is
+      # partial: if one partition of six uploads nothing and five upload
+      # shards, the merge succeeds, and the fixtures of the missing partition
+      # are simply absent. Nothing reports them, so an unmeasured fixture reads
+      # exactly like a fixture with no finding. Failing here names the
+      # partition that measured nothing.
       - name: Upload observed corpus results
         if: always()
         uses: actions/upload-artifact@v7

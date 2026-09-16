@@ -144,11 +144,12 @@ def merge_observed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]
 def command_aggregate(args: argparse.Namespace) -> int:
     records = merge_observed_records(read_jsonl_shards([Path(p) for p in args.input]))
     if not records:
-        # An empty merge means the corpus measured nothing, which is never a
-        # real state for a run that executed tests. Writing the document anyway
-        # would let the reconciliation job compare the catalog against silence
-        # and report success, which is the failure this whole lane exists to
-        # remove. Refuse instead, and name the likely cause.
+        # Shards that exist but hold nothing are not the same as a missing
+        # input, which `read_jsonl_shards` already rejects. An empty merge from
+        # real files means the corpus executed and measured nothing, and
+        # writing the document anyway would let the reconciliation job compare
+        # the catalog against silence and report success. Refuse instead, and
+        # name the likely cause.
         print(
             "no observed results in the shards. The corpus produced no "
             "measurement, so there is nothing to reconcile. Check that "
