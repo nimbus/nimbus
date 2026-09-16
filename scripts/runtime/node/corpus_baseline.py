@@ -81,11 +81,46 @@ def write_json(path: Path, payload: Any) -> None:
 # ---------------------------------------------------------------- aggregate
 
 
-def read_jsonl_shards(inputs: list[Path]) -> list[dict[str, Any]]:
+def check_shard_completeness(files: list[Path], partitions: int) -> None:
+    """Refuses a measurement that is missing any partition's shard.
+
+    The corpus job writes two shards per partition: `partition-<i>.jsonl` from
+    the main run and `watchpoints-<i>.jsonl` from the ignored-test run. A
+    partition that dies before its tests start writes neither, and the merge
+    would still succeed on the shards of its siblings.
+
+    That is the dangerous case. The fixtures of the missing partition are
+    simply absent, so an unmeasured fixture reads exactly like a fixture with
+    no finding, and seeding from it would leave those fixtures unrecorded. Their
+    next failure would then be reported as a fresh regression.
+
+    On 2026-09-16 partition 4 of 6 hit a transient `sccache` 503 from the
+    Actions cache, cargo exited before compiling, and only the watchpoints
+    shard reached the artifact.
+    """
+    present = {path.name for path in files}
+    missing = [
+        name
+        for index in range(partitions)
+        for name in (f"partition-{index}.jsonl", f"watchpoints-{index}.jsonl")
+        if name not in present
+    ]
+    if missing:
+        raise SystemExit(
+            "error: the measurement is incomplete. Missing shard(s): "
+            + ", ".join(missing)
+            + ". Every partition must contribute both shards before the results "
+            "can seed or reconcile a baseline. Rerun the corpus."
+        )
+
+
+def read_jsonl_shards(
+    inputs: list[Path], partitions: int | None = None
+) -> list[dict[str, Any]]:
     """Collects every JSON object from the given JSONL files and directories.
 
-    A partition that ran no fixture writes no file. That is not an error, and
-    `aggregate` reports the shard count so a silent zero stays visible.
+    `partitions` names how many corpus partitions the run used. When it is
+    given, every partition must have contributed both of its shards.
     """
     files: list[Path] = []
     for item in inputs:
@@ -95,6 +130,9 @@ def read_jsonl_shards(inputs: list[Path]) -> list[dict[str, Any]]:
             files.append(item)
         else:
             raise SystemExit(f"error: no such observed-results input: {item}")
+
+    if partitions is not None:
+        check_shard_completeness(files, partitions)
 
     records: list[dict[str, Any]] = []
     for path in files:
@@ -142,7 +180,9 @@ def merge_observed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def command_aggregate(args: argparse.Namespace) -> int:
-    records = merge_observed_records(read_jsonl_shards([Path(p) for p in args.input]))
+    records = merge_observed_records(
+        read_jsonl_shards([Path(p) for p in args.input], args.expect_partitions)
+    )
     if not records:
         # Shards that exist but hold nothing are not the same as a missing
         # input, which `read_jsonl_shards` already rejects. An empty merge from
@@ -408,6 +448,15 @@ def main() -> int:
     )
     aggregate.add_argument("--input", nargs="+", required=True)
     aggregate.add_argument("--output", required=True)
+    aggregate.add_argument(
+        "--expect-partitions",
+        type=int,
+        default=None,
+        help=(
+            "the number of corpus partitions the run used. Each one must have "
+            "contributed both its partition and watchpoints shard."
+        ),
+    )
     aggregate.set_defaults(handler=command_aggregate)
 
     refresh = sub.add_parser(

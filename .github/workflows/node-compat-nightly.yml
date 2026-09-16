@@ -63,6 +63,35 @@ jobs:
           tool: nextest@0.9.143
           fallback: none
 
+      # `RUSTC_WRAPPER: sccache` makes every cargo command depend on the
+      # sccache server, and the server depends on the Actions cache. When that
+      # service returns 503, cargo exits before it compiles anything.
+      #
+      # On 2026-09-16 partition 4 of 6 died this way in under a second with
+      # "Server startup failed: cache storage failed to read ... Egress is over
+      # the account limit". The other five partitions ran normally, so the run
+      # produced a partial measurement rather than an obvious outage.
+      #
+      # A compiler cache is an optimization. It must never decide whether this
+      # lane produces evidence, so a server that will not start is downgraded
+      # to a slower build instead of a dead job.
+      - name: Confirm sccache can serve this job
+        run: |
+          for attempt in 1 2 3; do
+            if sccache --start-server >/dev/null 2>&1 \
+              || sccache --show-stats >/dev/null 2>&1; then
+              echo "sccache is serving this job"
+              exit 0
+            fi
+            echo "sccache did not start (attempt ${attempt} of 3)"
+            sccache --stop-server >/dev/null 2>&1 || true
+            if [ "${attempt}" -lt 3 ]; then
+              sleep "$((attempt * 10))"
+            fi
+          done
+          echo "::warning::sccache could not start. Building without it is slower but still produces the measurement."
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+
       # NCT2: each fixture appends one JSON object here. nextest runs every
       # test in its own process, so an in-memory buffer would not survive. The
       # shards merge in the corpus-baseline-reconciliation job.
@@ -162,11 +191,17 @@ jobs:
           path: target/node-compat/observed-shards
           merge-multiple: true
 
+      # EXPECT_PARTITIONS must match the corpus matrix. A partition that dies
+      # before its tests start contributes no shard, and the merge would still
+      # succeed on its siblings' shards, so its fixtures would be absent rather
+      # than reported. Seeding from that leaves them unrecorded, and their next
+      # failure reads as a fresh regression.
       - name: Merge the partition shards
         run: |
           make node-compat-baseline-aggregate \
             OBSERVED_SHARDS=target/node-compat/observed-shards \
-            OBSERVED_RESULTS=target/node-compat/observed-results.json
+            OBSERVED_RESULTS=target/node-compat/observed-results.json \
+            EXPECT_PARTITIONS=6
 
       - name: Guard the recorded baseline
         run: make node-compat-baseline-verify

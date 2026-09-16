@@ -136,6 +136,38 @@ The failure names the fixture and the lane. Two messages matter:
 The `known gap` lines in a batch summary list what the baseline is currently
 absorbing. That list is the compatibility backlog.
 
+## When a partition dies
+
+The corpus runs in six partitions. Each one writes two shards:
+`partition-<i>.jsonl` from the main run, and `watchpoints-<i>.jsonl` from the
+ignored-test run. A partition that dies before its tests start writes neither.
+
+A missing shard is the dangerous failure, because the fixtures of that
+partition are absent rather than reported. An unmeasured fixture then reads
+exactly like a fixture with no finding. A baseline seeded from that
+measurement leaves those fixtures unrecorded, and their next failure reads as
+a fresh regression.
+
+Two guards prevent it:
+
+| Guard | Where | What it does |
+| --- | --- | --- |
+| `if-no-files-found: error` | the corpus upload step | fails the partition that measured nothing |
+| `--expect-partitions 6` | the merge step | refuses a set that is missing any shard |
+
+`EXPECT_PARTITIONS` must stay equal to the size of the corpus matrix. Change
+both together.
+
+The usual cause is the compiler cache. `RUSTC_WRAPPER: sccache` makes every
+cargo command depend on the sccache server, and that server depends on the
+Actions cache service. When the service returns 503, cargo exits in under a
+second. The `Confirm sccache can serve this job` step retries three times,
+then clears `RUSTC_WRAPPER` and writes a warning annotation. The job then
+builds without the cache, which is slower but still produces the measurement.
+
+When the merge refuses an incomplete set, rerun the corpus. Do not seed from
+a partial measurement.
+
 ## Prerequisites and cleanup
 
 The corpus lane needs the Rust toolchain cache and `cargo-nextest`. The

@@ -655,7 +655,7 @@ node-compat-baseline-verify:
 # Merge the per-partition observed-results shards into one document.
 node-compat-baseline-aggregate:
 	@test -n "$(OBSERVED_SHARDS)" || (echo "set OBSERVED_SHARDS=<dir or jsonl files>" && exit 1)
-	python3 scripts/runtime/node/corpus_baseline.py aggregate --input $(OBSERVED_SHARDS) --output $(or $(OBSERVED_RESULTS),target/node-compat/observed-results.json)
+	python3 scripts/runtime/node/corpus_baseline.py aggregate --input $(OBSERVED_SHARDS) --output $(or $(OBSERVED_RESULTS),target/node-compat/observed-results.json) $(if $(EXPECT_PARTITIONS),--expect-partitions $(EXPECT_PARTITIONS),)
 
 # Rewrite the baseline from a real instrumented run. Never hand-edit the file.
 # Pass LANES="node20 node22" to restrict the rewrite to the lanes a partial run
