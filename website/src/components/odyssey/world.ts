@@ -10,7 +10,7 @@
 // stage and the static storyboard share one source of truth.
 
 import { type Viewport, clamp, interpolateCamera, mix, monotoneCubic, range, requestStateFor, smoothstep, visibilityWindow } from './timeline';
-import { type FrameOptions, type Layout, type Rgb, Scene, WHITE, drawBackdrop, inkNight, layouts, mixRgb, night, paletteFor, rgba } from './scene';
+import { type FrameOptions, type Layout, type Rgb, Scene, WHITE, drawBackdrop, inkNight, layouts, measureMono, mixRgb, night, paletteFor, rgba } from './scene';
 
 export { type FrameOptions, type Palette, type Rgb, paletteFor, rgb, setFonts } from './scene';
 
@@ -66,6 +66,17 @@ const REJOIN_X = 3160;
 const AUTHORIZE = { x: 3400, y: 0, w: 176, h: 70 };
 const VALIDATE = { x: 3620, y: 0, w: 176, h: 70 };
 const TXN = { x: 3850, w: 220, h: 70, gap: 110 };
+const TXN_CONTENTS = 'DOCUMENT · INDEX · COMMIT LOG';
+
+// The transaction box's outline through the seal: its three effects spread
+// inside it from the chapter's start and lock together as the request
+// arrives, so its height, and its top edge, close over the writes chapter.
+// The request pill rides above that edge, so it follows the same curve.
+function txnBox(progress: number) {
+  const merge = smoothstep(range(progress, 0.2726, 0.2829));
+  const h = TXN.h + TXN.gap * 2 * (1 - merge) + 40 * merge;
+  return { merge, h, top: -h / 2 - 14 };
+}
 const PUBLISH = { x: 4220, y: 0, w: 150, h: 60 };
 const FANOUT_X = 4480;
 const BINARY = { x0: 800, x1: 7200, y0: -520, y1: 1250 };
@@ -239,8 +250,8 @@ function routeFor(layout: Layout): RoutePoint[] {
     // Back around the sealed transaction and straight down onto the default
     // backend beneath it, where the commit rests while the backends copy is
     // up.
-    { x: TXN.x + TXN.w / 2 + 60, y: -190, at: 0.3471 },
-    { x: TXN.x + TXN.w / 2 + 60, y: TXN.h / 2 + 56, at: 0.3505 },
+    { x: TXN.x + TXN.w / 2 + 80, y: -190, at: 0.3471 },
+    { x: TXN.x + TXN.w / 2 + 80, y: TXN.h / 2 + 56, at: 0.3505 },
     { x: TXN.x, y: TXN.h / 2 + 56, at: 0.3523 },
     { x: SHELF_REST.x, y: SHELF_REST.y, at: 0.3608 },
     { x: SHELF_REST.x, y: SHELF_REST.y, at: 0.3853 },
@@ -330,10 +341,13 @@ function drawApp(scene: Scene, progress: number, layout: Layout) {
   scene.text('existing code · no changes', x + 20, y + 44, palette.muted, alpha * 0.85);
   scene.line(x, y + 62, x + APP.w, y + 62, palette.ink, alpha * 0.14);
 
-  // SDK chips light up one after another on arrival; the one the request
-  // leaves through stays lit.
-  const arrive = smoothstep(range(progress, 0, 0.0229));
-  const born = smoothstep(range(progress, 0.003, 0.0167));
+  // The first chapter rests at the journey's start, so the card is whole
+  // there: every SDK chip in place, the one the request leaves through lit,
+  // and the lanes out to the doors already carrying traffic. The chips and
+  // the lit chip cascade in only on the approach, where the stage runs up to
+  // the start from below it.
+  const arrive = smoothstep(range(progress, -0.0229, 0));
+  const born = smoothstep(range(progress, -0.0137, 0));
   doors.forEach((door, index) => {
     const cy = appChipY(index);
     const reveal = clamp(arrive * 2.2 - index * 0.3);
@@ -343,7 +357,7 @@ function drawApp(scene: Scene, progress: number, layout: Layout) {
 
   // Lanes from the app to the doors. Every SDK has its own door; the request's
   // lane is the bright one.
-  const laneAlpha = alpha * Math.max(visibilityWindow(progress, 0.0266, 0.099, 0.0285), revisit(progress));
+  const laneAlpha = alpha * Math.max(visibilityWindow(progress, -0.0285, 0.099, 0.0285), revisit(progress));
   if (laneAlpha > 0.01) {
     doors.forEach((door, index) => {
       const dy = (index - 2) * layout.doorGap;
@@ -416,7 +430,7 @@ function drawDoors(scene: Scene, progress: number, layout: Layout) {
     ctx.save();
     ctx.translate(BAR.x, 0);
     ctx.rotate(-Math.PI / 2);
-    scene.text('CLIENT ADAPTERS', 0, 0, palette.ink, barAlpha * 0.9, 'center');
+    scene.text('BACKEND ADAPTERS', 0, 0, palette.ink, barAlpha * 0.9, 'center');
     ctx.restore();
     doors.forEach((_, index) => {
       const dy = (index - 2) * layout.doorGap * 0.55;
@@ -639,6 +653,21 @@ function drawCommit(scene: Scene, progress: number) {
   const txnGroup = alpha * stage(progress, 0.2427, 0.3683, 0.0114) * (1 - phoneFade);
   const checks = txnGroup * liveClear(progress);
 
+  // The contents line holds the text floor, so as the camera pulls back it
+  // outgrows the box's resting width. The box widens round it, keeping a
+  // margin either side of the line, and holds off VALIDATE while the checks
+  // still stand beside it; the detour the request takes round the box later
+  // clears the widest it gets.
+  scene.mono(11, 620);
+  const namesStay = scene.viewport === 'wide' ? 1 : 1 - smoothstep(range(progress, 0.2927, 0.3033));
+  const contentsAlpha = smoothstep(range(progress, 0.2789, 0.2842)) * namesStay;
+  const roomy = Math.min(scene.measure(TXN_CONTENTS) + scene.px(44), TXN.w + 60);
+  const clear = 2 * (TXN.x - 14 - 12 - (VALIDATE.x + VALIDATE.w / 2));
+  const innerW = TXN.w + Math.max(0, mix(roomy, Math.min(roomy, clear), liveClear(progress)) - TXN.w) * contentsAlpha;
+  const { merge, h, top: boxTop } = txnBox(progress);
+  const boxLeft = TXN.x - innerW / 2 - 14;
+  const boxRight = TXN.x + innerW / 2 + 14;
+
   const steps = [
     { box: AUTHORIZE, title: 'AUTHORIZE', sub: 'principal · tenant', at: 0.2581 },
     { box: VALIDATE, title: 'VALIDATE', sub: 'schema · optional', at: 0.2726 },
@@ -656,28 +685,23 @@ function drawCommit(scene: Scene, progress: number) {
     }
   });
   scene.lane(AUTHORIZE.x + AUTHORIZE.w / 2, 0, VALIDATE.x - VALIDATE.w / 2, 0, palette.accent, checks * 0.6, 1.6);
-  scene.lane(VALIDATE.x + VALIDATE.w / 2, 0, TXN.x - TXN.w / 2 - 14, 0, palette.accent, checks * 0.6, 1.6);
+  scene.lane(VALIDATE.x + VALIDATE.w / 2, 0, boxLeft, 0, palette.accent, checks * 0.6, 1.6);
   // Writes keep passing the checks into the transaction.
   scene.lineTraffic(AUTHORIZE.x + AUTHORIZE.w / 2, 0, VALIDATE.x - VALIDATE.w / 2, 0, palette.accent, checks * 0.9, { count: 1, speed: 3.2, phase: 0.4 });
-  scene.lineTraffic(VALIDATE.x + VALIDATE.w / 2, 0, TXN.x - TXN.w / 2 - 14, 0, palette.accent, checks * 0.9, { count: 1, speed: 3.2, phase: 0.9 });
+  scene.lineTraffic(VALIDATE.x + VALIDATE.w / 2, 0, boxLeft, 0, palette.accent, checks * 0.9, { count: 1, speed: 3.2, phase: 0.9 });
 
   // One storage transaction: the box is there from the chapter's start,
   // named, with its three effects spread inside it. They lock together as
   // the request arrives and the box seals around them.
-  const merge = smoothstep(range(progress, 0.2726, 0.2829));
   const parts = ['DOCUMENT WRITE', 'INDEX EFFECTS', 'COMMIT LOG'];
   const partAlpha = 1 - smoothstep(range(merge, 0.2, 0.7));
   parts.forEach((part, index) => {
     const spread = (index - 1) * TXN.gap * (1 - merge);
-    scene.panel(TXN.x, spread, TXN.w, TXN.h, txnGroup * (1 - merge * 0.5), 0.2, palette.accent);
+    scene.panel(TXN.x, spread, innerW, TXN.h, txnGroup * (1 - merge * 0.5), 0.2, palette.accent);
     scene.mono(11, 600);
     scene.text(part, TXN.x, spread, palette.ink, txnGroup * partAlpha, 'center');
   });
-  const h = TXN.h + TXN.gap * 2 * (1 - merge) + 40 * merge;
-  const boxLeft = TXN.x - TXN.w / 2 - 14;
-  const boxRight = TXN.x + TXN.w / 2 + 14;
-  const boxTop = -h / 2 - 14;
-  scene.roundRect(boxLeft, boxTop, TXN.w + 28, h + 28, 14);
+  scene.roundRect(boxLeft, boxTop, innerW + 28, h + 28, 14);
   ctx.lineWidth = scene.px(2);
   ctx.strokeStyle = rgba(palette.accent, txnGroup * (0.55 + merge * 0.45));
   ctx.setLineDash([scene.px(6), scene.px(6 * (1 - merge) + 0.01)]);
@@ -688,8 +712,10 @@ function drawCommit(scene: Scene, progress: number) {
   // chapter, and on a phone just past the frame's left edge, so the name and
   // the contents line, which reach left of the box, leave with the commit
   // copy there. A desktop has the room, and keeps them beside the live copy.
-  const namesStay = scene.viewport === 'wide' ? 1 : 1 - smoothstep(range(progress, 0.2927, 0.3033));
-  scene.text('DOCUMENT · INDEX · COMMIT LOG', TXN.x, scene.px(24), palette.accentText, txnGroup * smoothstep(range(progress, 0.2789, 0.2842)) * namesStay, 'center');
+  // The contents line sits at the centre of the sealed box, and steps down
+  // under the request while the request rests inside the box.
+  const occupied = visibilityWindow(progress, 0.2775, 0.305, 0.005);
+  scene.text(TXN_CONTENTS, TXN.x, scene.px(24) * occupied, palette.accentText, txnGroup * contentsAlpha, 'center');
   // The name sits on the box's top edge, right-aligned so it reads whole
   // beside the live copy and clear of the request pill; the promise sits
   // under the box's bottom-left corner once the box has sealed.
@@ -2420,8 +2446,11 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   // transaction it rides above the box's name.
   // The commit pill holds through the chapter mid; it hands off to the
   // transaction lane at the edge, not before.
-  const commitLane = smoothstep(range(progress, 0.2528, 0.2623)) * (1 - smoothstep(range(progress, 0.276, 0.2789)));
-  const txnLane = visibilityWindow(progress, 0.2789, 0.2996, 0.0029);
+  const writesLane = smoothstep(range(progress, 0.2528, 0.2623)) * (1 - smoothstep(range(progress, 0.2967, 0.2996)));
+  // The pill lifts over the box's rim as the request crosses from VALIDATE
+  // to the box, and settles with the rim as the box seals under it, so it
+  // rides above the box's name the whole way and never passes through it.
+  const writesHandoff = smoothstep(range(progress, 0.2699, 0.2765));
   // At publish the pill rides above the box; docked at the subscribers card
   // it sits left of the request and above the lane, clear of the card.
   const publishLane = visibilityWindow(progress, 0.2996, 0.3071, 0.0057);
@@ -2455,7 +2484,7 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   const flip = screenX > scene.width * 0.72 || overflow || doorLane > 0.5 || filesLane > 0.5;
   const beside = smoothstep(range(progress, 0.0415, 0.0528));
   let pillX = flip ? point.x - scene.px(16) - pillW : point.x + scene.px(16);
-  pillX = mix(pillX, point.x - pillW / 2, Math.max(commitLane, txnLane, publishLane, shelfLane, sandboxLane, serviceLane));
+  pillX = mix(pillX, point.x - pillW / 2, Math.max(writesLane, publishLane, shelfLane, sandboxLane, serviceLane));
   pillX = mix(pillX, point.x - scene.px(10) - pillW, fanLane);
   pillX = mix(pillX, point.x - pillW / 2, filesLane * (scene.viewport === 'compact' ? 1 : 0));
   pillX = mix(pillX, RUNTIME.x - pillW / 2, runtimeLane);
@@ -2477,8 +2506,7 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   pillY = mix(pillY, point.y + scene.px(60), serviceLane);
   pillY = mix(pillY, point.y, tenantDoorLane);
   pillY = mix(pillY, point.y + scene.px(50), workloadsLane);
-  pillY = mix(pillY, point.y - (AUTHORIZE.h / 2 + scene.px(34)), commitLane);
-  pillY = mix(pillY, -(TXN.h / 2 + 34) - scene.px(42), txnLane);
+  pillY = mix(pillY, mix(point.y - (AUTHORIZE.h / 2 + scene.px(34)), txnBox(progress).top - scene.px(42), writesHandoff), writesLane);
   pillY = mix(pillY, PUBLISH.y - PUBLISH.h / 2 - scene.px(14), publishLane);
   pillY = mix(pillY, point.y - scene.px(24), fanLane);
   pillY = mix(pillY, ENGINE_TILE.embeddedY + ENGINE_TILE.h / 2 + scene.px(46), shelfLane);
@@ -2574,8 +2602,12 @@ export function drawFrame(ctx: CanvasRenderingContext2D, options: FrameOptions) 
   // binary, the cloud region) stay inside the band and clear of the copy.
   // Small labels fade by the composed zoom, so a stage that pulls the camera
   // back to fit keeps the detail its chapter was composed with.
+  const composed = options.camera !== undefined;
+  if (options.camera) Object.assign(camera, options.camera);
   const lodZoom = camera.zoom;
-  if (viewport !== 'compact') {
+  if (composed) {
+    // The caller's frame is the frame.
+  } else if (viewport !== 'compact') {
     const composedH = 900 - CHROME.wide.top - CHROME.wide.bottom;
     const composedTabletH = 768 - CHROME.medium.top - CHROME.medium.bottom;
     camera.zoom *= clamp(safeH / (viewport === 'wide' ? composedH : composedTabletH), 0.8, 1) * clamp(width / (viewport === 'wide' ? 1440 : 1024), 0.8, 1);
@@ -2646,4 +2678,132 @@ export function drawFrame(ctx: CanvasRenderingContext2D, options: FrameOptions) 
     ctx.fillRect(0, height - chrome.bottom - 34, width, chrome.bottom + 34);
   }
   return { camera, palette };
+}
+
+// The parts of the binary still that a pointer can name, as world rectangles.
+// The splash hit-tests these under the cursor and shows the part's copy. The
+// still sits at the far level of detail, so each rectangle follows a card at
+// its label size; the cards that are sized in screen pixels take the zoom.
+// The list is in nesting order, and a later part wins a contested point, so
+// the sandbox beats the host around it. The module row is measured by the
+// drawing, so its columns are estimated from the widest title and line.
+export type PartId =
+  | 'app'
+  | 'protocols'
+  | 'adapters'
+  | 'engine'
+  | 'runtime'
+  | 'node'
+  | 'commit'
+  | 'database'
+  | 'hosted'
+  | 'objects'
+  | 'files'
+  | 'control'
+  | 'service'
+  | 'sessions'
+  | 'host'
+  | 'sandbox'
+  | 'isolation'
+  | 'proxy'
+  | 'ingress'
+  | 'binary'
+  | 'network'
+  | 'compute'
+  | 'storage'
+  | 'agents'
+  | 'workloads'
+  | 'auth';
+
+export type Part = { id: PartId; x0: number; y0: number; x1: number; y1: number };
+
+const MODULE_IDS: PartId[] = ['network', 'compute', 'storage', 'agents', 'workloads', 'auth'];
+// The label height of the cards that open with their rows at the detail
+// level: the service, the sessions, the node target, the proxy, the kinds.
+const LABEL_CARD_H = 52;
+
+export function parts(zoom: number, viewport: Viewport): Part[] {
+  const px = (value: number) => value / zoom;
+  const layout = layouts[viewport];
+  const centred = (id: PartId, x: number, y: number, w: number, h: number): Part => ({ id, x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2 });
+  const list: Part[] = [];
+
+  list.push(centred('app', APP.x, APP.y, APP.w, APP.h));
+  // The five doors, one column: the still is far back, so each door keeps
+  // its layout width.
+  list.push(centred('protocols', DOOR_X, 0, layout.doorW, layout.doorGap * (doors.length - 1) + DOOR_H));
+  list.push(centred('adapters', BAR.x, 0, BAR.w, layout.doorGap * 2.2 + 120));
+  list.push(centred('engine', ENGINE.x, ENGINE.y, ENGINE.w, ENGINE.h));
+  list.push(centred('runtime', RUNTIME.x, RUNTIME.y, RUNTIME.w, RUNTIME.h));
+  list.push({ id: 'node', x0: NODE.x - NODE.w / 2, y0: NODE.top, x1: NODE.x + NODE.w / 2, y1: NODE.top + LABEL_CARD_H });
+  list.push({ id: 'commit', x0: AUTHORIZE.x - AUTHORIZE.w / 2, y0: -TXN.h / 2 - 20, x1: PUBLISH.x + PUBLISH.w / 2, y1: TXN.h / 2 + 20 });
+  // The shelf: the planes, the bar, and the embedded engines under it.
+  list.push({ id: 'database', x0: SHELF.left, y0: PLANES.y - PLANES.h / 2, x1: SHELF.right, y1: ENGINE_TILE.embeddedY + ENGINE_TILE.h / 2 });
+  list.push({
+    id: 'hosted',
+    x0: hostedEngines[0].x - ENGINE_TILE.w / 2,
+    y0: ENGINE_TILE.hostedY - ENGINE_TILE.h / 2,
+    x1: hostedEngines[hostedEngines.length - 1].x + ENGINE_TILE.w / 2,
+    y1: ENGINE_TILE.hostedY + ENGINE_TILE.h / 2,
+  });
+  list.push(centred('objects', OBJECT_STORE.x, OBJECT_STORE.y, OBJECT_STORE.w, OBJECT_STORE.h));
+  // The files panel at the far level: the head, three rows of cards, and
+  // the padding, in the capped screen unit `filesLayout` uses.
+  const unit = Math.min(px(1), 2);
+  list.push({ id: 'files', x0: FILES.x - FILES.w / 2, y0: FILES.top, x1: FILES.x + FILES.w / 2, y1: FILES.top + unit * 264 });
+  list.push({ id: 'control', x0: CONTROL.x - CONTROL.w / 2, y0: CONTROL.top, x1: CONTROL.x + CONTROL.w / 2, y1: CONTROL.top + Math.min(px(38), BINARY.y1 - 12 - CONTROL.top) });
+  list.push({ id: 'service', x0: SERVICE.right - SERVICE.w, y0: SERVICE.top, x1: SERVICE.right, y1: SERVICE.top + LABEL_CARD_H });
+  // The session cards are 200 wide at the label level and step at least
+  // ten screen pixels apart, as `drawServices` spaces them, so the row grows
+  // rightward as the still gets smaller. Titles only draw once the camera is
+  // near, so the box is the cards alone.
+  const sessionW = 200;
+  const sessionStep = Math.max(SESSIONS.xs[1] - SESSIONS.xs[0], sessionW + px(10));
+  list.push({
+    id: 'sessions',
+    x0: SESSIONS.xs[0] - sessionW / 2,
+    y0: SESSIONS.top,
+    x1: SESSIONS.xs[0] + sessionStep * (SESSIONS.xs.length - 1) + sessionW / 2,
+    y1: SESSIONS.top + LABEL_CARD_H,
+  });
+  list.push(centred('host', HOST.x, HOST.y, HOST.w, HOST.h));
+  list.push({ id: 'sandbox', x0: SANDBOX.x - SANDBOX.w / 2, y0: SANDBOX.y - SANDBOX.h / 2, x1: SANDBOX.x + SANDBOX.w / 2, y1: SANDBOX.y + SANDBOX.h / 2 - 60 });
+  // The two landed kinds beside the box, stacked from the wall's top.
+  list.push({ id: 'isolation', x0: WALL.x - WALL.w / 2, y0: WALL.top, x1: WALL.x + WALL.w / 2, y1: WALL.top + LABEL_CARD_H * 2 + 30 });
+  list.push(centred('proxy', PROXY.x, PROXY.y, PROXY.w, LABEL_CARD_H));
+  list.push(centred('ingress', INGRESS.x, INGRESS.y, Math.max(INGRESS.w, px(84)), DOOR_H));
+  // The name and the line above the outline.
+  list.push({ id: 'binary', x0: BINARY.x0, y0: BINARY.y0 - px(72), x1: BINARY.x0 + px(330), y1: BINARY.y0 - px(6) });
+
+  // The module row, as `drawBinaryLabels` lays it out: six columns where
+  // the widest line fits, six titles where only those fit, nothing on a
+  // phone where the row is one line.
+  const inset = px(4);
+  const available = BINARY.x1 - BINARY.x0 - inset * 2;
+  const gap = px(12);
+  const measure = (text: string, size: number, weight: number) => measureMono(text, size, weight, zoom, viewport);
+  const lineW = Math.max(...modules.flatMap(([, lines]) => lines).map((line) => measure(line, 10.5, 500)));
+  const titleWs = modules.map(([title]) => measure(title, 11, 620));
+  const titleW = Math.max(...titleWs);
+  const spacingFor = (columnW: number) => (available - columnW) / (MODULE_IDS.length - 1);
+  const columns = spacingFor(lineW) >= lineW + gap / 2;
+  const titles = spacingFor(titleW) >= titleW + gap;
+  if (columns || titles) {
+    const spacing = spacingFor(columns ? lineW : titleW);
+    const my = BINARY.y1 + EXTERNAL_DEPTH + px(30);
+    const lines = columns ? Math.max(...modules.map(([, rows]) => rows.length)) : 0;
+    MODULE_IDS.forEach((id, index) => {
+      const mx = BINARY.x0 + inset + spacing * index;
+      const w = columns ? lineW : titleWs[index];
+      list.push({ id, x0: mx - px(6), y0: my - px(14), x1: mx + w + px(6), y1: my + px(8) + lines * px(16) });
+    });
+  }
+  // A card drawn at its label height is a few screen pixels tall in a fitted
+  // still, so every part is at least a fingertip wide and tall.
+  const least = px(26);
+  return list.map((part) => {
+    const padX = Math.max(0, (least - (part.x1 - part.x0)) / 2);
+    const padY = Math.max(0, (least - (part.y1 - part.y0)) / 2);
+    return { ...part, x0: part.x0 - padX, x1: part.x1 + padX, y0: part.y0 - padY, y1: part.y1 + padY };
+  });
 }

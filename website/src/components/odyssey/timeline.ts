@@ -5,7 +5,7 @@
 
 export type Align = 'left' | 'right';
 export type Viewport = 'wide' | 'medium' | 'compact';
-export type ActId = 'start' | 'network' | 'compute' | 'storage' | 'agents' | 'workloads' | 'run';
+export type ActId = 'sdk' | 'network' | 'compute' | 'storage' | 'agents' | 'workloads' | 'binary' | 'run';
 
 export type Snippet = {
   file: string;
@@ -18,8 +18,9 @@ export type Chapter = {
   id: string;
   act: ActId;
   label: string;
-  eyebrow: string;
   title: string;
+  // A chapter that describes a roadmap item, not a release.
+  planned?: boolean;
   copy: string;
   proof: string;
   snippet: Snippet;
@@ -28,14 +29,18 @@ export type Chapter = {
   align: Align;
 };
 
-export type Act = { id: ActId; label: string };
+// `rail` is the label on the progress rail, where the first act's span is
+// too short for its full name.
+export type Act = { id: ActId; label: string; rail?: string };
 
 export const acts: Act[] = [
+  { id: 'sdk', label: 'Client SDK', rail: 'SDK' },
   { id: 'network', label: 'Network' },
   { id: 'compute', label: 'Compute' },
   { id: 'storage', label: 'Storage' },
   { id: 'agents', label: 'Agents' },
   { id: 'workloads', label: 'Workloads' },
+  { id: 'binary', label: 'Binary' },
   { id: 'run', label: 'Run' },
 ];
 
@@ -57,10 +62,9 @@ export type Camera = Omit<CameraKeyframe, 'at'>;
 export const chapters: Chapter[] = [
   {
     id: 'code',
-    act: 'start',
-    label: 'CODE',
-    eyebrow: 'Nimbus · beta',
-    title: 'Keep the SDK. Change the address.',
+    act: 'sdk',
+    label: 'YOUR CODE',
+    title: 'Keep the SDK. Leave the service.',
     copy: 'Your Convex, Firestore, MongoDB, or DynamoDB code does not change. Point it at one Rust binary on your machine.',
     proof: 'CONVEX · FIRESTORE · CLOUD FUNCTIONS · MONGODB · DYNAMODB',
     snippet: {
@@ -92,7 +96,6 @@ export const chapters: Chapter[] = [
     id: 'protocols',
     act: 'network',
     label: 'CLIENT PROTOCOLS',
-    eyebrow: 'Network · 01 / Client protocols',
     title: 'Every SDK has its own endpoint on one host.',
     copy: 'Each SDK keeps its own wire format and port. One process on one host answers all of them.',
     proof: ':3210 HTTP + WS · :27017 MONGODB · :8000 DYNAMODB',
@@ -123,8 +126,7 @@ export const chapters: Chapter[] = [
   {
     id: 'adapters',
     act: 'network',
-    label: 'CLIENT ADAPTERS',
-    eyebrow: 'Network · 02 / Client adapters',
+    label: 'BACKEND ADAPTERS',
     title: 'Every SDK protocol is an adapter.',
     copy: 'Each adapter turns its protocol into engine operations and passes an authenticated identity, not a raw token. Every SDK meets the same rules and the same database.',
     proof: 'nimbus-server · nimbus-adapters · nimbus-engine',
@@ -159,7 +161,6 @@ export const chapters: Chapter[] = [
     id: 'functions',
     act: 'compute',
     label: 'FUNCTIONS',
-    eyebrow: 'Compute · 03 / Functions',
     title: 'Functions run next to the data.',
     copy: 'The handler runs on V8 inside the binary. Queries and mutations reach the database with no network hop. Only actions reach the network.',
     proof: 'V8 IN-PROCESS · ONLY ACTIONS REACH THE NETWORK',
@@ -194,7 +195,6 @@ export const chapters: Chapter[] = [
     id: 'node',
     act: 'compute',
     label: 'NODE',
-    eyebrow: 'Compute · 04 / Node',
     title: 'One directive moves an action to Node.',
     copy: 'Add "use node" to an action to run it on Node 22, 24, or 26 with npm packages. Native addons and subprocesses need a sandbox.',
     proof: 'NODE 22 · 24 · 26 · ACTIONS ONLY · NO NATIVE ADDONS',
@@ -224,7 +224,6 @@ export const chapters: Chapter[] = [
     id: 'commit',
     act: 'storage',
     label: 'WRITES',
-    eyebrow: 'Storage · 05 / Writes',
     title: 'Every write is one database transaction.',
     copy: 'A mutation and a driver insertOne take the same path. One transaction writes the document, its indexes, and the commit log. Nimbus acknowledges only durable writes.',
     proof: 'DOCUMENT + INDEX + COMMIT LOG = ONE TRANSACTION',
@@ -247,7 +246,6 @@ export const chapters: Chapter[] = [
     id: 'live',
     act: 'storage',
     label: 'REALTIME',
-    eyebrow: 'Storage · 06 / Realtime',
     title: 'Every transaction updates live queries.',
     copy: 'A MongoDB write updates a live Convex query the moment it commits. There is no polling and no pub/sub service to run.',
     proof: 'CONVEX WS · onSnapshot · runAfter AT-LEAST-ONCE',
@@ -275,7 +273,6 @@ export const chapters: Chapter[] = [
     id: 'backends',
     act: 'storage',
     label: 'DATABASE',
-    eyebrow: 'Storage · 07 / Database',
     title: 'Pick the database. SQLite is the default.',
     copy: 'SQLite runs inside the process with zero setup. Point one flag at Postgres, MySQL, or libSQL when you already run one. Every API works on every backend.',
     proof: 'SQLITE DEFAULT · POSTGRES · MYSQL · LIBSQL · REDB',
@@ -303,7 +300,6 @@ export const chapters: Chapter[] = [
     id: 'files',
     act: 'storage',
     label: 'FILES',
-    eyebrow: 'Storage · 08 / Files',
     title: 'One blob store for S3 objects, files, and volumes.',
     copy: 'Each tenant has one encrypted, content-addressed store. Uploads, the S3 endpoint, the function filesystem, and sandbox volumes read the same bytes.',
     proof: 'BLAKE3 · ENCRYPTED · S3 API :9000',
@@ -334,7 +330,6 @@ export const chapters: Chapter[] = [
     id: 'box',
     act: 'agents',
     label: 'SANDBOX',
-    eyebrow: 'Agents · 09 / Sandbox',
     title: 'Agent sandboxes run outside the Nimbus process.',
     copy: 'Compose gives each agent an OCI image, a microVM or container, and a volume at /work. No daemon runs. The sandbox has no path back to the engine.',
     proof: 'LIKE A POD · OCI IMAGE · NO DAEMON · CRUN · LIBKRUN',
@@ -366,7 +361,6 @@ export const chapters: Chapter[] = [
     id: 'egress',
     act: 'agents',
     label: 'EGRESS',
-    eyebrow: 'Agents · 10 / Egress',
     title: 'Nimbus denies agent network access by default.',
     copy: 'The egress proxy denies every sandbox request by default. An allow rule names one protocol, one host, one port, and its paths, with no wildcards.',
     proof: 'nimbus-egress DECIDES · nimbus-proxy ENFORCES',
@@ -398,7 +392,6 @@ export const chapters: Chapter[] = [
     id: 'services',
     act: 'workloads',
     label: 'SERVICES',
-    eyebrow: 'Workloads · 11 / Services',
     title: 'Code depends on a name, not a sandbox.',
     copy: 'A service is a name that other code depends on. A sandbox runs it. Replace the sandbox and the name still resolves.',
     proof: 'LIKE A K8S SERVICE · SAME VERBS IN COMPOSE AND API',
@@ -429,7 +422,6 @@ export const chapters: Chapter[] = [
     id: 'workloads',
     act: 'workloads',
     label: 'COMPOSE',
-    eyebrow: 'Workloads · 12 / Compose',
     title: 'Run an app as services on one host.',
     copy: 'A compose file names each service. Each one runs in its own microVM or container next to the engine. One service runs one sandbox today. Replicas are on the roadmap.',
     proof: 'ONE SANDBOX PER SERVICE · REPLICAS PLANNED',
@@ -468,7 +460,6 @@ export const chapters: Chapter[] = [
     id: 'sessions',
     act: 'workloads',
     label: 'SESSIONS',
-    eyebrow: 'Workloads · 13 / Sessions',
     title: 'A session is an audited connection to a running service.',
     copy: 'Plain service use needs no session. Open one for stdio, file exchange, or browser control. Nimbus authorizes the lease at open, and it expires at its TTL.',
     proof: 'LIKE KUBECTL EXEC · TTL 15 MIN · NO BYTES YET',
@@ -496,9 +487,8 @@ export const chapters: Chapter[] = [
   },
   {
     id: 'binary',
-    act: 'run',
-    label: 'BINARY',
-    eyebrow: 'Run · 14 / Binary',
+    act: 'binary',
+    label: 'SINGLE PROCESS',
     title: 'You run one process, not a platform.',
     copy: 'Network, compute, storage, and agents ship in one Rust binary with one trust model. There is no sidecar and no queue to run.',
     proof: 'ONE BINARY · NO DOCKER · NO KUBERNETES · NO QUEUE',
@@ -519,9 +509,8 @@ export const chapters: Chapter[] = [
   },
   {
     id: 'tenants',
-    act: 'run',
+    act: 'binary',
     label: 'TENANTS',
-    eyebrow: 'Run · 15 / Tenants',
     title: 'Tenants cannot see each other.',
     copy: 'Each tenant has its own database, file store, key, and budget. Nimbus admits a request once. No API can express a cross-tenant read.',
     proof: 'OWN DATABASE · KEY · BUDGET · 429 OVER BUDGET',
@@ -552,7 +541,6 @@ export const chapters: Chapter[] = [
     id: 'cloud',
     act: 'run',
     label: 'DEPLOYMENT',
-    eyebrow: 'Run · 16 / Deployment',
     title: 'Deploy to any Linux host you own.',
     copy: 'Install on any Linux host and run it as a service. Deploy from a laptop with a dry run first.',
     proof: 'NO TELEMETRY · NO METERING · NO CLUSTERING YET',
@@ -583,7 +571,7 @@ export const chapters: Chapter[] = [
     id: 'cluster',
     act: 'run',
     label: 'CLUSTER',
-    eyebrow: 'Run · 17 / Cluster · planned',
+    planned: true,
     title: 'Scale out to more hosts later.',
     copy: 'Planned cluster mode joins hosts over a QUIC mesh. Each node is an Ed25519 key, not an IP address. A host joins with a token as a learner, and each tenant gets one owner node. None of this ships today.',
     proof: 'IROH + OPENRAFT · QUIC UDP/7842 · RELAY TCP/443',
@@ -614,7 +602,7 @@ export const chapters: Chapter[] = [
     id: 'operator',
     act: 'run',
     label: 'OPERATOR',
-    eyebrow: 'Run · 18 / Operator · planned',
+    planned: true,
     title: 'Reach the cluster from a laptop.',
     copy: 'The planned operator plane is the same mesh. The CLI dials any node by key, through NAT, with an operator key that has admin and port-forward scopes only. It is never a voter.',
     proof: 'OPERATOR KEY · ADMIN · OP-FORWARD · NEVER A VOTER',
@@ -643,7 +631,6 @@ export const chapters: Chapter[] = [
     id: 'laptop',
     act: 'run',
     label: 'LAPTOP',
-    eyebrow: 'Run · 19 / Laptop',
     title: 'Start local with three commands.',
     copy: 'Install the binary and point the app at localhost:3210. Nimbus is in beta. APIs can break between releases. Do not use it in production yet.',
     proof: 'BREW INSTALL · NIMBUS INIT · NIMBUS DEV · LOCALHOST:3210',
@@ -662,7 +649,7 @@ export function actFor(chapter: Chapter) {
 }
 
 // Progress span of each act, from its first chapter's start to its last
-// chapter's end. The hero has no act and owns the start of the rail.
+// chapter's end. The first act owns the start of the rail.
 export function actSpans() {
   return acts.map((act) => {
     const own = chapters.filter((chapter) => chapter.act === act.id);
@@ -986,20 +973,22 @@ export function interpolateCamera(progress: number, viewport: Viewport): Camera 
   };
 }
 
-// Tonal arc: the acts alternate. Night for the client and the network, paper
-// for compute, night for storage, paper for the agents, night for the binary
-// and its tenants, the gold wash for the payoff on your machines.
+// Tonal arc: the acts alternate, starting light against the night hero.
+// Paper for your code, night for the network, paper for compute, night for
+// storage, paper for the agents, night for the workloads and for the binary
+// and its tenants, the gold wash for running it on your machines.
 export function paperMixFor(progress: number) {
   // Every crossfade sits in the middle third of the gap between two
   // chapters, so no copy is read while the background crosses and the
   // frame spends only a short beat between the two tones. The ink and the
   // chrome swap in one step at the midpoint (see paletteFor), so nothing
   // washes to grey on grey.
+  const sdkOut = smoothstep(range(progress, 0.0434, 0.047));
   const computeIn = smoothstep(range(progress, 0.1446, 0.1481));
   const computeOut = smoothstep(range(progress, 0.2458, 0.2492));
   const agentsIn = smoothstep(range(progress, 0.448, 0.4514));
   const agentsOut = smoothstep(range(progress, 0.7008, 0.7042));
-  return computeIn * (1 - computeOut) + agentsIn * (1 - agentsOut);
+  return 1 - sdkOut + computeIn * (1 - computeOut) + agentsIn * (1 - agentsOut);
 }
 
 export function washMixFor(progress: number) {

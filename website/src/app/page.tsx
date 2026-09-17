@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { Hero } from '@/components/odyssey/hero';
 import { Journey } from '@/components/odyssey/journey';
 import { OG_IMAGE } from '@/lib/og';
 
@@ -21,10 +22,15 @@ export const metadata: Metadata = {
   },
 };
 
-// The home page is the journey: one scroll-driven scene that follows a
-// request from an app through the binary and back. It is a client component
-// because the whole page is a canvas the scroll position drives; this file
-// stays a server component so the route keeps its metadata.
+// The home page is the splash and then the journey: one scroll-driven scene
+// that follows a request from an app through the binary and back. Both are
+// client components because the page is a canvas the scroll position drives;
+// this file stays a server component so the route keeps its metadata.
 export default function Page() {
-  return <Journey />;
+  return (
+    <>
+      <Hero />
+      <Journey />
+    </>
+  );
 }

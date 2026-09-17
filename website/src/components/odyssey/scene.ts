@@ -39,6 +39,9 @@ export type FrameOptions = {
   // The zoom the chapter was composed at, before the stage pulled the camera
   // back to fit; small labels fade by it.
   lodZoom?: number;
+  // A frame composed by its caller: the splash names its own camera, and the
+  // stage fitting that follows the chapter keyframes is skipped.
+  camera?: Partial<Camera>;
 };
 
 export type PaletteStops = {
@@ -110,6 +113,25 @@ let sansFamily = 'system-ui, sans-serif';
 export function setFonts(mono: string, sans: string) {
   if (mono.trim()) monoFamily = mono;
   if (sans.trim()) sansFamily = sans;
+}
+
+// A label never renders below the viewport's minimum screen size, whatever
+// the zoom, so a fitted still stays legible.
+function minFontPx(viewport: Viewport) {
+  return viewport === 'compact' ? 10 : 11;
+}
+
+// The width, in world units, of mono text as a frame at this zoom draws it.
+// Hit-testing shares this with the drawing, so a row laid out from measured
+// text and its hover targets agree. Without a document (a script), the mono
+// face's advance stands in.
+let gauge: CanvasRenderingContext2D | null | undefined;
+export function measureMono(text: string, size: number, weight: number, zoom: number, viewport: Viewport) {
+  const fontSize = Math.max(size, minFontPx(viewport) / zoom);
+  if (gauge === undefined) gauge = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+  if (!gauge) return fontSize * 0.6 * text.length;
+  gauge.font = `${weight} ${fontSize.toFixed(2)}px ${monoFamily}`;
+  return gauge.measureText(text).width;
 }
 
 // Per-viewport layout: the few pieces of the world that need a different
@@ -235,7 +257,7 @@ export class Scene {
     this.zoom = camera.zoom;
     this.time = options.time;
     this.ambient = options.ambient;
-    this.minPx = options.viewport === 'compact' ? 10 : 11;
+    this.minPx = minFontPx(options.viewport);
     this.viewport = options.viewport;
     const [lodLow, lodHigh] = layouts[options.viewport].lod;
     this.detail = smoothstep(range(options.lodZoom ?? camera.zoom, lodLow, lodHigh));

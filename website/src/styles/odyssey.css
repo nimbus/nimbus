@@ -44,8 +44,7 @@
   --paper-mix: 0;
   --wash-mix: 0;
   --scroll-hint-opacity: 1;
-  --frame-cursor-x: 0px;
-  --frame-cursor-y: 0px;
+  --rail-gust: 0;
 }
 
 /* Overscroll past either end of the stage must not flash the document ground
@@ -211,54 +210,16 @@ body:has(.odyssey) {
   align-items: flex-start;
 }
 
-/* The start item returns the reader to the beginning of the journey. */
-.start-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.start-button i,
-.start-return i {
-  width: 6px;
-  height: 6px;
-  rotate: 45deg;
-  border: 1px solid currentColor;
-  transition: background-color 160ms linear;
-}
-
-.start-button[aria-current='step'] i {
-  background: currentColor;
-}
-
-/* Where the chapter nav is not shown, the start item stands beside the run
-   link. */
-.start-return {
-  display: none;
-  align-items: center;
-  gap: 8px;
-  justify-self: end;
-  font: 500 10px/1 var(--font-mono);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--stage-muted);
-  transition: color 160ms linear;
-}
-
-.start-return:hover {
-  color: var(--stage-ink);
-}
-
-/* Each act is a bucket: its label on top, its chapters in a row under it. The
-   bucket the journey is in carries an outline, and a line along its floor
-   fills as the journey moves through its chapters. The other buckets keep
-   their chapters folded until the reader hovers or tabs into them, so the row
-   fits between the brand and the run link. */
+/* Each act is a bucket: its label centred on top, its chapters in a row
+   centred under it. The bucket the journey is in carries an outline, and a
+   line along its floor fills as the journey moves through its chapters. The
+   other buckets keep their chapters folded until the reader hovers or tabs
+   into them, so the row fits between the brand and the run link. */
 .act-group {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   padding: 0 4px 2px;
   border: 1px solid transparent;
   border-radius: 10px;
@@ -345,6 +306,7 @@ body:has(.odyssey) {
 
 .act-chapters-row {
   display: flex;
+  justify-content: center;
   gap: 2px;
   min-width: 0;
   overflow: hidden;
@@ -391,39 +353,46 @@ body:has(.odyssey) {
   transition: background-color 120ms linear, color 120ms linear;
 }
 
+/* The status row is the rail, edge to edge, closed by the percent. The rail's
+   length is fixed: the location caption rides inside it, under the playhead,
+   and the percent's digits are tabular, so nothing here grows or shrinks. */
 .journey-status {
   position: absolute;
   left: 50%;
-  bottom: 30px;
+  bottom: 22px;
   translate: -50% 0;
   z-index: 6;
   width: min(calc(100% - 56px), 1740px);
-  display: grid;
-  grid-template-columns: minmax(380px, max-content) 1fr max-content;
+  display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 24px;
   font: 500 10.5px/1 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-.status-location {
+/* The caption sits under the rail line and follows the playhead. Its anchor
+   slides from its left edge at the start to its right edge at the end, the
+   way a slider's thumb does, so it never leaves the rail at either end. */
+.progress-track .rail-caption {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: calc(var(--journey-progress) * 100%);
+  translate: calc(var(--journey-progress) * -100%) 0;
   display: flex;
   gap: 12px;
   white-space: nowrap;
+  pointer-events: none;
 }
 
-.status-location b {
-  font-weight: 600;
-  color: var(--stage-ink);
-}
-
-.status-location span {
+.rail-caption span {
   color: var(--stage-muted);
 }
 
 .progress-track {
   position: relative;
+  flex: 1;
+  min-width: 0;
   height: 28px;
   margin-top: 10px;
 }
@@ -471,26 +440,61 @@ body:has(.odyssey) {
   transform: scale(1.4);
 }
 
+/* The playhead is the mascot, riding the request along the rail; the
+   pointer can take it. */
 .progress-track .playhead {
   position: absolute;
   top: 50%;
   left: calc(var(--journey-progress) * 100%);
-  width: 9px;
-  height: 9px;
+  z-index: 1;
+  width: 26px;
+  height: 22px;
   translate: -50% -50%;
-  rotate: 45deg;
-  background: var(--stage-accent);
-  box-shadow: 0 0 0 3px var(--stage-chrome);
   cursor: grab;
   touch-action: none;
 }
 
-/* The hit area reaches past the diamond. */
-.progress-track .playhead::before,
-.stage-frame i::before {
+/* The hit area reaches past the mark. */
+.progress-track .playhead::before {
   content: '';
   position: absolute;
-  inset: -9px;
+  inset: -8px;
+}
+
+/* The wind. The journey writes the mark's speed along the rail, signed
+   forward, into `--rail-gust`. Blown along, the mark trails its anchor and
+   tips into the direction of travel. The layer sits between the anchor,
+   which must not lag the scroll, and the drift below. */
+.progress-track .rail-gust {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: translateX(calc(var(--rail-gust, 0) * -6px)) rotate(calc(var(--rail-gust, 0) * 16deg));
+}
+
+/* The same sticker as the brand row: gold on every ground, and through the
+   finale wash the body and the face trade places. A ground-coloured halo
+   lifts it off the rail's hairline and its chapter dots. */
+.progress-track .rail-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  --mark: color-mix(in srgb, var(--accent-ink) calc(var(--wash-mix) * 100%), var(--accent));
+  --mark-ink: color-mix(in srgb, var(--accent) calc(var(--wash-mix) * 100%), var(--accent-ink));
+  filter: drop-shadow(0 0 2px var(--stage-chrome)) drop-shadow(0 0 1px var(--stage-chrome));
+  animation: rail-drift 3.4s ease-in-out infinite;
+}
+
+/* At rest the mark still floats: a slow bob and a sway, the way a cloud
+   idles in a light breeze. */
+@keyframes rail-drift {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-1.5px) rotate(3deg);
+  }
 }
 
 .progress-track .playhead:focus-visible {
@@ -504,15 +508,16 @@ body:has(.odyssey) {
 }
 
 .odyssey-stage.is-scrubbing,
-.odyssey-stage.is-scrubbing .playhead,
-.odyssey-stage.is-scrubbing .stage-frame i {
+.odyssey-stage.is-scrubbing .playhead {
   cursor: grabbing;
 }
 
+/* Sits on the rail line: the track carries 10px of act-label headroom above
+   its centre, which the margin matches. */
 .telemetry {
   display: flex;
-  justify-content: flex-end;
-  gap: 18px;
+  gap: 8px;
+  margin-top: 10px;
   white-space: nowrap;
   color: var(--stage-muted);
 }
@@ -557,6 +562,68 @@ body:has(.odyssey) {
   animation: scroll-pulse 1.8s cubic-bezier(0.6, 0, 0.4, 1) infinite;
 }
 
+/* Once the reader has rested on a chapter, the prompt becomes the offer of
+   the next one: a pill naming the chapter, with a chevron beating downward,
+   that also takes them there on a click. */
+.scroll-prompt.is-next {
+  gap: 10px;
+  padding: 10px 14px 10px 16px;
+  border: 1px solid color-mix(in srgb, var(--stage-ink) 24%, transparent);
+  border-radius: 999px;
+  background: var(--stage-chrome);
+  font-size: 11px;
+  color: var(--stage-ink);
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+  animation: prompt-in 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  transition: border-color 160ms linear;
+}
+
+.scroll-prompt.is-next:hover,
+.scroll-prompt.is-next:focus-visible {
+  border-color: var(--stage-accent);
+  outline: none;
+}
+
+.scroll-prompt.is-next i {
+  display: grid;
+  place-items: center;
+  width: auto;
+  height: auto;
+  background: none;
+  color: var(--stage-accent);
+  animation: none;
+}
+
+.scroll-prompt.is-next svg {
+  display: block;
+  animation: prompt-beat 1.3s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+}
+
+@keyframes prompt-in {
+  from {
+    opacity: 0;
+    translate: -50% 12px;
+  }
+  to {
+    opacity: 1;
+    translate: -50% 0;
+  }
+}
+
+@keyframes prompt-beat {
+  0%,
+  100% {
+    transform: translateY(-3px);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(3px);
+    opacity: 1;
+  }
+}
+
 @keyframes scroll-pulse {
   0% {
     transform: scaleY(0);
@@ -570,33 +637,6 @@ body:has(.odyssey) {
     transform: scaleY(1) translateY(24px);
     opacity: 0;
   }
-}
-
-/* The frame is a hairline around the stage; its cursor travels the whole
-   perimeter exactly once across the journey, and the pointer can take it. */
-.stage-frame {
-  position: absolute;
-  top: 100px;
-  right: 14px;
-  bottom: 22px;
-  left: 14px;
-  z-index: 4;
-  border: 1px solid color-mix(in srgb, var(--stage-ink) 12%, transparent);
-  pointer-events: none;
-}
-
-.stage-frame i {
-  position: absolute;
-  top: -5px;
-  left: -5px;
-  width: 9px;
-  height: 9px;
-  background: var(--stage-accent);
-  box-shadow: 0 0 0 3px var(--stage-background);
-  transform: translate(var(--frame-cursor-x), var(--frame-cursor-y)) rotate(45deg);
-  pointer-events: auto;
-  cursor: grab;
-  touch-action: none;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -626,26 +666,44 @@ body:has(.odyssey) {
   right: max(36px, calc((100vw - 1740px) / 2 + 28px));
 }
 
-/* The chapter label. Selected through `.beat` because the label is a `<p>`
-   and `.beat p` below is (0,1,1): a bare `.beat-eyebrow` loses the cascade to
-   the body copy and the label comes out as paragraph grey on its own carrier.
-   Every rule here that sets a colour has to clear that bar. */
+/* The chapter's name, gold on its dark carrier, big enough to read as the
+   scene's title at a glance. A roadmap chapter carries a `planned` tag after
+   its name. Selected through `.beat` because the line is a `<p>` and
+   `.beat p` below is (0,1,1): a bare `.beat-eyebrow` loses the cascade to
+   the body copy. Every rule here that sets a colour has to clear that bar. */
 .beat .beat-eyebrow {
-  display: inline-block;
-  margin: 0 0 22px -7px;
-  padding: 4px 7px;
-  border-radius: 5px;
-  font: 500 10.5px/1 var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 22px -9px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  max-width: none;
+  font: 600 14px/1 var(--font-mono);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--stage-accent);
   background: var(--stage-accent-carrier);
 }
 
+.beat .beat-eyebrow em {
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--stage-muted) 55%, transparent);
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  color: var(--stage-muted);
+}
+
+/* The same type as the splash headline: the hero sizes its lines from its
+   column, which comes to about 3.45vw at a wide viewport, and caps them from
+   the viewport height. The chapter titles take that size directly, so the
+   splash and the chapters read as one voice. */
 .beat h1,
 .beat h2 {
   margin: 0;
-  font-size: clamp(40px, 4.6vw, 82px);
+  font-size: clamp(36px, min(3.45vw, (100svh - 600px) / 3.92), 96px);
   font-weight: 390;
   letter-spacing: -0.055em;
   line-height: 0.98;
@@ -823,50 +881,58 @@ body:has(.odyssey) {
 }
 
 /* ---------------------------------------------------------------------- */
-/* Afterword                                                                */
+/* Afterword: the colophon on the end card                                  */
 /* ---------------------------------------------------------------------- */
 
+/* One row above the progress rail, on the stage, so the last chapter is the
+   end of the page. The driver fades it with the final beat and makes it
+   inert while it is off; until then it takes no pointer. */
 .afterword {
-  position: relative;
-  min-height: 34svh;
-  display: grid;
-  align-content: end;
-  gap: 28px;
-  padding: 64px max(36px, calc((100vw - 1740px) / 2 + 28px)) 40px;
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.afterword-row {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  translate: -50% 0;
+  z-index: 6;
+  width: min(calc(100% - 56px), 1740px);
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 16px 32px;
-  font: 500 11px/1.6 var(--font-mono);
-  letter-spacing: 0.1em;
+  align-items: baseline;
+  gap: 10px 32px;
+  padding: 0 0 14px;
+  font: 500 10.5px/1.6 var(--font-mono);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  color: var(--stage-muted);
+  opacity: 0;
+  pointer-events: none;
 }
 
-.afterword-row nav {
+.afterword.is-live {
+  pointer-events: auto;
+}
+
+.afterword nav {
   display: flex;
   gap: 24px;
 }
 
-.afterword-row a {
+.afterword a {
+  color: var(--stage-ink);
   text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent-ink) 40%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--stage-ink) 35%, transparent);
 }
 
-.afterword-row a:hover {
-  border-bottom-color: var(--accent-ink);
+.afterword a:hover {
+  border-bottom-color: var(--stage-accent);
 }
 
-.afterword-row .fine {
-  color: color-mix(in srgb, var(--accent-ink) 78%, var(--accent));
-  max-width: 640px;
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 12px;
+.afterword .fine {
+  margin: 0;
+}
+
+.afterword .wordmark {
+  color: var(--stage-ink);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -874,14 +940,12 @@ body:has(.odyssey) {
 /* ---------------------------------------------------------------------- */
 
 @media (max-width: 1100px) {
+  /* The brand and the run link; the chapter nav is off at this width and the
+     brand is the way back to the top. */
   .nav-shell {
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: 1fr auto;
     height: 76px;
     width: calc(100% - 48px);
-  }
-
-  .start-return {
-    display: inline-flex;
   }
 
   .chapter-nav {
@@ -897,42 +961,20 @@ body:has(.odyssey) {
   }
 
   .journey-status {
-    grid-template-columns: 1fr;
-    gap: 10px;
     width: calc(100% - 48px);
-    bottom: 22px;
-  }
-
-  .status-location {
-    order: 2;
-    justify-content: space-between;
-    /* Keep the row inside the rail: the grid track must not grow to the
-       row's min-content width, so the state label can clip instead. */
-    min-width: 0;
-    overflow: hidden;
+    bottom: 20px;
   }
 
   .telemetry {
     display: none;
   }
 
-  .status-location .state {
+  .rail-caption .state {
     color: var(--stage-accent);
     background: var(--stage-accent-carrier);
     padding: 1px 5px;
     margin: -1px -1px;
     border-radius: 4px;
-    /* The longest state label is wider than a 375px row leaves; clip it
-       with an ellipsis instead of pushing past the frame edge. */
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .stage-frame {
-    top: 82px;
-    bottom: 18px;
   }
 
   .beat {
@@ -957,7 +999,7 @@ body:has(.odyssey) {
 
   .beat h1,
   .beat h2 {
-    font-size: clamp(36px, 4.9vw, 52px);
+    font-size: clamp(34px, min(4.1vw, (100svh - 600px) / 3.92), 52px);
   }
 
   .beat p {
@@ -1024,7 +1066,7 @@ body:has(.odyssey) {
 
   .beat h1,
   .beat h2 {
-    font-size: clamp(30px, 8.6vw, 40px);
+    font-size: clamp(30px, 8.2vw, 40px);
   }
 
   .beat p {
@@ -1050,21 +1092,9 @@ body:has(.odyssey) {
     font-size: 10px;
   }
 
-  .stage-frame {
-    top: 70px;
-    right: 10px;
-    bottom: 16px;
-    left: 10px;
-  }
-
-  /* A phone frame has no margin for the cursor; it crosses the status rows. */
-  .stage-frame i {
-    display: none;
-  }
-
   .journey-status {
     width: calc(100% - 32px);
-    bottom: 18px;
+    bottom: 16px;
     font-size: 9.5px;
   }
 
@@ -1073,7 +1103,11 @@ body:has(.odyssey) {
   }
 
   .afterword {
-    padding: 48px 18px 28px;
+    width: calc(100% - 32px);
+    bottom: 74px;
+    gap: 6px 20px;
+    padding-bottom: 10px;
+    font-size: 9.5px;
   }
 }
 
@@ -1086,15 +1120,10 @@ body:has(.odyssey) {
    composition, but tighter, so the longest chapter (its code and its proof
    line) stays clear of the progress rail. */
 /* A laptop browser viewport is about 815px tall on a 900px display; the
-   tallest beat (client adapters) needs the shorter layout up to 880px. */
+   tallest beat (backend adapters) needs the shorter layout up to 880px. */
 @media (min-width: 760px) and (max-height: 880px) {
   .beat {
     top: 15%;
-  }
-
-  .beat h1,
-  .beat h2 {
-    font-size: clamp(36px, 4vw, 64px);
   }
 
   .beat p {
@@ -1128,8 +1157,7 @@ body:has(.odyssey) {
   .odyssey-stage canvas.world,
   .halftone-field,
   .journey-status,
-  .scroll-prompt,
-  .stage-frame {
+  .scroll-prompt {
     display: none;
   }
 
@@ -1147,10 +1175,6 @@ body:has(.odyssey) {
 
   .chapter-nav {
     display: flex;
-  }
-
-  .start-return {
-    display: none;
   }
 
   .chapter-nav button::after {
@@ -1228,6 +1252,32 @@ body:has(.odyssey) {
     border-color: color-mix(in srgb, var(--beat-ink, var(--stage-ink)) 35%, transparent);
   }
 
+  .afterword {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    translate: 0;
+    width: 100%;
+    padding: 40px 28px;
+    background: var(--accent);
+    color: color-mix(in srgb, var(--accent-ink) 78%, var(--accent));
+    opacity: 1 !important;
+    pointer-events: auto;
+  }
+
+  .afterword a,
+  .afterword .wordmark {
+    color: var(--accent-ink);
+  }
+
+  .afterword a {
+    border-bottom-color: color-mix(in srgb, var(--accent-ink) 40%, transparent);
+  }
+
+  .afterword a:hover {
+    border-bottom-color: var(--accent-ink);
+  }
+
   .still {
     display: block;
     grid-column: 2;
@@ -1245,6 +1295,10 @@ body:has(.odyssey) {
       padding: 48px 20px;
     }
 
+    .afterword {
+      padding: 32px 20px;
+    }
+
     .still {
       grid-column: 1;
       grid-row: auto;
@@ -1253,10 +1307,6 @@ body:has(.odyssey) {
 
     .chapter-nav {
       display: none;
-    }
-
-    .start-return {
-      display: inline-flex;
     }
   }
 }
