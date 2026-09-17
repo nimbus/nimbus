@@ -4,9 +4,9 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   type Snippet,
   type Viewport,
+  COPY_EDGE,
   actFor,
   actSpans,
-  COPY_EDGE,
   chapterIndexFor,
   chapterRest,
   chapterStop,
@@ -109,16 +109,16 @@ function easeInOutCubic(t: number) {
 // with this angular frequency (per second). The spring keeps the velocity
 // continuous across notches, so the beats flow under the scroll instead of
 // pulsing with each notch, and a small input makes a small, smooth move.
-const WHEEL_GAIN = 0.5;
+const WHEEL_GAIN = 0.65;
 const GLIDE_OMEGA = 11;
 // A chapter holds at the edge of its rest. The gesture that brought the reader
 // to the edge does not push through it. A later gesture that pushes this far
 // (in native wheel pixels, within this window) carries the reader on to the
 // next chapter; a gentle nudge does not.
-const PUSH_THRESHOLD = 45;
+const PUSH_THRESHOLD = 30;
 const PUSH_WINDOW = 800;
 // And a push counts only once the edge has held this long.
-const EDGE_HOLD = 110;
+const EDGE_HOLD = 80;
 // A new wheel gesture starts after this long with no wheel input, when the
 // direction flips, or when the deltas rise again by this ratio: a trackpad's
 // momentum tail only decays, so a rise is a new swipe, even inside the tail.
@@ -136,6 +136,11 @@ const GAP_WEIGHT = 8;
 // A scroll the driver did not make (scrollbar, keyboard, touch) has ended
 // when this long passes with no further movement.
 const REST_DEBOUNCE = 140;
+// How long a reader rests on a chapter before the prompt offers the next one.
+const NUDGE_DELAY = 1800;
+// Progress per millisecond that reads as a full gust on the rail mark: a
+// chapter's span in a little over half a second, the pace of a chapter drive.
+const FULL_GUST = 0.05 / 550;
 // Tooling that sets the scroll position itself puts this attribute on <html>,
 // and the driver leaves the scroll alone.
 const HOLD_ATTRIBUTE = 'data-journey-hold';
@@ -159,9 +164,11 @@ type JourneyHandles = {
   percent: HTMLElement | null;
   track: HTMLElement;
   playhead: HTMLElement;
-  frame: HTMLElement;
   onChapter: (index: number) => void;
   onState: (label: string) => void;
+  // The chapter to nudge the reader on to once they have rested on one, or
+  // -1 while they are moving.
+  onNudge: (index: number) => void;
 };
 
 // The scrolling journey. Scroll position is the playhead; the scene follows it
@@ -169,7 +176,7 @@ type JourneyHandles = {
 // scroll its weight and rests it on a chapter. Every DOM write is guarded so
 // an idle frame writes nothing.
 function mountJourney(handles: JourneyHandles) {
-  const { section, stage, canvas, track, playhead, frame } = handles;
+  const { section, stage, canvas, track, playhead } = handles;
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return () => {};
 
@@ -179,6 +186,7 @@ function mountJourney(handles: JourneyHandles) {
   const beatState = beats.map((_, index) => ({ opacity: -1, shift: 0, live: index === beats.length - 1 }));
   const finalIndex = beats.length - 1;
   const finalBeat = beats[finalIndex];
+  const colophon = stage.querySelector<HTMLElement>('.afterword');
   const vars = new Map<string, string>();
   const setVar = (name: string, value: string) => {
     if (vars.get(name) === value) return;
@@ -192,9 +200,6 @@ function mountJourney(handles: JourneyHandles) {
   let viewport: Viewport = 'wide';
   let sectionTop = 0;
   let distance = 1;
-  let frameW = 0;
-  let frameH = 0;
-  let perimeter = 1;
 
   let target = 0;
   let progress = 0;
@@ -227,8 +232,13 @@ function mountJourney(handles: JourneyHandles) {
   let scrubPointer = -1;
   let scrubShift = 0;
   let chapter = -1;
+  let nudge = -1;
+  let idleAt = 0;
   let stateLabel = '';
   let percentText = '';
+  let lastProgress = -1;
+  let lastProgressAt = 0;
+  let gust = 0;
 
   const readScroll = () => {
     target = clamp((window.scrollY - sectionTop) / distance);
@@ -250,23 +260,18 @@ function mountJourney(handles: JourneyHandles) {
     setVar('--journey-progress', progress.toFixed(4));
     setVar('--scroll-hint-opacity', (1 - smoothstep(range(progress, 0, 0.03))).toFixed(3));
 
-    // The frame cursor travels the perimeter exactly once over the journey.
-    const along = progress * perimeter;
-    let cursorX = 0;
-    let cursorY = 0;
-    if (along < frameW) {
-      cursorX = along;
-    } else if (along < frameW + frameH) {
-      cursorX = frameW;
-      cursorY = along - frameW;
-    } else if (along < frameW * 2 + frameH) {
-      cursorX = frameW - (along - frameW - frameH);
-      cursorY = frameH;
-    } else {
-      cursorY = frameH - (along - frameW * 2 - frameH);
+    // The wind: the mark on the rail is blown along by the journey's own
+    // speed, signed forward. A chapter's drive is a full gust; the lean
+    // eases in over a few frames and dies with the scroll.
+    const now = performance.now();
+    if (lastProgress >= 0) {
+      const speed = (progress - lastProgress) / Math.max(1, now - lastProgressAt);
+      gust += (clamp(speed / FULL_GUST, -1, 1) - gust) * 0.12;
+      if (Math.abs(gust) < 0.002) gust = 0;
     }
-    setVar('--frame-cursor-x', `${cursorX.toFixed(1)}px`);
-    setVar('--frame-cursor-y', `${cursorY.toFixed(1)}px`);
+    lastProgress = progress;
+    lastProgressAt = now;
+    setVar('--rail-gust', gust.toFixed(3));
 
     const percent = `${String(Math.round(progress * 100)).padStart(3, '0')}%`;
     if (percent !== percentText) {
@@ -302,12 +307,19 @@ function mountJourney(handles: JourneyHandles) {
         state.shift = shift;
         node.style.opacity = alpha.toFixed(3);
         node.style.transform = `translate3d(0, ${shift.toFixed(1)}px, 0)`;
+        if (node === finalBeat && colophon) colophon.style.opacity = alpha.toFixed(3);
       }
       const live = alpha > 0.5;
       if (live !== state.live) {
         state.live = live;
         node.classList.toggle('is-live', live);
-        if (node === finalBeat) node.inert = !live;
+        if (node === finalBeat) {
+          node.inert = !live;
+          if (colophon) {
+            colophon.inert = !live;
+            colophon.classList.toggle('is-live', live);
+          }
+        }
       }
     });
   };
@@ -360,6 +372,18 @@ function mountJourney(handles: JourneyHandles) {
     // rate to spare the battery. The loop rests only when the stage leaves
     // the view or the tab hides.
     const settled = progress === target && !driving && !gliding && !scrubbing;
+    // A reader who has rested on a chapter for a moment is offered the next
+    // one, so the end of a scene never reads as the end of the page. Any
+    // movement takes the offer away again; the last chapter has its own
+    // calls to action.
+    const rest = chapter >= 0 && chapter < finalIndex ? chapterRest(chapter) : null;
+    const resting = settled && !touching && !held() && rest !== null && progress >= rest.from - 0.0001 && progress <= rest.to + 0.0001;
+    if (!resting) idleAt = now;
+    const nextNudge = resting && now - idleAt > NUDGE_DELAY ? chapter + 1 : -1;
+    if (nextNudge !== nudge) {
+      nudge = nextNudge;
+      handles.onNudge(nudge);
+    }
     if (settled && now - lastDraw < 28) return;
     lastDraw = now;
     draw(now);
@@ -382,9 +406,6 @@ function mountJourney(handles: JourneyHandles) {
     canvas.height = Math.round(height * dpr);
     sectionTop = section.getBoundingClientRect().top + window.scrollY;
     distance = Math.max(1, section.offsetHeight - height);
-    frameW = frame.clientWidth;
-    frameH = frame.clientHeight;
-    perimeter = Math.max(1, 2 * (frameW + frameH));
     readScroll();
     if (!running) {
       progress = target;
@@ -398,18 +419,23 @@ function mountJourney(handles: JourneyHandles) {
   const limit = () => Math.max(0, root.scrollHeight - window.innerHeight);
   const scrollFor = (progress: number) => Math.round(sectionTop + progress * distance);
 
-  // A chapter's rest in scroll pixels. The first chapter's rest reaches up to
-  // the top of the page; the last chapter's reaches down through the
-  // afterword to the end of the page. Whole pixels, so that a position the
+  // A chapter's rest in scroll pixels. The first chapter's rest starts where
+  // the stage does, below the splash; the last chapter's reaches to the end
+  // of the page, which is the journey's last stop: the colophon is on the
+  // stage, so nothing scrolls below it. Whole pixels, so that a position the
   // driver has set lands inside the rest and not a fraction outside it.
   const restBounds = (index: number) => {
     const rest = chapterRest(index);
     return {
       index,
-      from: index === 0 ? 0 : scrollFor(rest.from),
+      from: scrollFor(rest.from),
       to: index === chapters.length - 1 ? limit() : scrollFor(rest.to),
     };
   };
+
+  // The splash above the stage is an ordinary page: the wheel is the
+  // browser's there, and a scroll that ends there is left where it ended.
+  const aboveStage = (y: number) => y < sectionTop - 1;
 
   // The rest that holds a scroll position, or null in a gap.
   const restAround = (y: number) => {
@@ -424,6 +450,7 @@ function mountJourney(handles: JourneyHandles) {
   // chapter's arrival going forward, the previous chapter's finished scene
   // going back. Null inside a rest.
   const carryFrom = (y: number, heading: number) => {
+    if (aboveStage(y)) return null;
     for (let index = 0; index < chapters.length; index += 1) {
       const rest = restBounds(index);
       if (y >= rest.from - 1 && y <= rest.to + 1) return null;
@@ -539,6 +566,10 @@ function mountJourney(handles: JourneyHandles) {
   const onWheel = (event: WheelEvent) => {
     if (!finePointer || held() || event.ctrlKey || event.metaKey || event.deltaY === 0) return;
     if (scrollsWithin(event.target, event.deltaY, section)) return;
+    // Above the stage, and at the top of the stage heading up, the browser
+    // keeps the wheel, so the reader scrolls out to the splash the way they
+    // scrolled in.
+    if (aboveStage(window.scrollY) || (event.deltaY < 0 && window.scrollY <= sectionTop + 1)) return;
     event.preventDefault();
     // A drag in progress owns the page.
     if (scrubbing) return;
@@ -632,34 +663,20 @@ function mountJourney(handles: JourneyHandles) {
     drive(to, duration);
   };
 
-  // Direct manipulation: the reader drags the rail's playhead or the frame's
-  // cursor, and the page follows the pointer. The scene follows the page
-  // closely, and the drop lands in a chapter the way a scroll does.
+  // The brand mark leaves the journey for the splash above it, with the same
+  // glide, paced by the distance to the top of the page.
+  const travelHome = () => {
+    const duration = clamp(480 + (window.scrollY / distance) * 1500, 520, 1400);
+    locked = false;
+    drive(0, duration);
+  };
+
+  // Direct manipulation: the reader drags the rail's playhead, and the page
+  // follows the pointer. The scene follows the page closely, and the drop
+  // lands in a chapter the way a scroll does.
   const railProgress = (event: PointerEvent) => {
     const rect = track.getBoundingClientRect();
     return clamp((event.clientX - rect.left) / Math.max(1, rect.width));
-  };
-
-  // The point of the frame's perimeter nearest the pointer, as the fraction
-  // of the perimeter it lies along. The perimeter is a loop and the journey
-  // is not: a drag across the top-left corner stops at the end it came from.
-  const frameProgress = (event: PointerEvent) => {
-    const rect = frame.getBoundingClientRect();
-    const px = event.clientX - rect.left - frame.clientLeft;
-    const py = event.clientY - rect.top - frame.clientTop;
-    const x = clamp(px, 0, frameW);
-    const y = clamp(py, 0, frameH);
-    const edges = [
-      { gap: Math.abs(py), along: x },
-      { gap: Math.abs(px - frameW), along: frameW + y },
-      { gap: Math.abs(py - frameH), along: frameW + frameH + (frameW - x) },
-      { gap: Math.abs(px), along: frameW * 2 + frameH + (frameH - y) },
-    ];
-    const nearest = edges.reduce((best, edge) => (edge.gap < best.gap ? edge : best));
-    const next = clamp(nearest.along / perimeter);
-    if (next - target > 0.5) return 0;
-    if (target - next > 0.5) return 1;
-    return next;
   };
 
   const scrubTo = (value: number) => {
@@ -770,13 +787,12 @@ function mountJourney(handles: JourneyHandles) {
   window.addEventListener('keydown', interrupt);
   document.addEventListener('visibilitychange', onVisibility);
   const unbindPlayhead = bindScrub(playhead, railProgress);
-  const frameCursor = frame.querySelector<HTMLElement>('i');
-  const unbindFrame = frameCursor ? bindScrub(frameCursor, frameProgress) : () => {};
   playhead.addEventListener('keydown', onSliderKey);
 
   measure();
   start();
   travelRegistry.current = travel;
+  homeRegistry.current = travelHome;
 
   return () => {
     stop();
@@ -792,7 +808,6 @@ function mountJourney(handles: JourneyHandles) {
     window.removeEventListener('keydown', interrupt);
     document.removeEventListener('visibilitychange', onVisibility);
     unbindPlayhead();
-    unbindFrame();
     playhead.removeEventListener('keydown', onSliderKey);
     stage.classList.remove('is-scrubbing');
     beats.forEach((node) => {
@@ -802,6 +817,7 @@ function mountJourney(handles: JourneyHandles) {
       node.inert = false;
     });
     travelRegistry.current = travelStatic;
+    homeRegistry.current = travelHomeStatic;
   };
 }
 
@@ -851,6 +867,19 @@ function travelStatic(index: number) {
 
 const travelRegistry: { current: (index: number) => void } = { current: travelStatic };
 
+// The way back to the splash at the top of the page, where the journey began.
+function travelHomeStatic() {
+  window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+const homeRegistry: { current: () => void } = { current: travelHomeStatic };
+
+// Chapter travel for the page around the journey: the splash's scroll prompt
+// lands on the first chapter through the same drive the nav uses.
+export function travelTo(index: number) {
+  travelRegistry.current(index);
+}
+
 export function Journey() {
   const journeyRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -858,9 +887,9 @@ export function Journey() {
   const percentRef = useRef<HTMLElement>(null);
   const trackRef = useRef<HTMLElement>(null);
   const playheadRef = useRef<HTMLSpanElement>(null);
-  const frameRef = useRef<HTMLDivElement>(null);
   const [activeChapter, setActiveChapter] = useState(0);
   const [requestState, setRequestState] = useState(requestStates[0].label);
+  const [nudge, setNudge] = useState(-1);
 
   useEffect(() => {
     const section = journeyRef.current;
@@ -868,8 +897,7 @@ export function Journey() {
     const canvas = canvasRef.current;
     const track = trackRef.current;
     const playhead = playheadRef.current;
-    const frame = frameRef.current;
-    if (!section || !stage || !canvas || !track || !playhead || !frame) return;
+    if (!section || !stage || !canvas || !track || !playhead) return;
     const media = window.matchMedia(STATIC_QUERY);
     let cleanup: (() => void) | undefined;
     const boot = () => {
@@ -884,9 +912,9 @@ export function Journey() {
             percent: percentRef.current,
             track,
             playhead,
-            frame,
             onChapter: setActiveChapter,
             onState: setRequestState,
+            onNudge: setNudge,
           });
     };
     boot();
@@ -903,7 +931,16 @@ export function Journey() {
 
   return (
     <>
-      <a className="skip-link" href="#afterword">
+      <a
+        className="skip-link"
+        href="#afterword"
+        onClick={(event) => {
+          // The colophon sits on the sticky stage, so an anchor jump would
+          // land at the stage's top. Travel to the end card instead.
+          event.preventDefault();
+          travelRegistry.current(lastIndex);
+        }}
+      >
         Skip to the end
       </a>
       <main className="odyssey" ref={journeyRef} aria-label="Request path through Nimbus">
@@ -915,18 +952,14 @@ export function Journey() {
             <button
               type="button"
               className="brand"
-              onClick={() => travelRegistry.current(0)}
-              aria-label="Nimbus. Return to the start."
+              onClick={() => homeRegistry.current()}
+              aria-label="Nimbus. Back to the top of the page."
             >
               <Mascot className="brand-mark" />
               <span className="wordmark">nimbus</span>
               <small>beta</small>
             </button>
             <nav className="chapter-nav" aria-label="Chapters">
-              <button type="button" className="start-button" onClick={() => travelRegistry.current(0)} aria-current={activeChapter === 0 ? 'step' : undefined}>
-                <i aria-hidden="true" />
-                Start
-              </button>
               {spans.map(({ act, start, end }) => {
                 const members = chapters.map((beat, index) => ({ beat, index })).filter(({ beat }) => beat.act === act.id);
                 const current = activeAct?.id === act.id;
@@ -949,12 +982,8 @@ export function Journey() {
                 );
               })}
             </nav>
-            <button type="button" className="start-return" onClick={() => travelRegistry.current(0)} aria-label="Return to the start">
-              <i aria-hidden="true" />
-              Start
-            </button>
-            <a className="run-link" href={QUICKSTART}>
-              Run it locally ↗
+            <a className="run-link" href={QUICKSTART} target="_blank" rel="noreferrer">
+              Run locally ↗
             </a>
           </header>
 
@@ -967,17 +996,20 @@ export function Journey() {
                 className={`beat beat-${beat.align}${index === lastIndex ? ' beat-final' : ''}`}
                 style={{ opacity: index === 0 ? 1 : 0, ...(TALL_STILLS.has(index) ? { '--still-aspect': '16 / 12' } : {}) } as CSSProperties}
               >
-                <p className="beat-eyebrow">{beat.eyebrow}</p>
+                <p className="beat-eyebrow">
+                  {beat.label}
+                  {beat.planned ? <em>Planned</em> : null}
+                </p>
                 {index === 0 ? <h1>{beat.title}</h1> : <h2>{beat.title}</h2>}
                 <p>{beat.copy}</p>
                 <CodeSnippet snippet={beat.snippet} />
                 <span className="proof">{beat.proof}</span>
                 {index === lastIndex ? (
                   <div className="final-actions">
-                    <a className="primary" href={QUICKSTART}>
-                      Start the quickstart ↗
+                    <a className="primary" href={QUICKSTART} target="_blank" rel="noreferrer">
+                      Get started ↗
                     </a>
-                    <a href={GITHUB}>Read the source ↗</a>
+                    <a href={GITHUB} target="_blank" rel="noreferrer">Read the source ↗</a>
                   </div>
                 ) : null}
                 <canvas className="still" aria-hidden="true" />
@@ -986,15 +1018,6 @@ export function Journey() {
           </div>
 
           <div className="journey-status">
-            <div className="status-location">
-              <span aria-live="polite" aria-atomic="true" style={{ display: 'contents' }}>
-                <b>
-                  {String(activeChapter).padStart(2, '0')} / {String(chapters.length - 1).padStart(2, '0')}
-                </b>
-                <span>{chapters[activeChapter].label}</span>
-              </span>
-              <span className="state">{requestState}</span>
-            </div>
             <nav className="progress-track" aria-label="Progress" ref={trackRef}>
               <span className="played" aria-hidden="true" />
               {spans.map(({ act, start, end }) => (
@@ -1004,7 +1027,7 @@ export function Journey() {
                   aria-hidden="true"
                   style={{ left: `${(start * 100).toFixed(2)}%`, width: `${((end - start) * 100).toFixed(2)}%` }}
                 >
-                  {act.label}
+                  {act.rail ?? act.label}
                 </span>
               ))}
               {chapters.map((beat, index) => (
@@ -1027,42 +1050,61 @@ export function Journey() {
                 aria-valuemax={100}
                 aria-valuenow={0}
                 aria-valuetext={chapters[activeChapter].label}
-              />
+              >
+                <span className="rail-gust" aria-hidden="true">
+                  <Mascot className="rail-mark" small />
+                </span>
+              </span>
+              {/* Where the journey is, as a caption that rides under the
+                  playhead. It lives inside the rail, so its length never
+                  changes the rail's. */}
+              <div className="rail-caption">
+                <span aria-live="polite" aria-atomic="true">
+                  {chapters[activeChapter].label}
+                </span>
+                <span className="state">{requestState}</span>
+              </div>
             </nav>
-            <div className="telemetry">
-              <span>request</span>
-              <b ref={percentRef}>000%</b>
-            </div>
+            {/* The percent closes the row, inline with the rail line. Its
+                digits are fixed width, so the rail's length holds. */}
+            <span className="telemetry">
+              request <b ref={percentRef}>000%</b>
+            </span>
           </div>
 
-          <div className="scroll-prompt" aria-hidden="true">
-            <i />
-            <span>Scroll to follow the request</span>
-          </div>
-          <div className="stage-frame" ref={frameRef} aria-hidden="true">
-            <i />
-          </div>
+          {nudge >= 0 ? (
+            <button type="button" className="scroll-prompt is-next" onClick={() => travelRegistry.current(nudge)}>
+              <span>Next · {chapters[nudge].label}</span>
+              <i aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="14" height="14">
+                  <path d="M3.5 6.5 8 11l4.5-4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </i>
+            </button>
+          ) : (
+            <div className="scroll-prompt" aria-hidden="true">
+              <i />
+              <span>Scroll to follow the request</span>
+            </div>
+          )}
+          {/* The colophon is the last chapter's own footer: the page ends where
+              the journey does, so the end card is never pushed off the stage
+              to make room for a footer below it. The driver fades it with the
+              final beat; in the static narrative it is an ordinary footer
+              after the last card. */}
+          <footer className="afterword" id="afterword">
+            <nav aria-label="Nimbus resources">
+              <a href={DOCS} target="_blank" rel="noreferrer">Docs ↗</a>
+              <a href={GITHUB} target="_blank" rel="noreferrer">GitHub ↗</a>
+              <a href={DISCUSS} target="_blank" rel="noreferrer">Discuss ↗</a>
+            </nav>
+            <p className="fine">
+              <span className="wordmark">nimbus</span> · one binary backend · Nimbus Community License · No telemetry
+            </p>
+          </footer>
         </div>
       </main>
 
-      <footer className="afterword" id="afterword">
-        <div className="afterword-row">
-          <nav aria-label="Nimbus resources">
-            <a href={DOCS}>Docs ↗</a>
-            <a href={GITHUB}>GitHub ↗</a>
-            <a href={DISCUSS}>Discuss ↗</a>
-          </nav>
-          <span>
-            <span className="wordmark">nimbus</span> · one binary backend
-          </span>
-        </div>
-        <div className="afterword-row">
-          <p className="fine">
-            Nimbus is in beta and has not launched. APIs can break between releases. Do not use it in production
-            yet. The source is available under the Nimbus Community License. No telemetry.
-          </p>
-        </div>
-      </footer>
     </>
   );
 }

@@ -1,0 +1,599 @@
+/* The splash above the Odyssey: headline, lede, the two calls to action, the
+   install path, and one chapter of the world drawn as a still. It is a night
+   surface like the first chapter under it, so the page opens on one ground
+   and the scroll into the stage changes nothing but the scene.
+
+   The colours default to the night stop of the stage palette (`STOPS` in
+   `odyssey/scene.ts`); `mountScene` in `odyssey/hero.tsx` writes the same
+   values back from the drawn frame so the two can never drift. Every rule is
+   scoped under `.hero`, because this sheet loads on one route. */
+
+.hero {
+  --hero-background: #0a0b0c;
+  --hero-ink: #f6f7f8;
+  --hero-muted: #8e8f90;
+  --hero-accent: #f0b23e;
+  --hero-accent-carrier: #0a0b0c;
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: 88px 1fr auto;
+  background: var(--hero-background);
+  color: var(--hero-ink);
+}
+
+.hero :focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--hero-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.hero button {
+  cursor: pointer;
+}
+
+/* ---- Nav ---- */
+
+.hero-nav {
+  width: min(calc(100% - 56px), 1740px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.hero-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.hero-brand .wordmark {
+  font: 600 15px/1 var(--font-sans);
+  letter-spacing: -0.01em;
+}
+
+.hero-brand .hero-mark {
+  height: 32px;
+  width: auto;
+}
+
+.hero-brand small {
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hero-muted);
+}
+
+.hero-nav nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hero-nav nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  font: 500 10.5px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--hero-muted);
+  transition: color 160ms linear;
+}
+
+.hero-nav nav a:hover {
+  color: var(--hero-ink);
+}
+
+/* The docs and GitHub links lead with their marks, sized to the cap height
+   of the label beside them. */
+.hero-nav-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  opacity: 0.85;
+  transition: opacity 160ms linear;
+}
+
+.hero-nav nav a:hover .hero-nav-icon {
+  opacity: 1;
+}
+
+.hero-nav nav a.hero-run {
+  margin-left: 8px;
+  padding: 11px 16px;
+  border-radius: 999px;
+  background: var(--hero-ink);
+  color: var(--hero-background);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+/* ---- Body: copy beside the scene ---- */
+
+.hero-body {
+  width: min(calc(100% - 56px), 1740px);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+  align-items: center;
+  gap: clamp(28px, 3vw, 56px);
+  padding: 16px 0 32px;
+}
+
+.hero-copy {
+  max-width: 760px;
+  /* The headline is sized from this column, so its longest line always fits. */
+  container-type: inline-size;
+}
+
+/* Four claims, one to a line, as large as the screen allows. Two limits:
+   the width of the column, where the longest line is about ten and a quarter
+   ems, so 9.5cqw keeps it inside with a hair to spare; and the height of the
+   viewport, where everything but the headline (nav, lede, actions,
+   install path, and the scroll prompt) takes about 600px, and each of the
+   four lines is 0.98em. The floor lets a short laptop keep a readable
+   headline at the cost of the prompt sitting a little under the fold. */
+.hero h1 {
+  margin: 0;
+  font-size: clamp(36px, min(9.5cqw, (100svh - 600px) / 3.92), 96px);
+  font-weight: 390;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.hero h1 span {
+  display: block;
+  white-space: nowrap;
+}
+
+.hero-lede {
+  margin: 24px 0 0;
+  max-width: 520px;
+  font-size: clamp(15px, 1.2vw, 19px);
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--hero-ink) 78%, var(--hero-background));
+  text-wrap: pretty;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.hero-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 999px;
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--hero-ink);
+  border: 1px solid color-mix(in srgb, var(--hero-ink) 35%, transparent);
+  transition: border-color 160ms linear, background-color 160ms linear, color 160ms linear;
+}
+
+.hero-actions a:hover {
+  border-color: var(--hero-ink);
+}
+
+.hero-actions a.primary {
+  background: var(--hero-accent);
+  color: var(--accent-ink);
+  border-color: var(--hero-accent);
+}
+
+.hero-actions a.primary:hover {
+  background: color-mix(in srgb, var(--hero-accent) 88%, white);
+  border-color: color-mix(in srgb, var(--hero-accent) 88%, white);
+}
+
+/* The install path: the same night card the chapters' snippets use. */
+.hero-install {
+  margin-top: 30px;
+  max-width: 520px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--hero-ink) 16%, transparent);
+  background: color-mix(in srgb, var(--hero-ink) 5%, var(--hero-background));
+  overflow: hidden;
+}
+
+.hero-install-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px 0 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--hero-ink) 10%, transparent);
+  font: 500 9.5px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--hero-ink) 55%, var(--hero-background));
+}
+
+/* One tab per install path. The selected tab carries an underline that sits
+   on the head's rule, so the tab reads as the open page of the box. */
+.hero-install-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.hero-install-tabs button {
+  position: relative;
+  flex: none;
+  padding: 6px 8px 11px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  transition: color 160ms linear;
+}
+
+.hero-install-tabs button::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 1px;
+  background: var(--hero-accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.hero-install-tabs button:hover {
+  color: var(--hero-ink);
+}
+
+.hero-install-tabs button[aria-selected='true'] {
+  color: var(--hero-ink);
+}
+
+.hero-install-tabs button[aria-selected='true']::after {
+  transform: scaleX(1);
+}
+
+.hero-install-copy {
+  flex: none;
+  margin-bottom: 5px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--hero-accent);
+  background: var(--hero-accent-carrier);
+  transition: color 160ms linear;
+}
+
+.hero-install-copy:hover {
+  color: var(--hero-ink);
+}
+
+/* The platform note for the open tab, above its commands. */
+.hero-install-note {
+  padding: 12px 18px 0;
+  font: 500 9.5px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--hero-ink) 45%, var(--hero-background));
+}
+
+.hero-install pre {
+  margin: 0;
+  padding: 10px 18px 16px;
+  font: 400 12.5px/1.7 var(--font-mono);
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--hero-ink) 88%, var(--hero-background));
+  white-space: pre;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.hero-install code {
+  display: block;
+  font: inherit;
+}
+
+.hero-install .line {
+  display: block;
+}
+
+.hero-install i {
+  font-style: normal;
+  color: color-mix(in srgb, var(--hero-ink) 45%, var(--hero-background));
+  user-select: none;
+}
+
+/* ---- The scene ---- */
+
+.hero-scene {
+  position: relative;
+  margin: 0;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: calc(100svh - 240px);
+  /* The still bleeds into the right gutter: the drawing is the page's
+     widest element, and the nav above keeps the margin the eye expects. */
+  margin-right: -28px;
+  overflow: hidden;
+}
+
+.hero-scene canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---- Scroll prompt ---- */
+
+/* The prompt is the one thing on the splash that moves: a ring that pulses
+   on the accent and a chevron that drops through it. */
+.hero-scroll {
+  justify-self: center;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 28px;
+  padding: 8px 12px;
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hero-ink);
+  transition: color 160ms linear;
+}
+
+.hero-scroll span {
+  opacity: 0.82;
+  transition: opacity 160ms linear;
+}
+
+.hero-scroll:hover span {
+  opacity: 1;
+}
+
+.hero-scroll-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--hero-ink) 28%, transparent);
+  color: var(--hero-accent);
+  transition: border-color 160ms linear;
+}
+
+.hero-scroll:hover .hero-scroll-ring {
+  border-color: var(--hero-accent);
+}
+
+.hero-scroll-ring::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  border: 1px solid var(--hero-accent);
+  animation: hero-pulse 2.4s ease-out infinite;
+}
+
+.hero-scroll-ring svg {
+  animation: hero-arrow 1.6s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+}
+
+@keyframes hero-arrow {
+  0% {
+    transform: translateY(-9px);
+    opacity: 0;
+  }
+  40% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+}
+
+@keyframes hero-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-scroll-ring::before {
+    display: none;
+  }
+
+  .hero-scroll-ring svg {
+    animation: none;
+  }
+}
+
+/* ---- Responsive compositions ---- */
+
+@media (max-width: 1100px) {
+  .hero {
+    grid-template-rows: 76px 1fr auto;
+  }
+
+  .hero-nav,
+  .hero-body {
+    width: calc(100% - 48px);
+  }
+
+  .hero-body {
+    gap: 32px;
+  }
+
+  .hero-scene {
+    margin-right: -24px;
+  }
+
+  .hero-lede {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 760px) {
+  .hero {
+    grid-template-rows: 64px 1fr auto;
+  }
+
+  .hero-nav,
+  .hero-body {
+    width: calc(100% - 32px);
+  }
+
+  .hero-nav nav a:not(.hero-run) {
+    display: none;
+  }
+
+  .hero-nav nav a.hero-run {
+    padding: 9px 12px;
+    font-size: 9.5px;
+  }
+
+  .hero-brand small {
+    display: none;
+  }
+
+  .hero-body {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 8px 0 24px;
+  }
+
+  .hero h1 {
+    font-size: clamp(30px, 8.2vw, 40px);
+  }
+
+  .hero-lede {
+    margin-top: 14px;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .hero-actions {
+    margin-top: 18px;
+    gap: 8px;
+  }
+
+  .hero-actions a {
+    padding: 11px 14px;
+    font-size: 10px;
+  }
+
+  .hero-install {
+    margin-top: 18px;
+  }
+
+  .hero-install pre {
+    padding: 12px 14px 14px;
+    font-size: 11px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* The still keeps its text at a screen-pixel floor, so a narrow frame
+     needs height for the title above the box and the module row below. */
+  .hero-scene {
+    aspect-ratio: auto;
+    height: clamp(380px, 110vw, 460px);
+    max-height: none;
+    margin-right: 0;
+  }
+
+  .hero-scroll {
+    margin-bottom: 16px;
+  }
+}
+
+/* ---- The pointer on the still ---- */
+
+/* The part under the pointer: an outline on the drawn card, and a card that
+   names it and makes the chapter's claim in a line or two. Both are placed
+   in the still's pixels by `Scene` in `odyssey/hero.tsx`; the outline's
+   corner matches the drawn panels, and the card is a fixed width so it can
+   be kept inside the still without measuring it. */
+.hero-part {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--hero-accent);
+  border-radius: 6px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--hero-accent) 14%, transparent);
+  pointer-events: none;
+  animation: hero-part-in 140ms ease-out;
+}
+
+.hero-tip {
+  position: absolute;
+  width: 264px;
+  padding: 12px 14px 13px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--hero-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--hero-background) 92%, var(--hero-ink));
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--hero-background) 70%, transparent);
+  pointer-events: none;
+  animation: hero-part-in 140ms ease-out;
+}
+
+.hero-tip strong {
+  display: block;
+  margin-bottom: 6px;
+  font: 600 10.5px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hero-accent);
+}
+
+.hero-tip p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--hero-ink) 88%, var(--hero-background));
+  text-wrap: pretty;
+}
+
+@keyframes hero-part-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-part,
+  .hero-tip {
+    animation: none;
+  }
+}
