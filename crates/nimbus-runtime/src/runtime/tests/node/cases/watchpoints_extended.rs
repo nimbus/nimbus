@@ -563,22 +563,22 @@ fn node24_https_hwm_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 legacy-lane divergence: test-https-hwm.js still times out on the current Node20 lane while the Node22/Node24 official files complete"]
 fn node20_https_hwm_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-https-hwm.js",
         "node20/test/parallel/test-https-hwm.js",
         COMMON_TLS_SESSION_CERT_EXTRA_FILES,
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 legacy-lane divergence: test-tls-connect-hwm-option.js still times out on the current Node20 lane while the Node22/Node24 official files complete"]
 fn node20_tls_connect_hwm_option_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-tls-connect-hwm-option.js",
         "node20/test/parallel/test-tls-connect-hwm-option.js",
         COMMON_TLS_EXTENDED_CERT_EXTRA_FILES,
+        NodeCompatLane::Node20,
     );
 }
 
@@ -1810,10 +1810,11 @@ fn node24_stream_pipeline_watchpoint() {
 
 #[test]
 fn node20_readline_interface_fixture() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-readline-interface.js",
         "node20/test/parallel/test-readline-interface.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -1837,10 +1838,11 @@ fn node24_readline_interface_fixture() {
 
 #[test]
 fn node20_readline_promises_interface_fixture() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-readline-promises-interface.js",
         "node20/test/parallel/test-readline-promises-interface.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -6107,12 +6109,13 @@ fn node22_fs_rmdir_recursive_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 test-fs-stat.js still requires the older JSON.stringify(Stats) field shape that the current runtime no longer preserves while matching the newer Node22/Node24 file contract"]
+#[ignore = "Node20 divergence: official v20.20.2 test-fs-stat.js requires the older JSON.stringify(Stats) field shape, so the fixture fails with `AssertionError [ERR_ASSERTION]: function should not have been called`"]
 fn node20_fs_stat_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-fs-stat.js",
         "node20/test/parallel/test-fs-stat.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -6210,10 +6213,11 @@ fn node22_buffer_isascii_watchpoint() {
 
 #[test]
 fn node20_buffer_isascii_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-buffer-isascii.js",
         "node20/test/parallel/test-buffer-isascii.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -6228,20 +6232,22 @@ fn node22_buffer_isutf8_watchpoint() {
 
 #[test]
 fn node20_buffer_isutf8_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-buffer-isutf8.js",
         "node20/test/parallel/test-buffer-isutf8.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 test-buffer-slow.js still exercises SlowBuffer(buffer.kMaxLength), and the embedded runtime hits its 128 MB heap ceiling before Node-style range semantics"]
+#[ignore = "Node20 heap-ceiling gap: test-buffer-slow.js exercises SlowBuffer(buffer.kMaxLength) and the runtime reaches its 128 MB heap ceiling first, so the fixture fails with `Cannot evaluate dynamically imported module, because JavaScript execution has been terminated`"]
 fn node20_buffer_slow_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-buffer-slow.js",
         "node20/test/parallel/test-buffer-slow.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -6276,12 +6282,12 @@ fn node22_path_resolve_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned shared path gap: official Node20/Node22 test-path-resolve.js currently fails because win32.resolve rejects drive-letter-less inputs without a CWD"]
 fn node20_path_resolve_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-path-resolve.js",
         "node20/test/parallel/test-path-resolve.js",
         PATH_RESOLVE_EXTRA_FILES,
+        NodeCompatLane::Node20,
     );
 }
 

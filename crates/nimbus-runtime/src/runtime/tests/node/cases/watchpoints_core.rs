@@ -9,22 +9,23 @@ fn node22_process_env_delete_application_preset_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned application-preset restriction: process.env string-key mutation and deletion are intentionally denied outside tooling-owned host surfaces"]
 fn node20_process_env_delete_application_preset_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-process-env-delete.js",
         "node20/test/parallel/test-process-env-delete.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned official Node20 assert gap: current runtime still disagrees with the legacy test-assert-deep.js circular/deep-diff expectations"]
+#[ignore = "Shared assert gap: test-assert-deep.js fails with `AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal`. The deep-equal comparison disagrees with Node in every lane, so this is not a version divergence"]
 fn node20_assert_deep_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-assert-deep.js",
         "node20/test/parallel/test-assert-deep.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -49,32 +50,34 @@ fn node22_console_issue_43095_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned shared Deno-family inspect gap: revoked proxy formatting still throws inside ext/web and blocks test-console-issue-43095.js"]
+#[ignore = "Shared Deno-family inspect gap: test-console-issue-43095.js fails with `TypeError: Cannot inspect a proxy that has been revoked`. Revoked-proxy formatting throws in every lane, so this is not a version divergence"]
 fn node20_console_issue_43095_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-console-issue-43095.js",
         "node20/test/parallel/test-console-issue-43095.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 still accepts once(emitter, event, null), while the current runtime matches the newer Node22 invalid-options behavior and rejects null"]
+#[ignore = "Node20 divergence: official v20.20.2 accepts once(emitter, event, null), while the runtime rejects it with `TypeError: The \"options\" argument must be of type object. Received null`. The events polyfill needs a version-conditional options check"]
 fn node20_events_once_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-events-once.js",
         "node20/test/parallel/test-events-once.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 process.features does not expose the Node22-only `typescript` key that Nimbus intentionally keeps in its single Node22-shaped runtime contract"]
 fn node20_process_features_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-process-features.js",
         "node20/test/parallel/test-process-features.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -373,52 +376,54 @@ fn node22_process_finalization_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 PerformanceResourceTiming#toJSON() omits the Node22-era `deliveryType` and `responseStatus` fields that Nimbus intentionally keeps in its single Node22-shaped runtime contract"]
+#[ignore = "Node20 divergence: official v20.20.2 PerformanceResourceTiming#toJSON() omits the Node22-era deliveryType and responseStatus fields, so the fixture fails with `AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal`. The polyfill needs a version-conditional toJSON() shape"]
 fn node20_perf_hooks_resourcetiming_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-perf-hooks-resourcetiming.js",
         "node20/test/parallel/test-perf-hooks-resourcetiming.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 test-stream-duplex-readable-end.js still probes the older default-highWaterMark flow-control path, while the current runtime matches the later Node22/Node24 explicit-highWaterMark shape"]
 fn node20_stream_duplex_readable_end_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-stream-duplex-readable-end.js",
         "node20/test/parallel/test-stream-duplex-readable-end.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 test-stream-transform-split-highwatermark.js still expects the older 16 KiB split Transform default highWaterMark, while the current runtime matches the later Node22/Node24 getDefaultHighWaterMark() contract"]
 fn node20_stream_transform_split_highwatermark_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-stream-transform-split-highwatermark.js",
         "node20/test/parallel/test-stream-transform-split-highwatermark.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 test-stream-transform-split-objectmode.js still expects the older 16 KiB split Transform default highWaterMark, while the current runtime matches the later Node22/Node24 non-Windows 64 KiB contract"]
 fn node20_stream_transform_split_objectmode_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-stream-transform-split-objectmode.js",
         "node20/test/parallel/test-stream-transform-split-objectmode.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
-#[ignore = "Pinned Node20 divergence: official v20.20.2 test-stream-readable-infinite-read.js still depends on the older default Readable highWaterMark accumulation path, while the current runtime matches the later Node22/Node24 explicit-highWaterMark behavior"]
+#[ignore = "Node20 read-loop gap: with the Node20 default highWaterMark applied, test-stream-readable-infinite-read.js reads 8192 bytes where Node20 reads 16384. The emitReadable_ path in internal/streams/readable.js releases the buffer after one push instead of filling to the highWaterMark, so the default value alone does not close this gap"]
 fn node20_stream_readable_infinite_read_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-stream-readable-infinite-read.js",
         "node20/test/parallel/test-stream-readable-infinite-read.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -564,10 +569,11 @@ fn node22_fs_realpath_watchpoint() {
 
 #[test]
 fn node20_tty_backwards_api_fixture() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-tty-backwards-api.js",
         "node20/test/parallel/test-tty-backwards-api.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -600,19 +606,21 @@ fn node22_tty_stdin_pipe_fixture() {
 
 #[test]
 fn node20_tty_stdin_end_fixture() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-tty-stdin-end.js",
         "node20/test/parallel/test-tty-stdin-end.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
 #[test]
 fn node20_tty_stdin_pipe_fixture() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-tty-stdin-pipe.js",
         "node20/test/parallel/test-tty-stdin-pipe.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
@@ -1203,12 +1211,13 @@ fn node24_loader_context_async_local_storage_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 legacy-lane divergence: official v20.20.2 test-async-local-storage-exit-does-not-leak.js still expects the old JavaScript AsyncLocalStorage _propagate hook, while the current runtime matches the newer Node22/Node24 implementation shape"]
+#[ignore = "Node20 divergence: official v20.20.2 expects the old JavaScript AsyncLocalStorage _propagate hook, so the fixture fails with `AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value`"]
 fn node20_async_local_storage_exit_does_not_leak_watchpoint() {
-    run_node_compat_watchpoint(
+    run_node_compat_watchpoint_for_lane(
         "test/parallel/test-async-local-storage-exit-does-not-leak.js",
         "node20/test/parallel/test-async-local-storage-exit-does-not-leak.js",
         &[],
+        NodeCompatLane::Node20,
     );
 }
 
