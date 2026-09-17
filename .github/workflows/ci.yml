@@ -1687,7 +1687,9 @@ jobs:
       # nightly, so a hand-written, stale, or required-surface entry must fail
       # here rather than in the nightly. The check is local and takes seconds.
       - name: Guard the Node compatibility corpus baseline
-        run: make node-compat-baseline-verify
+        run: |
+          python3 -m unittest scripts.test_node_compat_corpus_baseline
+          make node-compat-baseline-verify
 
   node-faas-canaries:
     name: Node FaaS Canaries (${{ matrix.preset }} ${{ matrix.lane }})

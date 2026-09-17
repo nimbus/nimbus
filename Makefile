@@ -400,6 +400,7 @@ proof-helpers:
 	python3 -m unittest scripts.test_verify_release_version_contract
 	python3 -m unittest scripts.test_extract_release_notes
 	python3 -m unittest scripts.test_run_bun_jsc_shared_smoke
+	python3 -m unittest scripts.test_node_compat_corpus_baseline
 	bash -n scripts/verify-release-oci-image-assets.sh
 	bash -n scripts/smoke-release-oci-image.sh
 	bash -n scripts/verify-release-oci-image-helper.sh

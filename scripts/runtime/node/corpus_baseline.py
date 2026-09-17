@@ -56,6 +56,11 @@ OUTCOME_UNEXPECTED_PASS = "unexpected_pass"
 OUTCOME_PASSED = "passed"
 OUTCOME_SKIPPED = "skipped"
 
+# Records that report the progress of a batch rather than the result of a
+# fixture. `corpus_baseline.rs` writes them.
+RECORD_KIND_BATCH_START = "batch_start"
+RECORD_KIND_BATCH_COMPLETE = "batch_complete"
+
 # An entry is recorded for a fixture that did not pass. `known_gap` is included
 # because a fixture already recorded keeps failing and must stay recorded.
 RECORDABLE_OUTCOMES = frozenset({OUTCOME_FAILED, OUTCOME_KNOWN_GAP})
@@ -163,6 +168,76 @@ def read_jsonl_shards(
     return records
 
 
+def check_batch_completeness(records: list[dict[str, Any]]) -> None:
+    """Refuses a measurement that a killed batch truncated.
+
+    One batch test executes hundreds of fixtures in a single process. The test
+    runner kills a test that outruns its timeout, and every fixture the batch
+    already measured is already in the shard, so a kill removes the rest of the
+    batch from the measurement without removing the batch. Seeding from that
+    run records where the kill landed. The next run reaches further, and it
+    reports the fixtures behind the old kill point as fresh regressions.
+
+    A batch writes one record when it starts and one when its fixture loop
+    ends. A start without an end is a batch that did not finish. The end also
+    carries how many fixtures the loop executed, so a shard that lost records
+    is refused as well.
+
+    On 2026-09-16 run 35171841643 recorded 6908 fixtures and run 35167962571
+    recorded 6930, with 99 fixtures only in the first and 77 only in the
+    second, all in contiguous alphabetical groups. About 32 batch tests had
+    been killed at 135 seconds.
+    """
+    started: dict[str, dict[str, Any]] = {}
+    completed: dict[str, dict[str, Any]] = {}
+    observed: Counter[str] = Counter()
+    for record in records:
+        kind = str(record.get("kind", ""))
+        batch = str(record.get("batch", ""))
+        if not batch:
+            continue
+        if kind == RECORD_KIND_BATCH_START:
+            started[batch] = record
+        elif kind == RECORD_KIND_BATCH_COMPLETE:
+            completed[batch] = record
+        elif not kind:
+            observed[batch] += 1
+
+    errors: list[str] = []
+    for batch in sorted(started):
+        if batch not in completed:
+            test_name = str(started[batch].get("test_name", "?"))
+            errors.append(
+                f"{batch}: the batch started and never finished. Its test "
+                f"({test_name}) measured {observed[batch]} fixture(s) and was "
+                "killed, most likely by the nextest timeout. The rest of the "
+                "batch is missing from this measurement."
+            )
+    for batch in sorted(completed):
+        if batch not in started:
+            errors.append(
+                f"{batch}: the batch finished and never started. The shard "
+                "holding its first records is missing."
+            )
+            continue
+        expected = completed[batch].get("fixture_count")
+        if not isinstance(expected, int) or observed[batch] != expected:
+            errors.append(
+                f"{batch}: the batch executed {expected} fixture(s) and the "
+                f"shards hold {observed[batch]}. Records were lost between the "
+                "test process and the merge."
+            )
+    if errors:
+        raise SystemExit(
+            "error: the measurement is truncated. A batch that does not run to "
+            "its end measures only part of the corpus, and seeding or "
+            "reconciling from it would report the unmeasured fixtures as "
+            "regressions on the next run. Rerun the corpus.\n"
+            + "\n".join(f"  {line}" for line in errors)
+        )
+    print(f"verified {len(completed)} complete batch(es)")
+
+
 def merge_observed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Reduces repeated attempts of one fixture to a single worst-case result.
 
@@ -192,9 +267,11 @@ def merge_observed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def command_aggregate(args: argparse.Namespace) -> int:
-    records = merge_observed_records(
-        read_jsonl_shards([Path(p) for p in args.input], args.expect_partitions)
+    raw_records = read_jsonl_shards(
+        [Path(p) for p in args.input], args.expect_partitions
     )
+    check_batch_completeness(raw_records)
+    records = merge_observed_records(raw_records)
     if not records:
         # Shards that exist but hold nothing are not the same as a missing
         # input, which `read_jsonl_shards` already rejects. An empty merge from

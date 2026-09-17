@@ -4,14 +4,18 @@ Status: `active` | Owner: this plan | Created: 2026-09-16
 Baseline: main @ `f743836c6`
 Proof root: `proof/node-compat-corpus-trust/`
 
-Next action: NCT8 - delete this plan when the pull request merges
+Next action: NCT4 - re-seed the baseline from a complete measurement
 
 ## Current resume state
 
-- Updated: 2026-09-16. Active task: NCT8.
-- Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `361c5ee98`.
+- Updated: 2026-09-16. Active task: NCT4.
+- Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `edceb3733`.
 - Dirty files owned by this task: none.
-- NCT0 through NCT7 are done. The baseline is seeded from run 35167962571.
+- NCT0 through NCT3 and NCT5 through NCT7 are done.
+- NCT4 reopened. The confirming run did not match the committed baseline,
+  because about 32 batch tests were killed at 135 seconds and the measurement
+  was truncated. The batch bound and the batch-completion guard are in. The
+  baseline must now be re-seeded from a complete run.
 - The `rust-corpus` lane stays red on 15 node20 required-surface fixtures.
   Fixing the runtime is the next work, and it is outside this plan.
 - Running commands: none.
@@ -86,7 +90,7 @@ After:
 | NCT1 | Split release-train freshness from measurement | done | `actionlint` clean; 3 jobs; the 5 retained local commands all exit 0 |
 | NCT2 | Emit observed results from the Rust corpus lane | done | `proof/node-compat-corpus-trust/nct2-nct3-reconciliation.md`; JSONL verified on a real fixture run |
 | NCT3 | Add the expectation baseline and the reconciliation seam | done | 8 unit tests pass; 3 end-to-end fixture scenarios pass; all 4 policy branches named |
-| NCT4 | Seed the baseline from a full instrumented run | done | Run 35167962571: 12 shards, 6,930 fixtures, 1,204 failures, 1,188 recorded; 16 named refusals and no unresolved path |
+| NCT4 | Seed the baseline from a full instrumented run | in_progress | Run 35167962571 seeded 1,188 gaps, and the confirming run 35171841643 proved it truncated: 6,930 fixtures against 6,908, 99 only in the first and 77 only in the second. Batch bound and completion guard added; re-seeding |
 | NCT5 | Close the unexpected-pass loop for ignored watchpoints | done | `corpus-baseline-reconciliation` job feeds `--observed-results` to the 150-entry catalog |
 | NCT6 | Guard the baseline | done | 4 guard rejections proven; runs in the PR lane via `make node-compat-baseline-verify` |
 | NCT7 | Document the contract | done | `docs/private/operating/node-compat-nightly.md`; routed from the operating README; `check-docs.sh` PASS |
@@ -160,9 +164,12 @@ After:
   3. Record the producing run in the baseline header.
 - Acceptance: a second full run is green against the committed baseline.
 - Verification: the Node Compatibility workflow run is green.
-- Result: done, with one stated exception. The baseline holds 1,188 gaps from
-  run 35167962571. 15 node20 fixtures on the required surface keep the lane
-  red, which is the gate working as designed. The runtime fix owns them.
+- Result: reopened. The baseline holds 1,188 gaps from run 35167962571, and
+  the confirming run showed that measurement was truncated by the nextest
+  timeout. A batch now states when it starts and when its fixture loop ends,
+  and the aggregator refuses a measurement in which a batch did not finish.
+  15 node20 fixtures on the required surface keep the lane red, which is the
+  gate working as designed. The runtime fix owns them.
 
 ### NCT5 Close the unexpected-pass loop for ignored watchpoints
 
@@ -208,6 +215,10 @@ if a task needs a new schema, a new public contract, or an owner decision.
 | 2026-09-16 | NCT5+NCT6+NCT7 | Added `corpus_baseline.py` (aggregate/refresh/verify), the `corpus-baseline-reconciliation` job, the PR-lane guard, and the runbook | `actionlint` clean on both workflows; 4 guard rejections proven; aggregate merged 219 attempts to 136 fixtures; refresh refused a partial run; `check-docs.sh` PASS |
 | 2026-09-16 | NCT4 | Blocked the first seeding run: partition 4 of 6 died on a transient `sccache` 503 and wrote no corpus shard. Added the shard-completeness guard and an `sccache` preflight that degrades to a cache-less build | run 35147979837 partition 4 exit in 0 s (`ServerBusy`, HTTP 503 from `ghac`); 3 aggregate scenarios proven (complete exit 0, missing `partition-3.jsonl` exit 1, no-flag exit 0); preflight proven on both a failing and a healthy stub; `actionlint` clean; `check-docs.sh` PASS |
 | 2026-09-16 | NCT4 | Replaced the vendored-fixture guard. It derived the vendoring path from `test_relative_path`, and 11 of 12 refusals were false. The seam now records the path it read (`fixture_source_relative_path`), and both guards resolve that path | 7 of the 12 fixtures are vendored at the fixture root, and `test-async-hooks-enable-recursive-fsreqcallback-regression.js` is vendored under a different file name; `NodeCompatFixtureIdentity` names the pair; 82 of 83 node_compat tests pass (the 1 failure is the pre-existing `__nimbus-preserve-symlinks-options-probe`); refresh proved 4 refusals and 2 records, including a laneless fixture whose runtime path differs from its vendored path; `cargo fmt`/`clippy` clean; `check-docs.sh` PASS |
+
+| 2026-09-16 | NCT4 | Found the measurement truncated. nextest killed a batch test at 45 s x 3 while the batch was still executing fixtures, and the fixtures it had already recorded still reached the artifact, so the measurement shrank silently and moved between runs | Runs 35167962571 and 35171841643 recorded 6,930 and 6,908 fixtures, 99 only in the first and 77 only in the second, in contiguous alphabetical groups; the 6 partition logs name about 32 `TIMEOUT [ 135.0xxs]` batch tests; the largest batch holds 312 fixtures and only 251 were recorded |
+| 2026-09-16 | NCT4 | Bounded the batch at 10 minutes, made a batch state its start and its end, and made `aggregate` refuse a batch that started and did not finish | 7 new Python guard tests pass; 1 new Rust test pairs the records; a real 115-fixture batch aggregates clean, and the same shard cut to 60 lines is refused by name; `nextest list` accepts the override |
+| 2026-09-16 | NCT4 | Kept the observed reason on a recorded gap. `into_result` replaced it with the words "recorded corpus baseline gap", and the 3 supplementary signal-lifecycle watchpoints failed because the report could no longer see what the runtime did | `known_gap_detail: Option<String>` replaces `known_gap: bool`; 82 of 83 node_compat tests pass (the 1 failure is the pre-existing `__nimbus-preserve-symlinks-options-probe`); `cargo fmt`/`clippy` clean; `actionlint` clean; `check-docs.sh` PASS |
 
 ## NCT4 platform constraint
 

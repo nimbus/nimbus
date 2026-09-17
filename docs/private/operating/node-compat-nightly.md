@@ -187,6 +187,38 @@ builds without the cache, which is slower but still produces the measurement.
 When the merge refuses an incomplete set, rerun the corpus. Do not seed from
 a partial measurement.
 
+## When a batch is cut short
+
+One batch test executes hundreds of upstream fixtures in a single process. The
+test runner kills a test that outruns its timeout, and every fixture the batch
+already measured is already in the shard. A kill therefore removes the rest of
+the batch from the measurement without removing the batch, and nothing in the
+shard says so.
+
+That failure is silent and it moves. Run 35167962571 recorded 6930 fixtures and
+run 35171841643 recorded 6908, with 99 fixtures only in the first and 77 only
+in the second, in contiguous alphabetical groups. About 32 batch tests had been
+killed at 135 seconds. A baseline seeded from one such run records where the
+kill landed, and the next run reaches further and reports the fixtures behind
+the old kill point as fresh regressions.
+
+Two guards prevent it:
+
+| Guard | Where | What it does |
+| --- | --- | --- |
+| `slow-timeout = { period = "10m", terminate-after = 1 }` | `.config/nextest.toml`, for `runtime::tests::node_compat::` | gives a batch the time it needs. The largest batch holds 312 fixtures and needs about three minutes |
+| `batch_start` and `batch_complete` records | `corpus_baseline.rs`, checked by `corpus_baseline.py aggregate` | refuses a measurement in which any batch started and did not finish |
+
+A batch writes one record when it starts and one when its fixture loop ends.
+The end also carries how many fixtures the loop executed, so a shard that lost
+records is refused as well. The timeout reduces how often the refusal fires; it
+does not hide the refusal.
+
+When the merge refuses a truncated measurement, read which batch was cut short,
+then rerun the corpus. Do not seed from it. If the same batch is cut short
+again, the batch outgrew its bound: measure it, then raise the bound in
+`.config/nextest.toml` in a reviewed change.
+
 ## Prerequisites and cleanup
 
 The corpus lane needs the Rust toolchain cache and `cargo-nextest`. The

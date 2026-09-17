@@ -198,11 +198,71 @@ fn node_compat_observed_results_path(configured: &Path) -> PathBuf {
     node_compat_repo_root().join(configured)
 }
 
-fn record_node_compat_observed_result(
-    lane_key: &str,
-    fixture: NodeCompatFixtureIdentity<'_>,
-    decision: &NodeCompatReconciliation,
-) {
+thread_local! {
+    /// The batch that is running fixtures on this thread, if any.
+    static NODE_COMPAT_ACTIVE_BATCH: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Marks every fixture result on this thread as part of one batch.
+///
+/// A batch runs hundreds of fixtures inside a single Rust test. nextest kills a
+/// test that outruns its timeout, and the fixtures the batch already recorded
+/// still reach the artifact, so a killed batch shrinks the measurement without
+/// failing it. The next run then reaches further into the same batch and
+/// reports the fixtures behind the old kill point as fresh regressions.
+///
+/// The mark pairs those records with the completion record that the batch
+/// writes when its loop ends. A batch that was killed wrote no completion
+/// record, and the aggregator refuses the measurement instead of trimming it.
+struct NodeCompatBatchScope {
+    key: String,
+}
+
+impl NodeCompatBatchScope {
+    /// Opens a batch and records that it started.
+    ///
+    /// The key names the Rust test as well as the batch and the lane, because
+    /// several tests run the same batch for different lanes and the aggregator
+    /// pairs a start with exactly one end. The sequence number separates two
+    /// batches that one test opens in turn.
+    fn start(batch_name: &str, lane_name: &str) -> Self {
+        static NEXT_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+        let key = format!(
+            "{}::{batch_name}/{lane_name}#{}",
+            node_compat_current_test_path(),
+            NEXT_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        NODE_COMPAT_ACTIVE_BATCH.with(|active| *active.borrow_mut() = Some(key.clone()));
+        record_node_compat_batch_start(&key);
+        Self { key }
+    }
+
+    /// Records that the fixture loop ran to its end.
+    ///
+    /// This is a method rather than a drop, because a drop also runs on an
+    /// early exit and the record must mean that the loop did not take one.
+    fn finish(self, fixture_count: usize) {
+        record_node_compat_batch_completion(&self.key, fixture_count);
+    }
+}
+
+impl Drop for NodeCompatBatchScope {
+    fn drop(&mut self) {
+        NODE_COMPAT_ACTIVE_BATCH.with(|active| *active.borrow_mut() = None);
+    }
+}
+
+fn node_compat_active_batch() -> Option<String> {
+    NODE_COMPAT_ACTIVE_BATCH.with(|active| active.borrow().clone())
+}
+
+/// Appends one record to the observed-results shard.
+///
+/// The env var names the shard. Without it, nothing is recorded, which is what
+/// a plain local `cargo test` does.
+fn append_node_compat_observed_record(record: &serde_json::Value) {
     let Some(path) = std::env::var_os(NODE_COMPAT_OBSERVED_RESULTS_ENV) else {
         return;
     };
@@ -211,25 +271,6 @@ fn record_node_compat_observed_result(
         && !parent.as_os_str().is_empty()
     {
         let _ = std::fs::create_dir_all(parent);
-    }
-    let mut record = serde_json::json!({
-        "lane": lane_key,
-        "test_relative_path": fixture.test_relative_path,
-        "test_name": node_compat_current_test_name(),
-        "rust_test_path": node_compat_current_test_path(),
-        "outcome": decision.outcome_label(),
-    });
-    if let Some(source) = fixture.vendored_source {
-        // Only a fixture read from the vendored tree carries this. A test that
-        // supplies its own inline source is a Nimbus probe, and leaving the
-        // field out is what stops the baseline from absorbing it.
-        record["fixture_source_relative_path"] = serde_json::Value::String(source.to_string());
-    }
-    if let Some(detail) = decision.detail() {
-        // Keep the line bounded. The full text is already in the failure output
-        // and in the diagnostic artifact.
-        let trimmed: String = detail.chars().take(500).collect();
-        record["detail"] = serde_json::Value::String(trimmed);
     }
     let mut line = record.to_string();
     line.push('\n');
@@ -253,6 +294,67 @@ fn record_node_compat_observed_result(
             path.display()
         ),
     }
+}
+
+/// Records that one batch started.
+///
+/// A batch that the test runner kills before its first fixture writes nothing
+/// else, so without this record the batch leaves no trace at all, and the
+/// aggregator cannot tell a killed batch from a batch that does not exist.
+fn record_node_compat_batch_start(batch_key: &str) {
+    append_node_compat_observed_record(&serde_json::json!({
+        "kind": "batch_start",
+        "batch": batch_key,
+        "test_name": node_compat_current_test_name(),
+        "rust_test_path": node_compat_current_test_path(),
+    }));
+}
+
+/// Records that one batch ran its fixture list to the end.
+///
+/// The count is what the aggregator compares with the fixture records that
+/// carry the same batch key, so a batch that stopped early fails the
+/// measurement instead of shrinking it.
+fn record_node_compat_batch_completion(batch_key: &str, fixture_count: usize) {
+    append_node_compat_observed_record(&serde_json::json!({
+        "kind": "batch_complete",
+        "batch": batch_key,
+        "fixture_count": fixture_count,
+        "test_name": node_compat_current_test_name(),
+        "rust_test_path": node_compat_current_test_path(),
+    }));
+}
+
+fn record_node_compat_observed_result(
+    lane_key: &str,
+    fixture: NodeCompatFixtureIdentity<'_>,
+    decision: &NodeCompatReconciliation,
+) {
+    let mut record = serde_json::json!({
+        "lane": lane_key,
+        "test_relative_path": fixture.test_relative_path,
+        "test_name": node_compat_current_test_name(),
+        "rust_test_path": node_compat_current_test_path(),
+        "outcome": decision.outcome_label(),
+    });
+    if let Some(source) = fixture.vendored_source {
+        // Only a fixture read from the vendored tree carries this. A test that
+        // supplies its own inline source is a Nimbus probe, and leaving the
+        // field out is what stops the baseline from absorbing it.
+        record["fixture_source_relative_path"] = serde_json::Value::String(source.to_string());
+    }
+    if let Some(detail) = decision.detail() {
+        // Keep the line bounded. The full text is already in the failure output
+        // and in the diagnostic artifact.
+        let trimmed: String = detail.chars().take(500).collect();
+        record["detail"] = serde_json::Value::String(trimmed);
+    }
+    if let Some(batch_key) = node_compat_active_batch() {
+        // Only a fixture that a batch executed carries this. The aggregator
+        // pairs it with the batch completion record.
+        record["batch"] = serde_json::Value::String(batch_key);
+    }
+    append_node_compat_observed_record(&record);
 }
 
 /// Compares one observed fixture result with the recorded baseline.
@@ -314,9 +416,9 @@ impl NodeCompatReconciliation {
     fn into_result(self) -> std::result::Result<NodeCompatFixtureOutcome, String> {
         match self {
             Self::Clean(outcome) => Ok(outcome),
-            Self::KnownGap { .. } => Ok(NodeCompatFixtureOutcome {
+            Self::KnownGap { detail } => Ok(NodeCompatFixtureOutcome {
                 skipped: false,
-                known_gap: true,
+                known_gap_detail: Some(detail),
             }),
             Self::UnexpectedPass { message } => Err(message),
             Self::Regression { error } => Err(error),
@@ -360,7 +462,7 @@ fn decide_node_compat_fixture_result(
 fn node_compat_passing_outcome() -> NodeCompatFixtureOutcome {
     NodeCompatFixtureOutcome {
         skipped: false,
-        known_gap: false,
+        known_gap_detail: None,
     }
 }
 
@@ -431,7 +533,7 @@ fn node_compat_unrecorded_pass_stays_a_pass() {
     );
     assert_eq!(decision.outcome_label(), "passed");
     let outcome = decision.into_result().expect("an unrecorded pass stays green");
-    assert!(!outcome.known_gap);
+    assert!(!outcome.is_known_gap());
     assert!(!outcome.skipped);
 }
 
@@ -447,7 +549,11 @@ fn node_compat_recorded_failure_keeps_the_lane_green() {
     let outcome = decision
         .into_result()
         .expect("a recorded gap must not fail the lane");
-    assert!(outcome.known_gap, "the outcome must report itself as a gap");
+    assert_eq!(
+        outcome.known_gap_detail.as_deref(),
+        Some("runtime JavaScript error: TypeError"),
+        "a recorded gap keeps the reason the run observed, not a placeholder"
+    );
     assert!(!outcome.skipped, "a gap is not a skip");
 }
 
@@ -533,6 +639,10 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
     assert_eq!(first["lane"], "node20");
     assert_eq!(first["test_relative_path"], "test/parallel/test-one.js");
     assert_eq!(first["outcome"], "passed");
+    assert!(
+        first.get("batch").is_none(),
+        "a fixture outside a batch carries no batch key: {first}"
+    );
     let test_name = first["test_name"].as_str().expect("the Rust test name is recorded");
     assert!(
         !test_name.contains("::"),
@@ -563,6 +673,88 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
     assert!(
         third.get("fixture_source_relative_path").is_none(),
         "a test that supplies its own source must record no vendored path: {third}"
+    );
+}
+
+#[test]
+fn node_compat_batch_records_bracket_the_fixtures_they_measure() {
+    let _suite = acquire_runtime_suite_lock_blocking();
+    let tempdir = tempfile::tempdir().expect("a temp dir should be available");
+    let path = tempdir.path().join("observed.jsonl");
+    // SAFETY: the runtime suite serializes env mutation through this guard.
+    let _guard = ScopedProcessEnvVar::set(
+        NODE_COMPAT_OBSERVED_RESULTS_ENV,
+        path.to_str().expect("a UTF-8 temp path"),
+    );
+
+    {
+        let scope = NodeCompatBatchScope::start("streams", "node20");
+        record_node_compat_observed_result(
+            "node20",
+            NodeCompatFixtureIdentity::vendored(
+                "test/parallel/test-one.js",
+                "node20/test/parallel/test-one.js",
+            ),
+            &decide_node_compat_fixture_result(
+                "node20",
+                "test/parallel/test-one.js",
+                None,
+                Ok(node_compat_passing_outcome()),
+            ),
+        );
+        scope.finish(1);
+    }
+
+    // The scope ended, so a later fixture belongs to no batch.
+    record_node_compat_observed_result(
+        "node20",
+        NodeCompatFixtureIdentity::vendored(
+            "test/parallel/test-two.js",
+            "node20/test/parallel/test-two.js",
+        ),
+        &decide_node_compat_fixture_result(
+            "node20",
+            "test/parallel/test-two.js",
+            None,
+            Ok(node_compat_passing_outcome()),
+        ),
+    );
+
+    let raw = std::fs::read_to_string(&path).expect("the observed-results file should exist");
+    let lines: Vec<serde_json::Value> = raw
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("each line is JSON"))
+        .collect();
+    assert_eq!(lines.len(), 4, "start, fixture, completion, fixture: {raw}");
+
+    assert_eq!(lines[0]["kind"], "batch_start");
+    let batch_key = lines[0]["batch"].as_str().expect("the start names a batch");
+    // Two tests run the same batch for different lanes, so the key names the
+    // test as well.
+    assert!(
+        batch_key.contains("streams/node20")
+            && batch_key.contains("node_compat_batch_records_bracket_the_fixtures_they_measure"),
+        "the key names the test, the batch, and the lane: {batch_key}"
+    );
+
+    assert_eq!(lines[1]["test_relative_path"], "test/parallel/test-one.js");
+    assert_eq!(
+        lines[1]["batch"], batch_key,
+        "a fixture inside a batch names the batch that measured it"
+    );
+
+    assert_eq!(lines[2]["kind"], "batch_complete");
+    assert_eq!(lines[2]["batch"], batch_key);
+    assert_eq!(
+        lines[2]["fixture_count"], 1,
+        "the completion record counts the fixtures the loop executed"
+    );
+
+    assert_eq!(lines[3]["test_relative_path"], "test/parallel/test-two.js");
+    assert!(
+        lines[3].get("batch").is_none(),
+        "the scope ended, so this fixture belongs to no batch: {}",
+        lines[3]
     );
 }
 

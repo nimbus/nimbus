@@ -106,11 +106,21 @@ pub(super) struct NodeCompatBatchEntrySnapshot {
 #[derive(Debug)]
 struct NodeCompatFixtureOutcome {
     skipped: bool,
-    /// The fixture failed, and the corpus baseline records that failure.
+    /// Why the fixture failed, when the corpus baseline records that failure.
     ///
     /// The lane stays green, and batch summaries count the fixture separately
     /// so a recorded gap is never reported as a pass. See `corpus_baseline.rs`.
-    known_gap: bool,
+    ///
+    /// The reason travels with the outcome because a recorded gap is still a
+    /// measured failure. A report that replaced it with the word "recorded"
+    /// would erase the only statement of what the runtime actually did.
+    known_gap_detail: Option<String>,
+}
+
+impl NodeCompatFixtureOutcome {
+    fn is_known_gap(&self) -> bool {
+        self.known_gap_detail.is_some()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1963,7 +1973,7 @@ fn execute_upstream_node_compat_test_with_extra_files_raw(
                 if exit_code == 0 {
                     return Ok(NodeCompatFixtureOutcome {
                         skipped: false,
-                        known_gap: false,
+                        known_gap_detail: None,
                     });
                 }
                 let artifact = write_node_compat_fixture_diagnostic(
@@ -2036,7 +2046,7 @@ fn execute_upstream_node_compat_test_with_extra_files_raw(
 
     Ok(NodeCompatFixtureOutcome {
         skipped: result.get("skipped") == Some(&serde_json::json!(true)),
-        known_gap: false,
+        known_gap_detail: None,
     })
 }
 
@@ -3295,9 +3305,9 @@ pub(super) fn observe_seeded_fixture_runtime_outcome(
         // A baseline-recorded gap keeps the Rust lane green, but the report
         // must still count it as a measured failure. The baseline suppresses a
         // red test, never a red pass rate.
-        Ok(Ok(outcome)) if outcome.known_gap => NodeCompatSeededFixtureObservedOutcome {
+        Ok(Ok(outcome)) if outcome.is_known_gap() => NodeCompatSeededFixtureObservedOutcome {
             state: node_compat_manifest_report::NodeCompatObservedFixtureState::Fail,
-            detail: Some("recorded corpus baseline gap".to_string()),
+            detail: outcome.known_gap_detail,
         },
         Ok(Ok(outcome)) if outcome.skipped => NodeCompatSeededFixtureObservedOutcome {
             state: node_compat_manifest_report::NodeCompatObservedFixtureState::Skip,
@@ -3624,6 +3634,12 @@ fn run_manifested_subset_for_lane_excluding(
     excluded_test_relative_paths: &[&str],
 ) {
     let lane_name = node_compat_lane_name(lane);
+    // Every fixture result below carries this batch, and the completion record
+    // after the loop names it once. A batch that the test runner kills wrote no
+    // completion record, so the aggregator refuses the measurement instead of
+    // reading the kill point as the end of the batch.
+    let batch_scope = NodeCompatBatchScope::start(batch_name, lane_name);
+    let mut executed = 0usize;
     let mut passed = 0usize;
     let mut skipped = Vec::new();
     let mut excluded = Vec::new();
@@ -3640,6 +3656,7 @@ fn run_manifested_subset_for_lane_excluding(
                 "node_compat {batch_name} {lane_name} -> {}",
                 fixture.test_relative_path
             );
+            executed += 1;
             let snapshot = NodeCompatHostProcessSnapshot::capture();
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 execute_manifested_node_compat_test(
@@ -3655,7 +3672,7 @@ fn run_manifested_subset_for_lane_excluding(
             snapshot.restore();
             match execution {
                 Ok(Ok(outcome)) => {
-                    if outcome.known_gap {
+                    if outcome.is_known_gap() {
                         // Recorded in the corpus baseline. It is not a pass, and
                         // it does not fail the lane. See corpus_baseline.rs.
                         known_gaps.push(fixture.test_relative_path);
@@ -3674,6 +3691,9 @@ fn run_manifested_subset_for_lane_excluding(
             }
         }
     }
+
+    // The loop reached its end, so the batch measured every fixture it owns.
+    batch_scope.finish(executed);
 
     eprintln!(
         "node_compat {batch_name} {lane_name} summary -> passed: {passed}, skipped: {}, known gaps: {}, excluded: {}, failed: {}",
@@ -3827,7 +3847,7 @@ fn run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         }));
         snapshot.restore();
         match execution {
-            Ok(Ok(outcome)) if outcome.known_gap => {
+            Ok(Ok(outcome)) if outcome.is_known_gap() => {
                 // Not a pass and not a lane failure. The summary artifact still
                 // records it as failed, so the measured rate stays honest.
                 known_gap_paths.push(test_relative_path.clone());
@@ -4006,7 +4026,7 @@ pub(super) fn collect_seeded_slice_observed_result_records(
             let state = match execution {
                 // See the seeded path above: a recorded gap stays a measured
                 // failure in the report even though the lane stays green.
-                Ok(Ok(outcome)) if outcome.known_gap => {
+                Ok(Ok(outcome)) if outcome.is_known_gap() => {
                     failed += 1;
                     eprintln!(
                         "node_compat report live {family}:{slice} {lane_name} fixture {} is a recorded corpus baseline gap",
