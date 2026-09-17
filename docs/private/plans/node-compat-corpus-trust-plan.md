@@ -4,38 +4,75 @@ Status: `active` | Owner: this plan | Created: 2026-09-16
 Baseline: main @ `f743836c6`
 Proof root: `proof/node-compat-corpus-trust/`
 
-Next action: NCT4 is blocked. The executor joins a hung worker on drop, so
-24 batch tests are killed at 10 minutes and no run can measure the whole
-corpus. That defect owns the block, and it is outside this plan.
+Next action: land NCT10 with this branch, then reproduce NCT9 under the
+`NCT9UNCAUGHT` instrument and name the object that emits the uncaught error.
+NCT4 stays blocked. The executor joins a hung worker on drop, so 24 batch
+tests are killed at 10 minutes and no run can measure the whole corpus. That
+defect owns the block, and it is outside this plan.
 
 ## Current resume state
 
-- Updated: 2026-09-17. Active task: NCT4.
-- Worktree: `scratchpad/wt-node20`. Branch: `fix/node20-required-surface-fixtures`.
-  Base `d93408e19`. A second worktree `scratchpad/wt-node-compat` holds the
-  earlier branch `ci/node-compat-corpus-trust` at HEAD `954181ec3`.
-- Dirty files owned by this task: the 5 files of the node20 lane-wiring change.
-- Two flakes found while measuring that change are now tracked as NCT9 and
-  NCT10. Both reproduce with the change stashed, so neither belongs to it.
-- NCT0 through NCT3 and NCT5 through NCT7 are done.
-- NCT4 waits on a runtime fix that is now written, on branch
-  `fix/runtime-executor-shutdown-bound`. Run 35187917432 kills 24 batch tests at
-  the 600 s bound. They hang, so a larger bound cannot help. An earlier reading
-  named `RuntimeExecutorInner::drop` and the admission permit as the cause. That
-  reading was wrong, and a stack sample of the hung process corrects it: the
-  worker is inside the invocation itself. A runtime invocation enforces its
-  execution and system timeouts with a V8 termination, which reaches running
-  JavaScript only, so a guest that parks in the event loop is bounded by
-  nothing. `crates/nimbus-runtime/src/runtime/driver/invocation.rs` owns that
-  defect, not this plan.
-- The measurement machinery is complete and correct. It refuses the partial
-  measurement and names all 15 truncated batches and the fixture that follows
-  each one's last record.
-- Next: merge the runtime fix, re-seed the baseline from a complete
-  measurement, then take the 15 node20 required-surface fixtures. Re-seeding
-  waits on the runtime fix.
-- The `rust-corpus` lane stays red on 15 node20 required-surface fixtures.
-  Fixing the runtime is the next work, and it is outside this plan.
+- Updated: 2026-09-17. Active task: NCT10, which lands with this branch.
+  NCT9 follows as `v2.9.6-nimbus.7`.
+- NCT10 is closed in the fork and lands in nimbus with this branch.
+  - Fork PR https://github.com/nimbus/deno/pull/2 merged into `nimbus/v2.9.6`
+    as `744850baf0`.
+  - Annotated tag `v2.9.6-nimbus.6` points at `744850baf0`, tag object
+    `5b06d72d83`, message `Nimbus Deno 2.9.6 release 6`.
+  - `Cargo.toml` pins all 32 deno crates to `tag = "v2.9.6-nimbus.6"`, and
+    `Cargo.lock` resolves them to `744850ba`.
+  - `make test-rust-runtime` on that pin: 521 passed, 0 failed, 94 ignored,
+    plus 8 integration tests and 1 doctest, exit 0. This is the first run that
+    measures NCT10 alone. The earlier `rev = "d611a4f22a"` pin carried the
+    unproven NCT9 change as well.
+- Worktrees:
+  - `scratchpad/wt-nct10` (nimbus), branch `fix/nct10-snapshot-uaf`. It holds
+    the pin bump and this plan.
+  - `deno-worktrees/nct9-http2-fin`, branch `fix/http2-teardown-fin-race`,
+    head `d611a4f22a` plus one uncommitted hardening edit. No pull request,
+    because the fix is not sufficient.
+  - `scratchpad/wt-executor`, branch `fix/runtime-executor-shutdown-bound`.
+  - `scratchpad/wt-cppgc` and `deno-worktrees/nct10-snapshot-uaf` are spent.
+    Both pull requests merged and both branches are deleted.
+- NCT9 is open. The peer-FIN fix is necessary but not sufficient. See the
+  ledger row.
+- The NCT9 diagnostics are reverted in `wt-nct10` and saved for reuse:
+  - `scratchpad/nct9-instrument.patch` holds the `NCT9UNCAUGHT` block for the
+    top of `crates/nimbus-runtime/src/runtime/bootstrap/js/post_bootstrap.js`.
+    It wraps `EventEmitter.prototype.emit` and prints the object, its state and
+    two stacks whenever an emitter emits `error` with no listener. A passing
+    lane run prints three, all `ClientRequest
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE` from the known `test-https-strict.js`
+    failure, so the instrument is quiet enough to name the failing object when
+    the flake reproduces.
+  - `scratchpad/nct9_probe.rs.bak` holds the in-process probe. Restore it to
+    `crates/nimbus-runtime/src/runtime/tests/node/cases/nct9_probe.rs` and add
+    its `include!` line to `node/mod.rs`. It replays a slice of
+    `NETWORKING_BATCH` in one process, selected by `NCT9_SELECT` and repeated
+    `NCT9_ITERS` times.
+- NCT0 through NCT3 and NCT5 through NCT7 are done. NCT4 is unchanged and still
+  waits on the runtime fix and a complete re-seed.
+- Measured NCT9 rate on the node20 networking lane, one lane run per test
+  process: 1 failure in 19 runs before `d611a4f22a`, and 1 failure in 213 runs
+  after it (25 serial, 30 serial with an http2 debuglog trace, 60 across four
+  concurrent workers, and 98 serial with the `NCT9UNCAUGHT` instrument). The
+  fix lowers the rate. It does not prove the race is closed.
+- Ruled out as reproducers: 1,000 runs of a minimal http2 client/server repro on
+  a stock deno build, 480 runs of the real fixture on a stock build, and 1,100
+  in-process repeats of the 60-fixture http2 slice inside the nimbus test
+  binary. All clean. Only the complete lane reproduces the failure.
+- Ruled out as the mechanism: a late libuv read callback. `TcpWrap::close` and
+  `LibUvStreamWrap::close` both call `read_stop_internal()` synchronously before
+  `close_handle`, and `read_stop_for_stream` takes `active_read` so a queued
+  `on_uv_read` returns early. Note that upstream Node's `this._handle.onread =
+  noop` in `Socket.prototype._destroy` is inert in this fork, because
+  `read_start_with_handle` captures `onread` as a `v8::Global`.
+- Open question: which object emits the uncaught `read ECONNRESET`. Two
+  candidates remain. A `net.Socket` with no `error` listener, which needs
+  `finishSessionClose`'s `socket.once("close", ...)` to have run
+  `removeListener`. Or an `Http2Session` with no `error` listener, reached when
+  `socketOnError` finds `goawayCode === null && !closed && !destroyed` and calls
+  `session.destroy(error)`. The `NCT9UNCAUGHT` instrument separates them.
 - Running commands: none.
 
 ## Outcome
@@ -108,12 +145,12 @@ After:
 | NCT1 | Split release-train freshness from measurement | done | `actionlint` clean; 3 jobs; the 5 retained local commands all exit 0 |
 | NCT2 | Emit observed results from the Rust corpus lane | done | `proof/node-compat-corpus-trust/nct2-nct3-reconciliation.md`; JSONL verified on a real fixture run |
 | NCT3 | Add the expectation baseline and the reconciliation seam | done | 8 unit tests pass; 3 end-to-end fixture scenarios pass; all 4 policy branches named |
-| NCT4 | Seed the baseline from a full instrumented run | in_progress | Run 35167962571 seeded 1,188 gaps, and the confirming run 35171841643 proved it truncated: 6,930 fixtures against 6,908, 99 only in the first and 77 only in the second. Batch bound proven by 0 timeouts in run 35178467471; abort record, record-count witness, and 5 declaration fixes added; re-seeding |
+| NCT4 | Seed the baseline from a full instrumented run | blocked(the executor joins a hung worker on drop, so a whole-corpus run cannot finish; that defect is outside this plan) | Run 35167962571 seeded 1,188 gaps, and the confirming run 35171841643 proved it truncated: 6,930 fixtures against 6,908, 99 only in the first and 77 only in the second. Batch bound proven by 0 timeouts in run 35178467471; abort record, record-count witness, and 5 declaration fixes added; re-seeding |
 | NCT5 | Close the unexpected-pass loop for ignored watchpoints | done | `corpus-baseline-reconciliation` job feeds `--observed-results` to the 150-entry catalog |
 | NCT6 | Guard the baseline | done | 4 guard rejections proven; runs in the PR lane via `make node-compat-baseline-verify` |
 | NCT7 | Document the contract | done | `docs/private/operating/node-compat-nightly.md`; routed from the operating README; `check-docs.sh` PASS |
-| NCT9 | Fix the http2 teardown RST race | todo | Diagnosed: `socketOnData` in the vendored `ext/node/polyfills/http2.ts` destroys the socket once nghttp2 wants neither read nor write, without waiting for the peer FIN, so the peer reads ECONNRESET. 1 failure in 19 instrumented runs. Fix lives in `nimbus/deno` and needs a tag bump |
-| NCT10 | Fix the V8 backing-store heap corruption | todo | Diagnosed: 2 of 3 native aborts on 2026-09-17 are `POINTER_BEING_FREED_WAS_NOT_ALLOCATED` inside `v8::internal::BackingStore::~BackingStore()` during isolate teardown under `V8WorkerRuntimePool::return_runtime_with_authority`. A third abort shows the same corruption during snapshot deserialization at isolate creation. Reports kept in the session scratchpad `crash-evidence/` |
+| NCT9 | Fix the http2 teardown RST race | blocked(the object that emits the uncaught error is not named yet) | Diagnosed: `socketOnData` in the vendored `ext/node/polyfills/http2.ts` destroys the socket once nghttp2 wants neither read nor write, without waiting for the peer FIN, so the peer reads ECONNRESET. 1 failure in 19 instrumented runs. Commit `d611a4f22a` in `nimbus/deno` makes the teardown wait for the peer FIN and bounds a silent peer with a 5 s unref'd timer. That commit is **not sufficient**: the four networking lanes stay free of http2 failures and `test-http2-zero-length-header.js` passes on all four, but the flake still reproduces on `test-http2-status-code-invalid.js` at 1 failure in 213 lane runs after the commit, against 1 in 19 before it. A second teardown path must close a socket that still holds unread data. The `NCT9UNCAUGHT` instrument in `scratchpad/nct9-instrument.patch` names the emitting object when the flake next reproduces. NCT9 ships separately as `v2.9.6-nimbus.7` |
+| NCT10 | Fix the V8 backing-store heap corruption | in_progress | Root cause named: `JsRuntimeForSnapshot::snapshot` drops `ContextState` in `prepare_for_snapshot` before `create_blob` serializes the external backing stores over `tick_info`, `immediate_info` and `timer_info`. Guard Malloc proof: 2 of 2 SIGSEGV before the fix, 0 of 3 after, at the 12-byte `immediate_info` allocation. Fixed in `nimbus/deno` commit `c036d7383e` (fork PR 2). Abort proof: 0 aborts in 50 runs of the node20 networking subset under `MallocErrorAbort=1`. Fork PR 2 merged as `744850baf0` and tagged `v2.9.6-nimbus.6`. The 32 nimbus pins move to that tag, and `make test-rust-runtime` on it reports 521 passed, 0 failed, 94 ignored |
 | NCT8 | Cleanup | todo | |
 
 ## Tasks
@@ -246,15 +283,93 @@ final mark-compact in `Heap::StartTearDown`. The third abort shows
 `ReadReadOnlyHeapRef` failing during snapshot deserialization at isolate
 creation, which is consistent with the same corruption surfacing earlier.
 
-`SharedArrayBufferStore::default()` is built per runtime in
-`crates/nimbus-runtime/src/runtime/driver/construction.rs:260`, so a store
-shared across isolates is excluded. No nimbus crate creates a backing store
-directly.
+#### Root cause
+
+`deno_core::JsRuntime::store_js_callbacks` publishes three `ContextState`
+fields to JS as typed arrays over *external* `BackingStore`s with a no-op
+deleter: `tick_info` (2 bytes), `immediate_info` (12 bytes) and `timer_info`
+(4 bytes). The no-op deleter is correct only while `ContextState` owns the
+memory for at least as long as V8 can touch the address.
+
+`JsRuntimeForSnapshot::snapshot` breaks that contract. `prepare_for_snapshot`
+calls `JsRuntimeInner::cleanup`, which destroys the realm and drops
+`ContextState`, and only then does `create_blob` run V8's snapshot serializer.
+The three typed arrays are still reachable from the context, so
+`Serializer::ObjectSerializer::SerializeBackingStore` copies each external
+backing store into the blob after the allocation is freed.
+
+Guard Malloc (`/usr/lib/libgmalloc.dylib` with `MALLOC_PROTECT_BEFORE=1`)
+unmaps freed allocations, which turns the read into a deterministic SIGSEGV:
+
+```
+frame #1: SerializeBackingStore() at serializer.cc:603
+frame #2: SerializeJSTypedArray() at serializer.cc:646
+frame #4: SerializeObjectWithEmbedderFields() at context-serializer.cc:355
+```
+
+The faulting address equals the backing-store pointer itself, and an lldb
+breakpoint on `v8__ArrayBuffer__NewBackingStore__with_data` traced that
+address to the 12-byte `immediate_info` allocation created by
+`JsRuntime::store_js_callbacks`.
+
+#### Eliminated hypotheses
+
+- Allocator lifetime. `BackingStore::SetAllocatorFromIsolate` stores a
+  `shared_ptr<v8::ArrayBuffer::Allocator>`, and rusty_v8 always sets
+  `array_buffer_allocator_shared`, so the allocator outlives its isolate.
+- Out-of-order `OwnedIsolate` drops. The forked `OwnedIsolate::Drop` asserts
+  the current-isolate identity and that assert never fired in any log.
+- Double wrapping by V8. `WrapAllocation` always sets a custom deleter and
+  `EmptyBackingStore` has a null `buffer_start_`.
+- A second V8 platform for cppgc. Proven unrelated by an A/B run (5 aborts in
+  25 with the fix, 1 in 25 at base). That change shipped separately as
+  nimbus PR #364 because it is correct on its own.
+
+#### Fix
+
+`nimbus/deno` commit `c036d7383e` gives `tick_info`, `immediate_info` and
+`timer_info` their own reference count and holds one across `create_blob`,
+so the allocations satisfy the contract the external backing stores assert.
+An audit of every other raw-pointer backing store in the fork found no second
+violation: `ops_rust_to_v8.rs` owns its buffer through `Rc::into_raw` and
+frees it in its own deleter, and the `_from_bytes`, `_from_vec` and
+`_from_boxed_slice` constructors transfer ownership to V8.
+
+#### Snapshot strategy and pointer compression
+
+Neither this fix nor nimbus PR #364 changes the snapshot strategy or the
+pointer-compression savings.
+
+- Pointer compression is the build-time `v8-pointer-compression` cargo
+  feature in `crates/nimbus-runtime/Cargo.toml`. `CreateParams` has no knob
+  for it, and neither change touches the feature or the build.
+- PR #364 removes a second `v8::Platform` and an explicit
+  `cppgc::Heap::create`. V8 then builds an equivalent default `CppHeap` on
+  the one platform (`api.cc:10128`), so the heap configuration is the same.
+- This fix is a Rust lifetime change only. The same three typed arrays
+  serialize at the same byte lengths, 2, 12 and 4.
+
+Measured with `build_node22_anchor_snapshot`, three generations per binary:
+
+| build | blob bytes |
+|---|---|
+| unfixed `v2.9.6-nimbus.5` | 18,529,593, 18,529,593, 18,529,593 |
+| fixed `c036d7383e` | 18,529,593, 18,529,593, 18,529,593 |
+| PR #364 build, unfixed deno | 18,529,593 |
+
+The blob is not byte-identical between two generations of the same binary,
+before or after the fix, so byte length is the invariant. It does not move.
 
 Success criteria:
 - The corrupting writer is named, with an address-sanitizer run or an
   equivalent instrumented build as proof.
+  Met: Guard Malloc, 2 of 2 faults before, 0 of 3 after.
 - The node20 networking subset runs 50 times with 0 aborts.
+  Met: 0 of 50 under `MallocErrorAbort=1`, 2026-09-17 15:28.
+- A new `v2.9.6-nimbus.6` tag, the pin updates, and the lock update land.
+  Met: tag `v2.9.6-nimbus.6` on `744850baf0`, 32 pins moved, lock resolved
+  to `744850ba`, `make test-rust-runtime` 521 passed and 0 failed.
+  NCT9 is not a condition of this tag. It ships as `v2.9.6-nimbus.7`.
 
 
 ### NCT8 Cleanup
