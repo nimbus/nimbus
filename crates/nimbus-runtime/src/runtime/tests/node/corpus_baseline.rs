@@ -43,12 +43,67 @@ struct NodeCompatCorpusBaselineDocument {
 struct NodeCompatCorpusBaselineEntry {
     test_relative_path: String,
     reason: String,
+    /// Where the fixture is vendored, relative to the fixture root.
+    ///
+    /// The runtime path inside the bundle is not where the fixture lives on
+    /// disk. A lane vendors some fixtures under its own directory, the shared
+    /// tree vendors others once at the root, and a regression fixture can carry
+    /// a different file name. Guessing from `test_relative_path` gets all three
+    /// wrong, so the seam records the path it actually read.
+    ///
+    /// The field is required. A fixture with no vendored source is a synthetic
+    /// probe of Nimbus behavior rather than a measurement of upstream
+    /// compatibility, and the baseline may not absorb one.
+    fixture_source_relative_path: String,
+}
+
+/// One recorded gap: why the fixture fails, and where it is vendored.
+#[derive(Debug)]
+struct NodeCompatRecordedGap {
+    reason: String,
+    fixture_source_relative_path: String,
+}
+
+/// Which fixture ran, and where its source came from.
+///
+/// The two paths always travel together, and neither one derives from the
+/// other, so the pair is named once. A call site that knows the runtime path
+/// cannot then forget to say where the source came from.
+#[derive(Debug, Clone, Copy)]
+struct NodeCompatFixtureIdentity<'a> {
+    /// The path the fixture takes inside the runtime bundle.
+    test_relative_path: &'a str,
+    /// Where the fixture is vendored, relative to the fixture root, or `None`
+    /// when the test supplies its own source.
+    vendored_source: Option<&'a str>,
+}
+
+impl<'a> NodeCompatFixtureIdentity<'a> {
+    /// A fixture read from the vendored corpus. Only this kind is recordable.
+    fn vendored(test_relative_path: &'a str, vendored_source: &'a str) -> Self {
+        Self {
+            test_relative_path,
+            vendored_source: Some(vendored_source),
+        }
+    }
+
+    /// A test that supplies its own source. It probes Nimbus behavior rather
+    /// than upstream compatibility, so the baseline may never absorb it.
+    fn synthetic(test_relative_path: &'a str) -> Self {
+        Self {
+            test_relative_path,
+            vendored_source: None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 struct NodeCompatCorpusBaseline {
-    /// lane key -> fixture path -> reason
-    lanes: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    /// lane key -> fixture path -> recorded gap
+    lanes: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, NodeCompatRecordedGap>,
+    >,
 }
 
 impl NodeCompatCorpusBaseline {
@@ -56,7 +111,7 @@ impl NodeCompatCorpusBaseline {
         self.lanes
             .get(lane_key)
             .and_then(|fixtures| fixtures.get(test_relative_path))
-            .map(String::as_str)
+            .map(|gap| gap.reason.as_str())
     }
 
     fn entry_count(&self) -> usize {
@@ -85,12 +140,14 @@ fn node_compat_corpus_baseline() -> &'static NodeCompatCorpusBaseline {
         for (lane_key, entries) in document.lanes {
             let fixtures = baseline.lanes.entry(lane_key.clone()).or_default();
             for entry in entries {
-                if let Some(previous) =
-                    fixtures.insert(entry.test_relative_path.clone(), entry.reason)
-                {
+                let gap = NodeCompatRecordedGap {
+                    reason: entry.reason,
+                    fixture_source_relative_path: entry.fixture_source_relative_path,
+                };
+                if let Some(previous) = fixtures.insert(entry.test_relative_path.clone(), gap) {
                     panic!(
-                        "the node_compat corpus baseline records `{}` twice for lane `{lane_key}`: {previous}",
-                        entry.test_relative_path
+                        "the node_compat corpus baseline records `{}` twice for lane `{lane_key}`: {}",
+                        entry.test_relative_path, previous.reason
                     );
                 }
             }
@@ -143,7 +200,7 @@ fn node_compat_observed_results_path(configured: &Path) -> PathBuf {
 
 fn record_node_compat_observed_result(
     lane_key: &str,
-    test_relative_path: &str,
+    fixture: NodeCompatFixtureIdentity<'_>,
     decision: &NodeCompatReconciliation,
 ) {
     let Some(path) = std::env::var_os(NODE_COMPAT_OBSERVED_RESULTS_ENV) else {
@@ -157,11 +214,17 @@ fn record_node_compat_observed_result(
     }
     let mut record = serde_json::json!({
         "lane": lane_key,
-        "test_relative_path": test_relative_path,
+        "test_relative_path": fixture.test_relative_path,
         "test_name": node_compat_current_test_name(),
         "rust_test_path": node_compat_current_test_path(),
         "outcome": decision.outcome_label(),
     });
+    if let Some(source) = fixture.vendored_source {
+        // Only a fixture read from the vendored tree carries this. A test that
+        // supplies its own inline source is a Nimbus probe, and leaving the
+        // field out is what stops the baseline from absorbing it.
+        record["fixture_source_relative_path"] = serde_json::Value::String(source.to_string());
+    }
     if let Some(detail) = decision.detail() {
         // Keep the line bounded. The full text is already in the failure output
         // and in the diagnostic artifact.
@@ -199,13 +262,19 @@ fn record_node_compat_observed_result(
 /// `execute_upstream_node_compat_test_with_extra_files`, which calls this.
 fn reconcile_node_compat_fixture_result(
     lane: Option<NodeCompatLane>,
-    test_relative_path: &str,
+    fixture: NodeCompatFixtureIdentity<'_>,
     result: std::result::Result<NodeCompatFixtureOutcome, String>,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
     let lane_key = node_compat_baseline_lane_key(lane);
-    let recorded_reason = node_compat_corpus_baseline().recorded_gap_reason(lane_key, test_relative_path);
-    let decision = decide_node_compat_fixture_result(lane_key, test_relative_path, recorded_reason, result);
-    record_node_compat_observed_result(lane_key, test_relative_path, &decision);
+    let recorded_reason =
+        node_compat_corpus_baseline().recorded_gap_reason(lane_key, fixture.test_relative_path);
+    let decision = decide_node_compat_fixture_result(
+        lane_key,
+        fixture.test_relative_path,
+        recorded_reason,
+        result,
+    );
+    record_node_compat_observed_result(lane_key, fixture, &decision);
     decision.into_result()
 }
 
@@ -317,13 +386,18 @@ fn node_compat_corpus_baseline_entries_name_a_vendored_fixture() {
     let fixture_root = node_compat_fixture_root();
     let mut missing = Vec::new();
     for (lane_key, fixtures) in &node_compat_corpus_baseline().lanes {
-        if lane_key == NODE_COMPAT_LANELESS_BASELINE_KEY {
-            continue;
-        }
-        for test_relative_path in fixtures.keys() {
-            let fixture = fixture_root.join(lane_key).join(test_relative_path);
-            if !fixture.exists() {
-                missing.push(format!("{lane_key}/{test_relative_path}"));
+        for (test_relative_path, gap) in fixtures {
+            if gap.fixture_source_relative_path.trim().is_empty() {
+                missing.push(format!(
+                    "{lane_key}/{test_relative_path}: names no vendored source"
+                ));
+                continue;
+            }
+            if !fixture_root.join(&gap.fixture_source_relative_path).exists() {
+                missing.push(format!(
+                    "{lane_key}/{test_relative_path}: {} is not vendored",
+                    gap.fixture_source_relative_path
+                ));
             }
         }
     }
@@ -413,7 +487,10 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
     for (lane_key, fixture, decision) in [
         (
             "node20",
-            "test/parallel/test-one.js",
+            NodeCompatFixtureIdentity::vendored(
+                "test/parallel/test-one.js",
+                "node20/test/parallel/test-one.js",
+            ),
             decide_node_compat_fixture_result(
                 "node20",
                 "test/parallel/test-one.js",
@@ -423,12 +500,25 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
         ),
         (
             "node22",
-            "test/parallel/test-two.js",
+            NodeCompatFixtureIdentity::vendored(
+                "test/parallel/test-two.js",
+                "node22/test/parallel/test-two.js",
+            ),
             decide_node_compat_fixture_result(
                 "node22",
                 "test/parallel/test-two.js",
                 Some("recorded"),
                 Err("still failing".to_string()),
+            ),
+        ),
+        (
+            "node24",
+            NodeCompatFixtureIdentity::synthetic("test/parallel/__nimbus-probe.js"),
+            decide_node_compat_fixture_result(
+                "node24",
+                "test/parallel/__nimbus-probe.js",
+                None,
+                Err("probe failed".to_string()),
             ),
         ),
     ] {
@@ -437,7 +527,7 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
 
     let raw = std::fs::read_to_string(&path).expect("the observed-results file should exist");
     let lines: Vec<&str> = raw.lines().collect();
-    assert_eq!(lines.len(), 2, "one line per fixture attempt: {raw}");
+    assert_eq!(lines.len(), 3, "one line per fixture attempt: {raw}");
 
     let first: serde_json::Value = serde_json::from_str(lines[0]).expect("line 1 is JSON");
     assert_eq!(first["lane"], "node20");
@@ -459,6 +549,21 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
     assert_eq!(second["lane"], "node22");
     assert_eq!(second["outcome"], "known_gap");
     assert_eq!(second["detail"], "still failing");
+    assert_eq!(
+        second["fixture_source_relative_path"],
+        "node22/test/parallel/test-two.js",
+        "the record must name where the fixture is vendored"
+    );
+
+    // A synthetic probe names no vendored source. The absent field is what
+    // keeps `refresh` from recording it, so the writer must leave it out
+    // rather than invent a path.
+    let third: serde_json::Value = serde_json::from_str(lines[2]).expect("line 3 is JSON");
+    assert_eq!(third["outcome"], "failed");
+    assert!(
+        third.get("fixture_source_relative_path").is_none(),
+        "a test that supplies its own source must record no vendored path: {third}"
+    );
 }
 
 #[test]
@@ -473,7 +578,14 @@ fn node_compat_observed_results_stay_silent_without_the_env_var() {
         Ok(node_compat_passing_outcome()),
     );
     // The call must not panic and must not create a file anywhere.
-    record_node_compat_observed_result("node20", "test/parallel/test-one.js", &decision);
+    record_node_compat_observed_result(
+        "node20",
+        NodeCompatFixtureIdentity::vendored(
+            "test/parallel/test-one.js",
+            "node20/test/parallel/test-one.js",
+        ),
+        &decision,
+    );
 }
 
 /// The CI upload step collects `target/node-compat/observed` from the

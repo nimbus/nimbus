@@ -37,6 +37,18 @@ FIXTURE_ROOT_RELATIVE_PATH = "crates/nimbus-runtime/src/runtime/tests/node_compa
 
 LANES = ("node20", "node22", "node24", "node26")
 
+# A fixture that is vendored once and runs without a declared lane. The Rust
+# reader already treats this as a real baseline key
+# (NODE_COMPAT_LANELESS_BASELINE_KEY in corpus_baseline.rs), so this side must
+# agree. Without it, a laneless failure has no legal way into the baseline, and
+# the lane stays red on a finding the documented workflow cannot record.
+LANELESS_LANE = "unspecified"
+
+# Every key the baseline document carries. The laneless bucket is a key like
+# any other, so the document always states all five and never leaves one
+# implicit.
+BASELINE_LANE_KEYS = (*LANES, LANELESS_LANE)
+
 # Outcomes that the Rust seam writes. See NodeCompatReconciliation.
 OUTCOME_FAILED = "failed"
 OUTCOME_KNOWN_GAP = "known_gap"
@@ -224,7 +236,7 @@ def command_refresh(args: argparse.Namespace) -> int:
         raise SystemExit("error: the observed-results document has no `results` list")
 
     seen_lanes = {str(r.get("lane")) for r in records if isinstance(r, dict)}
-    lanes_to_write = list(args.lane) if args.lane else list(LANES)
+    lanes_to_write = list(args.lane) if args.lane else list(BASELINE_LANE_KEYS)
     missing = [lane for lane in lanes_to_write if lane not in seen_lanes]
     if missing:
         # Refusing here is the point. Rewriting a lane from a run that never
@@ -239,7 +251,8 @@ def command_refresh(args: argparse.Namespace) -> int:
     baseline_path = root / BASELINE_RELATIVE_PATH
     existing = load_json(baseline_path) if baseline_path.is_file() else {"lanes": {}}
     lanes: dict[str, list[dict[str, str]]] = {
-        lane: list(existing.get("lanes", {}).get(lane, [])) for lane in LANES
+        lane: list(existing.get("lanes", {}).get(lane, []))
+        for lane in BASELINE_LANE_KEYS
     }
 
     # `verify` rejects a required-surface entry and a non-vendored entry, so
@@ -255,7 +268,7 @@ def command_refresh(args: argparse.Namespace) -> int:
     not_recordable: list[str] = []
 
     for lane in lanes_to_write:
-        entries: dict[str, str] = {}
+        entries: dict[str, tuple[str, str]] = {}
         for record in records:
             if not isinstance(record, dict) or str(record.get("lane")) != lane:
                 continue
@@ -264,23 +277,37 @@ def command_refresh(args: argparse.Namespace) -> int:
             test_path = str(record.get("test_relative_path", ""))
             if not test_path:
                 continue
+            # The posture document is lane-keyed, so the laneless bucket has
+            # no required surface and this lookup is empty for it.
             if test_path in surface.get(lane, set()):
                 not_recordable.append(
                     f"{lane}: {test_path} is required surface (v8_isolate_required). "
                     "Fix the runtime; the baseline may not record it."
                 )
                 continue
-            if not (fixture_root / lane / test_path).is_file():
+            source = str(record.get("fixture_source_relative_path", "")).strip()
+            if not source:
                 not_recordable.append(
-                    f"{lane}: {test_path} is not vendored under "
-                    f"{FIXTURE_ROOT_RELATIVE_PATH}/{lane}. A synthetic probe tests "
-                    "Nimbus behavior, not upstream compatibility, so fix it "
-                    "rather than record it."
+                    f"{lane}: {test_path} names no vendored source. A test that "
+                    "supplies its own source is a Nimbus probe, not a "
+                    "measurement of upstream compatibility, so fix it rather "
+                    "than record it."
                 )
                 continue
-            entries[test_path] = summarize_reason(record)
+            if not (fixture_root / source).is_file():
+                not_recordable.append(
+                    f"{lane}: {test_path} names {source}, which is not vendored "
+                    f"under {FIXTURE_ROOT_RELATIVE_PATH}. Vendor the fixture, or "
+                    "fix the test that points at nothing."
+                )
+                continue
+            entries[test_path] = (summarize_reason(record), source)
         lanes[lane] = [
-            {"test_relative_path": path, "reason": entries[path]}
+            {
+                "test_relative_path": path,
+                "fixture_source_relative_path": entries[path][1],
+                "reason": entries[path][0],
+            }
             for path in sorted(entries)
         ]
         print(f"{lane}: {len(lanes[lane])} recorded gaps")
@@ -372,7 +399,7 @@ def verify_baseline(root: Path) -> int:
     lanes = baseline.get("lanes")
     if not isinstance(lanes, dict):
         return fail(["`lanes` must be an object"])
-    for lane in LANES:
+    for lane in BASELINE_LANE_KEYS:
         if lane not in lanes:
             errors.append(f"lane `{lane}` is missing; write an empty list instead")
 
@@ -381,7 +408,7 @@ def verify_baseline(root: Path) -> int:
     total = 0
 
     for lane, entries in lanes.items():
-        if lane not in LANES:
+        if lane not in BASELINE_LANE_KEYS:
             errors.append(f"unknown lane `{lane}`")
             continue
         if not isinstance(entries, list):
@@ -414,17 +441,23 @@ def verify_baseline(root: Path) -> int:
                     "be recorded as a known gap. Fix the fixture, or "
                     "reclassify it through the posture first."
                 )
-            if not (fixture_root / lane / test_path).is_file():
+            source = str(entry.get("fixture_source_relative_path", "")).strip()
+            if not source:
                 errors.append(
-                    f"{lane}: {test_path} is recorded but not vendored under "
-                    f"{FIXTURE_ROOT_RELATIVE_PATH}/{lane}"
+                    f"{lane}: {test_path} has no fixture_source_relative_path. "
+                    "A recorded gap must name where its fixture is vendored."
+                )
+            elif not (fixture_root / source).is_file():
+                errors.append(
+                    f"{lane}: {test_path} names {source}, which is not vendored "
+                    f"under {FIXTURE_ROOT_RELATIVE_PATH}"
                 )
 
     if errors:
         return fail(errors)
     print(
         f"node-compat corpus baseline ok: {total} recorded gaps across "
-        f"{len(LANES)} lanes"
+        f"{len(BASELINE_LANE_KEYS)} lanes"
     )
     return 0
 
@@ -466,8 +499,8 @@ def main() -> int:
     refresh.add_argument(
         "--lane",
         action="append",
-        choices=LANES,
-        help="restrict the rewrite to one lane; repeatable",
+        choices=BASELINE_LANE_KEYS,
+        help="restrict the rewrite to one lane key; repeatable",
     )
     refresh.set_defaults(handler=command_refresh)
 

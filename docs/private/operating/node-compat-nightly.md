@@ -34,6 +34,15 @@ implement yet. A lane that requires every fixture to pass can never go green,
 and a permanently red lane cannot report a regression, because a regression
 looks exactly like the background failure.
 
+The document holds five lane keys: `node20`, `node22`, `node24`, `node26`, and
+`unspecified`. The last one holds the fixtures that are vendored once and run
+without a declared lane. It is a key like any other, and the document always
+states all five, even when a lane records nothing.
+
+Every entry names three things: the fixture path inside the runtime bundle
+(`test_relative_path`), where the fixture is vendored
+(`fixture_source_relative_path`), and the observed `reason`.
+
 The Rust seam
 (`crates/nimbus-runtime/src/runtime/tests/node/corpus_baseline.rs`) compares
 every observed result with the record:
@@ -60,6 +69,15 @@ Three properties make this a gate rather than a mute button:
    `docs/private/architecture/runtime/node-default-support-posture.json`. The
    required surface is the gate that already means something, and a baseline
    entry must not retire it.
+4. **Every recorded gap names a file that exists.** The seam writes the
+   vendored path it actually read, and both guards resolve that path under
+   `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures`. A test that
+   supplies its own source writes no path, so the baseline cannot absorb it.
+
+   Do not derive the vendored path from `test_relative_path`. The two differ.
+   A lane vendors some fixtures under its own directory, the shared tree
+   vendors others once at the fixture root, and a regression fixture can carry
+   a different file name. Only the seam knows which one it read.
 
 ## Refreshing the baseline
 
@@ -114,7 +132,8 @@ The refresh reports, and does not record, two kinds of observed failure:
 | Kind | Why it is not recordable |
 | --- | --- |
 | required surface (`v8_isolate_required`) | The gate that already means something must stay intact. Fix the runtime. |
-| a fixture that is not vendored | A synthetic `__nimbus-` probe tests Nimbus behavior, not upstream compatibility. Fix the probe or the runtime. |
+| a result with no `fixture_source_relative_path` | The test supplied its own source. A synthetic `__nimbus-` probe tests Nimbus behavior, not upstream compatibility. Fix the probe or the runtime. |
+| a recorded path that is not vendored | The named file is absent from the fixture tree. Vendor it, or fix the test that points at nothing. |
 
 Both keep the lane red until the runtime changes, which is the intended
 behavior. The refresh skips them so that it cannot write a baseline that

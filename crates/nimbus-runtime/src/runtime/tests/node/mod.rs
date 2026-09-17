@@ -411,7 +411,10 @@ fn fixture_requested_node_conditions_include_module_sync_when_require_module_is_
 #[test]
 fn node_compat_fixture_node_options_exposes_preserve_symlinks_flags() {
     let outcome = execute_upstream_node_compat_test_with_extra_files(
-        "test/parallel/__nimbus-preserve-symlinks-options-probe.js",
+        // This test supplies its own source, so no vendored fixture backs it.
+        NodeCompatFixtureIdentity::synthetic(
+            "test/parallel/__nimbus-preserve-symlinks-options-probe.js",
+        ),
         r#"
 // Flags: --preserve-symlinks --preserve-symlinks-main
 'use strict';
@@ -1804,7 +1807,7 @@ async fn invoke_node_compat_fixture_with_async_main_module(
 /// the only place that has to know about recorded gaps. The raw execution below
 /// stays free of that concern.
 fn execute_upstream_node_compat_test_with_extra_files(
-    test_relative_path: &str,
+    fixture: NodeCompatFixtureIdentity<'_>,
     test_source: &str,
     extra_files: &[(&str, &[u8])],
     capture_top_level_skip: bool,
@@ -1813,7 +1816,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
     postlude_script: Option<&str>,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
     let observed = execute_upstream_node_compat_test_with_extra_files_raw(
-        test_relative_path,
+        fixture.test_relative_path,
         test_source,
         extra_files,
         capture_top_level_skip,
@@ -1821,7 +1824,7 @@ fn execute_upstream_node_compat_test_with_extra_files(
         prelude_script,
         postlude_script,
     );
-    reconcile_node_compat_fixture_result(lane, test_relative_path, observed)
+    reconcile_node_compat_fixture_result(lane, fixture, observed)
 }
 
 fn execute_upstream_node_compat_test_with_extra_files_raw(
@@ -2534,7 +2537,10 @@ fn node_compat_harness_message_port_exit_criterion_blocks_unqualified_worker_pro
 #[test]
 fn node_compat_common_fixture_platform_booleans_track_process_platform() {
     execute_upstream_node_compat_test_with_extra_files(
-        "test/parallel/test-nimbus-common-platform-booleans.js",
+        // This test supplies its own source, so no vendored fixture backs it.
+        NodeCompatFixtureIdentity::synthetic(
+            "test/parallel/test-nimbus-common-platform-booleans.js",
+        ),
         r#"'use strict';
 
 const assert = require('assert');
@@ -2565,7 +2571,10 @@ assert.strictEqual(typeof common.isInsideDirWithUnusualChars, 'boolean');
 #[test]
 fn node20_gcm_implicit_short_tag_is_silent_without_pending_deprecation() {
     execute_upstream_node_compat_test_with_extra_files(
-        "test/parallel/test-nimbus-crypto-gcm-implicit-short-tag-silent.js",
+        // This test supplies its own source, so no vendored fixture backs it.
+        NodeCompatFixtureIdentity::synthetic(
+            "test/parallel/test-nimbus-crypto-gcm-implicit-short-tag-silent.js",
+        ),
         r#"'use strict';
 
 const assert = require('assert');
@@ -2593,7 +2602,10 @@ setImmediate(() => assert.strictEqual(dep0182Warnings, 0));
 #[test]
 fn node24_invalid_gcm_tag_does_not_consume_implicit_short_tag_warning() {
     execute_upstream_node_compat_test_with_extra_files(
-        "test/parallel/test-nimbus-crypto-gcm-invalid-tag-warning-order.js",
+        // This test supplies its own source, so no vendored fixture backs it.
+        NodeCompatFixtureIdentity::synthetic(
+            "test/parallel/test-nimbus-crypto-gcm-invalid-tag-warning-order.js",
+        ),
         r#"'use strict';
 
 const assert = require('assert');
@@ -2652,7 +2664,7 @@ fn execute_manifested_node_compat_test(
         .and_then(NodeCompatNamedPostludeBehavior::from_script)
         .or_else(|| default_postlude_behavior_for_fixture(test_relative_path));
     execute_upstream_node_compat_test_with_extra_files(
-        test_relative_path,
+        NodeCompatFixtureIdentity::vendored(test_relative_path, fixture_source_path),
         &test_source,
         &borrowed_extra_files,
         capture_top_level_skip,
@@ -2685,7 +2697,7 @@ fn execute_manifested_node_compat_test_with_lane_extra_dirs(
     let resolved_prelude_behavior = default_prelude_behavior_for_fixture(test_relative_path);
     let resolved_postlude_behavior = default_postlude_behavior_for_fixture(test_relative_path);
     execute_upstream_node_compat_test_with_extra_files(
-        test_relative_path,
+        NodeCompatFixtureIdentity::vendored(test_relative_path, fixture_source_path),
         &test_source,
         &borrowed_extra_files,
         true,
