@@ -4,14 +4,16 @@ Status: `active` | Owner: this plan | Created: 2026-09-16
 Baseline: main @ `f743836c6`
 Proof root: `proof/node-compat-corpus-trust/`
 
-Next action: NCT4 - seed the baseline from a full instrumented CI run
+Next action: NCT8 - delete this plan when the pull request merges
 
 ## Current resume state
 
-- Updated: 2026-09-16. Active task: NCT4.
-- Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `f743836c6`.
-- Dirty files owned by this task: none yet.
-- Fail-before evidence is captured. See `proof/node-compat-corpus-trust/nct0-baseline.md`.
+- Updated: 2026-09-16. Active task: NCT8.
+- Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `361c5ee98`.
+- Dirty files owned by this task: none.
+- NCT0 through NCT7 are done. The baseline is seeded from run 35167962571.
+- The `rust-corpus` lane stays red on 15 node20 required-surface fixtures.
+  Fixing the runtime is the next work, and it is outside this plan.
 - Running commands: none.
 
 ## Outcome
@@ -84,7 +86,7 @@ After:
 | NCT1 | Split release-train freshness from measurement | done | `actionlint` clean; 3 jobs; the 5 retained local commands all exit 0 |
 | NCT2 | Emit observed results from the Rust corpus lane | done | `proof/node-compat-corpus-trust/nct2-nct3-reconciliation.md`; JSONL verified on a real fixture run |
 | NCT3 | Add the expectation baseline and the reconciliation seam | done | 8 unit tests pass; 3 end-to-end fixture scenarios pass; all 4 policy branches named |
-| NCT4 | Seed the baseline from a full instrumented run | in_progress | Must run on ubuntu-24.04: a macOS-seeded baseline would not match the gate platform |
+| NCT4 | Seed the baseline from a full instrumented run | done | Run 35167962571: 12 shards, 6,930 fixtures, 1,204 failures, 1,188 recorded; 16 named refusals and no unresolved path |
 | NCT5 | Close the unexpected-pass loop for ignored watchpoints | done | `corpus-baseline-reconciliation` job feeds `--observed-results` to the 150-entry catalog |
 | NCT6 | Guard the baseline | done | 4 guard rejections proven; runs in the PR lane via `make node-compat-baseline-verify` |
 | NCT7 | Document the contract | done | `docs/private/operating/node-compat-nightly.md`; routed from the operating README; `check-docs.sh` PASS |
@@ -158,6 +160,9 @@ After:
   3. Record the producing run in the baseline header.
 - Acceptance: a second full run is green against the committed baseline.
 - Verification: the Node Compatibility workflow run is green.
+- Result: done, with one stated exception. The baseline holds 1,188 gaps from
+  run 35167962571. 15 node20 fixtures on the required surface keep the lane
+  red, which is the gate working as designed. The runtime fix owns them.
 
 ### NCT5 Close the unexpected-pass loop for ignored watchpoints
 
