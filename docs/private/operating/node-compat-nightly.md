@@ -202,17 +202,29 @@ killed at 135 seconds. A baseline seeded from one such run records where the
 kill landed, and the next run reaches further and reports the fixtures behind
 the old kill point as fresh regressions.
 
-Two guards prevent it:
+Three guards prevent it:
 
 | Guard | Where | What it does |
 | --- | --- | --- |
 | `slow-timeout = { period = "10m", terminate-after = 1 }` | `.config/nextest.toml`, for `runtime::tests::node_compat::` | gives a batch the time it needs. The largest batch holds 312 fixtures and needs about three minutes |
-| `batch_start` and `batch_complete` records | `corpus_baseline.rs`, checked by `corpus_baseline.py aggregate` | refuses a measurement in which any batch started and did not finish |
+| `batch_start`, `batch_complete`, and `batch_abort` records | `corpus_baseline.rs`, checked by `corpus_baseline.py aggregate` | refuses a measurement in which a batch started and neither finished nor unwound |
+| The record-count witness | `corpus_baseline.rs`, read by the batch loop in `mod.rs` | records a fixture that stopped before the baseline seam, so the count the batch reports always matches the shard |
 
-A batch writes one record when it starts and one when its fixture loop ends.
-The end also carries how many fixtures the loop executed, so a shard that lost
-records is refused as well. The timeout reduces how often the refusal fires; it
-does not hide the refusal.
+A batch writes one record when it starts and one of two records when it ends.
+It writes `batch_complete` when the fixture loop runs to its end, with how many
+fixtures the loop executed. It writes `batch_abort` when the loop exits early,
+because a panic or an early return unwinds through the drop of the scope. A
+kill is the third state: the process dies without unwinding, so the start
+stands alone. That third state is how the aggregate tells a loud failure, which
+the test runner already reports, from a silent truncation.
+
+The witness closes a second hole. A fixture whose vendored source is missing
+panics while it reads that source, which is before the seam that writes the
+evidence. The batch then counts the fixture as executed and the shard never
+names it. The loop now reads the record count on both sides of each fixture,
+and it records the failure itself when the count did not move. That record goes
+through the ordinary baseline decision, so a recorded gap stays a recorded gap
+and a new hole becomes a named regression.
 
 When the merge refuses a truncated measurement, read which batch was cut short,
 then rerun the corpus. Do not seed from it. If the same batch is cut short

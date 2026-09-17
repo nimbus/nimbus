@@ -217,6 +217,8 @@ thread_local! {
 /// record, and the aggregator refuses the measurement instead of trimming it.
 struct NodeCompatBatchScope {
     key: String,
+    /// Set by `finish`. Without it the drop records an abort.
+    completed: bool,
 }
 
 impl NodeCompatBatchScope {
@@ -247,20 +249,35 @@ impl NodeCompatBatchScope {
             *active = Some(key.clone());
         });
         record_node_compat_batch_start(&key);
-        Self { key }
+        Self {
+            key,
+            completed: false,
+        }
     }
 
     /// Records that the fixture loop ran to its end.
     ///
     /// This is a method rather than a drop, because a drop also runs on an
     /// early exit and the record must mean that the loop did not take one.
-    fn finish(self, fixture_count: usize) {
+    fn finish(mut self, fixture_count: usize) {
         record_node_compat_batch_completion(&self.key, fixture_count);
+        self.completed = true;
     }
 }
 
 impl Drop for NodeCompatBatchScope {
+    /// Records an abort when the batch ends without `finish`.
+    ///
+    /// A panic in the fixture loop, or an early return, unwinds through here.
+    /// Both stop the batch, but nextest reports the test as failed, so the
+    /// operator can see what happened. A kill is different: the process dies
+    /// without unwinding, so no record of any kind follows the start. That
+    /// missing third record is how the aggregator tells a loud failure from a
+    /// silent truncation.
     fn drop(&mut self) {
+        if !self.completed {
+            record_node_compat_batch_abort(&self.key);
+        }
         NODE_COMPAT_ACTIVE_BATCH.with(|active| *active.borrow_mut() = None);
     }
 }
@@ -336,6 +353,19 @@ fn record_node_compat_batch_completion(batch_key: &str, fixture_count: usize) {
     }));
 }
 
+/// Records that a batch stopped before the end of its fixture loop.
+///
+/// The aggregator treats this as a measured, reported failure rather than a
+/// truncation, because the test process stayed alive long enough to unwind.
+fn record_node_compat_batch_abort(batch_key: &str) {
+    append_node_compat_observed_record(&serde_json::json!({
+        "kind": "batch_abort",
+        "batch": batch_key,
+        "test_name": node_compat_current_test_name(),
+        "rust_test_path": node_compat_current_test_path(),
+    }));
+}
+
 fn record_node_compat_observed_result(
     lane_key: &str,
     fixture: NodeCompatFixtureIdentity<'_>,
@@ -366,6 +396,57 @@ fn record_node_compat_observed_result(
         record["batch"] = serde_json::Value::String(batch_key);
     }
     append_node_compat_observed_record(&record);
+    NODE_COMPAT_FIXTURE_RECORD_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Counts the fixture results this process has recorded.
+///
+/// A batch loop reads it on both sides of one fixture. The count does not move
+/// when the fixture stops before the baseline seam, and the loop then records
+/// the failure itself. Without that, the batch counts the fixture as executed
+/// while the evidence never mentions it.
+static NODE_COMPAT_FIXTURE_RECORD_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+fn node_compat_fixture_record_count() -> u64 {
+    NODE_COMPAT_FIXTURE_RECORD_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// What a batch loop must do with a fixture that may have recorded nothing.
+#[derive(Debug, PartialEq, Eq)]
+enum NodeCompatUnmeasuredFixture {
+    /// The fixture reached the baseline seam and recorded its own result.
+    AlreadyRecorded,
+    /// The failure was recorded here, and the corpus baseline does not hold it.
+    Regression,
+    /// The failure was recorded here, and the corpus baseline already holds it.
+    KnownGap,
+}
+
+/// Records a fixture that stopped before it reached the baseline seam.
+///
+/// `records_before` is `node_compat_fixture_record_count()` from before the
+/// fixture ran. A fixture whose vendored source is missing panics while it
+/// reads that source, which is well before the seam that writes the evidence.
+/// The failure still reaches the operator through the batch summary, so the
+/// hole is silent only in the evidence, which is where it does the damage: the
+/// shard then holds fewer fixtures than the batch executed.
+///
+/// The failure goes through the ordinary baseline decision, so a recorded gap
+/// stays a recorded gap.
+fn record_node_compat_unmeasured_fixture(
+    records_before: u64,
+    lane: Option<NodeCompatLane>,
+    fixture: NodeCompatFixtureIdentity<'_>,
+    error: String,
+) -> NodeCompatUnmeasuredFixture {
+    if node_compat_fixture_record_count() != records_before {
+        return NodeCompatUnmeasuredFixture::AlreadyRecorded;
+    }
+    match reconcile_node_compat_fixture_result(lane, fixture, Err(error)) {
+        Ok(outcome) if outcome.is_known_gap() => NodeCompatUnmeasuredFixture::KnownGap,
+        _ => NodeCompatUnmeasuredFixture::Regression,
+    }
 }
 
 /// Compares one observed fixture result with the recorded baseline.
@@ -642,11 +723,13 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
         record_node_compat_observed_result(lane_key, fixture, &decision);
     }
 
-    let raw = std::fs::read_to_string(&path).expect("the observed-results file should exist");
-    let lines: Vec<&str> = raw.lines().collect();
-    assert_eq!(lines.len(), 3, "one line per fixture attempt: {raw}");
+    let lines = node_compat_records_written_by(
+        &path,
+        "node_compat_observed_results_append_one_json_line_per_fixture",
+    );
+    assert_eq!(lines.len(), 3, "one line per fixture attempt: {lines:?}");
 
-    let first: serde_json::Value = serde_json::from_str(lines[0]).expect("line 1 is JSON");
+    let first = &lines[0];
     assert_eq!(first["lane"], "node20");
     assert_eq!(first["test_relative_path"], "test/parallel/test-one.js");
     assert_eq!(first["outcome"], "passed");
@@ -666,7 +749,7 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
         "the full module path is recorded beside the bare name"
     );
 
-    let second: serde_json::Value = serde_json::from_str(lines[1]).expect("line 2 is JSON");
+    let second = &lines[1];
     assert_eq!(second["lane"], "node22");
     assert_eq!(second["outcome"], "known_gap");
     assert_eq!(second["detail"], "still failing");
@@ -679,12 +762,28 @@ fn node_compat_observed_results_append_one_json_line_per_fixture() {
     // A synthetic probe names no vendored source. The absent field is what
     // keeps `refresh` from recording it, so the writer must leave it out
     // rather than invent a path.
-    let third: serde_json::Value = serde_json::from_str(lines[2]).expect("line 3 is JSON");
+    let third = &lines[2];
     assert_eq!(third["outcome"], "failed");
     assert!(
         third.get("fixture_source_relative_path").is_none(),
         "a test that supplies its own source must record no vendored path: {third}"
     );
+}
+
+/// Reads back only the records that the calling test wrote.
+///
+/// `NODE_COMPAT_OBSERVED_RESULTS_ENV` is process-wide, and the suite runs
+/// tests in parallel, so another test can append to the same shard between two
+/// of these writes. Every record names its own Rust test, so filtering on that
+/// keeps each test reading its own measurement.
+#[cfg(test)]
+fn node_compat_records_written_by(path: &std::path::Path, test_name: &str) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .expect("the observed-results file should exist")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("each line is JSON"))
+        .filter(|record| record["test_name"] == test_name)
+        .collect()
 }
 
 #[test]
@@ -731,12 +830,15 @@ fn node_compat_batch_records_bracket_the_fixtures_they_measure() {
         ),
     );
 
-    let raw = std::fs::read_to_string(&path).expect("the observed-results file should exist");
-    let lines: Vec<serde_json::Value> = raw
-        .lines()
-        .map(|line| serde_json::from_str(line).expect("each line is JSON"))
-        .collect();
-    assert_eq!(lines.len(), 4, "start, fixture, completion, fixture: {raw}");
+    let lines = node_compat_records_written_by(
+        &path,
+        "node_compat_batch_records_bracket_the_fixtures_they_measure",
+    );
+    assert_eq!(
+        lines.len(),
+        4,
+        "start, fixture, completion, fixture: {lines:?}"
+    );
 
     assert_eq!(lines[0]["kind"], "batch_start");
     let batch_key = lines[0]["batch"].as_str().expect("the start names a batch");
@@ -766,6 +868,101 @@ fn node_compat_batch_records_bracket_the_fixtures_they_measure() {
         lines[3].get("batch").is_none(),
         "the scope ended, so this fixture belongs to no batch: {}",
         lines[3]
+    );
+}
+
+#[test]
+fn node_compat_a_batch_that_unwinds_records_an_abort() {
+    let _suite = acquire_runtime_suite_lock_blocking();
+    let tempdir = tempfile::tempdir().expect("a temp dir should be available");
+    let path = tempdir.path().join("observed.jsonl");
+    // SAFETY: the runtime suite serializes env mutation through this guard.
+    let _guard = ScopedProcessEnvVar::set(
+        NODE_COMPAT_OBSERVED_RESULTS_ENV,
+        path.to_str().expect("a UTF-8 temp path"),
+    );
+
+    {
+        // The scope ends without `finish`, which is what an early return or a
+        // panic in the fixture loop does.
+        let _scope = NodeCompatBatchScope::start("streams", "node20");
+    }
+
+    let lines =
+        node_compat_records_written_by(&path, "node_compat_a_batch_that_unwinds_records_an_abort");
+    assert_eq!(lines.len(), 2, "start and abort: {lines:?}");
+    assert_eq!(lines[0]["kind"], "batch_start");
+    assert_eq!(lines[1]["kind"], "batch_abort");
+    assert_eq!(
+        lines[1]["batch"], lines[0]["batch"],
+        "the abort closes the batch that started"
+    );
+}
+
+#[test]
+fn node_compat_a_fixture_that_records_nothing_is_recorded_by_the_batch() {
+    let _suite = acquire_runtime_suite_lock_blocking();
+    let tempdir = tempfile::tempdir().expect("a temp dir should be available");
+    let path = tempdir.path().join("observed.jsonl");
+    // SAFETY: the runtime suite serializes env mutation through this guard.
+    let _guard = ScopedProcessEnvVar::set(
+        NODE_COMPAT_OBSERVED_RESULTS_ENV,
+        path.to_str().expect("a UTF-8 temp path"),
+    );
+
+    // A fixture whose vendored source is missing panics before the baseline
+    // seam, so the count does not move and the batch records the failure.
+    let before = node_compat_fixture_record_count();
+    let outcome = record_node_compat_unmeasured_fixture(
+        before,
+        None,
+        NodeCompatFixtureIdentity::vendored(
+            "test/parallel/test-missing.js",
+            "node20/test/parallel/test-missing.js",
+        ),
+        "should read: No such file or directory".to_string(),
+    );
+    assert_eq!(outcome, NodeCompatUnmeasuredFixture::Regression);
+
+    // A fixture that reached the seam already recorded itself, so the batch
+    // must not record it twice.
+    let before = node_compat_fixture_record_count();
+    record_node_compat_observed_result(
+        "node20",
+        NodeCompatFixtureIdentity::vendored(
+            "test/parallel/test-one.js",
+            "node20/test/parallel/test-one.js",
+        ),
+        &decide_node_compat_fixture_result(
+            "node20",
+            "test/parallel/test-one.js",
+            None,
+            Ok(node_compat_passing_outcome()),
+        ),
+    );
+    let outcome = record_node_compat_unmeasured_fixture(
+        before,
+        None,
+        NodeCompatFixtureIdentity::vendored(
+            "test/parallel/test-one.js",
+            "node20/test/parallel/test-one.js",
+        ),
+        "unused".to_string(),
+    );
+    assert_eq!(outcome, NodeCompatUnmeasuredFixture::AlreadyRecorded);
+
+    let lines = node_compat_records_written_by(
+        &path,
+        "node_compat_a_fixture_that_records_nothing_is_recorded_by_the_batch",
+    );
+    let paths: Vec<&str> = lines
+        .iter()
+        .map(|record| record["test_relative_path"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        paths,
+        vec!["test/parallel/test-missing.js", "test/parallel/test-one.js"],
+        "each fixture appears exactly once: {lines:?}"
     );
 }
 

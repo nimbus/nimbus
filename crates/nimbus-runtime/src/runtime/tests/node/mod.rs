@@ -3627,6 +3627,25 @@ fn run_manifested_subset_for_lane(
     run_manifested_subset_for_lane_excluding(batch_name, lane, fixtures, &[]);
 }
 
+/// Records a batch fixture that stopped before it reached the baseline seam.
+///
+/// The batch owns the lane and the vendored path, so it can name the fixture
+/// the way the evidence names it. See `record_node_compat_unmeasured_fixture`.
+fn record_unmeasured_batch_fixture(
+    records_before: u64,
+    lane: NodeCompatLane,
+    test_relative_path: &str,
+    fixture_source_path: &str,
+    error: &str,
+) -> NodeCompatUnmeasuredFixture {
+    record_node_compat_unmeasured_fixture(
+        records_before,
+        Some(lane),
+        NodeCompatFixtureIdentity::vendored(test_relative_path, fixture_source_path),
+        error.to_string(),
+    )
+}
+
 fn run_manifested_subset_for_lane_excluding(
     batch_name: &str,
     lane: NodeCompatLane,
@@ -3657,6 +3676,7 @@ fn run_manifested_subset_for_lane_excluding(
                 fixture.test_relative_path
             );
             executed += 1;
+            let records_before = node_compat_fixture_record_count();
             let snapshot = NodeCompatHostProcessSnapshot::capture();
             let execution = panic::catch_unwind(AssertUnwindSafe(|| {
                 execute_manifested_node_compat_test(
@@ -3682,12 +3702,40 @@ fn run_manifested_subset_for_lane_excluding(
                         passed += 1;
                     }
                 }
-                Ok(Err(error)) => failures.push(format!("{}: {error}", fixture.test_relative_path)),
-                Err(payload) => failures.push(format!(
-                    "{}: panic: {}",
-                    fixture.test_relative_path,
-                    panic_payload_to_string(payload)
-                )),
+                Ok(Err(error)) => {
+                    let error = format!("{}: {error}", fixture.test_relative_path);
+                    if record_unmeasured_batch_fixture(
+                        records_before,
+                        lane,
+                        fixture.test_relative_path,
+                        fixture_source_path.as_ref(),
+                        &error,
+                    ) == NodeCompatUnmeasuredFixture::KnownGap
+                    {
+                        known_gaps.push(fixture.test_relative_path);
+                    } else {
+                        failures.push(error);
+                    }
+                }
+                Err(payload) => {
+                    let error = format!(
+                        "{}: panic: {}",
+                        fixture.test_relative_path,
+                        panic_payload_to_string(payload)
+                    );
+                    if record_unmeasured_batch_fixture(
+                        records_before,
+                        lane,
+                        fixture.test_relative_path,
+                        fixture_source_path.as_ref(),
+                        &error,
+                    ) == NodeCompatUnmeasuredFixture::KnownGap
+                    {
+                        known_gaps.push(fixture.test_relative_path);
+                    } else {
+                        failures.push(error);
+                    }
+                }
             }
         }
     }

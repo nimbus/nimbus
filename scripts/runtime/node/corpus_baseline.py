@@ -60,6 +60,7 @@ OUTCOME_SKIPPED = "skipped"
 # fixture. `corpus_baseline.rs` writes them.
 RECORD_KIND_BATCH_START = "batch_start"
 RECORD_KIND_BATCH_COMPLETE = "batch_complete"
+RECORD_KIND_BATCH_ABORT = "batch_abort"
 
 # An entry is recorded for a fixture that did not pass. `known_gap` is included
 # because a fixture already recorded keeps failing and must stay recorded.
@@ -178,10 +179,16 @@ def check_batch_completeness(records: list[dict[str, Any]]) -> None:
     run records where the kill landed. The next run reaches further, and it
     reports the fixtures behind the old kill point as fresh regressions.
 
-    A batch writes one record when it starts and one when its fixture loop
-    ends. A start without an end is a batch that did not finish. The end also
-    carries how many fixtures the loop executed, so a shard that lost records
-    is refused as well.
+    A batch writes one record when it starts and one when it ends. The end is
+    either a completion, when the fixture loop ran to its last fixture, or an
+    abort, when a panic or an early return unwound out of the loop. An abort is
+    a reported failure: the test process stayed alive, and the runner names the
+    failing test. A kill leaves neither record, because the process dies
+    without unwinding, and that silence is what this check refuses.
+
+    A completion also carries how many fixtures the loop executed, so a shard
+    that lost records is refused as well. An aborted batch carries no count,
+    because the loop never reached its end.
 
     On 2026-09-16 run 35171841643 recorded 6908 fixtures and run 35167962571
     recorded 6930, with 99 fixtures only in the first and 77 only in the
@@ -190,6 +197,7 @@ def check_batch_completeness(records: list[dict[str, Any]]) -> None:
     """
     started: dict[str, dict[str, Any]] = {}
     completed: dict[str, dict[str, Any]] = {}
+    aborted: dict[str, dict[str, Any]] = {}
     observed: Counter[str] = Counter()
     for record in records:
         kind = str(record.get("kind", ""))
@@ -200,18 +208,27 @@ def check_batch_completeness(records: list[dict[str, Any]]) -> None:
             started[batch] = record
         elif kind == RECORD_KIND_BATCH_COMPLETE:
             completed[batch] = record
+        elif kind == RECORD_KIND_BATCH_ABORT:
+            aborted[batch] = record
         elif not kind:
             observed[batch] += 1
 
     errors: list[str] = []
     for batch in sorted(started):
-        if batch not in completed:
-            test_name = str(started[batch].get("test_name", "?"))
+        if batch in completed or batch in aborted:
+            continue
+        test_name = str(started[batch].get("test_name", "?"))
+        errors.append(
+            f"{batch}: the batch started and neither finished nor unwound. "
+            f"Its test ({test_name}) measured {observed[batch]} fixture(s) "
+            "and the process was killed, most likely by the nextest timeout. "
+            "The rest of the batch is missing from this measurement."
+        )
+    for batch in sorted(aborted):
+        if batch not in started:
             errors.append(
-                f"{batch}: the batch started and never finished. Its test "
-                f"({test_name}) measured {observed[batch]} fixture(s) and was "
-                "killed, most likely by the nextest timeout. The rest of the "
-                "batch is missing from this measurement."
+                f"{batch}: the batch unwound and never started. The shard "
+                "holding its first records is missing."
             )
     for batch in sorted(completed):
         if batch not in started:
@@ -235,7 +252,10 @@ def check_batch_completeness(records: list[dict[str, Any]]) -> None:
             "regressions on the next run. Rerun the corpus.\n"
             + "\n".join(f"  {line}" for line in errors)
         )
-    print(f"verified {len(completed)} complete batch(es)")
+    print(
+        f"verified {len(completed)} complete batch(es) "
+        f"and {len(aborted)} reported failure(s)"
+    )
 
 
 def merge_observed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

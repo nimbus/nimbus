@@ -542,7 +542,12 @@ const NETWORKING_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-dgram-bind-fd-error.js"),
     shared_official_batch_case!("test/parallel/test-dgram-bind-fd.js"),
     shared_official_batch_case!("test/parallel/test-dgram-bind-socket-close-before-lookup.js"),
-    shared_official_batch_case!("test/parallel/test-dgram-blocklist.js"),
+    // Upstream added this fixture after v20.20.2, so the node20 lane has
+    // nothing to vendor and nothing to run.
+    node22_only_batch_case!(
+        "test/parallel/test-dgram-blocklist.js",
+        "node22/test/parallel/test-dgram-blocklist.js"
+    ),
     shared_official_batch_case!("test/parallel/test-dgram-close-during-bind.js"),
     shared_official_batch_case!("test/parallel/test-dgram-close-in-listening.js"),
     shared_official_batch_case!("test/parallel/test-dgram-close-signal.js"),

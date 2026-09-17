@@ -4352,7 +4352,6 @@ const HTTP_REMAINING_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-http-pipeline-assertionerror-finish.js",
     "test/parallel/test-http-pipeline-socket-parser-typeerror.js",
     "test/parallel/test-http-raw-headers.js",
-    "test/parallel/test-http-rawheaders-limit.js",
     "test/parallel/test-http-readable-data-event.js",
     "test/parallel/test-http-remove-connection-header-persists-connection.js",
     "test/parallel/test-http-remove-header-stays-removed.js",

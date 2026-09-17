@@ -33,6 +33,10 @@ def complete(batch, fixture_count, test_name="a_batch_test"):
     }
 
 
+def abort(batch, test_name="a_batch_test"):
+    return {"kind": "batch_abort", "batch": batch, "test_name": test_name}
+
+
 def fixture(batch=None, path="test/parallel/test-one.js", lane="node20"):
     record = {"lane": lane, "test_relative_path": path, "outcome": "passed"}
     if batch is not None:
@@ -64,6 +68,7 @@ class CheckBatchCompletenessTests(unittest.TestCase):
         self.assertIn("streams/node20", message)
         self.assertIn("node20_streams_subset", message)
         self.assertIn("measured 1 fixture(s)", message)
+        self.assertIn("neither finished nor unwound", message)
 
     def test_refuses_a_batch_that_lost_records(self):
         records = [
@@ -91,6 +96,33 @@ class CheckBatchCompletenessTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             corpus_baseline.check_batch_completeness([start("networking/node22")])
         self.assertIn("measured 0 fixture(s)", str(caught.exception))
+
+    def test_accepts_a_batch_that_unwound_out_of_its_loop(self):
+        # A panic in the fixture loop stops the batch, but the runner names the
+        # failing test, so the operator can see what happened. Only silence is
+        # a truncation.
+        records = [
+            start("streams/node20"),
+            fixture("streams/node20", "test/parallel/test-one.js"),
+            abort("streams/node20"),
+        ]
+        corpus_baseline.check_batch_completeness(records)
+
+    def test_an_abort_carries_no_fixture_count(self):
+        # The loop never reached its end, so there is no count to compare and
+        # the shard is accepted with whatever the batch measured.
+        records = [
+            start("streams/node20"),
+            fixture("streams/node20", "test/parallel/test-one.js"),
+            fixture("streams/node20", "test/parallel/test-two.js"),
+            abort("streams/node20"),
+        ]
+        corpus_baseline.check_batch_completeness(records)
+
+    def test_refuses_an_abort_whose_start_is_missing(self):
+        with self.assertRaises(SystemExit) as caught:
+            corpus_baseline.check_batch_completeness([abort("streams/node20")])
+        self.assertIn("never started", str(caught.exception))
 
     def test_a_fixture_outside_a_batch_is_not_attributed_to_one(self):
         records = [
