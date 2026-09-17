@@ -19,6 +19,18 @@ if (__nimbusCompatibilityMatch !== null) {
       return __nimbusWasmStreamingFetchModule.handleWasmStreaming(source, rid);
     },
   );
+  // Node 20 resolves the default stream highWaterMark to 16 KiB. Node 22
+  // raised the non-Windows default to 64 KiB, and the polyfill carries only
+  // the later value. `setDefaultHighWaterMark` is the public Node API for
+  // this default, so a Node20 target configures it here instead of forking
+  // the stream implementation. Every default-highWaterMark path reads the
+  // same binding, so this reaches Readable, Writable, Duplex, Transform, and
+  // the socket types built on them. Later targets keep the upstream default.
+  if (Number.parseInt(__nimbusCompatibilityMatch[1], 10) === 20) {
+    const { setDefaultHighWaterMark: __nimbusSetDefaultHighWaterMark } = Deno.core
+      .loadExtScript("ext:deno_node/internal/streams/state.js");
+    __nimbusSetDefaultHighWaterMark(false, 16 * 1024);
+  }
 }
 delete globalThis.__nimbusRefreshNodeRuntimeOpState;
 delete globalThis.__nimbusDenoFetchModule;

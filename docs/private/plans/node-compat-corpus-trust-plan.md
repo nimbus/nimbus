@@ -11,8 +11,12 @@ corpus. That defect owns the block, and it is outside this plan.
 ## Current resume state
 
 - Updated: 2026-09-17. Active task: NCT4.
-- Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `954181ec3`.
-- Dirty files owned by this task: none.
+- Worktree: `scratchpad/wt-node20`. Branch: `fix/node20-required-surface-fixtures`.
+  Base `d93408e19`. A second worktree `scratchpad/wt-node-compat` holds the
+  earlier branch `ci/node-compat-corpus-trust` at HEAD `954181ec3`.
+- Dirty files owned by this task: the 5 files of the node20 lane-wiring change.
+- Two flakes found while measuring that change are now tracked as NCT9 and
+  NCT10. Both reproduce with the change stashed, so neither belongs to it.
 - NCT0 through NCT3 and NCT5 through NCT7 are done.
 - NCT4 waits on a runtime fix that is now written, on branch
   `fix/runtime-executor-shutdown-bound`. Run 35187917432 kills 24 batch tests at
@@ -108,10 +112,11 @@ After:
 | NCT5 | Close the unexpected-pass loop for ignored watchpoints | done | `corpus-baseline-reconciliation` job feeds `--observed-results` to the 150-entry catalog |
 | NCT6 | Guard the baseline | done | 4 guard rejections proven; runs in the PR lane via `make node-compat-baseline-verify` |
 | NCT7 | Document the contract | done | `docs/private/operating/node-compat-nightly.md`; routed from the operating README; `check-docs.sh` PASS |
+| NCT9 | Fix the http2 teardown RST race | todo | Diagnosed: `socketOnData` in the vendored `ext/node/polyfills/http2.ts` destroys the socket once nghttp2 wants neither read nor write, without waiting for the peer FIN, so the peer reads ECONNRESET. 1 failure in 19 instrumented runs. Fix lives in `nimbus/deno` and needs a tag bump |
+| NCT10 | Fix the V8 backing-store heap corruption | todo | Diagnosed: 2 of 3 native aborts on 2026-09-17 are `POINTER_BEING_FREED_WAS_NOT_ALLOCATED` inside `v8::internal::BackingStore::~BackingStore()` during isolate teardown under `V8WorkerRuntimePool::return_runtime_with_authority`. A third abort shows the same corruption during snapshot deserialization at isolate creation. Reports kept in the session scratchpad `crash-evidence/` |
 | NCT8 | Cleanup | todo | |
 
 ## Tasks
-
 ### NCT0 Capture fail-before evidence
 
 - Problem: the nightly has never been green. The cause was not recorded.
@@ -211,6 +216,47 @@ After:
 - Steps: write the runbook and route it from
   `docs/private/operating/README.md`.
 
+### NCT9 Fix the http2 teardown RST race
+
+`socketOnData` ends and then destroys the session socket as soon as
+`!handle.hasPendingData() && !this.destroyed`. `destroy()` closes the file
+descriptor when our writable side drains. When the peer has not closed its
+side, the kernel answers the next peer segment with RST, and the peer reports
+`read ECONNRESET`. The adjacent graceful path `finishSessionClose` already
+delays its destroy behind `setImmediate` and guards it with `if (!session.closed)`.
+The `socketOnData` path has no equivalent guard.
+
+The defect is lane independent. The fixture is a `shared_official_batch_case!`,
+`http2.ts` holds no version branch, and the fixture transfers headers only.
+
+Success criteria:
+- The teardown waits for the peer FIN, with a bounded `unref()` fallback timer.
+- The full http2 fixture set passes on all four lanes, including
+  `test-http2-zero-length-header.js`, which relies on the current destroy.
+- A new `v2.9.6-nimbus.6` tag, the pin updates, and the lock update land together.
+
+### NCT10 Fix the V8 backing-store heap corruption
+
+`nimbus-runtime-worker-0` aborts inside `v8::internal::BackingStore::~BackingStore()`
+with `POINTER_BEING_FREED_WAS_NOT_ALLOCATED`. libmalloc reports a pointer it
+never allocated, so this is heap corruption or a double free of an ArrayBuffer
+backing store, not a benign race. Both teardown aborts reach the destructor
+through the `ArrayBufferSweeper`, one from `Heap::TearDown` and one from the
+final mark-compact in `Heap::StartTearDown`. The third abort shows
+`ReadReadOnlyHeapRef` failing during snapshot deserialization at isolate
+creation, which is consistent with the same corruption surfacing earlier.
+
+`SharedArrayBufferStore::default()` is built per runtime in
+`crates/nimbus-runtime/src/runtime/driver/construction.rs:260`, so a store
+shared across isolates is excluded. No nimbus crate creates a backing store
+directly.
+
+Success criteria:
+- The corrupting writer is named, with an address-sanitizer run or an
+  equivalent instrumented build as proof.
+- The node20 networking subset runs 50 times with 0 aborts.
+
+
 ### NCT8 Cleanup
 
 - Trigger: the final pull request of this plan merges.
@@ -243,6 +289,7 @@ if a task needs a new schema, a new public contract, or an owner decision.
 | 2026-09-17 | NCT4 | Found why the bound did not stop the truncation, and corrected an earlier reading. The bound is reached, not avoided: 24 batch tests hang and die at 600 s, and an earlier "0 timeouts" reading was a grep artifact, because the log carries ANSI codes between `TIMEOUT` and `[`. A sampled stack puts the block in `drop_in_place<NimbusRuntime>`, not in the bounded fixture call: `RuntimeExecutorInner::drop` joins a worker that sits inside `block_on` of a job which never observes the shutdown cancel | runs 35178467471 and 35187917432 both time out the same 24 tests at 600 s; 15 batches are refused by name, and each names the fixture after its last record (`test-worker-message-port.js` stops `loader-context` in all 4 lanes, `test-net-listen-invalid-port.js` stops `net-diagnostic-core` in 2, and 6 batches record 0 fixtures); the node20 batch reproduces on this machine and stops on the same fixture; `sample` shows `facade.rs:157` joining `worker_loop::cooperative::execution::admit_job_inner` parked in the tokio I/O driver |
 | 2026-09-17 | NCT4 | Corrected the root cause and fixed it. The block is not the admission permit and not the executor drop itself: a stack sample of the hung process puts worker-0 inside `admit_job_inner` -> `invoke_direct`, with its tokio runtime parked in `kevent` and nothing left to wake it. A runtime invocation enforces its timeouts with a V8 termination, which reaches running JavaScript only, so a guest parked in the event loop never ends. `invoke_bundle_unmanaged` now waits for the guest and for the invocation stop signal together | `test-worker-message-port.js` alone reproduced the hang, and it now fails in 34 s with `runtime system wall time timed out after 30s` and a diagnostic artifact, instead of killing the process at 600 s; new test `runtime_times_out_an_invocation_that_parks_in_the_event_loop` passes in 4 s and, with `invocation.rs` stashed, hangs and is killed at 135 s |
 | 2026-09-17 | NCT4 | Proved the truncation is gone end to end. The node20 `loader-context` batch runs to completion and reports a measurement, instead of dying at the runner bound | batch finished in 133.3 s with 40 named fixture gaps and no truncation refusal, where every earlier run was killed at 600 s; `test-worker-message-port.js` and `test-inspector-open.js` each record `runtime system wall time timed out after 30s` with a diagnostic artifact; `test-crypto-dh-leak.js` is a newly visible unexpected pass that the truncated runs could never reach; `make test-rust-runtime` 521 passed, 0 failed, 94 ignored |
+| 2026-09-17 | NCT4 | Found that the node20 watchpoints never ran on a Node20 runtime. Each single-fixture `node20_*` test called `run_node_compat_watchpoint`, which sends no lane, and a missing lane resolves to `RuntimeCompatibilityTarget::Node24`. The lane thus ran node20 fixture files on a Node24 runtime and recorded each version difference as a permanent node20 gap. The 23 tests now call `run_node_compat_watchpoint_for_lane` with `NodeCompatLane::Node20`, and `post_bootstrap.js` sets the Node20 default stream highWaterMark to 16 KiB with the public `setDefaultHighWaterMark` API, guarded on the compatibility major that the file already reads | 15 of the 23 node20 watchpoints pass, against 7 before; 8 `#[ignore]` attributes removed and 8 stale reasons replaced with the measured failure; `rust-watchpoints.json` 150 -> 142 entries, node20 23 -> 15, and node22/node24/node26 hold at 63/44/20 with no entry added; `make test-rust-runtime` 521 passed, 0 failed, 94 ignored; the 6 node20 lane subsets give the same 3 passed and 3 failed as baseline `d93408e19`, with identical per-subset counts (streams-and-local-io 291 passed/13 gaps/7 failed, loader-context 131/26/14, networking 244/11/9); `test-http2-compat-serverrequest-host.js` failed once with `read ECONNRESET` in 1 of 4 runs and passed in the other 3, and it sends headers only, so the default highWaterMark cannot reach it; `make node-compat-required-surface-blockers` node22 0 and node24 0 |
 
 ## NCT4 platform constraint
 
