@@ -622,3 +622,55 @@ export {};
     assert_eq!(host.calls(), 1);
     assert_eq!(runtime.policy.metrics_snapshot().timed_out_invocations, 0);
 }
+
+#[tokio::test]
+async fn runtime_times_out_an_invocation_that_parks_in_the_event_loop() {
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    // The guest runs no JavaScript while it waits, so the V8 termination that
+    // the watchdog sends has nothing to interrupt. Only a bound on the wait
+    // itself ends this invocation.
+    std::fs::write(
+        &bundle_path,
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  await new Promise((resolve) => setTimeout(resolve, 3_600_000));
+  return {};
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let mut limits = run_to_completion_snapshot_runtime_test_limits();
+    limits.execution_timeout = std::time::Duration::from_millis(50);
+    let runtime = NimbusRuntime::with_limits(
+        Arc::new(RecordingHost::default()),
+        limits,
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let bundle = RuntimeBundle::new(&bundle_path);
+    let request = InvocationRequest {
+        kind: InvocationKind::Query,
+        function_name: "messages:list".to_string(),
+        args: Value::Null,
+        page_size: None,
+        cursor: None,
+        auth: None,
+        services: Default::default(),
+    };
+    let invocation = runtime.invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(30), invocation)
+        .await
+        .expect("a parked invocation should end at its execution timeout")
+        .expect_err("a parked invocation should report a timeout");
+
+    match error {
+        NimbusRuntimeError::ExecutionTimeout(timeout) => {
+            assert_eq!(timeout, std::time::Duration::from_millis(50));
+        }
+        other => panic!("unexpected timeout error: {other}"),
+    }
+    assert_eq!(runtime.policy.metrics_snapshot().timed_out_invocations, 1);
+}

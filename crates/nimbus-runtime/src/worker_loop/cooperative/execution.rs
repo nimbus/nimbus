@@ -5,13 +5,26 @@ use tracing::debug;
 
 use crate::error::NimbusRuntimeError;
 use crate::executor::{
-    RuntimeWorkerJob, RuntimeWorkerQueue, SharedInvocationPermit, SharedInvocationPermitAcquire,
+    RuntimeWorkerJob, RuntimeWorkerQueue, RuntimeWorkerShutdown, SharedInvocationPermit,
+    SharedInvocationPermitAcquire,
 };
 use crate::host::HostCallCancellation;
 use crate::limits::RuntimePolicy;
 
 use super::backend::{CooperativeBackendDriver, CooperativeBackendInvocationStart};
 use super::{CooperativeInvocation, CooperativeWorkerLoop};
+
+/// How a worker acquires the initial permit for a job.
+///
+/// Blocking admission waits for the permit, so it carries the shutdown signal
+/// that it must observe while it waits. Without that signal a worker stays in
+/// the acquire after the executor closes, and the executor drop cannot join it.
+/// Non-blocking admission returns at once and needs no signal.
+#[derive(Clone, Copy)]
+pub(super) enum CooperativeAdmissionMode<'a> {
+    Blocking(&'a RuntimeWorkerShutdown),
+    NonBlocking,
+}
 
 enum CooperativeAdmissionStart<S> {
     Slot(S),
@@ -78,8 +91,14 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
         (job, result, ready_jobs)
     }
 
-    pub(super) fn admit_job(&mut self, queue: &Arc<dyn RuntimeWorkerQueue>, job: RuntimeWorkerJob) {
-        let deferred = self.admit_job_inner(queue, job, true);
+    pub(super) fn admit_job(
+        &mut self,
+        queue: &Arc<dyn RuntimeWorkerQueue>,
+        job: RuntimeWorkerJob,
+        shutdown: &RuntimeWorkerShutdown,
+    ) {
+        let deferred =
+            self.admit_job_inner(queue, job, CooperativeAdmissionMode::Blocking(shutdown));
         debug_assert!(
             deferred.is_none(),
             "blocking cooperative admission should not defer jobs"
@@ -94,14 +113,14 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
         queue: &Arc<dyn RuntimeWorkerQueue>,
         job: RuntimeWorkerJob,
     ) -> Option<RuntimeWorkerJob> {
-        self.admit_job_inner(queue, job, false)
+        self.admit_job_inner(queue, job, CooperativeAdmissionMode::NonBlocking)
     }
 
     fn admit_job_inner(
         &mut self,
         queue: &Arc<dyn RuntimeWorkerQueue>,
         mut job: RuntimeWorkerJob,
-        allow_blocking_acquire: bool,
+        mode: CooperativeAdmissionMode<'_>,
     ) -> Option<RuntimeWorkerJob> {
         let cancellation_for_metrics = job.cancellation.clone();
         let job_policy = job.policy.clone();
@@ -144,22 +163,39 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
         let start = worker_runtime.block_on(async {
             let execution_started_at = Instant::now();
             let mut permit_for_acquire = permit.clone();
-            if allow_blocking_acquire {
-                permit_for_acquire
-                    .acquire_initial(job.enqueued_at)
-                    .await
-                    .map_err(|error| (error, execution_started_at))?;
-            } else {
-                match permit_for_acquire
-                    .try_acquire_initial(job.enqueued_at)
-                    .map_err(|error| (error, execution_started_at))?
-                {
-                    SharedInvocationPermitAcquire::Acquired => {}
-                    SharedInvocationPermitAcquire::WouldBlock => {
-                        return Ok::<_, (NimbusRuntimeError, Instant)>((
-                            CooperativeAdmissionStart::Deferred,
-                            execution_started_at,
-                        ));
+            match mode {
+                CooperativeAdmissionMode::Blocking(shutdown) => {
+                    let acquire = permit_for_acquire.acquire_initial(job.enqueued_at);
+                    tokio::pin!(acquire);
+                    tokio::select! {
+                        biased;
+                        acquired = &mut acquire => {
+                            acquired.map_err(|error| (error, execution_started_at))?;
+                        }
+                        () = shutdown.cancelled() => {
+                            return Err((
+                                NimbusRuntimeError::Contract(
+                                    "runtime executor closed while the invocation waited for an \
+                                     admission permit"
+                                        .to_string(),
+                                ),
+                                execution_started_at,
+                            ));
+                        }
+                    }
+                }
+                CooperativeAdmissionMode::NonBlocking => {
+                    match permit_for_acquire
+                        .try_acquire_initial(job.enqueued_at)
+                        .map_err(|error| (error, execution_started_at))?
+                    {
+                        SharedInvocationPermitAcquire::Acquired => {}
+                        SharedInvocationPermitAcquire::WouldBlock => {
+                            return Ok::<_, (NimbusRuntimeError, Instant)>((
+                                CooperativeAdmissionStart::Deferred,
+                                execution_started_at,
+                            ));
+                        }
                     }
                 }
             }

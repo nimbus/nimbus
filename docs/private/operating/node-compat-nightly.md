@@ -231,26 +231,41 @@ then rerun the corpus. Do not seed from it. If the same batch is cut short
 again, the batch outgrew its bound: measure it, then raise the bound in
 `.config/nextest.toml` in a reviewed change.
 
-### The known remaining cause
+### The cause of the truncations, and its fix
 
-A refusal today names a hung fixture, not a slow batch. Raising the bound does
-not help, because the process is blocked, not busy.
+A refusal named a hung fixture, not a slow batch. Raising the bound did not
+help, because the process was blocked, not busy.
 
-The harness already bounds each fixture with a wall clock, and that bound
-fires. The hang is after it. `NimbusRuntime` drops at the end of every fixture,
-`RuntimeExecutorInner::drop` cancels its shutdown token and then joins its
-worker threads without a bound, and a worker that sits inside `block_on` of a
-job which never observes the cancel never returns from the join. The test
-runner then kills the process at 10 minutes and the batch loses the rest of its
+The harness bounds each fixture with a wall clock, and that bound fired. The
+hang was after it, and it was an invocation that never ended. A runtime
+invocation carries an execution timeout and a system timeout, and the watchdog
+enforces both with a V8 termination. That termination reaches running
+JavaScript only. A guest that parks in the event loop, on work that never
+arrives, runs no JavaScript, so nothing stopped it. The worker thread stayed
+inside the invocation, `NimbusRuntime` dropped at the end of the fixture, and
+`RuntimeExecutorInner::drop` joined that worker without a bound. The test
+runner then killed the process at 10 minutes and the batch lost the rest of its
 fixtures.
 
-24 batch tests end this way in every run. Each one names its own fixture: the
-one that follows its last record. `test/parallel/test-worker-message-port.js`
-is the first of them, it stops the `loader-context` batch in all four lanes,
-and it reproduces on a developer machine.
+24 batch tests ended this way in every run. Each one named its own fixture: the
+one that followed its last record. `test/parallel/test-worker-message-port.js`
+was the first of them, it stopped the `loader-context` batch in all four lanes,
+and it reproduced on a developer machine.
 
-The runtime executor owns that defect. Until it is fixed, the corpus cannot
-produce a complete measurement and the baseline cannot be re-seeded.
+Two bounds close it, both in `crates/nimbus-runtime`:
+
+| Bound | Where | What it does |
+| --- | --- | --- |
+| The invocation stop signal | `runtime/driver/invocation.rs` | `invoke_bundle_unmanaged` waits for the guest and for the invocation stop signal together. Only the execution timeout, the system timeout, the heap limit, and an external cancellation cancel that signal, and each one sends the V8 termination first. The signal arm is reached only after the guest has no more work to do on this thread, which is the state the termination cannot leave. The error it returns carries the text that `classify_runtime_error` reads, so the operator sees the same timeout, heap-limit, or cancellation error as a guest that stops inside JavaScript |
+| The worker shutdown signal | `executor/queue/shutdown.rs` | `RuntimeWorkerShutdown` also has an awaitable form. A worker that waits for an admission permit observes it, so the worker leaves when the executor closes and the executor drop can join it |
+
+`test/parallel/test-worker-message-port.js` now ends at its own timeout with a
+diagnostic artifact, and the batch measures every fixture behind it. The node20
+`loader-context` batch completes in 133 s, where it was killed at 600 s. It
+still fails, on 40 named fixture gaps, which is the measurement the lane must
+report. Two of those gaps are the parked guests themselves,
+`test-worker-message-port.js` and `test-inspector-open.js`, and each one now
+records a wall-time timeout and a diagnostic artifact.
 
 ## Prerequisites and cleanup
 

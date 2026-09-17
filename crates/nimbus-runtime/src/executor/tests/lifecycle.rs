@@ -295,3 +295,82 @@ async fn timed_out_worker_invocations_record_runtime_pool_replacements() {
     assert_eq!(metrics.runtime_pool_hits, 1);
     assert_eq!(metrics.runtime_pool_replacements, 1);
 }
+
+/// Waits until one invocation sits in the initial acquire, or until the bound
+/// expires. Returns whether the worker reached the acquire.
+async fn wait_for_queued_admission(policy: &Arc<RuntimePolicy>) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        if policy.metrics_snapshot().queued_invocations == 1 {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    false
+}
+
+#[tokio::test]
+async fn executor_drop_completes_while_a_worker_waits_for_an_admission_permit() {
+    let _test_lock = runtime_executor_test_lock().lock().await;
+    let mut limits = crate::RuntimeLimits::application_node22();
+    limits.execution_model = crate::RuntimeExecutionModel::CooperativeLocker;
+    limits.max_concurrent_runtime_instances = 1;
+    limits.worker_threads = 1;
+    let policy = Arc::new(RuntimePolicy::new(limits));
+
+    // PRODUCTION anchor: NodeFull installed first, exactly as
+    // V8RuntimeBackendFactory::create. RuntimeExecutor::new builds the worker
+    // V8 pool, which asserts the anchor floor, so the install must finish
+    // before the executor exists.
+    crate::runtime::driver::anchor::enable_and_arm_nodefull_anchor();
+
+    let executor = RuntimeExecutor::new(policy.clone());
+
+    // Hold the one runtime instance permit. The worker then stops inside the
+    // initial acquire, before it reads the bundle.
+    let _held_permit = policy
+        .runtime_instance_semaphore()
+        .acquire_owned()
+        .await
+        .expect("the runtime instance semaphore should be open");
+
+    let request = test_request("messages:list");
+    let context = test_context(&request, "req-drop-while-waiting");
+    let returned_early = tokio::select! {
+        result = executor.invoke_on_worker(
+            NimbusRuntime::with_policy(
+                Arc::new(NoopHost),
+                policy.clone(),
+                crate::RuntimeEgressPosture::CoarsePermissions,
+            ),
+            RuntimeBundle::new("unused.mjs"),
+            request,
+            context,
+            None,
+        ) => Some(result),
+        reached = wait_for_queued_admission(&policy) => {
+            assert!(
+                reached,
+                "the worker should reach the initial acquire within the bound"
+            );
+            None
+        }
+    };
+    assert!(
+        returned_early.is_none(),
+        "the invocation should wait for the held permit, but it returned {returned_early:?}"
+    );
+    assert_eq!(
+        policy.metrics_snapshot().worker_dispatched_invocations,
+        0,
+        "the worker should not pass the initial acquire"
+    );
+
+    // The caller has abandoned the invocation, which is what a timed-out
+    // invocation leaves behind. The drop must still join the worker.
+    let dropped = tokio::task::spawn_blocking(move || drop(executor));
+    tokio::time::timeout(std::time::Duration::from_secs(30), dropped)
+        .await
+        .expect("the executor drop should not block on a worker that waits for a permit")
+        .expect("the executor drop should not panic");
+}

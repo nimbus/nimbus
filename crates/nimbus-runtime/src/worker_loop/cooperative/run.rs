@@ -138,7 +138,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
                     let deferred = if self.scheduler.has_parked() {
                         self.try_admit_job(queue, job)
                     } else {
-                        self.admit_job(queue, job);
+                        self.admit_job(queue, job, shutdown);
                         None
                     };
                     if let Some(job) = deferred {
@@ -167,7 +167,7 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
 
             self.drain_deferred_v8_runtime_drops_if_idle();
             match queue.recv_blocking()? {
-                RuntimeWorkerMessage::Job(job) => self.admit_job(queue, *job),
+                RuntimeWorkerMessage::Job(job) => self.admit_job(queue, *job, shutdown),
                 RuntimeWorkerMessage::Control(control) => self.process_control(control),
             }
         }

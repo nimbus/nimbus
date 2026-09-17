@@ -306,19 +306,36 @@ impl NimbusRuntime {
                 }
             };
             tokio::pin!(invoke);
+            let invoke_until_terminated = async {
+                // `cancellation_signal` is the invocation's own stop signal. Only
+                // the execution timeout, the system timeout, the heap limit, and
+                // an external cancellation cancel it, and each one calls
+                // `terminate_execution` first. That call reaches running
+                // JavaScript only, so a guest that parks in the event loop never
+                // observes it. This arm is the bound for that guest: it is
+                // reached only after `invoke` reports that it has no more work to
+                // do on this thread, which is the state a V8 termination cannot
+                // leave.
+                tokio::select! {
+                    biased;
+                    result = &mut invoke => result,
+                    () = cancellation_signal.cancelled() => Err(terminated_while_parked_error()),
+                }
+            };
+            tokio::pin!(invoke_until_terminated);
             match external_cancellation {
                 Some(external_cancellation) => {
                     tokio::select! {
-                        result = &mut invoke => result,
+                        result = &mut invoke_until_terminated => result,
                         _ = external_cancellation.cancelled() => {
                             external_cancellation_triggered.store(true, Ordering::SeqCst);
                             cancellation_signal.cancel();
                             let _ = isolate_handle.terminate_execution();
-                            invoke.await
+                            invoke_until_terminated.await
                         }
                     }
                 }
-                None => invoke.await,
+                None => invoke_until_terminated.await,
             }
         };
 
@@ -498,6 +515,23 @@ impl NimbusRuntime {
             owner_lease,
         })
     }
+}
+
+/// The error for an invocation that the runtime stopped while its event loop
+/// was parked.
+///
+/// `classify_runtime_error` reads the trigger flags and replaces this error with
+/// the timeout, heap-limit, or cancellation error that the operator sees for a
+/// guest that stops inside JavaScript. It matches on
+/// `NimbusRuntimeError::JavaScript`, and its heap-limit arm also reads the
+/// "execution terminated" text, so both are part of the contract of this
+/// message.
+fn terminated_while_parked_error() -> NimbusRuntimeError {
+    NimbusRuntimeError::JavaScript(
+        "execution terminated: the runtime stopped the invocation while its event loop waited \
+         for work that did not arrive"
+            .to_string(),
+    )
 }
 
 fn wait_until_idle_pending_error(error: &NimbusRuntimeError) -> bool {
