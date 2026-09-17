@@ -14,17 +14,22 @@ corpus. That defect owns the block, and it is outside this plan.
 - Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `954181ec3`.
 - Dirty files owned by this task: none.
 - NCT0 through NCT3 and NCT5 through NCT7 are done.
-- NCT4 is blocked, and the block is now named. Run 35187917432 kills 24 batch
-  tests at the 600 s bound. They hang, so a larger bound cannot help.
-  `RuntimeExecutorInner::drop` joins its workers without a bound, and a worker
-  inside `block_on` of a job that never observes the shutdown cancel never
-  returns. `crates/nimbus-runtime/src/executor/facade.rs:157` owns the defect,
-  not this plan.
+- NCT4 waits on a runtime fix that is now written, on branch
+  `fix/runtime-executor-shutdown-bound`. Run 35187917432 kills 24 batch tests at
+  the 600 s bound. They hang, so a larger bound cannot help. An earlier reading
+  named `RuntimeExecutorInner::drop` and the admission permit as the cause. That
+  reading was wrong, and a stack sample of the hung process corrects it: the
+  worker is inside the invocation itself. A runtime invocation enforces its
+  execution and system timeouts with a V8 termination, which reaches running
+  JavaScript only, so a guest that parks in the event loop is bounded by
+  nothing. `crates/nimbus-runtime/src/runtime/driver/invocation.rs` owns that
+  defect, not this plan.
 - The measurement machinery is complete and correct. It refuses the partial
   measurement and names all 15 truncated batches and the fixture that follows
   each one's last record.
-- Next: land the trust work, then fix the executor drop and the 15 node20
-  required-surface fixtures. Re-seeding waits on the executor fix.
+- Next: merge the runtime fix, re-seed the baseline from a complete
+  measurement, then take the 15 node20 required-surface fixtures. Re-seeding
+  waits on the runtime fix.
 - The `rust-corpus` lane stays red on 15 node20 required-surface fixtures.
   Fixing the runtime is the next work, and it is outside this plan.
 - Running commands: none.
@@ -236,6 +241,8 @@ if a task needs a new schema, a new public contract, or an owner decision.
 | 2026-09-17 | NCT4 | Corrected 5 batch declarations against the official upstream identity catalogs. Each named a fixture source for a lane that never shipped it | `test-dgram-blocklist.js` and `test-os-constants-signals.js` arrived after v20.20.2 (node20 source now `None`); `test-fs-promises-writefile-typedarray.js` and `test-fs-promises-writefile-with-fd.js` left after v22.23.2 (new `node20_node22_exclusive_batch_case!`); `test-http-rawheaders-limit.js` is in no Node release and is removed, and `rust-watchpoints.json` is re-synced at 150 entries; catalog lookup uses the `parallel/...` prefix, and the result matched the vendored tree exactly |
 | 2026-09-17 | NCT4 | Repaired a latent test-isolation race that the new drop records made visible. `NODE_COMPAT_OBSERVED_RESULTS_ENV` is process-wide, so a concurrent test appended to the file a test was reading back. Read-back now filters on the recorded Rust test name | `node_compat_observed_results_append_one_json_line_per_fixture` flaked in 2 of 8 runs before the fix; 85 passed, 1 failed (the pre-existing `__nimbus-preserve-symlinks-options-probe`), 2 ignored, stable across 10 consecutive runs; `cargo fmt`/`clippy` clean; `python3 -m unittest scripts.test_node_compat_corpus_baseline` 10 tests OK; `node-compat-validate-fixtures` and `node-compat-validate-watchpoints` (150 entries) clean; `node-compat-baseline-verify` ok at 1,188 gaps; `actionlint` clean; `check-docs.sh` PASS |
 | 2026-09-17 | NCT4 | Found why the bound did not stop the truncation, and corrected an earlier reading. The bound is reached, not avoided: 24 batch tests hang and die at 600 s, and an earlier "0 timeouts" reading was a grep artifact, because the log carries ANSI codes between `TIMEOUT` and `[`. A sampled stack puts the block in `drop_in_place<NimbusRuntime>`, not in the bounded fixture call: `RuntimeExecutorInner::drop` joins a worker that sits inside `block_on` of a job which never observes the shutdown cancel | runs 35178467471 and 35187917432 both time out the same 24 tests at 600 s; 15 batches are refused by name, and each names the fixture after its last record (`test-worker-message-port.js` stops `loader-context` in all 4 lanes, `test-net-listen-invalid-port.js` stops `net-diagnostic-core` in 2, and 6 batches record 0 fixtures); the node20 batch reproduces on this machine and stops on the same fixture; `sample` shows `facade.rs:157` joining `worker_loop::cooperative::execution::admit_job_inner` parked in the tokio I/O driver |
+| 2026-09-17 | NCT4 | Corrected the root cause and fixed it. The block is not the admission permit and not the executor drop itself: a stack sample of the hung process puts worker-0 inside `admit_job_inner` -> `invoke_direct`, with its tokio runtime parked in `kevent` and nothing left to wake it. A runtime invocation enforces its timeouts with a V8 termination, which reaches running JavaScript only, so a guest parked in the event loop never ends. `invoke_bundle_unmanaged` now waits for the guest and for the invocation stop signal together | `test-worker-message-port.js` alone reproduced the hang, and it now fails in 34 s with `runtime system wall time timed out after 30s` and a diagnostic artifact, instead of killing the process at 600 s; new test `runtime_times_out_an_invocation_that_parks_in_the_event_loop` passes in 4 s and, with `invocation.rs` stashed, hangs and is killed at 135 s |
+| 2026-09-17 | NCT4 | Proved the truncation is gone end to end. The node20 `loader-context` batch runs to completion and reports a measurement, instead of dying at the runner bound | batch finished in 133.3 s with 40 named fixture gaps and no truncation refusal, where every earlier run was killed at 600 s; `test-worker-message-port.js` and `test-inspector-open.js` each record `runtime system wall time timed out after 30s` with a diagnostic artifact; `test-crypto-dh-leak.js` is a newly visible unexpected pass that the truncated runs could never reach; `make test-rust-runtime` 521 passed, 0 failed, 94 ignored |
 
 ## NCT4 platform constraint
 
