@@ -3781,6 +3781,7 @@ fn run_node_compat_watchpoint_batch(
         "node26" => NodeCompatLane::Node26,
         other => panic!("unsupported node_compat watchpoint lane `{other}`"),
     };
+    let batch_scope = NodeCompatBatchScope::start(batch_name, lane_name);
     let mut failures = Vec::new();
 
     for test_relative_path in fixture_paths {
@@ -3803,6 +3804,7 @@ fn run_node_compat_watchpoint_batch(
             ));
         }
     }
+    batch_scope.finish(fixture_paths.len());
 
     if !failures.is_empty() {
         panic!(
@@ -3821,6 +3823,7 @@ fn run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
     extra_dirs: &[&str],
 ) {
     let lane_name = node_compat_lane_name(lane);
+    let batch_scope = NodeCompatBatchScope::start(batch_name, lane_name);
     let mut failures = Vec::new();
     let mut passed_paths = Vec::new();
     let mut skipped_paths = Vec::new();
@@ -3873,6 +3876,8 @@ fn run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
             }
         }
     }
+
+    batch_scope.finish(fixture_paths.len());
 
     eprintln!(
         "node_compat {batch_name} {lane_name} summary: selected={}, passed={}, skipped={}, known gaps={}, failed={}",
@@ -3975,6 +3980,12 @@ pub(super) fn collect_seeded_slice_observed_result_records(
     for lane_plan in plan.lanes {
         let lane = node_compat_lane_from_manifest_name(lane_plan.lane)?;
         let lane_name = node_compat_lane_name(lane);
+        // An error below returns early, and the scope then ends without its
+        // completion record. That is the intent: a lane that stopped partway
+        // measured part of its slice, and the aggregator must refuse it.
+        let batch_scope =
+            NodeCompatBatchScope::start(&format!("report-live/{family}:{slice}"), lane_name);
+        let fixture_count = lane_plan.fixtures.len();
         let mut passed = 0usize;
         let mut skipped = 0usize;
         let mut failed = 0usize;
@@ -4068,6 +4079,7 @@ pub(super) fn collect_seeded_slice_observed_result_records(
                 },
             );
         }
+        batch_scope.finish(fixture_count);
 
         eprintln!(
             "node_compat report live {family}:{slice} {lane_name} summary -> passed: {passed}, skipped: {skipped}, failed: {failed}",

@@ -234,7 +234,18 @@ impl NodeCompatBatchScope {
             node_compat_current_test_path(),
             NEXT_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        NODE_COMPAT_ACTIVE_BATCH.with(|active| *active.borrow_mut() = Some(key.clone()));
+        NODE_COMPAT_ACTIVE_BATCH.with(|active| {
+            let mut active = active.borrow_mut();
+            // One batch at a time. A nested batch would take the mark from the
+            // outer one, and the fixtures after the inner batch would then be
+            // recorded as belonging to no batch at all.
+            assert!(
+                active.is_none(),
+                "node_compat batch `{key}` started inside batch `{}`",
+                active.as_deref().unwrap_or_default()
+            );
+            *active = Some(key.clone());
+        });
         record_node_compat_batch_start(&key);
         Self { key }
     }
@@ -756,6 +767,13 @@ fn node_compat_batch_records_bracket_the_fixtures_they_measure() {
         "the scope ended, so this fixture belongs to no batch: {}",
         lines[3]
     );
+}
+
+#[test]
+#[should_panic(expected = "started inside batch")]
+fn node_compat_a_nested_batch_is_refused() {
+    let _outer = NodeCompatBatchScope::start("outer", "node20");
+    let _inner = NodeCompatBatchScope::start("inner", "node20");
 }
 
 #[test]
