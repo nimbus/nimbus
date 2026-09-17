@@ -63,7 +63,41 @@ jobs:
           tool: nextest@0.9.143
           fallback: none
 
+      # `RUSTC_WRAPPER: sccache` makes every cargo command depend on the
+      # sccache server, and the server depends on the Actions cache. When that
+      # service returns 503, cargo exits before it compiles anything.
+      #
+      # On 2026-09-16 partition 4 of 6 died this way in under a second with
+      # "Server startup failed: cache storage failed to read ... Egress is over
+      # the account limit". The other five partitions ran normally, so the run
+      # produced a partial measurement rather than an obvious outage.
+      #
+      # A compiler cache is an optimization. It must never decide whether this
+      # lane produces evidence, so a server that will not start is downgraded
+      # to a slower build instead of a dead job.
+      - name: Confirm sccache can serve this job
+        run: |
+          for attempt in 1 2 3; do
+            if sccache --start-server >/dev/null 2>&1 \
+              || sccache --show-stats >/dev/null 2>&1; then
+              echo "sccache is serving this job"
+              exit 0
+            fi
+            echo "sccache did not start (attempt ${attempt} of 3)"
+            sccache --stop-server >/dev/null 2>&1 || true
+            if [ "${attempt}" -lt 3 ]; then
+              sleep "$((attempt * 10))"
+            fi
+          done
+          echo "::warning::sccache could not start. Building without it is slower but still produces the measurement."
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+
+      # NCT2: each fixture appends one JSON object here. nextest runs every
+      # test in its own process, so an in-memory buffer would not survive. The
+      # shards merge in the corpus-baseline-reconciliation job.
       - name: Run Rust Node compatibility corpus
+        env:
+          NIMBUS_NODE_COMPAT_OBSERVED_RESULTS: target/node-compat/observed/partition-${{ strategy.job-index }}.jsonl
         run: >
           cargo nextest run -p nimbus-runtime --lib
           runtime::tests::node_compat::
@@ -73,6 +107,150 @@ jobs:
           --failure-output immediate-final
           --success-output never
           --final-status-level slow
+
+      # NCT5: the 150 cataloged watchpoints are #[ignore]d because they are
+      # expected to fail, so the run above never executes them and the
+      # unexpected-pass check had nothing to read. Measure them here.
+      #
+      # A test result is data for this step, not its verdict: the gate is
+      # `watchpoints.py validate --observed-results` in the next job, which
+      # fails when a cataloged watchpoint passes. nextest returns 0 when every
+      # test passed and 100 when at least one failed, and both are valid
+      # measurements. Any other exit code is a build or harness failure, and it
+      # still stops the job.
+      - name: Measure the ignored watchpoints
+        if: always()
+        env:
+          NIMBUS_NODE_COMPAT_OBSERVED_RESULTS: target/node-compat/observed/watchpoints-${{ strategy.job-index }}.jsonl
+        run: |
+          set +e
+          cargo nextest run -p nimbus-runtime --lib \
+            runtime::tests::node_compat:: \
+            --run-ignored only \
+            --partition hash:${{ matrix.partition }} \
+            --test-threads 1 \
+            --no-fail-fast \
+            --success-output never \
+            --failure-output never
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ] && [ "$status" -ne 100 ]; then
+            echo "::error::nextest exited $status, which is not a test result" >&2
+            exit "$status"
+          fi
+          echo "watchpoint measurement finished with nextest status $status"
+
+      # The corpus lane can fail, and its measurement is exactly what the next
+      # job needs in that case. Uploading on failure is not a way to ignore the
+      # failure: the job still reports its own status.
+      #
+      # `if-no-files-found: error` is the point of this step. On 2026-09-16 the
+      # shard path was relative, the test process resolved it under the crate
+      # directory, this step found an empty directory, and `warn` reported
+      # success while uploading nothing.
+      #
+      # When every partition does that, the merge step still fails, because
+      # `aggregate` refuses an input that does not exist. The dangerous case is
+      # partial: if one partition of six uploads nothing and five upload
+      # shards, the merge succeeds, and the fixtures of the missing partition
+      # are simply absent. Nothing reports them, so an unmeasured fixture reads
+      # exactly like a fixture with no finding. Failing here names the
+      # partition that measured nothing.
+      - name: Upload observed corpus results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-compat-observed-${{ strategy.job-index }}
+          path: target/node-compat/observed
+          if-no-files-found: error
+
+  # NCT5: this job turns the corpus measurement into a reconciliation report.
+  #
+  # `watchpoints.py validate --observed-results` has always known how to detect
+  # an unexpected pass: a cataloged #[ignore] watchpoint that now passes. No
+  # producer of that file existed, so the check ran blind against 150 cataloged
+  # entries. The corpus lane now produces one, so the loop closes.
+  #
+  # The job depends on the corpus lane but runs even when it fails, because a
+  # failing corpus is the case that most needs the reconciliation report.
+  corpus-baseline-reconciliation:
+    name: Node Compatibility Corpus Reconciliation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: rust-corpus
+    if: always()
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download observed corpus results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: node-compat-observed-*
+          path: target/node-compat/observed-shards
+          merge-multiple: true
+
+      # EXPECT_PARTITIONS must match the corpus matrix. A partition that dies
+      # before its tests start contributes no shard, and the merge would still
+      # succeed on its siblings' shards, so its fixtures would be absent rather
+      # than reported. Seeding from that leaves them unrecorded, and their next
+      # failure reads as a fresh regression.
+      - name: Merge the partition shards
+        run: |
+          make node-compat-baseline-aggregate \
+            OBSERVED_SHARDS=target/node-compat/observed-shards \
+            OBSERVED_RESULTS=target/node-compat/observed-results.json \
+            EXPECT_PARTITIONS=6
+
+      - name: Guard the recorded baseline
+        run: make node-compat-baseline-verify
+
+      - name: Reconcile ignored watchpoints against the measurement
+        run: |
+          make node-compat-validate-watchpoints \
+            OBSERVED_RESULTS=target/node-compat/observed-results.json
+
+      # Seeding and refreshing the baseline both read this artifact.
+      - name: Upload merged observed results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-compat-observed-results
+          path: target/node-compat/observed-results.json
+          if-no-files-found: error
+
+  # NCT1: this job owns one question: is the vendored Node inventory correct
+  # and current? It is separate from measurement on purpose.
+  #
+  # "probe-live" compares the live Node dist index with the checked-in lane
+  # registry and exits non-zero on any difference. Node publishes patch
+  # releases continuously, so this check goes red on upstream's schedule, not
+  # on ours. It used to run as step 4 of 11 inside the evidence job. On
+  # 2026-09-16 it reported node24 v24.21.0 against registry v24.20.0 and
+  # node26 v26.8.2 against registry v26.8.1, and the seven measurement steps
+  # after it never ran. A routine upstream patch release discarded the whole
+  # night's compatibility evidence.
+  #
+  # Splitting the probe keeps the drift signal red and actionable while the
+  # dashboard, the trends, and the artifact still get produced. The job needs
+  # only git and python3, so it does not restore the Rust cache.
+  #
+  # Contract: docs/private/operating/node-compat-nightly.md.
+  release-train-freshness:
+    name: Node Release Train Freshness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Verify vendored fixtures against their pinned upstream tags
+        run: make node-compat-verify-fixture-upstream ALLOW_FETCH=1
+
+      - name: Probe the live Node release train for drift
+        run: python3 scripts/runtime/node/release_train.py probe-live
 
   node-compat-evidence:
     name: Node Compatibility Evidence
@@ -105,6 +283,10 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      # NCT1: every command here is local and deterministic. It validates the
+      # checked-in metadata that the dashboard reads. The two commands that
+      # reach upstream moved to the release-train-freshness job, so upstream
+      # publishing a patch release can no longer discard this job's evidence.
       - name: Verify release-train metadata and docs
         run: |
           bash scripts/verify-node-lts-docs.sh
@@ -112,8 +294,6 @@ jobs:
           NIMBUS_ENFORCE_CURRENT_NODE_CORPORA=1 bash scripts/verify-node-latest-suite-tags.sh
           bash scripts/verify-node-release-train.sh
           make node-compat-validate-fixtures
-          make node-compat-verify-fixture-upstream ALLOW_FETCH=1
-          python3 scripts/runtime/node/release_train.py probe-live
           make node-compat-validate-watchpoints
 
       - name: Emit seeded slice reports

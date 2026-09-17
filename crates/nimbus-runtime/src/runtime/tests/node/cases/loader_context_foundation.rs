@@ -291,7 +291,9 @@ const NODE_TOOLS_CONSTANTS_FOUNDATION_BATCH: &[NodeCompatBatchEntry] = &[
     },
     NodeCompatBatchEntry {
         test_relative_path: "test/parallel/test-os-constants-signals.js",
-        node20_fixture_source_path: Some("node20/test/parallel/test-os-constants-signals.js"),
+        // Upstream added this fixture after v20.20.2, so the node20 lane has
+        // nothing to vendor and nothing to run.
+        node20_fixture_source_path: None,
         node22_fixture_source_path: Some("node22/test/parallel/test-os-constants-signals.js"),
         node24_fixture_source_path: Some("node24/test/parallel/test-os-constants-signals.js"),
         shared_extra_files: &[],

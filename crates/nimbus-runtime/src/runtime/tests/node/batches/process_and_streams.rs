@@ -565,8 +565,10 @@ const STREAMS_AND_LOCAL_IO_BATCH: &[NodeCompatBatchEntry] = &[
         SHARED_FIXTURES_DIR_EXTRA_FILES
     ),
     shared_official_batch_case!("test/parallel/test-fs-promises-readfile-with-fd.js"),
-    shared_official_batch_case!("test/parallel/test-fs-promises-writefile-typedarray.js"),
-    shared_official_batch_case!("test/parallel/test-fs-promises-writefile-with-fd.js"),
+    // Upstream dropped both fixtures after v22.23.2, so the node24 lane has
+    // nothing to vendor and nothing to run.
+    node20_node22_exclusive_batch_case!("test/parallel/test-fs-promises-writefile-typedarray.js"),
+    node20_node22_exclusive_batch_case!("test/parallel/test-fs-promises-writefile-with-fd.js"),
     shared_official_batch_case!("test/parallel/test-fs-promises-writefile.js"),
     shared_official_batch_case!("test/parallel/test-fs-append-file-flush.js"),
     shared_official_batch_case!("test/parallel/test-fs-read-stream-fd.js"),

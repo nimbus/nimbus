@@ -194,6 +194,25 @@ macro_rules! node22_exclusive_batch_case {
     };
 }
 
+/// A fixture that upstream carried through v22 and dropped afterwards.
+///
+/// The node24 source is `None` because there is nothing to vendor. Node26
+/// resolves by file presence, so it needs no declaration.
+macro_rules! node20_node22_exclusive_batch_case {
+    ($test_relative_path:literal) => {
+        NodeCompatBatchEntry {
+            test_relative_path: $test_relative_path,
+            node20_fixture_source_path: Some(concat!("node20/", $test_relative_path)),
+            node22_fixture_source_path: Some(concat!("node22/", $test_relative_path)),
+            node24_fixture_source_path: None,
+            shared_extra_files: &[],
+            node20_extra_files: &[],
+            node22_extra_files: &[],
+            node24_extra_files: &[],
+        }
+    };
+}
+
 macro_rules! shared_official_batch_case {
     ($test_relative_path:literal) => {
         NodeCompatBatchEntry {

@@ -36,6 +36,21 @@ test-group = 'external-provider'
 filter = 'package(nimbus-engine) and test(/^tests::libsql_replica_provider::ppsc::libsql_ppsc_seeded_journal_differential$/)'
 slow-timeout = { period = "90s", terminate-after = 3 }
 
+# One node_compat batch test executes hundreds of upstream fixtures in a single
+# process, and each fixture may take its own 125-second runtime bound. The
+# workspace limit of 45 seconds x 3 kills the largest batches partway through.
+# A kill is worse than a failure here: the fixtures the batch already measured
+# still reach the evidence shard, so the measurement shrinks silently, and the
+# next run reads the fixtures behind the old kill point as fresh regressions.
+# The largest batch holds 312 fixtures and needs about three minutes on a CI
+# runner. Ten minutes keeps a real liveness bound with room for a slow runner.
+# The batch-completion records in corpus_baseline.rs still refuse a measurement
+# that a kill truncated, so this bound reduces the refusals, it does not hide
+# them.
+[[profile.default.overrides]]
+filter = 'package(nimbus-runtime) and test(/^runtime::tests::node_compat::/)'
+slow-timeout = { period = "10m", terminate-after = 1 }
+
 [[profile.default.overrides]]
 filter = 'test(/verification_harness_(required|nightly)_/)'
 test-group = 'harness-corpus'
