@@ -231,6 +231,27 @@ then rerun the corpus. Do not seed from it. If the same batch is cut short
 again, the batch outgrew its bound: measure it, then raise the bound in
 `.config/nextest.toml` in a reviewed change.
 
+### The known remaining cause
+
+A refusal today names a hung fixture, not a slow batch. Raising the bound does
+not help, because the process is blocked, not busy.
+
+The harness already bounds each fixture with a wall clock, and that bound
+fires. The hang is after it. `NimbusRuntime` drops at the end of every fixture,
+`RuntimeExecutorInner::drop` cancels its shutdown token and then joins its
+worker threads without a bound, and a worker that sits inside `block_on` of a
+job which never observes the cancel never returns from the join. The test
+runner then kills the process at 10 minutes and the batch loses the rest of its
+fixtures.
+
+24 batch tests end this way in every run. Each one names its own fixture: the
+one that follows its last record. `test/parallel/test-worker-message-port.js`
+is the first of them, it stops the `loader-context` batch in all four lanes,
+and it reproduces on a developer machine.
+
+The runtime executor owns that defect. Until it is fixed, the corpus cannot
+produce a complete measurement and the baseline cannot be re-seeded.
+
 ## Prerequisites and cleanup
 
 The corpus lane needs the Rust toolchain cache and `cargo-nextest`. The

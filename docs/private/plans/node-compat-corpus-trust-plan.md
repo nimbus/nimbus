@@ -4,7 +4,9 @@ Status: `active` | Owner: this plan | Created: 2026-09-16
 Baseline: main @ `f743836c6`
 Proof root: `proof/node-compat-corpus-trust/`
 
-Next action: NCT4 - re-seed the baseline from a complete measurement
+Next action: NCT4 is blocked. The executor joins a hung worker on drop, so
+24 batch tests are killed at 10 minutes and no run can measure the whole
+corpus. That defect owns the block, and it is outside this plan.
 
 ## Current resume state
 
@@ -12,14 +14,17 @@ Next action: NCT4 - re-seed the baseline from a complete measurement
 - Worktree: `scratchpad/wt-node-compat`. Branch: `ci/node-compat-corpus-trust`. HEAD `954181ec3`.
 - Dirty files owned by this task: none.
 - NCT0 through NCT3 and NCT5 through NCT7 are done.
-- NCT4 reopened. The batch bound holds: run 35178467471 recorded 0 timeouts in
-  all 6 shards, against about 32 before. The same run showed two further holes,
-  and both are now closed: a batch records an abort when it unwinds, and a
-  record-count witness records a fixture that stopped before the evidence seam.
-  5 batch declarations named a source that upstream never shipped in that lane,
-  and each is corrected against the official identity catalogs.
-- Next: dispatch `Node Compatibility` on this branch, confirm `aggregate`
-  accepts the measurement, then re-seed the baseline from it.
+- NCT4 is blocked, and the block is now named. Run 35187917432 kills 24 batch
+  tests at the 600 s bound. They hang, so a larger bound cannot help.
+  `RuntimeExecutorInner::drop` joins its workers without a bound, and a worker
+  inside `block_on` of a job that never observes the shutdown cancel never
+  returns. `crates/nimbus-runtime/src/executor/facade.rs:157` owns the defect,
+  not this plan.
+- The measurement machinery is complete and correct. It refuses the partial
+  measurement and names all 15 truncated batches and the fixture that follows
+  each one's last record.
+- Next: land the trust work, then fix the executor drop and the 15 node20
+  required-surface fixtures. Re-seeding waits on the executor fix.
 - The `rust-corpus` lane stays red on 15 node20 required-surface fixtures.
   Fixing the runtime is the next work, and it is outside this plan.
 - Running commands: none.
@@ -174,7 +179,8 @@ After:
   when it unwinds, and the aggregator refuses only the silent third state. A
   record-count witness makes every attempted fixture produce exactly one
   record, so the count a batch reports always matches the shard. The bound is
-  proven: run 35178467471 recorded 0 timeouts. Re-seeding is the open step.
+  proven: it refuses the partial measurement and names every truncated batch.
+  Re-seeding is blocked on a runtime defect that this plan does not own.
   15 node20 fixtures on the required surface keep the lane red, which is the
   gate working as designed. The runtime fix owns them.
 
@@ -229,6 +235,7 @@ if a task needs a new schema, a new public contract, or an owner decision.
 | 2026-09-17 | NCT4 | Closed the hole behind it. A fixture whose vendored source is missing panics while it reads that source, which is before the seam that writes the evidence, so the batch counted the fixture as executed and the shard never named it. A record-count witness now reads the count on both sides of each fixture and records the failure through the ordinary baseline decision | 4 batches showed the mismatch (networking/node20 265 against 264, streams-and-local-io/node24 308 against 306, http-remaining node22 and node24 139 against 138); 1 new Rust test proves a regression for a fixture that recorded nothing, `AlreadyRecorded` for one that did, and exactly one record per fixture path |
 | 2026-09-17 | NCT4 | Corrected 5 batch declarations against the official upstream identity catalogs. Each named a fixture source for a lane that never shipped it | `test-dgram-blocklist.js` and `test-os-constants-signals.js` arrived after v20.20.2 (node20 source now `None`); `test-fs-promises-writefile-typedarray.js` and `test-fs-promises-writefile-with-fd.js` left after v22.23.2 (new `node20_node22_exclusive_batch_case!`); `test-http-rawheaders-limit.js` is in no Node release and is removed, and `rust-watchpoints.json` is re-synced at 150 entries; catalog lookup uses the `parallel/...` prefix, and the result matched the vendored tree exactly |
 | 2026-09-17 | NCT4 | Repaired a latent test-isolation race that the new drop records made visible. `NODE_COMPAT_OBSERVED_RESULTS_ENV` is process-wide, so a concurrent test appended to the file a test was reading back. Read-back now filters on the recorded Rust test name | `node_compat_observed_results_append_one_json_line_per_fixture` flaked in 2 of 8 runs before the fix; 85 passed, 1 failed (the pre-existing `__nimbus-preserve-symlinks-options-probe`), 2 ignored, stable across 10 consecutive runs; `cargo fmt`/`clippy` clean; `python3 -m unittest scripts.test_node_compat_corpus_baseline` 10 tests OK; `node-compat-validate-fixtures` and `node-compat-validate-watchpoints` (150 entries) clean; `node-compat-baseline-verify` ok at 1,188 gaps; `actionlint` clean; `check-docs.sh` PASS |
+| 2026-09-17 | NCT4 | Found why the bound did not stop the truncation, and corrected an earlier reading. The bound is reached, not avoided: 24 batch tests hang and die at 600 s, and an earlier "0 timeouts" reading was a grep artifact, because the log carries ANSI codes between `TIMEOUT` and `[`. A sampled stack puts the block in `drop_in_place<NimbusRuntime>`, not in the bounded fixture call: `RuntimeExecutorInner::drop` joins a worker that sits inside `block_on` of a job which never observes the shutdown cancel | runs 35178467471 and 35187917432 both time out the same 24 tests at 600 s; 15 batches are refused by name, and each names the fixture after its last record (`test-worker-message-port.js` stops `loader-context` in all 4 lanes, `test-net-listen-invalid-port.js` stops `net-diagnostic-core` in 2, and 6 batches record 0 fixtures); the node20 batch reproduces on this machine and stops on the same fixture; `sample` shows `facade.rs:157` joining `worker_loop::cooperative::execution::admit_job_inner` parked in the tokio I/O driver |
 
 ## NCT4 platform constraint
 
