@@ -133,7 +133,7 @@ pub(crate) fn create_v8_startup_snapshot(
         extensions,
         extension_transpiler: extension_transpiler_for_target(compatibility_target),
         extension_source_provider,
-        create_params: Some(super::attach_cppgc_heap(Default::default())),
+        create_params: Some(Default::default()),
         ..Default::default()
     });
     {

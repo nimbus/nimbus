@@ -268,7 +268,7 @@ impl NimbusRuntime {
 
     pub(crate) fn create_isolate_params(&self) -> v8::CreateParams {
         let heap_megabyte = 1usize << 20;
-        crate::backends::v8::attach_cppgc_heap(v8::Isolate::create_params())
+        v8::Isolate::create_params()
             .heap_limits(
                 self.policy.limits().initial_heap_mb * heap_megabyte,
                 self.policy.limits().max_heap_mb * heap_megabyte,
