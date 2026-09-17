@@ -4901,7 +4901,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "allocator-api2",
- "equivalent",
  "foldhash 0.2.0",
  "serde",
  "serde_core",
@@ -13664,6 +13663,7 @@ dependencies = [
  "icu_locale_core",
  "icu_provider",
  "indexmap 2.14.0",
+ "itertools 0.12.1",
  "libc",
  "linux-raw-sys 0.12.1",
  "litemap",
