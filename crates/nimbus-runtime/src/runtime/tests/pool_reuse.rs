@@ -3491,6 +3491,14 @@ fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock() {
 #[test]
 #[ignore = "runs in a subprocess to isolate shared RO-heap/V8 teardown state"]
 fn ro_heap_serialize_lock_isolate_drop_while_held_does_not_self_deadlock_subprocess() {
+    // V8 schedules cppgc sweeper tasks through the deno_core platform, which spawns them on
+    // Tokio. Keep a runtime entered for the whole JsRuntime lifetime, exactly as the production
+    // worker loops do, so isolate construction and Drop see the same owner context.
+    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("serialize-lock test tokio runtime should build");
+    let _tokio_enter = tokio_runtime.enter();
     let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
     let owner = NimbusRuntime::with_policy(
         std::sync::Arc::new(RecordingHost::default()),
@@ -3529,6 +3537,13 @@ fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort() {
 #[test]
 #[ignore = "runs in a subprocess to isolate shared RO-heap/V8 teardown state"]
 fn ro_heap_serialize_lock_isolate_drop_during_unwind_does_not_abort_subprocess() {
+    // As above: the isolate must be built and torn down inside a Tokio context so the cppgc
+    // sweeper's delayed tasks reach the deno_core platform's spawner.
+    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("serialize-lock test tokio runtime should build");
+    let _tokio_enter = tokio_runtime.enter();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _outer = deno_core::shared_ro_heap_serialize_lock().lock();
         let owner = NimbusRuntime::with_policy(
