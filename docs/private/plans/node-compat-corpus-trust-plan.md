@@ -4,42 +4,37 @@ Status: `active` | Owner: this plan | Created: 2026-09-16
 Baseline: main @ `f743836c6`
 Proof root: `proof/node-compat-corpus-trust/`
 
-Next action: land NCT10 with this branch. Then merge fork PR
-https://github.com/nimbus/deno/pull/3 (NCT9), tag `v2.9.6-nimbus.7`, and bump
-the nimbus pins. Both merges wait for the owner's permission.
+Next action: merge the NCT9 pin PR (branch `fix/nct9-pin-nimbus-7`) after
+the owner approves it, then close NCT9. After that, fix the 15 node20
+required-surface fixtures that the runtime owns (see NCT4).
 NCT4 stays blocked. The executor joins a hung worker on drop, so 24 batch
 tests are killed at 10 minutes and no run can measure the whole corpus. That
 defect owns the block, and it is outside this plan.
 
 ## Current resume state
 
-- Updated: 2026-09-18. Active task: NCT9. NCT10 lands with this branch
-  (nimbus PR #365, green, waits for the owner's merge permission).
-- NCT10 is closed in the fork and lands in nimbus with this branch.
-  - Fork PR https://github.com/nimbus/deno/pull/2 merged into `nimbus/v2.9.6`
-    as `744850baf0`, tagged `v2.9.6-nimbus.6`.
-  - `Cargo.toml` pins all 32 deno crates to `tag = "v2.9.6-nimbus.6"`.
-    `make test-rust-runtime` on that pin: 521 passed, 0 failed, 94 ignored.
-- NCT9 is diagnosed and fixed in fork PR https://github.com/nimbus/deno/pull/3,
-  branch `fix/http2-teardown-fin-race` in `deno-worktrees/nct9-http2-fin`,
-  head merge commit on top of `0ba54cc5d6`. Autoreview (Sol, high) is clean.
-  See the NCT9 task for the root cause and evidence.
-- Remaining NCT9 steps, in order: merge fork PR #3 (owner permission), tag
-  `v2.9.6-nimbus.7` on the merge commit, pin the 32 crates to it on a nimbus
-  branch, run `make test-rust-runtime`, open the nimbus PR.
+- Updated: 2026-09-18. Active task: NCT9.
+- NCT10 is done. Nimbus PR #365 merged as `7fe080a9a`. It pins the 32 deno
+  crates to `v2.9.6-nimbus.6`.
+- NCT9 fork work is merged. Fork PR https://github.com/nimbus/deno/pull/3
+  merged into `nimbus/v2.9.6` as `2c63807d52`, and the annotated tag
+  `v2.9.6-nimbus.7` points at it.
+- Branch `fix/nct9-pin-nimbus-7` in `scratchpad/wt-nct9` pins all 32 deno
+  crates to `tag = "v2.9.6-nimbus.7"`. `Cargo.lock` resolves 41 packages to
+  `2c63807d`. `make test-rust-runtime` on this pin: 521 passed, 0 failed,
+  94 ignored. NCT9 closes when that PR merges.
 - Worktrees:
-  - `scratchpad/wt-nct10` (nimbus), branch `fix/nct10-snapshot-uaf`. It holds
-    the pin bump and this plan. The NCT9 diagnostic instrument is reverted and
-    saved as `scratchpad/nct9-instrument-v4.patch`.
-  - `deno-worktrees/nct9-http2-fin`, the NCT9 fork branch.
+  - `scratchpad/wt-nct9` (nimbus), branch `fix/nct9-pin-nimbus-7`.
+  - `scratchpad/wt-nct10` and `deno-worktrees/nct9-http2-fin` are spent.
+    Remove them when NCT9 closes.
   - `scratchpad/wt-executor`, branch `fix/runtime-executor-shutdown-bound`.
 - Probe tools in `scratchpad`: `nct9-ab.sh <binary> <tag>` runs the node20
   networking lane N times while `holder.py` holds about 254 `127.0.0.1` ports
   spread over the ephemeral range, and counts runs with a failure outside
   `nct9-baseline-fails.txt`. `ephtest.c`, `samehold.c`, `xhold.c` and `wa.c`
   are the C reproductions of the kernel defect and of the workaround.
-- NCT0 through NCT3 and NCT5 through NCT7 are done. NCT4 is unchanged and still
-  waits on the runtime fix and a complete re-seed.
+- NCT0 through NCT3, NCT5 through NCT7 and NCT10 are done. NCT4 is unchanged
+  and still waits on the runtime fix and a complete re-seed.
 - Running commands: none.
 
 ## Outcome
@@ -116,8 +111,8 @@ After:
 | NCT5 | Close the unexpected-pass loop for ignored watchpoints | done | `corpus-baseline-reconciliation` job feeds `--observed-results` to the 150-entry catalog |
 | NCT6 | Guard the baseline | done | 4 guard rejections proven; runs in the PR lane via `make node-compat-baseline-verify` |
 | NCT7 | Document the contract | done | `docs/private/operating/node-compat-nightly.md`; routed from the operating README; `check-docs.sh` PASS |
-| NCT9 | Fix the http2 teardown RST race | in_progress | Root cause found: a macOS kernel defect (Apple FB12128351). A dual-stack `bind([::]:0)` can return a port that another socket holds on `127.0.0.1`, so the fixture client reaches that socket and not the fixture server. Fork PR https://github.com/nimbus/deno/pull/3 adds the Apple DTS workaround in `uv_compat` plus the peer-FIN teardown fix; new test `tcp_bind_ipv6_ephemeral_skips_held_ipv4_ports` fails without the fix; `uv_compat` 74 passed; clippy and rustfmt clean; autoreview clean. Lane with 254 held `127.0.0.1` ports: 5 of 5 runs bad on `v2.9.6-nimbus.6`, 0 of 100 bad with the fix; fork Linux CI `check and test (linux-x86_64)` pass. Remaining: merge, tag `v2.9.6-nimbus.7`, pin bump |
-| NCT10 | Fix the V8 backing-store heap corruption | in_progress | Root cause named: `JsRuntimeForSnapshot::snapshot` drops `ContextState` in `prepare_for_snapshot` before `create_blob` serializes the external backing stores over `tick_info`, `immediate_info` and `timer_info`. Guard Malloc proof: 2 of 2 SIGSEGV before the fix, 0 of 3 after, at the 12-byte `immediate_info` allocation. Fixed in `nimbus/deno` commit `c036d7383e` (fork PR 2). Abort proof: 0 aborts in 50 runs of the node20 networking subset under `MallocErrorAbort=1`. Fork PR 2 merged as `744850baf0` and tagged `v2.9.6-nimbus.6`. The 32 nimbus pins move to that tag, and `make test-rust-runtime` on it reports 521 passed, 0 failed, 94 ignored |
+| NCT9 | Fix the http2 teardown RST race | in_progress | Root cause found: a macOS kernel defect (Apple FB12128351). A dual-stack `bind([::]:0)` can return a port that another socket holds on `127.0.0.1`, so the fixture client reaches that socket and not the fixture server. Fork PR https://github.com/nimbus/deno/pull/3 adds the Apple DTS workaround in `uv_compat` plus the peer-FIN teardown fix; new test `tcp_bind_ipv6_ephemeral_skips_held_ipv4_ports` fails without the fix; `uv_compat` 74 passed; clippy and rustfmt clean; autoreview clean. Lane with 254 held `127.0.0.1` ports: 5 of 5 runs bad on `v2.9.6-nimbus.6`, 0 of 100 bad with the fix; fork Linux CI `check and test (linux-x86_64)` pass. Fork PR 3 merged as `2c63807d52` and tagged `v2.9.6-nimbus.7`; the 32 nimbus pins move to that tag on `fix/nct9-pin-nimbus-7`, and `make test-rust-runtime` on it reports 521 passed, 0 failed, 94 ignored. Remaining: merge the pin PR |
+| NCT10 | Fix the V8 backing-store heap corruption | done | Nimbus PR 365 merged as `7fe080a9a`. Root cause named: `JsRuntimeForSnapshot::snapshot` drops `ContextState` in `prepare_for_snapshot` before `create_blob` serializes the external backing stores over `tick_info`, `immediate_info` and `timer_info`. Guard Malloc proof: 2 of 2 SIGSEGV before the fix, 0 of 3 after, at the 12-byte `immediate_info` allocation. Fixed in `nimbus/deno` commit `c036d7383e` (fork PR 2). Abort proof: 0 aborts in 50 runs of the node20 networking subset under `MallocErrorAbort=1`. Fork PR 2 merged as `744850baf0` and tagged `v2.9.6-nimbus.6`. The 32 nimbus pins move to that tag, and `make test-rust-runtime` on it reports 521 passed, 0 failed, 94 ignored |
 | NCT8 | Cleanup | todo | |
 
 ## Tasks
@@ -403,6 +398,7 @@ if a task needs a new schema, a new public contract, or an owner decision.
 | 2026-09-17 | NCT4 | Proved the truncation is gone end to end. The node20 `loader-context` batch runs to completion and reports a measurement, instead of dying at the runner bound | batch finished in 133.3 s with 40 named fixture gaps and no truncation refusal, where every earlier run was killed at 600 s; `test-worker-message-port.js` and `test-inspector-open.js` each record `runtime system wall time timed out after 30s` with a diagnostic artifact; `test-crypto-dh-leak.js` is a newly visible unexpected pass that the truncated runs could never reach; `make test-rust-runtime` 521 passed, 0 failed, 94 ignored |
 | 2026-09-17 | NCT4 | Found that the node20 watchpoints never ran on a Node20 runtime. Each single-fixture `node20_*` test called `run_node_compat_watchpoint`, which sends no lane, and a missing lane resolves to `RuntimeCompatibilityTarget::Node24`. The lane thus ran node20 fixture files on a Node24 runtime and recorded each version difference as a permanent node20 gap. The 23 tests now call `run_node_compat_watchpoint_for_lane` with `NodeCompatLane::Node20`, and `post_bootstrap.js` sets the Node20 default stream highWaterMark to 16 KiB with the public `setDefaultHighWaterMark` API, guarded on the compatibility major that the file already reads | 15 of the 23 node20 watchpoints pass, against 7 before; 8 `#[ignore]` attributes removed and 8 stale reasons replaced with the measured failure; `rust-watchpoints.json` 150 -> 142 entries, node20 23 -> 15, and node22/node24/node26 hold at 63/44/20 with no entry added; `make test-rust-runtime` 521 passed, 0 failed, 94 ignored; the 6 node20 lane subsets give the same 3 passed and 3 failed as baseline `d93408e19`, with identical per-subset counts (streams-and-local-io 291 passed/13 gaps/7 failed, loader-context 131/26/14, networking 244/11/9); `test-http2-compat-serverrequest-host.js` failed once with `read ECONNRESET` in 1 of 4 runs and passed in the other 3, and it sends headers only, so the default highWaterMark cannot reach it; `make node-compat-required-surface-blockers` node22 0 and node24 0 |
 | 2026-09-18 | NCT9 | Found the root cause: macOS dual-stack ephemeral bind returns ports held on `127.0.0.1` (Apple FB12128351). Added the Apple DTS workaround to `uv_compat` and opened fork PR #3 with it and the peer-FIN fix | interposer trace: fixture on `[::]:56688`, Chrome on `127.0.0.1:56688`; C: 6 of 6 held ports returned in 17,000 binds, 0 with the workaround (`wa.c`); new test fails without the fix (60+ held ports returned) and passes with it; `uv_compat` 74 passed; clippy, rustfmt, autoreview clean; lane with 254 held ports: 5 of 5 bad on `v2.9.6-nimbus.6`, 0 of 100 with the fix |
+| 2026-09-18 | NCT9 | Merged nimbus PR 365 (NCT10) and fork PR 3, tagged `v2.9.6-nimbus.7`, and moved the 32 deno pins to it | PR 365 merge `7fe080a9a`; fork merge `2c63807d52`; 41 lock packages resolve to `2c63807d`; `make test-rust-runtime` 521 passed, 0 failed, 94 ignored |
 
 ## NCT4 platform constraint
 
