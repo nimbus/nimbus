@@ -19,7 +19,6 @@ fn node20_process_env_delete_application_preset_watchpoint() {
 }
 
 #[test]
-#[ignore = "Shared assert gap: test-assert-deep.js fails with `AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal`. The deep-equal comparison disagrees with Node in every lane, so this is not a version divergence"]
 fn node20_assert_deep_watchpoint() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-assert-deep.js",
@@ -40,7 +39,6 @@ fn node22_assert_partial_deep_equal_watchpoint() {
 }
 
 #[test]
-#[ignore = "Pinned shared Deno-family inspect gap: revoked proxy formatting still throws inside ext/web and blocks test-console-issue-43095.js"]
 fn node22_console_issue_43095_watchpoint() {
     run_node_compat_watchpoint(
         "test/parallel/test-console-issue-43095.js",
@@ -50,7 +48,6 @@ fn node22_console_issue_43095_watchpoint() {
 }
 
 #[test]
-#[ignore = "Shared Deno-family inspect gap: test-console-issue-43095.js fails with `TypeError: Cannot inspect a proxy that has been revoked`. Revoked-proxy formatting throws in every lane, so this is not a version divergence"]
 fn node20_console_issue_43095_watchpoint() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-console-issue-43095.js",
@@ -61,7 +58,6 @@ fn node20_console_issue_43095_watchpoint() {
 }
 
 #[test]
-#[ignore = "Node20 divergence: official v20.20.2 accepts once(emitter, event, null), while the runtime rejects it with `TypeError: The \"options\" argument must be of type object. Received null`. The events polyfill needs a version-conditional options check"]
 fn node20_events_once_watchpoint() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-events-once.js",
@@ -376,13 +372,52 @@ fn node22_process_finalization_watchpoint() {
 }
 
 #[test]
-#[ignore = "Node20 divergence: official v20.20.2 PerformanceResourceTiming#toJSON() omits the Node22-era deliveryType and responseStatus fields, so the fixture fails with `AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal`. The polyfill needs a version-conditional toJSON() shape"]
 fn node20_perf_hooks_resourcetiming_watchpoint() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-perf-hooks-resourcetiming.js",
         "node20/test/parallel/test-perf-hooks-resourcetiming.js",
         &[],
         NodeCompatLane::Node20,
+    );
+}
+
+#[test]
+fn node20_perf_hooks_resourcetiming_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-perf-hooks-resourcetiming-lane-contract.js",
+        "regression/perf-hooks/test-perf-hooks-resourcetiming-lane-contract.js",
+        &[],
+        NodeCompatLane::Node20,
+    );
+}
+
+#[test]
+fn node22_perf_hooks_resourcetiming_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-perf-hooks-resourcetiming-lane-contract.js",
+        "regression/perf-hooks/test-perf-hooks-resourcetiming-lane-contract.js",
+        &[],
+        NodeCompatLane::Node22,
+    );
+}
+
+#[test]
+fn node24_perf_hooks_resourcetiming_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-perf-hooks-resourcetiming-lane-contract.js",
+        "regression/perf-hooks/test-perf-hooks-resourcetiming-lane-contract.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node26_perf_hooks_resourcetiming_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-perf-hooks-resourcetiming-lane-contract.js",
+        "regression/perf-hooks/test-perf-hooks-resourcetiming-lane-contract.js",
+        &[],
+        NodeCompatLane::Node26,
     );
 }
 
@@ -417,13 +452,52 @@ fn node20_stream_transform_split_objectmode_watchpoint() {
 }
 
 #[test]
-#[ignore = "Node20 read-loop gap: with the Node20 default highWaterMark applied, test-stream-readable-infinite-read.js reads 8192 bytes where Node20 reads 16384. The emitReadable_ path in internal/streams/readable.js releases the buffer after one push instead of filling to the highWaterMark, so the default value alone does not close this gap"]
 fn node20_stream_readable_infinite_read_watchpoint() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-stream-readable-infinite-read.js",
         "node20/test/parallel/test-stream-readable-infinite-read.js",
         &[],
         NodeCompatLane::Node20,
+    );
+}
+
+#[test]
+fn node20_stream_readable_read_size_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-readable-read-size-lane-contract.js",
+        "regression/stream/test-stream-readable-read-size-lane-contract.js",
+        &[],
+        NodeCompatLane::Node20,
+    );
+}
+
+#[test]
+fn node22_stream_readable_read_size_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-readable-read-size-lane-contract.js",
+        "regression/stream/test-stream-readable-read-size-lane-contract.js",
+        &[],
+        NodeCompatLane::Node22,
+    );
+}
+
+#[test]
+fn node24_stream_readable_read_size_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-readable-read-size-lane-contract.js",
+        "regression/stream/test-stream-readable-read-size-lane-contract.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node26_stream_readable_read_size_lane_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-readable-read-size-lane-contract.js",
+        "regression/stream/test-stream-readable-read-size-lane-contract.js",
+        &[],
+        NodeCompatLane::Node26,
     );
 }
 

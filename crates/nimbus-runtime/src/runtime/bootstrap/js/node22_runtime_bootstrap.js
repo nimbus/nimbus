@@ -4128,8 +4128,16 @@ if (typeof runtimeTargetTriple === "string" && runtimeTargetTriple.length > 0) {
 }
 
 enableNextTick();
+const nodeBufferInternals = core.loadExtScript("ext:deno_node/internal/buffer.mjs");
+const nodeAssertInternals = core.loadExtScript("ext:deno_node/assert.ts");
 function refreshNodeRuntimeOpState() {
   op_stream_base_register_state(streamBaseState);
+  // The snapshot holds the Buffer limit of the snapshot build. Node 20 has a
+  // lower limit than later targets.
+  nodeBufferInternals.refreshMaxLength();
+  // The snapshot holds the `node:assert` exports of the snapshot build. The
+  // versioned exports differ between Node 20, 22 and 26.
+  nodeAssertInternals.refreshApiSurface();
   seedNodeProcessCwd(nodeProcessBuiltin);
   seedNodeProcessCwd(internals.nodeGlobals?.process);
   seedNodeProcessCwd(globalThis.process);

@@ -881,12 +881,11 @@ fn should_quiesce_then_require_fixture(test_relative_path: &str) -> bool {
 //
 // The leak has two distinct sources, fixed together here:
 //
-//   1. Top-level-await resumptions. The shared `infra_warmup_script` awaits a
-//      2-turn setTimeout loop, which makes the module async; V8 then creates
-//      native await-resumption promises whose reactions run -- at depth 0, hook
-//      enabled -- during the Rust load-phase drive, surfacing spurious firings.
-//      Fixed by gating infra_warmup OFF for these fixtures (they create no dgram
-//      resource that needs warming), so the module is fully synchronous.
+//   1. Top-level-await resumptions. Any top-level `await` in the harness
+//      module makes it async; V8 then creates native await-resumption promises
+//      whose reactions run -- at depth 0, hook enabled -- during the Rust
+//      load-phase drive, surfacing spurious firings. These fixtures load through
+//      the synchronous-require arm, so the module has no top-level `await`.
 //
 //   2. Native load-phase / invoke continuations. Even fully synchronous, after
 //      `mod_evaluate` the Rust drive (`run_event_loop` in loading.rs) and the
@@ -910,8 +909,7 @@ fn should_quiesce_then_require_fixture(test_relative_path: &str) -> bool {
 // in the normal microtask checkpoint with no surrounding harness loop. It
 // weakens no assertion; the fixture still observes exactly the
 // before/after/init/resolve of the promises it owns. The trailing raise is
-// emitted by the require-without-import arm; the infra_warmup gate keys off this
-// same predicate.
+// emitted by the require-without-import arm.
 fn should_drain_module_body_microtasks_for_fixture(test_relative_path: &str) -> bool {
     matches!(
         test_relative_path,
@@ -928,8 +926,7 @@ fn should_drain_module_body_microtasks_for_fixture(test_relative_path: &str) -> 
 // body runs synchronously inside the dynamic import's CJS resolution, then the
 // bundle module resumes once the import settles). That resumption promise's
 // `init` is created with promise-hook suppression DOWN (it resolves at
-// module-settle time, outside both `infra_warmup_script` suppression and the
-// `__nimbusInvoke` suppression wrapper), so the still-enabled fixture hook counts
+// module-settle time, outside the `__nimbusInvoke` suppression wrapper), so the still-enabled fixture hook counts
 // it as one extra PROMISE init and the exact-count assertion trips (+1). A real
 // `node main.js` run loads the test as the main module synchronously through the
 // CJS loader and never creates an import() promise to resume, so there is no
@@ -938,9 +935,8 @@ fn should_drain_module_body_microtasks_for_fixture(test_relative_path: &str) -> 
 // fixture hook, and the fixture's own resources still init normally (suppression
 // is NOT raised around this require). This weakens no assertion; it removes a
 // harness-only promise that a real Node process never produces. The require is
-// not hoisted, so it still runs AFTER `infra_warmup_script` -- preserving the
-// "fixture evaluates after the infrastructure is warmed" ordering that the
-// dynamic-import arm below was introduced to guarantee.
+// not hoisted, so it still runs after the module-body preludes, the same order
+// that the dynamic-import arm below keeps.
 fn should_require_fixture_without_import_promise(test_relative_path: &str) -> bool {
     matches!(
         test_relative_path,
@@ -1129,16 +1125,14 @@ Object.defineProperty(globalThis.global, "gc", {
     };
     // async_hooks fixtures enable a user hook at top level and then assert the
     // exact init/before/after/destroy invocation counts for the resources they
-    // create. The harness/runtime initializes its own infrastructure resources
-    // (e.g. an internal connect/listening `nextTick`) lazily during the fixture's
-    // `require` chain — created before the fixture calls `hooks.enable()`, so the
-    // fixture hook never records their `init`, yet their `before` fires later in
-    // the tail drain and trips "before without init". Pre-initialize that
-    // infrastructure under async_hooks suppression before the fixture loads so
-    // those ids enter `suppressedAsyncIds` and stay invisible to the fixture hook,
-    // mirroring how a real Node process has its infrastructure warmed before the
-    // test's hooks observe anything.
-    let warmup_infra = should_use_async_hooks_infra_for_fixture(test_relative_path);
+    // create. The harness drains and the `__nimbusInvoke` call that run after the
+    // fixture loads create their own async resources, so both run under
+    // async_hooks suppression for these fixtures (see the trailing drain and
+    // `invoke_suppression_wrapper` below). The runtime bootstrap must not leave
+    // an async resource pending for the fixture hook to observe; the regression
+    // fixture `regression/async-hooks/test-async-hooks-no-startup-orphans.js`
+    // guards that contract.
+    let suppress_harness_async_hooks = should_use_async_hooks_infra_for_fixture(test_relative_path);
     let uses_prelude = prelude_script.is_some();
     let capture_import_error = capture_top_level_skip
         || should_capture_top_level_import_error_for_fixture(test_relative_path)
@@ -1186,10 +1180,9 @@ try {{
         // `node main.js` main-module load), the fixture's top-level hook is
         // enabled, and its own resources init normally -- but NO import() promise
         // is created, so there is no await-resumption promise to leak a spurious
-        // PROMISE `init` into the still-enabled fixture hook. This runs AFTER
-        // `infra_warmup_script` (so the runtime infrastructure is already warmed
-        // and suppressed) and is the LAST statement of the module body, so the
-        // body completes synchronously with no trailing promise of its own.
+        // PROMISE `init` into the still-enabled fixture hook. This is the LAST
+        // statement of the module body, so the body completes synchronously with
+        // no trailing promise of its own.
         //
         // These fixtures still flow through the `capture_import_error`
         // `invoke_import_guard` branch (they can emit a top-level skip), which
@@ -1225,8 +1218,7 @@ try {{
             // at depth 0 they would be tracked and surfaced to the fixture hook as
             // a spurious extra init/resolve (test-async-hooks-promise.js) or
             // before/after (test-async-hooks-promise-triggerid.js). Raising
-            // suppression at the tail of the (now fully synchronous -- see
-            // infra_warmup gate) module body means every such continuation is born
+            // suppression at the tail of the (fully synchronous) module body means every such continuation is born
             // at depth >= 1, enters `suppressedPromises`, and stays invisible. We
             // never decrement: the process is torn down right after the fixture's
             // exit-time mustCall tally, so an unbalanced counter is harmless, and
@@ -1257,49 +1249,15 @@ try {{
   __nimbusImportError = error;
 }}"#
         )
-    } else if uses_prelude || warmup_infra {
-        // Force a dynamic import so the module body (the infrastructure warm-up)
-        // runs BEFORE the fixture evaluates. A static import is hoisted ahead of
-        // the body, which would run the fixture first and defeat the warm-up.
+    } else if uses_prelude || suppress_harness_async_hooks {
+        // Force a dynamic import so the module-body preludes run BEFORE the
+        // fixture evaluates. A static import is hoisted ahead of the body, which
+        // would run the fixture first. The async_hooks fixtures keep this load
+        // order because their promotion evidence was recorded with it.
         format!(r#"await import("./{test_relative_path}");"#)
     } else {
         format!(r#"import "./{test_relative_path}";"#)
     };
-    let infra_warmup_script =
-        if warmup_infra && !should_drain_module_body_microtasks_for_fixture(test_relative_path) {
-            // Pump real event-loop turns under async_hooks suppression BEFORE the
-            // fixture module loads. A runtime-internal async resource created during
-            // bootstrap (a deno_node dgram socket whose native close-completion is
-            // still pending) drains its `socketCloseNT` tick on the first
-            // event-loop turn. Without this warm-up that turn happens after the
-            // fixture has enabled its hook but before the fixture recorded the
-            // resource's `init`, so the resource's later `before` (fired in the
-            // tail drain) trips init-hooks' "before without init" guard. Draining
-            // it here, while `core.incPromiseHooksSuppressed()` is raised, routes
-            // its `init` through emitInitNative's suppression gate: the id enters
-            // `suppressedAsyncIds`, so its before/after/destroy stay invisible to
-            // the fixture's hook. This pumps the event loop (a real `setTimeout`
-            // turn that `run_event_loop` drives to idle), not just the nextTick
-            // queue, because the pending completion is a native op, not a JS tick.
-            // It weakens no fixture assertion — the fixture still observes every
-            // resource it owns, created strictly after this point.
-            r#"{
-  const __nimbusWarmCore = globalThis.Deno?.core;
-  if (typeof __nimbusWarmCore?.incPromiseHooksSuppressed === "function") {
-    __nimbusWarmCore.incPromiseHooksSuppressed();
-    try {
-      for (let __nimbusWarmTurn = 0; __nimbusWarmTurn < 2; __nimbusWarmTurn++) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-    } finally {
-      __nimbusWarmCore.decPromiseHooksSuppressed();
-    }
-  }
-}
-"#
-        } else {
-            ""
-        };
     let invoke_import_guard = if matches!(mode, NodeCompatBundleMode::Runtime)
         && should_load_fixture_as_async_main_module(test_relative_path)
     {
@@ -1394,7 +1352,7 @@ try {{
     await globalThis.__nimbusFlushEmbeddedTests();
   }
 "#
-    } else if warmup_infra {
+    } else if suppress_harness_async_hooks {
         // async-hooks fixtures enable a user hook and then assert the EXACT
         // init/before/after/destroy counts for the resources THEY create. This
         // trailing drain is pure harness machinery: it flushes residual
@@ -1524,7 +1482,7 @@ try {{
     // that async function's own promise is born suppressed. Suppression only
     // withholds `init`; the before/after/destroy of resources the fixture
     // created earlier still fire, so no fixture-owned assertion is weakened.
-    let invoke_suppression_wrapper = if warmup_infra {
+    let invoke_suppression_wrapper = if suppress_harness_async_hooks {
         r#"
 {
   const __nimbusInvokeOriginal = globalThis.__nimbusInvoke;
@@ -1605,7 +1563,6 @@ if (typeof globalThis.process === "object" && globalThis.process !== null) {{
     }}
   }}
 }}
-{infra_warmup_script}
 {lane_prelude}
 {preloaded_common_for_assert_script}
 {prelude_script}

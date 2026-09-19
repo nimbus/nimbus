@@ -3,7 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::backends::v8::embedder::JsRuntime;
-use crate::backends::v8::{ReusableV8Runtime, V8RuntimeConstructionMode, V8WorkerRuntimePool};
+use crate::backends::v8::{
+    NearHeapLimitCause, NearHeapLimitClassifier, ReusableV8Runtime, V8RuntimeConstructionMode,
+    V8WorkerRuntimePool,
+};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::execution_plan::RuntimeExecutionPlan;
 use crate::executor::{SharedInvocationPermit, WorkerActivitySignal};
@@ -426,7 +429,15 @@ impl NimbusRuntime {
             let cancellation_signal = cancellation_signal.clone();
             let isolate_handle = runtime.v8_isolate().thread_safe_handle();
             let activity_signal = activity_signal.clone();
+            let classifier = NearHeapLimitClassifier::for_runtime(&mut runtime);
             runtime.add_near_heap_limit_callback(move |current_limit, _initial_limit| {
+                // A failed ArrayBuffer allocation also reaches this callback.
+                // Keep the limit, so that V8 throws a RangeError as in Node.js.
+                if classifier.classify(current_limit)
+                    == NearHeapLimitCause::FailedBackingStoreAllocation
+                {
+                    return current_limit;
+                }
                 heap_limit_triggered.store(true, Ordering::SeqCst);
                 cancellation_signal.cancel();
                 let _ = isolate_handle.terminate_execution();

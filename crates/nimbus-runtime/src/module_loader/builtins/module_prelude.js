@@ -306,7 +306,6 @@ function createNimbusVmModule() {
 
 function createNimbusInternalDgramModule() {
   const dnsBuiltin = denoGetBuiltinModule("dns");
-  const dgramBuiltin = denoGetBuiltinModule("dgram");
   const netBuiltin = denoGetBuiltinModule("net");
   const udpWrapBinding = getNodeInternalBinding("udp_wrap");
   const utilBinding = getNodeInternalBinding("util");
@@ -318,7 +317,6 @@ function createNimbusInternalDgramModule() {
     internalErrors?.codes?.ERR_SOCKET_BAD_TYPE ?? internalErrors?.ERR_SOCKET_BAD_TYPE;
   if (
     typeof dnsBuiltin?.lookup !== "function" ||
-    typeof dgramBuiltin?.createSocket !== "function" ||
     typeof netBuiltin?.isIP !== "function" ||
     typeof UDP !== "function" ||
     typeof guessHandleType !== "function" ||
@@ -326,27 +324,17 @@ function createNimbusInternalDgramModule() {
     typeof ERR_SOCKET_BAD_TYPE !== "function"
   ) {
     throw new Error(
-      "Nimbus Node22 bootstrap expected dns, dgram, net.isIP, udp_wrap, util.guessHandleType, uv.UV_EINVAL, and ERR_SOCKET_BAD_TYPE to be available",
+      "Nimbus Node22 bootstrap expected dns, net.isIP, udp_wrap, util.guessHandleType, uv.UV_EINVAL, and ERR_SOCKET_BAD_TYPE to be available",
     );
   }
-  const probeSocket = dgramBuiltin.createSocket("udp4");
-  const kStateSymbol = (() => {
-    try {
-      return Object.getOwnPropertySymbols(probeSocket).find((symbol) => {
-        const state = probeSocket[symbol];
-        return state && typeof state === "object" && "handle" in state;
-      });
-    } finally {
-      try {
-        probeSocket.close();
-      } catch (_error) {
-        // Ignore close races for the bootstrap-only probe socket.
-      }
-    }
-  })();
+  // Read the state symbol that deno_node dgram sockets use. Do not open a
+  // probe socket to discover it: its native close completes at an arbitrary
+  // later event-loop turn and queues a `socketCloseNT` tick that user
+  // async_hooks observe without an `init`.
+  const kStateSymbol = denoLoad("internal/dgram", null, false)?.kStateSymbol;
   if (typeof kStateSymbol !== "symbol") {
     throw new Error(
-      "Nimbus Node22 bootstrap expected dgram sockets to expose an internal state symbol",
+      "Nimbus Node22 bootstrap expected internal/dgram to expose kStateSymbol",
     );
   }
   function lookup4(lookup, address, callback) {

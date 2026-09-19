@@ -335,6 +335,10 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
       typeof nodeApiContract?.module_version === "string"
         ? nodeApiContract.module_version
         : undefined;
+    const nodeOpensslVersion =
+      typeof nodeApiContract?.openssl_version === "string"
+        ? nodeApiContract.openssl_version
+        : undefined;
     const nodeReleaseName =
       typeof nodeApiContract?.release_name === "string"
         ? nodeApiContract.release_name
@@ -363,6 +367,9 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
     };
     if (nodeModuleVersion !== undefined) {
       nextVersions.modules = nodeModuleVersion;
+    }
+    if (nodeOpensslVersion !== undefined && "openssl" in existingVersions) {
+      nextVersions.openssl = nodeOpensslVersion;
     }
     const versions = Object.freeze(nextVersions);
     const existingRelease =

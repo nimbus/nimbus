@@ -294,7 +294,7 @@ Current manifested files:
 - `test/parallel/test-stream-duplexpair.js`
 - `test/parallel/test-stream-readable-add-chunk-during-data.js`
 - `test/parallel/test-stream-readable-didRead.js`
-- Node22/Node24 only: `test/parallel/test-stream-readable-infinite-read.js`
+- `test/parallel/test-stream-readable-infinite-read.js`
 - `test/parallel/test-stream-readable-hwm-0.js`
 - `test/parallel/test-stream-readable-hwm-0-async.js`
 - `test/parallel/test-stream-readable-hwm-0-no-flow-data.js`

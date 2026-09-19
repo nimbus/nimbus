@@ -120,6 +120,7 @@ pub struct RuntimeNodeLtsLane {
     pub upstream_version: String,
     pub upstream_tag: String,
     pub node_module_version: String,
+    pub openssl_version: String,
     pub fixture_corpus_path: Option<String>,
     pub fixture_corpus_upstream_tag: Option<String>,
     pub lts_start: String,
@@ -191,6 +192,17 @@ impl RuntimeNodeLtsRegistry {
                 return Err(format!(
                     "Node LTS lane {} node_module_version must be numeric",
                     lane.lane_name
+                ));
+            }
+            let openssl_parts: Vec<&str> = lane.openssl_version.split('.').collect();
+            if openssl_parts.len() != 3
+                || openssl_parts.iter().any(|part| {
+                    part.is_empty() || !part.chars().all(|value| value.is_ascii_digit())
+                })
+            {
+                return Err(format!(
+                    "Node LTS lane {} openssl_version must be MAJOR.MINOR.PATCH, got {:?}",
+                    lane.lane_name, lane.openssl_version
                 ));
             }
             if let Some(target) = lane.runtime_compatibility_target
@@ -319,6 +331,11 @@ impl RuntimeCompatibilityTarget {
     pub fn node_module_version(self) -> Option<&'static str> {
         self.node_lts_metadata()
             .map(|lane| lane.node_module_version.as_str())
+    }
+
+    pub fn node_openssl_version(self) -> Option<&'static str> {
+        self.node_lts_metadata()
+            .map(|lane| lane.openssl_version.as_str())
     }
 }
 

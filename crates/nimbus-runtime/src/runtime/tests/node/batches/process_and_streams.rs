@@ -195,10 +195,7 @@ const STREAMS_AND_LOCAL_IO_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-stream-readable-didRead.js"),
     shared_official_batch_case!("test/parallel/test-stream-readable-dispose.js"),
     shared_official_batch_case!("test/parallel/test-stream-readable-from-web-termination.js"),
-    node22_only_batch_case!(
-        "test/parallel/test-stream-readable-infinite-read.js",
-        "node22/test/parallel/test-stream-readable-infinite-read.js"
-    ),
+    shared_official_batch_case!("test/parallel/test-stream-readable-infinite-read.js"),
     shared_official_batch_case!("test/parallel/test-stream-readable-hwm-0.js"),
     shared_official_batch_case!("test/parallel/test-stream-readable-hwm-0-async.js"),
     shared_official_batch_case!("test/parallel/test-stream-readable-hwm-0-no-flow-data.js"),

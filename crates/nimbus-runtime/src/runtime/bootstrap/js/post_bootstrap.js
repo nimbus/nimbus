@@ -31,8 +31,16 @@ if (__nimbusCompatibilityMatch !== null) {
       .loadExtScript("ext:deno_node/internal/streams/state.js");
     __nimbusSetDefaultHighWaterMark(false, 16 * 1024);
   }
+  // node:perf_hooks is evaluated into the target-invariant Node snapshot with
+  // the current Node shape; the hook narrows it to the target's shape.
+  if (typeof globalThis.__nimbusConfigurePerfHooksForNodeMajor === "function") {
+    globalThis.__nimbusConfigurePerfHooksForNodeMajor(
+      Number.parseInt(__nimbusCompatibilityMatch[1], 10),
+    );
+  }
 }
 delete globalThis.__nimbusRefreshNodeRuntimeOpState;
+delete globalThis.__nimbusConfigurePerfHooksForNodeMajor;
 delete globalThis.__nimbusDenoFetchModule;
 if (globalThis.__nimbusRetainDenoForNodeLazyScripts !== true) {
   delete globalThis.Deno;

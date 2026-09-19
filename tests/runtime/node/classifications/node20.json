@@ -5,13 +5,6 @@
   "contract": "Classifies vendored lane-local test files that are not green in the non-ignored Rust compatibility lane. Entries must not be counted as pass claims; they reduce only the unmanifested/unclassified remainder.",
   "entries": [
     {
-      "test_path": "test/parallel/test-assert-deep.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/assert",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_assert_deep_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-async-local-storage-exit-does-not-leak.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
@@ -19,130 +12,11 @@
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_async_local_storage_exit_does_not_leak_watchpoint"
     },
     {
-      "test_path": "test/parallel/test-buffer-slow.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/buffer",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_buffer_slow_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-console-issue-43095.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/console",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_console_issue_43095_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-crypto-authenticated.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_legacy_watchpoint_batch"
-    },
-    {
-      "test_path": "test/parallel/test-crypto-des3-wrap.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-crypto-dh.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "networking/crypto",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_crypto_dh_legacy_watchpoint_batch"
-    },
-    {
-      "test_path": "test/parallel/test-events-once.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/events",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_events_once_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-fs-stat.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/fs-host-io",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_fs_stat_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-https-hwm.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "networking/https",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_https_hwm_watchpoint"
-    },
-    {
       "test_path": "test/parallel/test-module-loading-error.js",
       "expectation": "expected_failure",
       "classification": "rust_watchpoint_expected_failure",
       "owner": "loader-context/module",
       "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_loader_context_followup_module_commonjs_remainder_batch_fixture"
-    },
-    {
-      "test_path": "test/parallel/test-path-resolve.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "core-semantics/path",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_path_resolve_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-perf-hooks-resourcetiming.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "process-and-timing/perf-hooks",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_perf_hooks_resourcetiming_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-process-env-delete.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "process-and-timing/process-host",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_env_delete_application_preset_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-process-features.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "process-and-timing/process-host",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_process_features_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-stream-duplex-readable-end.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/stream",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_duplex_readable_end_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-stream-readable-infinite-read.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/stream",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_readable_infinite_read_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-stream-transform-split-highwatermark.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/stream",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_transform_split_highwatermark_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-stream-transform-split-objectmode.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "streams-local-io/stream",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_stream_transform_split_objectmode_watchpoint"
-    },
-    {
-      "test_path": "test/parallel/test-tls-connect-hwm-option.js",
-      "expectation": "expected_failure",
-      "classification": "rust_watchpoint_expected_failure",
-      "owner": "networking/tls",
-      "reason": "This fixture is referenced by ignored Rust watchpoint(s), so it is a measured red path until the watchpoint is removed: node20_tls_connect_hwm_option_watchpoint"
     }
   ],
   "groups": [
@@ -802,7 +676,6 @@
         "test/async-hooks/test-crypto-pbkdf2.js",
         "test/async-hooks/test-crypto-randomBytes.js",
         "test/parallel/test-crypto-async-sign-verify.js",
-        "test/parallel/test-crypto-authenticated-stream.js",
         "test/parallel/test-crypto-certificate.js",
         "test/parallel/test-crypto-cipher-decipher.js",
         "test/parallel/test-crypto-domain.js",

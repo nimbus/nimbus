@@ -191,50 +191,62 @@ function runtimeStatsFromMetadata(value, options) {
     : stats;
 }
 
-async function runtimeFsStat(path, followSymlink, options) {
-  try {
-    const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_stat", {
-      path: runtimeFsPathToString(path),
-      follow_symlink: followSymlink,
-    });
-    return runtimeStatsFromMetadata(value, options);
-  } catch (error) {
-    throw mapRuntimeFsHostError(error, "stat");
-  }
+// Node validates the path before it queues the request (lib/fs.js stat,
+// lstat and readlink), so an invalid path throws synchronously from the
+// callback API and keeps its TypeError class in the sync API. The promise API
+// calls these from an async function, which turns the same throw into a
+// rejection. Only host failures go through mapRuntimeFsHostError.
+function runtimeFsStat(path, followSymlink, options) {
+  const pathString = runtimeFsPathToString(path);
+  return globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_stat", {
+    path: pathString,
+    follow_symlink: followSymlink,
+  }).then(
+    (value) => runtimeStatsFromMetadata(value, options),
+    (error) => {
+      throw mapRuntimeFsHostError(error, "stat");
+    },
+  );
 }
 
 function runtimeFsStatSync(path, followSymlink, options) {
+  const pathString = runtimeFsPathToString(path);
+  let value;
   try {
-    const value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_stat_sync", {
-      path: runtimeFsPathToString(path),
+    value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_stat_sync", {
+      path: pathString,
       follow_symlink: followSymlink,
     });
-    return runtimeStatsFromMetadata(value, options);
   } catch (error) {
     throw mapRuntimeFsHostError(error, "statSync");
   }
+  return runtimeStatsFromMetadata(value, options);
 }
 
-async function runtimeFsReadlink(path, options) {
-  try {
-    const value = await globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_read_link", {
-      path: runtimeFsPathToString(path),
-    });
-    return encodeWatchFilename(String(value ?? ""), snapshotFsEncodingOptions(options)?.encoding);
-  } catch (error) {
-    throw mapRuntimeFsHostError(error, "readlink");
-  }
+function runtimeFsReadlink(path, options) {
+  const pathString = runtimeFsPathToString(path);
+  return globalThis.__nimbusAsyncHostValue("op_nimbus_runtime_read_link", {
+    path: pathString,
+  }).then(
+    (value) =>
+      encodeWatchFilename(String(value ?? ""), snapshotFsEncodingOptions(options)?.encoding),
+    (error) => {
+      throw mapRuntimeFsHostError(error, "readlink");
+    },
+  );
 }
 
 function runtimeFsReadlinkSync(path, options) {
+  const pathString = runtimeFsPathToString(path);
+  let value;
   try {
-    const value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_read_link_sync", {
-      path: runtimeFsPathToString(path),
+    value = globalThis.__nimbusSyncHostValue("op_nimbus_runtime_read_link_sync", {
+      path: pathString,
     });
-    return encodeWatchFilename(String(value ?? ""), snapshotFsEncodingOptions(options)?.encoding);
   } catch (error) {
     throw mapRuntimeFsHostError(error, "readlinkSync");
   }
+  return encodeWatchFilename(String(value ?? ""), snapshotFsEncodingOptions(options)?.encoding);
 }
 
 function normalizeInvalidOpenThrow(fsBuiltin, path, flags, error, callback) {
