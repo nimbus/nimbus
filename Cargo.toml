@@ -281,4 +281,4 @@ deno_websocket = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.
 node_resolver = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.11" }
 node_shim = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.11" }
 serde_v8 = { git = "https://github.com/nimbus/deno", tag = "v2.9.6-nimbus.11" }
-v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v150.4.0-nimbus.2" }
+v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "v150.4.0-nimbus.3" }

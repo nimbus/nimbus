@@ -165,6 +165,30 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
 }
 
 #[test]
+fn runtime_array_buffer_ceiling_is_lowered_for_node20_only() {
+    // Node 20 runs V8 11.3, which rejects an ArrayBuffer longer than 2^32. Every
+    // other target keeps the ceiling of the V8 build.
+    assert_eq!(
+        RuntimeCompatibilityTarget::Node20.max_array_buffer_bytes(),
+        Some(1usize << 32)
+    );
+    for target in [
+        RuntimeCompatibilityTarget::Node22,
+        RuntimeCompatibilityTarget::Node24,
+        RuntimeCompatibilityTarget::Node26,
+        RuntimeCompatibilityTarget::WebStandardIsolate,
+        RuntimeCompatibilityTarget::BunJsc,
+        RuntimeCompatibilityTarget::WasmComponent,
+    ] {
+        assert_eq!(
+            target.max_array_buffer_bytes(),
+            None,
+            "{target:?} must keep the ceiling of the V8 build"
+        );
+    }
+}
+
+#[test]
 fn runtime_profile_is_derived_from_v8_javascript_surface_only() {
     let web_limits = RuntimeLimits::application_web_standard().normalized();
     assert_eq!(

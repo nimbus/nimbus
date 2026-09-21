@@ -5,6 +5,7 @@ mod cloudflare_workers;
 mod guest_semantics;
 mod nested_dispatch;
 mod node_bootstrap;
+mod node_buffer_ceiling;
 mod node_capabilities;
 mod node_util_parity;
 mod package_resolution;
