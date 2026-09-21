@@ -310,8 +310,7 @@ function UpdatesValue() {
           <span className="inline-flex items-center gap-1.5 font-mono text-xs text-text-1">
             <span
               aria-hidden
-              className="inline-block size-2 rounded-full"
-              style={{ background: "var(--accent)" }}
+              className="inline-block size-2 rounded-full bg-accent text-accent-ink"
             />
             {info.latest} available — Update
           </span>

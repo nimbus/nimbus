@@ -93,8 +93,8 @@ function RunSheetBody({
   }) as EventDoc[] | undefined;
   return (
     <>
-      <SheetHeader className="pr-12">
-        <SheetTitle className="flex min-w-0 items-center gap-2">
+      <SheetHeader>
+        <SheetTitle>
           <span
             className="min-w-0 truncate font-mono text-sm text-text-1"
             title={run.functionPath ?? runId}
@@ -105,7 +105,7 @@ function RunSheetBody({
             <StatePill state={run.status} />
           </span>
         </SheetTitle>
-        <SheetDescription className="flex items-center gap-2">
+        <SheetDescription>
           <CategoryPill value={run.kind} />
           <span className="font-mono text-xs text-text-3">
             {shortId(runId, 14)}
@@ -183,8 +183,8 @@ function RunSheetMissing({
 }) {
   return (
     <>
-      <SheetHeader className="pr-12">
-        <SheetTitle className="font-mono text-sm text-text-1">
+      <SheetHeader>
+        <SheetTitle className="font-mono text-sm">
           {shortId(runId, 14)}
         </SheetTitle>
         <SheetDescription data-testid={`${TESTID}-missing`}>

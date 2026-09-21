@@ -95,14 +95,13 @@ function DotEyes({
   r: number;
   w: number;
 }) {
-  const style: CSSProperties = { transformOrigin: `60px ${EYE_Y}px` };
   return (
     <g
       data-part="eyes"
       data-blink={blink ? "true" : undefined}
       data-wink={wink ? "true" : undefined}
-      className={cn(blink && "animate-blink")}
-      style={style}
+      className={cn("origin-(--eye-origin)", blink && "animate-blink")}
+      style={{ "--eye-origin": `60px ${EYE_Y}px` } as CSSProperties}
       fill={ink}
     >
       <circle cx={EYE_L + dx} cy={EYE_Y} r={r} />

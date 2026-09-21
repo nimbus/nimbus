@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import { Td } from "./table-cells";
@@ -110,12 +110,13 @@ export function SkeletonRows({
                 >
                   {/* The bar sits in a fixed-height box so the row matches
                       the loaded row it replaces; the surrounding padding still
-                      comes from `Td`. Inline because the height is a caller
-                      measurement, and a computed Tailwind class would not be
-                      in the generated CSS. */}
+                      comes from `Td`. The height is a caller measurement, so
+                      it travels as a custom property the class reads. */}
                   <span
-                    className="flex items-center"
-                    style={{ height: rowContentHeight }}
+                    className="flex h-(--row-h) items-center"
+                    style={
+                      { "--row-h": `${rowContentHeight}px` } as CSSProperties
+                    }
                   >
                     <span
                       className={cn(

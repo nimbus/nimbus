@@ -39,7 +39,7 @@ export function MobileTopBar() {
               size="icon-lg"
               aria-label="Open navigation"
               data-testid="mobile-menu-button"
-              className="size-11 text-text-2"
+              className="size-11"
             />
           }
         >
@@ -49,8 +49,9 @@ export function MobileTopBar() {
           side="left"
           aria-label="Navigation"
           data-testid="sidebar-sheet"
+          variant="flush"
           showCloseButton={false}
-          className="w-64 gap-0 overflow-y-auto bg-bg-panel p-0 text-text-1"
+          className="w-64 overflow-y-auto"
         >
           <SidebarBody
             collapsed={false}

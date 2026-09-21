@@ -136,7 +136,10 @@ describe("UpgradeRow", () => {
       const dot = slot.querySelector("[data-state]") as HTMLElement;
       const kind = UPGRADE_TONE_KINDS[tone];
       expect(dot.dataset.state).toBe(kind);
-      expect(dot.style.background).toBe(`var(${statePalette[kind].token})`);
+      expect(dot).toHaveClass("bg-(--dot)");
+      expect(dot.style.getPropertyValue("--dot")).toBe(
+        `var(${statePalette[kind].token})`,
+      );
     });
 
     it.each(

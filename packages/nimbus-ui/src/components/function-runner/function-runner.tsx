@@ -277,8 +277,8 @@ export function FunctionRunner({
               >
                 {result.kind === "running" ? "Running…" : "Run function"}
                 <KbdGroup aria-hidden className="ml-1">
-                  <Kbd className="bg-current/10 text-current">{metaGlyph}</Kbd>
-                  <Kbd className="bg-current/10 text-current">⏎</Kbd>
+                  <Kbd>{metaGlyph}</Kbd>
+                  <Kbd>⏎</Kbd>
                 </KbdGroup>
               </Button>
               {!runnable ? (

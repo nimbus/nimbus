@@ -70,9 +70,7 @@ function RunDetailPage() {
           ]}
           testid="run-detail-breadcrumb"
         />
-        <h1 className="text-text-1" style={{ fontSize: "var(--text-xl)" }}>
-          Run detail
-        </h1>
+        <h1 className="text-xl text-text-1">Run detail</h1>
       </header>
 
       <RunDetailBody run={run} runId={runId} events={sortedEvents} />

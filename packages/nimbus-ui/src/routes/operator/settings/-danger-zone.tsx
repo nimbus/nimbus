@@ -30,18 +30,16 @@ export function DangerZoneSection() {
     >
       <div className="flex flex-wrap items-center gap-3">
         <Button
-          variant="outline"
+          variant="destructive-outline"
           size="sm"
-          className="border-error text-error hover:bg-error-tint"
           data-testid="settings-rotate-open"
           onClick={() => setRotateOpen(true)}
         >
           Rotate admin token
         </Button>
         <Button
-          variant="outline"
+          variant="destructive-outline"
           size="sm"
-          className="border-error text-error hover:bg-error-tint"
           data-testid="settings-shutdown-open"
           onClick={() => setShutdownOpen(true)}
         >

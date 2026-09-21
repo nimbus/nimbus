@@ -49,10 +49,10 @@ export function Select<T extends string>({
         }}
       >
         <SelectTrigger
-          size="sm"
           aria-label={label}
           data-testid={testid}
-          className="h-[26px] rounded-xs border-border-2 bg-bg-panel px-2 font-mono text-xs text-text-1"
+          size="xs"
+          className="font-mono"
         >
           <SelectValue placeholder={placeholder ?? "Select…"} />
         </SelectTrigger>

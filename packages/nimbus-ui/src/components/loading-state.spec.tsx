@@ -87,8 +87,10 @@ describe("SkeletonRows", () => {
     const box = () =>
       container.querySelector("tbody td > span") as HTMLElement | null;
     // The storage tables carry a ~22px inline control per row; the taller
-    // machines table passes its own measurement instead.
-    expect(box()).toHaveStyle({ height: "22px" });
+    // machines table passes its own measurement instead. The measurement
+    // travels as a custom property that the static height class reads.
+    expect(box()).toHaveClass("h-(--row-h)");
+    expect(box()?.style.getPropertyValue("--row-h")).toBe("22px");
     rerender(
       <SkeletonRows
         columns={2}
@@ -97,7 +99,7 @@ describe("SkeletonRows", () => {
         rowContentHeight={34}
       />,
     );
-    expect(box()).toHaveStyle({ height: "34px" });
+    expect(box()?.style.getPropertyValue("--row-h")).toBe("34px");
   });
 
   it("uses the same dense cell padding and hairline as a loaded row", () => {

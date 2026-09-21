@@ -32,8 +32,12 @@ describe("Th", () => {
         <Th>Size</Th>
       </Table>,
     );
-    expect(screen.getByText("Name").style.width).toBe("30%");
-    expect(screen.getByText("Size").style.width).toBe("");
+    const name = screen.getByText("Name");
+    const size = screen.getByText("Size");
+    expect(name).toHaveClass("w-(--col-w)");
+    expect(name.style.getPropertyValue("--col-w")).toBe("30%");
+    expect(size).not.toHaveClass("w-(--col-w)");
+    expect(size.style.getPropertyValue("--col-w")).toBe("");
   });
 });
 

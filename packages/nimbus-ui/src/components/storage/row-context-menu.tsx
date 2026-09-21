@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -139,8 +145,13 @@ export function RowContextMenu({
       ref={ref}
       role="menu"
       aria-label={label}
-      style={{ left: pos.left, top: pos.top }}
-      className="fixed z-50 min-w-[180px] rounded-md border border-border-2 bg-bg-panel py-1 font-mono text-xs shadow-lg"
+      style={
+        {
+          "--menu-x": `${pos.left}px`,
+          "--menu-y": `${pos.top}px`,
+        } as CSSProperties
+      }
+      className="fixed top-(--menu-y) left-(--menu-x) z-50 min-w-[180px] rounded-md border border-border-2 bg-bg-panel py-1 font-mono text-xs shadow-lg"
       data-testid={testid}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {

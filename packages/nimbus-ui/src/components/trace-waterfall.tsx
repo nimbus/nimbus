@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { type CSSProperties, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "../lib/format";
 import type { RunSpan } from "../routes/developer/observability/-types";
@@ -134,11 +134,11 @@ const toneFills: Record<WaterfallTone, string> = {
  */
 const toneMarkers: Record<
   WaterfallTone,
-  { glyph: string; token: string } | null
+  { glyph: string; ink: string } | null
 > = {
-  ok: { glyph: "✓", token: "--success" },
+  ok: { glyph: "✓", ink: "text-success" },
   muted: null,
-  error: { glyph: "✗", token: "--error" },
+  error: { glyph: "✗", ink: "text-error" },
 };
 
 /**
@@ -190,16 +190,15 @@ function WaterfallBar({
       {/* The glyph sits outside the truncating span so a long label can never
           clip the row's only non-color signal. */}
       <span
-        className="flex min-w-0 items-center gap-1.5"
-        style={{ paddingLeft: `${depth * 0.75}rem` }}
+        className="flex min-w-0 items-center gap-1.5 pl-(--indent)"
+        style={{ "--indent": `${depth * 0.75}rem` } as CSSProperties}
         title={`${label} · +${formatDuration(offsetMs)}`}
       >
         {marker ? (
           <span
             role="img"
             aria-label={state ?? tone}
-            className="shrink-0 leading-none"
-            style={{ color: `var(${marker.token})` }}
+            className={cn("shrink-0 leading-none", marker.ink)}
             data-testid={`${testid}-marker`}
           >
             {marker.glyph}
@@ -214,8 +213,16 @@ function WaterfallBar({
       </span>
       <div className="relative h-3 rounded-full bg-bg-raised">
         <div
-          className={cn("absolute top-0 h-3 rounded-full", toneFills[tone])}
-          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+          className={cn(
+            "absolute top-0 left-(--bar-x) h-3 w-(--bar-w) rounded-full",
+            toneFills[tone],
+          )}
+          style={
+            {
+              "--bar-x": `${leftPct}%`,
+              "--bar-w": `${widthPct}%`,
+            } as CSSProperties
+          }
         />
       </div>
       <span className="tabular text-text-3 text-right">

@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 import { type StateKind, statePalette } from "../../components/state-dot";
 import { UpgradePopover } from "../../components/upgrade-popover";
 import { useStalenessContext } from "../../hooks/use-staleness";
@@ -32,8 +34,8 @@ function UpgradeDot({ tone }: { tone: UpgradeTone }) {
     <span
       aria-hidden
       data-state={kind}
-      className="inline-block size-2 rounded-full"
-      style={{ background: `var(${statePalette[kind].token})` }}
+      className="inline-block size-2 rounded-full bg-(--dot)"
+      style={{ "--dot": `var(${statePalette[kind].token})` } as CSSProperties}
     />
   );
 }
