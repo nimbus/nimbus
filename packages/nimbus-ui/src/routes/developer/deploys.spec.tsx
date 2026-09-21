@@ -175,6 +175,21 @@ describe("developer/deploys", () => {
     expect(state).toHaveTextContent("local server access denied");
   });
 
+  it("opens the function diff when a row is clicked", async () => {
+    serveHistory(HISTORY);
+    render(<Page />);
+    await screen.findByTestId("deploys-table");
+    expect(screen.queryByTestId("deploys-diff")).toBeNull();
+
+    // DESIGN.md: "Row click opens detail." The row itself, not the hash chip
+    // or the kebab, is the target: those are controls the row skips.
+    fireEvent.click(screen.getByTestId("deploys-row-2"));
+
+    expect(screen.getByTestId("deploys-diff")).toHaveTextContent(
+      "Generation 2",
+    );
+  });
+
   it("compares a selected bundle's function paths with the active one", async () => {
     serveHistory(HISTORY);
     render(<Page />);

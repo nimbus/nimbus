@@ -136,6 +136,7 @@ export function IndexesTab({
         id: "actions",
         header: "",
         size: 48,
+        enableResizing: false,
         cell: ({ row }) => (
           <button
             type="button"

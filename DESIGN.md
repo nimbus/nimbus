@@ -881,9 +881,11 @@ the two tiers are intentionally distinct.
 The product palette has one axis: **mode**, `light` / `dark` / `system`.
 There is one palette: neutral grounds and one amber accent. Mode is user
 controlled from Settings → Appearance and from the appearance menu in the
-shell, and persists to `localStorage` (`nimbus-ui:theme`). The shell sets
-`data-theme` on `<html>`. Dark is the default token set on `:root`; light is
-the override under `[data-theme="light"]`.
+shell, and persists to `localStorage` (`nimbus-ui:theme`). The first load
+is `system`: the console follows `prefers-color-scheme` until the operator
+picks a mode. The shell sets `data-theme` on `<html>`. The `:root` token set
+is the dark one, and light is the override under `[data-theme="light"]`;
+that is a CSS detail, not a default mode.
 
 Tokens live in `packages/nimbus-ui/src/styles/tokens.css` as hex and rgba
 literals. `@theme inline` bridges them to Tailwind utilities (`bg-bg-panel`,

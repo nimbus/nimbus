@@ -404,7 +404,6 @@ export function DataTable<TData extends RowData>({
 
   const renderSkeletonRow = (index: number) => (
     <div
-      // biome-ignore lint/suspicious/noArrayIndexKey: a placeholder has no identity beyond its position
       key={index}
       role="row"
       aria-rowindex={index + 2}

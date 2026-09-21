@@ -272,6 +272,7 @@ function TenantsPage() {
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
         size: 48,
+        enableResizing: false,
         enableSorting: false,
         cell: (ctx) => {
           const row = ctx.row.original;

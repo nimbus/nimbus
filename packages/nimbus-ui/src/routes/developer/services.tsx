@@ -366,6 +366,7 @@ export function ServicesTable({
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
         size: 40,
+        enableResizing: false,
         enableSorting: false,
         cell: (ctx) => {
           const row = ctx.row.original;
