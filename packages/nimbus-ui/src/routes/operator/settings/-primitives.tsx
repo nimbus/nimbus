@@ -39,10 +39,7 @@ export function PageSection({
       )}
     >
       <header className={cn("border-b pb-2", ruleClass)}>
-        <h2
-          className={cn("text-sm", danger ? "text-error" : "text-text-1")}
-          style={{ fontSize: "var(--text-base)" }}
-        >
+        <h2 className={cn("text-base", danger ? "text-error" : "text-text-1")}>
           {title}
         </h2>
         {description ? (

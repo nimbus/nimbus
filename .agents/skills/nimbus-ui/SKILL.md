@@ -50,9 +50,10 @@ component and a nimbus component read the same value. Dark is the default;
 `html[data-theme]` switches the set. Never write a `dark:` class and never
 write a raw palette class; add or change a token instead.
 
-The type scale is reset in `@theme`: xs 12, sm 13, base 14, md 16, lg 20,
-xl 24, 2xl 32. Radius, fonts (Geist, Geist Mono), and shadows are tokens
-too.
+The type scale is reset in `@theme`: 2xs 10 (eyebrow only), xs 12, sm 13,
+base 14, md 16, lg 20, xl 24, 2xl 32. Radius, fonts (Geist, Geist Mono),
+shadows, `tracking-eyebrow`, and the selected-row `inset-shadow-rail` are
+tokens too.
 
 ## Registry ownership
 
@@ -73,15 +74,22 @@ too.
 it through ESLint; Biome still owns general lint and formatting.
 
 ```sh
-npm run lint -w packages/nimbus-ui          # biome check src && eslint . --max-warnings <cap>
+npm run lint -w packages/nimbus-ui          # biome check src && eslint . --max-warnings 0
 npm run lint:design -w packages/nimbus-ui   # design rules only
 npx eslint src/routes/operator              # one directory while iterating
 ```
 
 - Errors: `no-raw-colors`, `no-unknown-classes`. Fix them; do not disable.
-- Warnings behind the cap: `no-restyle`, `no-arbitrary-values`,
-  `no-inline-styles`, `require-static-classes`. A change may lower the cap
-  in `package.json`; it may not raise it.
+- Warnings: `no-restyle`, `no-arbitrary-values`, `no-inline-styles`,
+  `require-static-classes`. The cap in `package.json` is 0; it does not go
+  up. Fix the site or record an exception with its constraint.
+- A repeated look is a variant on the registry component (`Button`
+  `destructive-outline`/`destructive-ghost`, `SheetContent`
+  `panel`/`flush`, `PopoverContent` `list`, `Skeleton` `shape`,
+  `SelectTrigger` `size="xs"`), never a `className` on the call site.
+- A measured value is a custom property plus a static class that reads it:
+  a `--indent` entry in `style` with `pl-(--indent)` in `className`. Build
+  the object inline; the rule cannot check a style object passed by name.
 - Exception: `// eslint-disable-next-line shadcn/<rule> -- <constraint>`.
 - `src/components/ui/**` is exempt from the restyle, arbitrary-value, and
   static-class rules because the registry defines the variants.

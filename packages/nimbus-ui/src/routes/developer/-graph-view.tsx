@@ -184,7 +184,7 @@ function GraphCanvas({ graph, focus }: { graph: GraphData; focus?: string }) {
                 event.preventDefault();
                 void openFunction(node.id);
               }}
-              style={{ cursor: "pointer" }}
+              className="cursor-pointer"
             >
               <rect
                 width={NODE_W}

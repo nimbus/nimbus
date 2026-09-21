@@ -318,11 +318,7 @@ function Headline({
           data-testid="overview-mascot"
           data-state={reading.mascot}
         />
-        <h1
-          className="text-xl text-text-1"
-          style={{ fontSize: "var(--text-xl)" }}
-          data-testid="overview-sentence"
-        >
+        <h1 className="text-xl text-text-1" data-testid="overview-sentence">
           {reading.sentence}
         </h1>
       </div>
@@ -466,7 +462,6 @@ function ConnectPanel({
       <Tabs
         value={active}
         onValueChange={(value) => setActive(value as SnippetId)}
-        className="gap-2"
       >
         <div className="flex items-center justify-between gap-3">
           <TabsList variant="line" data-testid="overview-connect-tabs">

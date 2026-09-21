@@ -101,7 +101,12 @@ function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-body"
-      className={cn("flex-1 overflow-y-auto px-5 py-4", className)}
+      // Nimbus alignment: the body is a column of secondary text. A field
+      // inside it groups its own label, control, and hint.
+      className={cn(
+        "flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4 text-sm text-text-2",
+        className,
+      )}
       {...props}
     />
   );

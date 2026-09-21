@@ -256,11 +256,7 @@ function Headline({
           data-testid="nodes-mascot"
           data-state={reading.mascot}
         />
-        <h1
-          className="text-xl text-text-1"
-          style={{ fontSize: "var(--text-xl)" }}
-          data-testid="nodes-sentence"
-        >
+        <h1 className="text-xl text-text-1" data-testid="nodes-sentence">
           {reading.sentence}
         </h1>
       </div>

@@ -216,12 +216,13 @@ describe("RowContextMenu", () => {
       />,
     );
     const menu = screen.getByTestId("row-menu");
-    expect(Number.parseFloat(menu.style.left)).toBeLessThanOrEqual(
-      window.innerWidth,
-    );
-    expect(Number.parseFloat(menu.style.top)).toBeLessThanOrEqual(
-      window.innerHeight,
-    );
+    expect(menu).toHaveClass("top-(--menu-y)", "left-(--menu-x)");
+    expect(
+      Number.parseFloat(menu.style.getPropertyValue("--menu-x")),
+    ).toBeLessThanOrEqual(window.innerWidth);
+    expect(
+      Number.parseFloat(menu.style.getPropertyValue("--menu-y")),
+    ).toBeLessThanOrEqual(window.innerHeight);
   });
 
   it("exposes an accessible menu with one menuitem per action", () => {

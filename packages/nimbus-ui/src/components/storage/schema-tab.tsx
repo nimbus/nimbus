@@ -110,11 +110,11 @@ export function SchemaTab({
       <div className="flex items-center justify-end gap-2">
         <Button
           type="button"
-          variant="outline"
+          variant="destructive-outline"
           size="sm"
           onClick={() => setConfirmDrop(true)}
           disabled={busy !== null || !schema}
-          className="mr-auto text-error hover:text-error"
+          className="mr-auto"
           data-testid="documents-schema-drop"
         >
           {busy === "drop" ? "Dropping…" : "Drop schema"}

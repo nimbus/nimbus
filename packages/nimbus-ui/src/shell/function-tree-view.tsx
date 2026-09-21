@@ -12,7 +12,7 @@ import {
   Pencil,
   Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type CSSProperties, useMemo, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -151,7 +151,7 @@ function FolderRow({
         className={cn(
           "flex h-7 w-full items-center gap-1 rounded-md px-1 text-left text-text-3 hover:bg-bg-raised hover:text-text-1",
         )}
-        style={{ paddingLeft: `${rest.depth * 12 + 4}px` }}
+        style={{ "--indent": `${rest.depth * 12 + 4}px` } as CSSProperties}
         data-testid={`${rest.testidPrefix}-folder-toggle-${folder.fullPath}`}
       >
         {collapsed ? (
@@ -211,7 +211,7 @@ function ModuleRow({
         onClick={() => rest.toggle(key)}
         aria-expanded={!collapsed}
         className="flex h-7 w-full items-center gap-1 rounded-md px-1 text-left text-text-3 hover:bg-bg-raised hover:text-text-1"
-        style={{ paddingLeft: `${rest.depth * 12 + 4}px` }}
+        style={{ "--indent": `${rest.depth * 12 + 4}px` } as CSSProperties}
         data-testid={`${rest.testidPrefix}-module-toggle-${mod.fullPath}`}
       >
         {collapsed ? (
@@ -253,7 +253,7 @@ function LeafRow({
       search={{ tab: "source" }}
       data-testid={`${testidPrefix}-fn-${leaf.path}`}
       className="flex h-7 items-center gap-2 rounded-md px-1 text-sm text-text-3 hover:bg-bg-raised hover:text-text-1"
-      style={{ paddingLeft: `${depth * 12 + 16}px` }}
+      style={{ "--indent": `${depth * 12 + 16}px` } as CSSProperties}
     >
       <Icon size={13} aria-hidden className="shrink-0" />
       <span className="flex-1 truncate font-mono text-xs">{leaf.name}</span>

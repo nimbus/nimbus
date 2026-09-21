@@ -53,7 +53,7 @@ export function NavGroups({
           {group.label && !collapsed ? (
             <div
               data-testid={`sidebar-group-${group.label.toLowerCase()}`}
-              className="px-3 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.08em] text-text-4"
+              className="px-3 pb-1 pt-3 text-2xs font-medium uppercase tracking-eyebrow text-text-4"
             >
               {group.label}
             </div>

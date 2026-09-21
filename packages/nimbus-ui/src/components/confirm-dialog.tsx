@@ -86,7 +86,7 @@ export function ConfirmDialog({
           )}
         </DialogHeader>
         {(children || danger || typedConfirmation) && (
-          <DialogBody className="flex flex-col gap-3 text-sm text-text-2">
+          <DialogBody>
             {children}
             {typedConfirmation && (
               <label

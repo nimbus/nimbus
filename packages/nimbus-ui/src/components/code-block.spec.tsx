@@ -17,7 +17,7 @@ describe("CodeBlock", () => {
   it("uses 12px monospace at 1.5 leading, per DESIGN.md", () => {
     render(<CodeBlock code={"const a = 1;\n"} testid="cb" />);
     const pre = screen.getByTestId("cb");
-    expect(pre).toHaveClass("font-mono", "text-sm", "leading-[1.5]");
+    expect(pre).toHaveClass("font-mono", "text-sm", "leading-normal");
     expect(pre).not.toHaveClass("leading-5");
   });
 

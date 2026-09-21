@@ -17,6 +17,14 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
+        // Nimbus alignment: the two quieter danger buttons. `destructive`
+        // is the filled confirm inside a dialog; these open one. The
+        // outline is the danger-zone button on a settings page, the ghost
+        // is the inline delete beside a row.
+        "destructive-outline":
+          "border-error text-error hover:bg-error-tint hover:text-error focus-visible:border-error/40 focus-visible:ring-error/20 aria-expanded:bg-error-tint aria-expanded:text-error",
+        "destructive-ghost":
+          "text-error hover:bg-error-tint hover:text-error focus-visible:border-error/40 focus-visible:ring-error/20 aria-expanded:bg-error-tint aria-expanded:text-error",
       },
       size: {
         default:

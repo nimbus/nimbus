@@ -358,6 +358,10 @@
 
   /* Type scale (DESIGN.md): size/line pairs. Body is base 14/20. */
   --text-*: initial;
+  /* 2xs is the eyebrow step: sidebar group labels and the glyph inside an
+   * 8px state dot. Nothing a reader must read sits at this size. */
+  --text-2xs: 10px;
+  --text-2xs--line-height: 12px;
   --text-xs: 12px;
   --text-xs--line-height: 16px;
   --text-sm: 13px;
@@ -385,6 +389,14 @@
   --radius-full: 9999px;
 
   --ease-standard: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+
+  /* Uppercase eyebrow labels open their letter-spacing by this much. */
+  --tracking-eyebrow: 0.08em;
+
+  /* The 2px accent rail on the left edge of a selected list row (command
+   * palette, sub-panel). An inset shadow, not a border, so the row keeps its
+   * box and the rail can switch on without a layout shift. */
+  --inset-shadow-rail: inset 2px 0 0 var(--accent);
 
   /* Above-the-page-plane shadow (popovers and modals): the drop shadow plus
    * the inset 1px white ring that lifts a dark surface. */

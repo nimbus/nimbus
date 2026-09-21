@@ -53,10 +53,11 @@ export function Slideover({
     >
       <SheetContent
         side="right"
+        variant="panel"
         showCloseButton={false}
         aria-label={title}
         data-testid={testid}
-        className="gap-2 border-border-2 bg-bg-panel p-4 text-text-1 data-[side=right]:w-[480px] data-[side=right]:max-w-full data-[side=right]:sm:max-w-full"
+        className="data-[side=right]:w-[480px] data-[side=right]:max-w-full data-[side=right]:sm:max-w-full"
       >
         <PanelHeader title={title} onClose={onClose} />
         {children}

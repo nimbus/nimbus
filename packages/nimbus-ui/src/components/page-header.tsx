@@ -28,12 +28,7 @@ export function PageHeader({
       data-testid={testid}
     >
       <div className="min-w-0">
-        <h1
-          className="text-xl text-text-1"
-          style={{ fontSize: "var(--text-xl)" }}
-        >
-          {title}
-        </h1>
+        <h1 className="text-xl text-text-1">{title}</h1>
         {/* No measure cap. The paragraph is shrink-to-fit inside a header
             row, so its width is the sentence's own intrinsic width and does
             not grow with the viewport. Capping it only bought a second line

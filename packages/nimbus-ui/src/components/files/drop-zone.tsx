@@ -81,7 +81,7 @@ export function DropZone({
         <div
           // The dashes are gold with an `--accent-ink` hairline hugging them
           // inside, so the frame is legible over the light panel too.
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-accent bg-bg-panel/80 shadow-[inset_0_0_0_1px_var(--accent-ink)]"
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 border-dashed border-accent bg-bg-panel/80 inset-ring inset-ring-accent-ink"
           data-testid={`${testid}-overlay`}
         >
           {/* The drop label is the one focal element of this state, so it is

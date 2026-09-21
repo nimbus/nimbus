@@ -100,14 +100,11 @@ function ObjectBody({
   };
   return (
     <>
-      <SheetHeader className="pr-12">
-        <SheetTitle
-          className="min-w-0 truncate font-mono text-sm text-text-1"
-          title={object.key}
-        >
+      <SheetHeader>
+        <SheetTitle className="truncate font-mono text-sm" title={object.key}>
           {name}
         </SheetTitle>
-        <SheetDescription className="flex min-w-0 items-center gap-2">
+        <SheetDescription>
           <span className="truncate font-mono text-xs text-text-3">
             {bucket}/{object.key}
           </span>
@@ -146,7 +143,7 @@ function ObjectBody({
           in console session only; hand out S3 credentials for anything else.
         </p>
       </div>
-      <SheetFooter className="flex-row flex-wrap justify-end gap-2">
+      <SheetFooter className="flex-row flex-wrap justify-end">
         <Button
           type="button"
           variant="outline"
@@ -272,7 +269,7 @@ function Preview({
 function Missing({ loading }: { loading: boolean }) {
   return (
     <>
-      <SheetHeader className="pr-12">
+      <SheetHeader>
         <SheetTitle>{loading ? "Reading…" : "Not in this listing"}</SheetTitle>
         <SheetDescription>
           {loading

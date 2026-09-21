@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { ChevronsLeft, ChevronsRight, Cpu, FunctionSquare } from "lucide-react";
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -43,8 +43,8 @@ function FakeSubPanelHost({
       data-testid="sub-panel"
       data-kind={spec.kind}
       data-collapsed="false"
-      style={{ width }}
-      className="flex h-[420px] shrink-0 flex-col border-r border-border-2 bg-bg-panel"
+      style={{ "--w": `${width}px` } as CSSProperties}
+      className="flex h-[420px] w-(--w) shrink-0 flex-col border-r border-border-2 bg-bg-panel"
     >
       <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border-2 px-3">
         <span className="truncate text-xs font-medium text-text-3">
@@ -95,7 +95,7 @@ function FakeStaticList({
         const row = cn(
           "flex h-8 items-center gap-2 rounded-sm border-l-2 border-transparent px-2 text-sm no-underline",
           active
-            ? "bg-bg-hover text-text-1"
+            ? "border-l-accent bg-bg-hover text-text-1"
             : "text-text-3 hover:bg-bg-hover hover:text-text-1",
         );
         return (
@@ -105,7 +105,6 @@ function FakeStaticList({
               data-testid={`sub-panel-item-${item.id}`}
               data-active={active ? "true" : "false"}
               className={row}
-              style={active ? { borderLeftColor: "var(--accent)" } : undefined}
             >
               <span className="flex-1 truncate">{item.label}</span>
               {typeof item.count === "number" ? (
@@ -134,8 +133,8 @@ function FakeSubPanelRail({
       aria-label={title}
       data-testid="sub-panel"
       data-collapsed="true"
-      style={{ width: SUB_PANEL_RAIL_WIDTH }}
-      className="flex h-[420px] shrink-0 flex-col gap-1 border-r border-border-2 bg-bg-panel py-2"
+      style={{ "--w": `${SUB_PANEL_RAIL_WIDTH}px` } as CSSProperties}
+      className="flex h-[420px] w-(--w) shrink-0 flex-col gap-1 border-r border-border-2 bg-bg-panel py-2"
     >
       <button
         type="button"
@@ -154,11 +153,8 @@ function FakeSubPanelRail({
             aria-current={item.active ? "page" : undefined}
             className={cn(
               "flex h-8 w-full items-center justify-center border-l-2 border-transparent text-text-3 transition-colors hover:bg-bg-hover hover:text-text-1",
-              item.active && "bg-bg-hover text-text-1",
+              item.active && "border-l-accent bg-bg-hover text-text-1",
             )}
-            style={
-              item.active ? { borderLeftColor: "var(--accent)" } : undefined
-            }
           >
             <Icon size={14} aria-hidden />
           </button>

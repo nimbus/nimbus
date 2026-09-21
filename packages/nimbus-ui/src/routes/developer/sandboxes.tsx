@@ -344,7 +344,7 @@ export function SandboxesTable({
               />
               {row.actionError ? (
                 <span
-                  className="truncate text-xs text-[color:var(--error)]"
+                  className="truncate text-xs text-error"
                   title={row.actionError}
                   data-testid={`sandboxes-row-error-${idOf(row)}`}
                 >

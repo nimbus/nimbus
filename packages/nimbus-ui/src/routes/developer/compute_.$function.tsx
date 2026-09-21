@@ -150,12 +150,7 @@ function FunctionDetailPage() {
           ]}
         />
         <header className="flex flex-wrap items-center gap-3">
-          <h1
-            className="font-mono text-text-1"
-            style={{ fontSize: "var(--text-lg)" }}
-          >
-            {functionPath}
-          </h1>
+          <h1 className="font-mono text-lg text-text-1">{functionPath}</h1>
           {fn?.kind ? <CategoryPill value={fn.kind} /> : null}
           {fn?.adapter ? <CategoryPill value={fn.adapter} /> : null}
           {fn?.lastStatus ? <StatePill state={fn.lastStatus} /> : null}

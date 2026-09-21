@@ -61,7 +61,8 @@ export function ColumnChooser({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="flex max-h-80 w-72 flex-col gap-0 border border-border-2 bg-bg-panel p-0 text-text-1"
+        variant="list"
+        className="max-h-80 w-72"
         data-testid="documents-column-chooser-panel"
       >
         <div className="border-b border-border-2 px-3 py-2">

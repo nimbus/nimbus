@@ -115,12 +115,7 @@ function ServiceDetailPage() {
         />
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-wrap items-baseline gap-3">
-            <h1
-              className="font-mono text-text-1"
-              style={{ fontSize: "var(--text-lg)" }}
-            >
-              {displayName}
-            </h1>
+            <h1 className="font-mono text-lg text-text-1">{displayName}</h1>
             {service.kind ? <CategoryPill value={service.kind} /> : null}
             <StatePill
               state={shownStateOf(service, actions)}

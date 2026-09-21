@@ -134,7 +134,8 @@ function ServerIdentity() {
         label="server URL"
         value={url}
         testid="sidebar-server-url"
-        className="min-w-0 flex-1 truncate text-left font-mono text-text-1"
+        tone="primary"
+        className="min-w-0 flex-1 text-left"
       >
         {host}
       </CopyChip>
