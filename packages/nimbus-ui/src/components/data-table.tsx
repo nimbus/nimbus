@@ -264,15 +264,32 @@ export function DataTable<TData extends RowData>({
   };
 
   const headerGroups = table.getHeaderGroups();
+  // A column is pinned to its declared size when it opts out of resizing or
+  // declares its own maxSize. TanStack merges its default maxSize
+  // (Number.MAX_SAFE_INTEGER, see getDefaultColumnSizingColumnDef in
+  // @tanstack/table-core) into every columnDef, so the check compares against
+  // that default rather than testing for presence; otherwise every column is
+  // pinned, and a table half as wide as its panel truncates values beside
+  // empty space. Every other column grows past its size in proportion to it,
+  // so the page's column plan keeps its shape as the panel widens.
+  const defaultMaxSize = Number.MAX_SAFE_INTEGER;
   const template = table
     .getAllLeafColumns()
-    .map((column) =>
-      column.columnDef.enableResizing === false || column.columnDef.maxSize
-        ? `${column.getSize()}px`
-        : `minmax(${column.getSize()}px, 1fr)`,
-    )
+    .map((column) => {
+      const { enableResizing, maxSize } = column.columnDef;
+      const size = column.getSize();
+      return enableResizing === false ||
+        (maxSize !== undefined && maxSize < defaultMaxSize)
+        ? `${size}px`
+        : `minmax(${size}px, ${size}fr)`;
+    })
     .join(" ");
-  const gridStyle: CSSProperties = { gridTemplateColumns: template };
+  // The template and the row height travel as custom properties so the grid
+  // rows stay on static classes (DESIGN.md → Styling Contract).
+  const gridVars = {
+    "--table-cols": template,
+    "--row-h": `${ROW_HEIGHT}px`,
+  } as CSSProperties;
 
   const activate = (row: Row<DataTableFeatures, TData>) => {
     onRowActivate?.(row.original);
@@ -333,7 +350,7 @@ export function DataTable<TData extends RowData>({
   const renderRow = (
     row: Row<DataTableFeatures, TData>,
     index: number,
-    style?: CSSProperties,
+    virtualStart?: number,
   ) => (
     <div
       key={row.id}
@@ -360,12 +377,18 @@ export function DataTable<TData extends RowData>({
         focusable ? (event) => onRowKeyDown(event, row, index) : undefined
       }
       className={cn(
-        "grid items-center border-b border-border-1 outline-none last:border-b-0 focus-visible:border-accent",
+        "grid h-(--row-h) grid-cols-(--table-cols) items-center border-b border-border-1 outline-none last:border-b-0 focus-visible:border-accent",
         onRowActivate && "cursor-pointer hover:bg-bg-hover",
         row.getIsSelected() && "bg-accent-tint",
+        virtualStart !== undefined &&
+          "absolute top-0 left-0 w-full translate-y-(--row-y)",
         rowClassName?.(row.original),
       )}
-      style={{ ...gridStyle, height: ROW_HEIGHT, ...style }}
+      style={
+        virtualStart !== undefined
+          ? ({ "--row-y": `${virtualStart}px` } as CSSProperties)
+          : undefined
+      }
     >
       {row.getAllCells().map((cell) => (
         <div
@@ -387,17 +410,20 @@ export function DataTable<TData extends RowData>({
       aria-rowindex={index + 2}
       aria-hidden="true"
       data-testid={testid ? `${testid}-skeleton-row` : undefined}
-      className="grid items-center border-b border-border-1 last:border-b-0"
-      style={{ ...gridStyle, height: ROW_HEIGHT }}
+      className="grid h-(--row-h) grid-cols-(--table-cols) items-center border-b border-border-1 last:border-b-0"
     >
       {table.getAllLeafColumns().map((column, columnIndex) => (
         <div key={column.id} role="cell" className="min-w-0 px-3">
           <Skeleton
-            className="h-3"
-            style={{
-              width:
-                SKELETON_WIDTHS[(index + columnIndex) % SKELETON_WIDTHS.length],
-            }}
+            className="h-3 w-(--w)"
+            style={
+              {
+                "--w":
+                  SKELETON_WIDTHS[
+                    (index + columnIndex) % SKELETON_WIDTHS.length
+                  ],
+              } as CSSProperties
+            }
           />
         </div>
       ))}
@@ -419,11 +445,22 @@ export function DataTable<TData extends RowData>({
         "flex min-h-0 flex-col overflow-hidden rounded-md border border-border-1 bg-bg-panel",
         className,
       )}
+      style={gridVars}
     >
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-auto"
-        style={maxHeight !== undefined ? { maxHeight } : undefined}
+        className={cn(
+          "min-h-0 flex-1 overflow-auto",
+          maxHeight !== undefined && "max-h-(--table-max-h)",
+        )}
+        style={
+          maxHeight !== undefined
+            ? ({
+                "--table-max-h":
+                  typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight,
+              } as CSSProperties)
+            : undefined
+        }
       >
         <div role="rowgroup" className="sticky top-0 z-10 bg-bg-panel">
           {headerGroups.map((headerGroup) => (
@@ -431,8 +468,7 @@ export function DataTable<TData extends RowData>({
               key={headerGroup.id}
               role="row"
               aria-rowindex={1}
-              className="grid h-8 items-center border-b border-border-2"
-              style={gridStyle}
+              className="grid h-8 grid-cols-(--table-cols) items-center border-b border-border-2"
             >
               {headerGroup.headers.map((header) => {
                 const column = header.column;
@@ -498,9 +534,12 @@ export function DataTable<TData extends RowData>({
         <div
           role="rowgroup"
           data-testid={testid ? `${testid}-body` : undefined}
+          className={cn(isVirtual && !loading && "relative h-(--body-h)")}
           style={
             isVirtual && !loading
-              ? { height: virtualizer.getTotalSize(), position: "relative" }
+              ? ({
+                  "--body-h": `${virtualizer.getTotalSize()}px`,
+                } as CSSProperties)
               : undefined
           }
         >
@@ -523,13 +562,7 @@ export function DataTable<TData extends RowData>({
             virtualizer.getVirtualItems().map((item) => {
               const row = rowModel[item.index];
               if (!row) return null;
-              return renderRow(row, item.index, {
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                transform: `translateY(${item.start}px)`,
-              });
+              return renderRow(row, item.index, item.start);
             })
           ) : (
             rowModel.map((row, index) => renderRow(row, index))
