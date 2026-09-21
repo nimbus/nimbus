@@ -277,12 +277,8 @@ export function FunctionRunner({
               >
                 {result.kind === "running" ? "Running…" : "Run function"}
                 <KbdGroup aria-hidden className="ml-1">
-                  <Kbd className="bg-black/10 text-current dark:bg-white/15">
-                    {metaGlyph}
-                  </Kbd>
-                  <Kbd className="bg-black/10 text-current dark:bg-white/15">
-                    ⏎
-                  </Kbd>
+                  <Kbd className="bg-current/10 text-current">{metaGlyph}</Kbd>
+                  <Kbd className="bg-current/10 text-current">⏎</Kbd>
                 </KbdGroup>
               </Button>
               {!runnable ? (
@@ -449,6 +445,7 @@ function ResultPanel({
       <div
         className="flex flex-col gap-2 rounded-lg border border-border-2 bg-bg-raised px-3 py-3"
         data-testid="function-runner-result-error"
+        // eslint-disable-next-line shadcn/no-unknown-classes -- a test hook, not a class list
         data-error-class={thrown ? "function" : "service"}
       >
         <div className="flex items-center gap-2">

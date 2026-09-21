@@ -73,9 +73,7 @@ describe("Mascot", () => {
     for (const state of MASCOT_STATES.filter(
       (s) => s !== "idle" && s !== "wink",
     )) {
-      const { container, unmount } = render(
-        <Mascot state={state} size={48} />,
-      );
+      const { container, unmount } = render(<Mascot state={state} size={48} />);
       const svg = container.querySelector("svg") as SVGSVGElement;
       expect(svg).toHaveAttribute("viewBox", "0 0 120 92");
       expect(svg).toHaveAttribute("height", "37");
@@ -165,7 +163,10 @@ describe("Mascot", () => {
     const eyes = container.querySelector("[data-part='eyes']") as SVGElement;
     expect(eyes.querySelectorAll("circle")).toHaveLength(1);
     expect(eyes.querySelector("circle")).toHaveAttribute("cx", "48");
-    expect(eyes.querySelector("path")).toHaveAttribute("d", "M66 54 q6 -7 12 0");
+    expect(eyes.querySelector("path")).toHaveAttribute(
+      "d",
+      "M66 54 q6 -7 12 0",
+    );
     expect(eyes.getAttribute("class") ?? "").not.toContain("animate");
   });
 

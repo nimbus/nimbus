@@ -48,7 +48,7 @@ export function TraceWaterfall({
           {spans?.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="space-y-2">
+      <div className="flex flex-col gap-2">
         {/* The run's own bar reports the run's own status, so a failed run
             never paints itself success-green above the spans that failed
             it. */}

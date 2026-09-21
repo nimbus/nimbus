@@ -300,7 +300,10 @@ function TableDocumentsPage() {
           `Stopped after deleting ${attempted - failures.length} of ${ids.length} documents`,
           {
             description: (
-              <div className="space-y-1" data-testid="documents-delete-stopped">
+              <div
+                className="flex flex-col gap-1"
+                data-testid="documents-delete-stopped"
+              >
                 <p>
                   Left {table} before the rest were deleted;{" "}
                   {ids.length - attempted} document
@@ -690,7 +693,7 @@ function TableDocumentsPage() {
             : `Delete ${confirmDelete?.length ?? 0} documents?`
         }
         description={
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2">
             <p>
               Removes{" "}
               <span className="font-mono text-text-1 tabular">

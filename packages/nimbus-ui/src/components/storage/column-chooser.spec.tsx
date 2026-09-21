@@ -96,7 +96,7 @@ describe("ColumnChooser", () => {
     await user.click(screen.getByTestId("documents-column-chooser"));
 
     const button = screen.getByRole("button", { name: "Move body left" });
-    expect(sizingClasses(button)).toEqual(["h-8", "w-8"]);
+    expect(sizingClasses(button)).toEqual(["size-8"]);
     // Sizing alone parks the chevron in a corner of the new box.
     expect(button.className.split(" ")).toEqual(
       expect.arrayContaining(["flex", "items-center", "justify-center"]),
@@ -115,7 +115,7 @@ describe("ColumnChooser", () => {
     await user.click(screen.getByTestId("documents-column-chooser"));
 
     const button = screen.getByRole("button", { name: "Move body right" });
-    expect(sizingClasses(button)).toEqual(["h-8", "w-8"]);
+    expect(sizingClasses(button)).toEqual(["size-8"]);
     expect(button.className.split(" ")).toEqual(
       expect.arrayContaining(["flex", "items-center", "justify-center"]),
     );

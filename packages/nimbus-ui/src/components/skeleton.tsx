@@ -146,7 +146,7 @@ export function CardGridSkeleton({
           <Skeleton className="size-9 shrink-0 rounded-md" />
           <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
             <Skeleton className="h-3.5 w-1/2" />
-            <Skeleton className="h-3 w-3/4" />
+            <Skeleton className="size-3/4" />
             <Skeleton className="h-3 w-1/3" />
           </div>
         </div>

@@ -674,7 +674,7 @@ describe("SubPanel icon-button hit targets", () => {
     renderLayout(SPEC);
     const collapse = screen.getByTestId("sub-panel-toggle");
     expect(collapse.className.split(" ")).toEqual(
-      expect.arrayContaining(["h-8", "w-8"]),
+      expect.arrayContaining(["size-8"]),
     );
   });
 
