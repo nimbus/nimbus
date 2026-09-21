@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { ConfirmDialog } from "../../../components/confirm-dialog";
 import { Select } from "../../../components/select";
 import { sandboxes as sandboxApi } from "../../../lib/api-mutations";
@@ -147,7 +153,7 @@ export function CreateSandboxDialog({
       onCancel={close}
       testid="sandbox-create-dialog"
     >
-      <div className="flex flex-col gap-3">
+      <FieldGroup>
         <div className="flex flex-wrap items-center gap-3">
           <Select
             label="profile"
@@ -170,11 +176,8 @@ export function CreateSandboxDialog({
             testid="sandbox-create-backend"
           />
         </div>
-        <Field
-          htmlFor="sandbox-create-id"
-          label="Id"
-          hint="lowercase, digits, hyphens"
-        >
+        <Field>
+          <FieldLabel htmlFor="sandbox-create-id">Id</FieldLabel>
           <input
             value={draft.id}
             onChange={(event) => patch({ id: event.target.value })}
@@ -183,12 +186,10 @@ export function CreateSandboxDialog({
             id="sandbox-create-id"
             data-testid="sandbox-create-id"
           />
+          <FieldDescription>lowercase, digits, hyphens</FieldDescription>
         </Field>
-        <Field
-          htmlFor="sandbox-create-name"
-          label="Display name"
-          hint="optional"
-        >
+        <Field>
+          <FieldLabel htmlFor="sandbox-create-name">Display name</FieldLabel>
           <input
             value={draft.displayName}
             onChange={(event) => patch({ displayName: event.target.value })}
@@ -197,12 +198,10 @@ export function CreateSandboxDialog({
             id="sandbox-create-name"
             data-testid="sandbox-create-name"
           />
+          <FieldDescription>optional</FieldDescription>
         </Field>
-        <Field
-          htmlFor="sandbox-create-image"
-          label="Image"
-          hint="OCI reference"
-        >
+        <Field>
+          <FieldLabel htmlFor="sandbox-create-image">Image</FieldLabel>
           <input
             value={draft.image}
             onChange={(event) => patch({ image: event.target.value })}
@@ -211,12 +210,10 @@ export function CreateSandboxDialog({
             id="sandbox-create-image"
             data-testid="sandbox-create-image"
           />
+          <FieldDescription>OCI reference</FieldDescription>
         </Field>
-        <Field
-          htmlFor="sandbox-create-command"
-          label="Command"
-          hint="one argument per line"
-        >
+        <Field>
+          <FieldLabel htmlFor="sandbox-create-command">Command</FieldLabel>
           <textarea
             value={draft.command}
             onChange={(event) => patch({ command: event.target.value })}
@@ -226,34 +223,10 @@ export function CreateSandboxDialog({
             id="sandbox-create-command"
             data-testid="sandbox-create-command"
           />
+          <FieldDescription>one argument per line</FieldDescription>
         </Field>
-      </div>
+      </FieldGroup>
     </ConfirmDialog>
-  );
-}
-
-function Field({
-  htmlFor,
-  label,
-  hint,
-  children,
-}: {
-  htmlFor: string;
-  label: string;
-  hint: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label
-        htmlFor={htmlFor}
-        className="flex items-baseline gap-2 text-xs font-medium text-text-3"
-      >
-        {label}
-        <span className="font-normal">{hint}</span>
-      </label>
-      {children}
-    </div>
   );
 }
 

@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { schema as schemaApi } from "../../lib/api-mutations";
 import type { TableSchemaIndex, TableSchemaShape } from "../../lib/types/table";
 import { ConfirmDialog } from "../confirm-dialog";
@@ -289,19 +290,21 @@ function NewIndexForm({
       onSubmit={submit}
       data-testid="documents-index-form"
     >
-      <label className="inline-flex items-center gap-1.5 text-xs font-medium text-text-3">
-        name
+      <Field orientation="inline">
+        <FieldLabel htmlFor="documents-index-name">name</FieldLabel>
         <input
+          id="documents-index-name"
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="by_author"
           className={`${INPUT_CLASS} w-40`}
           data-testid="documents-index-name"
         />
-      </label>
-      <label className="inline-flex items-center gap-1.5 text-xs font-medium text-text-3">
-        fields
+      </Field>
+      <Field orientation="inline">
+        <FieldLabel htmlFor="documents-index-fields">fields</FieldLabel>
         <input
+          id="documents-index-fields"
           value={fields}
           onChange={(event) => setFields(event.target.value)}
           // The leading field is the one a sort can use without a scan.
@@ -309,7 +312,7 @@ function NewIndexForm({
           className={`${INPUT_CLASS} w-56`}
           data-testid="documents-index-fields"
         />
-      </label>
+      </Field>
       <Button
         type="submit"
         size="sm"

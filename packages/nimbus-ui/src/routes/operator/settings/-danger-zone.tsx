@@ -3,6 +3,7 @@ import { toast } from "sonner";
 
 import { ConfirmDialog } from "../../../components/confirm-dialog";
 import { Button } from "../../../components/ui/button";
+import { Field, FieldLabel } from "../../../components/ui/field";
 import { Input } from "../../../components/ui/input";
 import { system } from "../../../lib/api-mutations";
 import { PageSection } from "./-primitives";
@@ -142,11 +143,10 @@ function RotateTokenDialog({
       onCancel={close}
       testid="settings-rotate-dialog"
     >
-      <label
-        htmlFor="settings-rotate-token"
-        className="flex flex-col gap-1 text-xs text-text-3"
-      >
-        <span>Current admin bearer</span>
+      <Field>
+        <FieldLabel htmlFor="settings-rotate-token">
+          Current admin bearer
+        </FieldLabel>
         <Input
           id="settings-rotate-token"
           type="password"
@@ -164,7 +164,7 @@ function RotateTokenDialog({
           className="font-mono"
           placeholder="Paste the token printed by nimbus token show"
         />
-      </label>
+      </Field>
     </ConfirmDialog>
   );
 }

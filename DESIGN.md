@@ -1340,11 +1340,13 @@ Tables are the default shape for resources:
 - Use inputs/sliders/steppers for numeric values.
 - Use JSON/code editors for document, argument, and config values.
 - Validate on blur and before submit. Show field-specific errors.
-- Build new forms from the shadcn `Field` family (`Field`, `FieldGroup`,
-  `FieldLabel`, `FieldDescription`, `FieldError`) and put adorned inputs in
-  `InputGroup` with `InputGroupInput`. `field` is not installed yet; add it
-  with `npx shadcn@latest add field` in the first change that needs a form,
-  and do not hand-roll label, hint, and error markup.
+- Build every form from the shadcn `Field` family (`Field`, `FieldGroup`,
+  `FieldLabel`, `FieldContent`, `FieldDescription`, `FieldError`) and put
+  adorned inputs in `InputGroup` with `InputGroupInput`. Do not hand-roll
+  label, hint, and error markup. `Field` carries two Nimbus orientations
+  beside the upstream three: `inline` for a label-prefixed filter control in
+  a toolbar, and `columns` for a fixed label column beside a growing control
+  (the function runner argument rows).
 
 ### Badges
 

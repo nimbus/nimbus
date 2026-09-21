@@ -40,6 +40,12 @@ import {
 } from "../../components/storage/row-context-menu";
 import { RelativeTime } from "../../components/time";
 import { Button } from "../../components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "../../components/ui/field";
 import { Input } from "../../components/ui/input";
 import { useServerUrl } from "../../hooks/use-server-url";
 import {
@@ -540,8 +546,8 @@ function FilesPage() {
         onCancel={() => setNewBucket({ open: false, name: "" })}
         testid="files-new-bucket-dialog"
       >
-        <div className="flex flex-col gap-1 text-xs text-text-3">
-          <label htmlFor={newBucketId}>Bucket name</label>
+        <Field>
+          <FieldLabel htmlFor={newBucketId}>Bucket name</FieldLabel>
           <Input
             id={newBucketId}
             value={newBucket.name}
@@ -562,15 +568,15 @@ function FilesPage() {
           />
           {newBucket.name.trim().length > 0 &&
           !isValidBucketName(newBucket.name.trim()) ? (
-            <span className="text-error">
+            <FieldError>
               A bucket name cannot contain a slash and is at most 63 bytes.
-            </span>
+            </FieldError>
           ) : (
-            <span>
+            <FieldDescription>
               One to 63 bytes, no slash. The S3 listener sees the same name.
-            </span>
+            </FieldDescription>
           )}
-        </div>
+        </Field>
       </ConfirmDialog>
     </section>
   );

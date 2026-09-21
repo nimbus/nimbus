@@ -44,7 +44,6 @@ export function EditDrawer({
         initialJson={initial}
         label="patch (JSON object — only changed fields)"
         fieldId="edit-json"
-        labelClassName="mt-2"
         submitLabel="save"
         submittingLabel="saving…"
         testidPrefix="documents-edit"

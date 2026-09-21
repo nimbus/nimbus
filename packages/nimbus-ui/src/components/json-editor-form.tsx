@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 
 // A labelled JSON textarea with a cancel/submit footer that owns the draft
@@ -11,7 +12,6 @@ export function JsonEditorForm({
   initialJson,
   label,
   fieldId,
-  labelClassName,
   submitLabel,
   submittingLabel,
   testidPrefix,
@@ -21,7 +21,6 @@ export function JsonEditorForm({
   initialJson: string;
   label: string;
   fieldId: string;
-  labelClassName?: string;
   submitLabel: string;
   submittingLabel: string;
   testidPrefix: string;
@@ -46,28 +45,20 @@ export function JsonEditorForm({
 
   return (
     <>
-      <label
-        htmlFor={fieldId}
-        className={cn("text-xs font-medium text-text-3", labelClassName)}
-      >
-        {label}
-      </label>
-      <textarea
-        id={fieldId}
-        value={json}
-        onChange={(e) => setJson(e.target.value)}
-        spellCheck={false}
-        className="min-h-[240px] flex-1 resize-none rounded-xs border border-border-2 bg-bg-raised p-2 font-mono text-xs text-text-1 focus-visible:border-accent"
-        data-testid={`${testidPrefix}-textarea`}
-      />
-      {error ? (
-        <p
-          className="font-mono text-xs text-error"
-          data-testid={`${testidPrefix}-error`}
-        >
-          {error}
-        </p>
-      ) : null}
+      <Field className="min-h-0 flex-1">
+        <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
+        <textarea
+          id={fieldId}
+          value={json}
+          onChange={(e) => setJson(e.target.value)}
+          spellCheck={false}
+          className="min-h-[240px] flex-1 resize-none rounded-xs border border-border-2 bg-bg-raised p-2 font-mono text-xs text-text-1 focus-visible:border-accent"
+          data-testid={`${testidPrefix}-textarea`}
+        />
+        {error ? (
+          <FieldError data-testid={`${testidPrefix}-error`}>{error}</FieldError>
+        ) : null}
+      </Field>
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
           type="button"

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { useServerUrl } from "../../hooks/use-server-url";
 import { CodeBlock } from "../code-block";
 import { CopyChip } from "../copy-chip";
@@ -241,16 +242,21 @@ export function QueryTab({
             className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning-tint/40 px-3 py-2 text-xs text-text-1"
             data-testid="documents-query-scan-warning"
           >
-            <Checkbox
-              id="documents-query-scan-anyway"
-              checked={scanAnyway}
-              onCheckedChange={(checked) => setScanAnyway(checked === true)}
-              data-testid="documents-query-scan-anyway"
-            />
-            <label htmlFor="documents-query-scan-anyway">
-              No index leads with <span className="font-mono">{sortField}</span>
-              ; the sort reads the whole table. Scan anyway.
-            </label>
+            <Field orientation="horizontal">
+              <Checkbox
+                id="documents-query-scan-anyway"
+                checked={scanAnyway}
+                onCheckedChange={(checked) => setScanAnyway(checked === true)}
+                data-testid="documents-query-scan-anyway"
+              />
+              <FieldLabel htmlFor="documents-query-scan-anyway">
+                <span>
+                  No index leads with{" "}
+                  <span className="font-mono">{sortField}</span>; the sort reads
+                  the whole table. Scan anyway.
+                </span>
+              </FieldLabel>
+            </Field>
           </div>
         ) : null}
       </fieldset>

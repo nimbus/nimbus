@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { Field, FieldLabel } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 
 // FacetBar is the filter strip above a list: a row of facets (a select, a
@@ -61,11 +62,8 @@ export function FacetInput({
   testid?: string;
 }) {
   return (
-    <label
-      htmlFor={id}
-      className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text-3"
-    >
-      <span className="shrink-0">{label}</span>
+    <Field orientation="inline">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <input
         id={id}
         type="text"
@@ -78,7 +76,7 @@ export function FacetInput({
         )}
         data-testid={testid}
       />
-    </label>
+    </Field>
   );
 }
 
