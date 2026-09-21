@@ -1336,6 +1336,11 @@ Tables are the default shape for resources:
 - Use inputs/sliders/steppers for numeric values.
 - Use JSON/code editors for document, argument, and config values.
 - Validate on blur and before submit. Show field-specific errors.
+- Build new forms from the shadcn `Field` family (`Field`, `FieldGroup`,
+  `FieldLabel`, `FieldDescription`, `FieldError`) and put adorned inputs in
+  `InputGroup` with `InputGroupInput`. `field` is not installed yet; add it
+  with `npx shadcn@latest add field` in the first change that needs a form,
+  and do not hand-roll label, hint, and error markup.
 
 ### Badges
 
@@ -1517,7 +1522,10 @@ the resource header), the chip is permanent rather than hover-only.
 ### Toast / Notification Queue
 
 Use `sonner` for transient feedback. Anchor: bottom-right, with the
-default offset; nothing fixed sits under the toast stack. Rules:
+default offset; nothing fixed sits under the toast stack. shadcn now ships
+a Base UI `toast` component for `base-nova` projects and reserves `sonner`
+for the Radix styles. The console stays on `sonner` (23 call sites) until
+a migration plan owns the switch; do not mix the two. Rules:
 
 - Mutations confirm via toast (`Started machine-01`), not via modal.
 - Errors show until dismissed; never auto-disappear.
@@ -1537,7 +1545,10 @@ Three sizes, each with a clear next action:
 | Whole-tab | Centered, monospace title + 2-line muted body + 1-2 primary actions | Brand-new install, no machines created, no tenant exists |
 
 No illustrative artwork, no marketing-style blocks. Empty states are
-operational onboarding hints, not decoration.
+operational onboarding hints, not decoration. The console's `EmptyState`
+component (`packages/nimbus-ui/src/components/empty-state.tsx`) is the
+deliberate exception to the shadcn `Empty` registry component: it owns the
+mascot face and the copyable command below. Do not add `Empty`.
 
 The next action is on the page, not on another page. An empty state that
 says "open Compute" or "click Create tenant in the top nav" sends the
@@ -1799,11 +1810,73 @@ Tone:
 - Do not introduce a second data orchestration path for the UI.
 - Prefer shadcn `base-nova` registry components on Base UI primitives,
   Tailwind v4 with the hex role tokens in `tokens.css` bridged through
-  `@theme inline`, `cmdk` for the command palette, `sonner` for toasts,
-  `shiki` for syntax highlighting, Geist and Geist Mono self-hosted for
-  type, Lucide for icons, TanStack Router, Table, Virtual and Charts,
-  Zustand, Vitest, React Testing Library, and Playwright as described in
+  `@theme inline`, the `cn` package for class merging, `cmdk` for the
+  command palette, `sonner` for toasts, `shiki` for syntax highlighting,
+  Geist and Geist Mono self-hosted for type, Lucide for icons, TanStack
+  Router, Table, Virtual and Charts, Zustand, Vitest, React Testing Library,
+  and Playwright as described in
   `docs/private/plans/archive/desktop-ui-plan.md`.
+- `packages/nimbus-ui/src/components/ui/*` is registry-owned. Add and
+  update it with `npx shadcn@latest add <name>` and check drift with
+  `npx shadcn@latest diff`. Change a component's look with a `cva` variant
+  or a wrapper component in `src/components/`, not by editing the registry
+  file and not by restyling it at the call site.
+- Agent guidance for console work lives in the repo, not in a home
+  directory: `.agents/skills/nimbus-ui/SKILL.md` (this project) and
+  `.agents/skills/shadcn/SKILL.md` (upstream shadcn rules, pinned in
+  `skills-lock.json`). Update the local copy with
+  `npx skills add shadcn/ui --skill shadcn --agent claude-code codex -y`.
+
+### Styling Contract
+
+`@shadcn/lint` enforces this section. The config is
+`packages/nimbus-ui/eslint.config.mjs`; the gate is
+`npm run lint -w packages/nimbus-ui`, which runs Biome and then the design
+rules. This prose is the contract; the linter is the proof.
+
+- Style through tokens and variants. Every color, radius, shadow, and font
+  class resolves to a token in `src/styles/tokens.css`. A raw palette class
+  (`bg-zinc-900`, `text-white`, `border-[#333]`) is an error
+  (`no-raw-colors`).
+- A class that Tailwind cannot generate is an error (`no-unknown-classes`).
+  It is dead CSS. This rule caught `bg-bg-base` written for `bg-bg-canvas`.
+- `className` on a registry or nimbus component carries layout only: width,
+  height, flex, grid, margin, position, overflow. It does not carry color,
+  typography, padding, shape, effects, or motion (`no-restyle`). Change the
+  look through a variant or a wrapper.
+- Data-bearing controls (`Input`, `Textarea`, `InputGroupInput`,
+  `SelectTrigger`, `SelectItem`, `CommandInput`, `CommandItem`, `Kbd`, and
+  the dialog and sheet titles) may add `font-mono`, `tabular`, `truncate`,
+  `text-xs`, and `text-sm`. The contract list lives in `eslint.config.mjs`.
+  Extend it there, with the reason in the commit.
+- No arbitrary value outside layout (`no-arbitrary-values`). `text-[9px]`
+  and `tracking-[0.08em]` are token requests, not brackets; put the value in
+  `tokens.css` or use the nearest step. Layout brackets such as
+  `grid-cols-[auto_1fr]` and `h-[calc(100dvh-3rem)]` are allowed.
+- No inline `style` for a static value (`no-inline-styles`). A measured or
+  computed value (virtualizer offset, panel width, chart geometry) goes
+  through a CSS custom property, `style={{ "--row-h": h }}`, and a class
+  that reads it, `h-(--row-h)`.
+- Build every conditional class list with `cn()` from the `cn` package. No
+  template strings and no string concatenation (`require-static-classes`).
+- No `dark:` variant. Tokens switch with `html[data-theme]`.
+- Space siblings with flex or grid `gap-*`, never `space-x-*` or
+  `space-y-*`.
+- Use `size-*` for equal width and height.
+- Use `truncate` for single-line overflow and give the full value a `title`
+  or tooltip.
+- No manual `z-index` on overlays. The registry layers dialog, sheet,
+  popover, and tooltip.
+- An icon inside a registry component carries `data-icon="inline-start"` or
+  `data-icon="inline-end"` and no size class. The component sizes it.
+- Compose Base UI with the `render` prop, never `asChild`.
+- Record an exception at the call site:
+  `// eslint-disable-next-line shadcn/<rule> -- <constraint>`. The reason
+  names the constraint, not the rule. `src/components/ui/**` is exempt from
+  `no-restyle`, `no-arbitrary-values`, and `require-static-classes` because
+  the registry defines the variants.
+- `package.json` caps the design warnings with `--max-warnings`. A change
+  may lower the cap. It may not raise it.
 
 ## Accessibility And Quality Gates
 
@@ -1818,6 +1891,8 @@ Every UI feature must satisfy:
 - Tables remain usable at 1000+ rows through pagination or virtualization.
 - Logs remain responsive at 100+ events/second.
 - Bundle stays under the plan's gzipped size budget.
+- `npm run lint -w packages/nimbus-ui` passes: zero Biome errors, zero
+  design-rule errors, and design warnings at or under the cap.
 
 ## References Used
 

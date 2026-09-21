@@ -66,6 +66,7 @@ Keep routing detail in the local indexes, not in this bootstrap file:
 - Operating, CI, release, deploy, install, local-dev, and node runbooks: `docs/private/operating/README.md`
 - Adapter-family routing: `docs/private/adapters/README.md`
 - Public docs site work: `.agents/skills/docs/SKILL.md` and `docs/README.md`
+- Operator console UI work (`packages/nimbus-ui`): `.agents/skills/nimbus-ui/SKILL.md`, then `.agents/skills/shadcn/SKILL.md` and `DESIGN.md`
 
 Choose the active plan owner before editing. If no plan owns a concrete
 implementation topic, promote exactly one owner plan and update the roadmap map
@@ -192,6 +193,7 @@ discussing "nimbus," identify the intended item.
 - **JS tests:** `npm run test`
 - **JS build:** `npm run build`
 - **JS capability-boundary lint:** `npm run lint:capability-boundary`
+- **JS UI lint (Biome + shadcn design rules):** `npm run lint -w packages/nimbus-ui`. After a change under `packages/nimbus-ui`, run it and fix every error.
 - **Docs gates:** `bash scripts/check-docs.sh` and `bash scripts/verify-nimbus-docs-site.sh`
 - **Required local CI gate:** `make ci`. It aliases `make ci-required`. Hosted
   CI still owns coverage uploads and scheduled or manual Node compatibility

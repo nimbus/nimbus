@@ -117,7 +117,7 @@ describe("SystemTenantLens close button", () => {
     useUiStore.setState({ lensOpen: true });
     render(<SystemTenantLens />);
     const classes = screen.getByTestId("lens-close").className.split(" ");
-    expect(classes).toEqual(expect.arrayContaining(["h-8", "w-8"]));
+    expect(classes).toEqual(expect.arrayContaining(["size-8"]));
     // Padding cannot stay: 4px around a 16px glyph inside a fixed 32px box
     // shrinks the glyph's own box instead of growing the target.
     expect(classes).not.toContain("p-1");

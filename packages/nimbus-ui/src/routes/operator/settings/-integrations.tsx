@@ -58,7 +58,7 @@ export function IntegrationsSection({
                     Not claimed — no capability records published.
                   </p>
                 ) : (
-                  <ul className="space-y-1.5">
+                  <ul className="flex flex-col gap-1.5">
                     {features.map((f) => (
                       <li
                         key={f._id}

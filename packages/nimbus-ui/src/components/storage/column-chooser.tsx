@@ -109,7 +109,7 @@ export function ColumnChooser({
                   aria-label={`Move ${field} left`}
                   disabled={!isVisible || index <= 1}
                   onClick={() => onMove(field, -1)}
-                  className="flex h-8 w-8 items-center justify-center rounded-xs text-text-3 hover:text-text-1 disabled:opacity-30"
+                  className="flex size-8 items-center justify-center rounded-xs text-text-3 hover:text-text-1 disabled:opacity-30"
                 >
                   <ChevronUp size={14} aria-hidden />
                 </button>
@@ -118,7 +118,7 @@ export function ColumnChooser({
                   aria-label={`Move ${field} right`}
                   disabled={!isVisible || index === visible.length - 1}
                   onClick={() => onMove(field, 1)}
-                  className="flex h-8 w-8 items-center justify-center rounded-xs text-text-3 hover:text-text-1 disabled:opacity-30"
+                  className="flex size-8 items-center justify-center rounded-xs text-text-3 hover:text-text-1 disabled:opacity-30"
                 >
                   <ChevronDown size={14} aria-hidden />
                 </button>

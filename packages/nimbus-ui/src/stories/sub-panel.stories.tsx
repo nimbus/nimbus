@@ -53,7 +53,7 @@ function FakeSubPanelHost({
         <button
           type="button"
           aria-label="Collapse sub-panel"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-3 transition-colors hover:bg-bg-hover hover:text-text-1"
+          className="flex size-8 shrink-0 items-center justify-center rounded-sm text-text-3 transition-colors hover:bg-bg-hover hover:text-text-1"
         >
           <ChevronsLeft size={14} aria-hidden />
         </button>

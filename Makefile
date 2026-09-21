@@ -326,6 +326,11 @@ test-js:
 typecheck-js:
 	npm run typecheck --workspaces --if-present
 
+# Lint the operator console: Biome (general lint and format) and the
+# @shadcn/lint design-system rules (packages/nimbus-ui/eslint.config.mjs).
+lint-js:
+	npm run lint -w packages/nimbus-ui
+
 # Boot every examples/ app against a fresh local server and run its headless
 # smoke (EX5.2). Deliberately NOT folded into ci-required/ci: it boots eight
 # Nimbus servers sequentially (each paying its own health-check wait plus,
@@ -911,7 +916,7 @@ convex-demo-stop:
 
 # Required local CI-shaped check. Hosted CI still owns coverage upload and the
 # scheduled/manual Node compatibility evidence workflow.
-ci-required: $(UI_DIST_INDEX) fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js typecheck-js test-js proof-helpers
+ci-required: $(UI_DIST_INDEX) fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js typecheck-js lint-js test-js proof-helpers
 
 ci: ci-required
 

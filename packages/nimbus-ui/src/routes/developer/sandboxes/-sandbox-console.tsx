@@ -219,7 +219,7 @@ export function SandboxConsole({
       </div>
       <ol
         ref={logRef}
-        className="min-h-0 flex-1 overflow-auto bg-bg-base px-6 py-3 font-mono text-xs"
+        className="min-h-0 flex-1 overflow-auto bg-bg-canvas px-6 py-3 font-mono text-xs"
         aria-label="Sandbox console output"
         aria-live="polite"
         data-testid={`${testid}-log`}

@@ -14,7 +14,9 @@ Common commands:
 - `npm run build --workspace nimbus-ui` — regenerate Convex/router code,
   typecheck, and build `dist/` for `rust-embed`.
 - `npm run test --workspace nimbus-ui` — run Vitest component/unit specs.
-- `npm run lint --workspace nimbus-ui` — run Biome over the UI source.
+- `npm run lint --workspace nimbus-ui` — run Biome and the `@shadcn/lint`
+  design-system rules (`eslint.config.mjs`) over the UI source. Design-rule
+  warnings are capped in `package.json`; lower the cap, never raise it.
 - `npm run storybook:build --workspace nimbus-ui` — build the visual/a11y
   story matrix.
 - `npm run test:e2e --workspace nimbus-ui` — run Playwright E2E. Until the

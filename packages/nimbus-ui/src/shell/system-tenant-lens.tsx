@@ -53,7 +53,7 @@ export function SystemTenantLens() {
           type="button"
           aria-label="Close lens"
           onClick={() => setLensOpen(false)}
-          className="flex h-8 w-8 items-center justify-center rounded-xs text-text-3 hover:bg-bg-raised hover:text-text-1"
+          className="flex size-8 items-center justify-center rounded-xs text-text-3 hover:bg-bg-raised hover:text-text-1"
           data-testid="lens-close"
         >
           <X size={16} aria-hidden />

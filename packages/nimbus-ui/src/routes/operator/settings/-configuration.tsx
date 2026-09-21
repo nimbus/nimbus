@@ -52,7 +52,7 @@ export function ConfigurationSection({
       description="Runtime limits, runtime lanes, license entitlements, auth provider, adapter enablement, and storage topology."
     >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="space-y-4">
+        <div className="flex flex-col gap-4">
           <h3 className="mb-2 text-xs font-medium text-text-3">
             Runtime limits
           </h3>
@@ -213,7 +213,7 @@ export function ConfigurationSection({
           )}
           {licenseWarnings.length > 0 ? (
             <ul
-              className="mt-2 list-disc space-y-1 pl-5 text-xs text-warning"
+              className="mt-2 flex list-disc flex-col gap-1 pl-5 text-xs text-warning"
               data-testid="settings-license-warnings"
             >
               {licenseWarnings.map((w) => (
