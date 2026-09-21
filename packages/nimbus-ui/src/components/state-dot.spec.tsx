@@ -130,7 +130,8 @@ describe("StateDot", () => {
       const { container, unmount } = render(<StateDot state={state} />);
       const dot = container.querySelector("[data-state]") as HTMLElement;
       expect(dot.dataset.state).toBe(kind);
-      expect(dot.style.background).toBe(`var(${token})`);
+      expect(dot.style.getPropertyValue("--dot")).toBe(`var(${token})`);
+      expect(dot).toHaveClass("bg-(--dot)");
       expect(statePalette[kind].token).toBe(token);
       unmount();
     }
@@ -140,11 +141,13 @@ describe("StateDot", () => {
     const { unmount } = render(<StateDot state="starting" />);
     let dot = screen.getByRole("img");
     expect(dot).toHaveAttribute("data-glyph", "half");
-    expect(dot.style.background).toContain("conic-gradient");
+    expect(dot.className).toContain("conic-gradient");
+    expect(dot).toHaveClass("inset-ring-(--dot)");
     unmount();
     render(<StateDot state="stopped" />);
     dot = screen.getByRole("img");
     expect(dot).toHaveAttribute("data-glyph", "outline");
-    expect(dot.style.boxShadow).toContain("var(--text-3)");
+    expect(dot).toHaveClass("inset-ring-[1.5px]", "inset-ring-(--dot)");
+    expect(dot.style.getPropertyValue("--dot")).toBe("var(--text-3)");
   });
 });

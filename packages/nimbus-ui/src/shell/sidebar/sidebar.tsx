@@ -29,7 +29,7 @@ export function Sidebar() {
       data-collapsed={collapsed ? "true" : "false"}
       data-tier={tier}
       className={cn(
-        "flex h-full shrink-0 flex-col border-r border-border-2 bg-bg-panel transition-[width] duration-150 ease-standard",
+        "flex h-full shrink-0 flex-col border-r border-border-2 bg-bg-panel transition-all duration-150 ease-standard",
         collapsed ? "w-16" : "w-60",
       )}
     >

@@ -208,7 +208,7 @@ export function CommandPalette() {
       <Command
         loop
         aria-label="Command palette"
-        className="max-h-[min(70vh,560px)] bg-bg-raised"
+        className="max-h-[min(70vh,560px)]"
         data-testid="command-palette"
       >
         <CommandInput
@@ -222,7 +222,7 @@ export function CommandPalette() {
           className="max-h-none min-h-0 flex-1"
           data-testid="command-palette-list"
         >
-          <CommandEmpty className="text-text-3">No matches.</CommandEmpty>
+          <CommandEmpty>No matches.</CommandEmpty>
 
           {recent.length > 0 && query === "" ? (
             <CommandGroup heading="Recent" data-testid="palette-group-recent">
@@ -561,7 +561,6 @@ function UnavailableRow({
       disabled
       forceMount
       value={`${heading} unavailable`}
-      className="text-text-3"
       data-testid={`palette-group-${heading.toLowerCase()}-error`}
     >
       {heading} unavailable — {error}
@@ -573,8 +572,7 @@ function UnavailableRow({
 // selected row is what Enter runs, so it takes the hover surface plus a 2px
 // accent bar — the ~5% surface step alone was indistinguishable from the
 // empty background.
-const ITEM_CLASS =
-  "h-9 text-text-1 data-selected:bg-bg-hover data-selected:shadow-[inset_2px_0_0_var(--accent)]";
+const ITEM_CLASS = "h-9";
 
 function Detail({ children }: { children: string }) {
   return (

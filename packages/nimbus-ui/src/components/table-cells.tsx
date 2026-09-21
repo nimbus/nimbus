@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -70,9 +70,10 @@ export function Th({
       className={cn(
         "border-b border-border-2 px-3 py-2 font-normal",
         align === "right" ? "text-right" : "text-left",
+        width && "w-(--col-w)",
         className,
       )}
-      style={width ? { width } : undefined}
+      style={width ? ({ "--col-w": width } as CSSProperties) : undefined}
     >
       {children}
     </th>

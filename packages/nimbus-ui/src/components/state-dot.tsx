@@ -122,22 +122,16 @@ export function resolveStateKind(value: string | null | undefined): StateKind {
 // screen and a permanent pulse there is the opposite of calm.
 export type ConnState = "connected" | "reconnecting" | "offline";
 
-function glyphStyle(style: StateStyle): CSSProperties {
-  const color = `var(${style.token})`;
-  switch (style.glyph) {
-    case "outline":
-      return { boxShadow: `inset 0 0 0 1.5px ${color}` };
-    case "half":
-      return {
-        background: `conic-gradient(from 270deg, ${color} 0 50%, transparent 50% 100%)`,
-        boxShadow: `inset 0 0 0 1px ${color}`,
-      };
-    case "question":
-      return { color };
-    default:
-      return { background: color };
-  }
-}
+// The state's color travels as `--dot`; the glyph decides which parts of the
+// 8px circle it paints. A `half` dot is a conic wedge over a 1px ring; an
+// `outline` dot is a 1.5px ring; a `question` dot paints the glyph only.
+const GLYPH_CLASS: Record<StateStyle["glyph"], string> = {
+  solid: "bg-(--dot)",
+  pulsing: "bg-(--dot)",
+  outline: "inset-ring-[1.5px] inset-ring-(--dot)",
+  half: "bg-[conic-gradient(from_270deg,var(--dot)_0_50%,transparent_50%_100%)] inset-ring inset-ring-(--dot)",
+  question: "text-(--dot)",
+};
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -164,11 +158,12 @@ export function StateDot({
       data-state={kind}
       data-glyph={style.glyph}
       className={cn(
-        "inline-flex size-2 shrink-0 items-center justify-center rounded-full font-mono text-[9px] leading-none",
+        "inline-flex size-2 shrink-0 items-center justify-center rounded-full font-mono text-2xs leading-none",
+        GLYPH_CLASS[style.glyph],
         style.glyph === "pulsing" && "animate-pulse motion-reduce:animate-none",
         className,
       )}
-      style={glyphStyle(style)}
+      style={{ "--dot": `var(${style.token})` } as CSSProperties}
     >
       {style.glyph === "question" ? "?" : null}
     </span>

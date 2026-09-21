@@ -1248,6 +1248,7 @@ the short spoken hook (README banner headline). Nimbus is
 
 | Step | Size / line | Tracking | Use |
 | --- | --- | --- | --- |
+| `2xs` | 10 / 12 | `--tracking-eyebrow` (0.08em) when uppercase | Sidebar group eyebrow, the state-dot glyph |
 | `xs` | 12 / 16 | 0 | Labels, captions, table metadata |
 | `sm` | 13 / 18 | 0 | Compact table text, menus, chips |
 | `base` | 14 / 20 | 0 | Body |
@@ -1265,7 +1266,8 @@ Rules:
 - Do not scale type with viewport width.
 - **Labels are sentence case** in the sans at `text-xs font-medium
   text-text-3`. Tracked small caps (`uppercase` + `tracking-*`) are retired;
-  the sidebar group heading is the one place that may keep them.
+  the sidebar group heading is the one place that may keep them, at
+  `text-2xs uppercase tracking-eyebrow`.
 - **Mono is the voice of data, never of labels.** A category chip, a column
   header, or a form label is sans. A value, an ID, or a path is mono.
 - Reserve `xl` and `2xl` for empty states, onboarding, and metric values,
@@ -1849,10 +1851,20 @@ rules. This prose is the contract; the linter is the proof.
   the dialog and sheet titles) may add `font-mono`, `tabular`, `truncate`,
   `text-xs`, and `text-sm`. The contract list lives in `eslint.config.mjs`.
   Extend it there, with the reason in the commit.
-- No arbitrary value outside layout (`no-arbitrary-values`). `text-[9px]`
-  and `tracking-[0.08em]` are token requests, not brackets; put the value in
-  `tokens.css` or use the nearest step. Layout brackets such as
+- No arbitrary value outside layout (`no-arbitrary-values`). A bracket that
+  names a design value is a token request: `text-[9px]` became `text-2xs`,
+  `tracking-[0.08em]` became `tracking-eyebrow`, and the selected-row rail
+  `shadow-[inset_2px_0_0_var(--accent)]` became `inset-shadow-rail`. Put
+  the value in `tokens.css` or use the nearest step. Layout brackets such as
   `grid-cols-[auto_1fr]` and `h-[calc(100dvh-3rem)]` are allowed.
+- A look that a page needs more than once is a variant, not a `className`.
+  The registry carries the console's: `Button` `destructive-outline` and
+  `destructive-ghost` for the danger zone and the drop actions,
+  `SheetContent` `panel` (the slideover) and `flush` (the mobile sidebar),
+  `PopoverContent` `list` for a popover that is all rows, `Skeleton`
+  `shape` (`bar`, `tile`, `circle`), and `SelectTrigger` `size="xs"` for
+  the toolbar select. `Kbd` inside a `Button` reads the button's ink on its
+  own.
 - No inline `style` for a static value (`no-inline-styles`). A measured or
   computed value (virtualizer offset, panel width, chart geometry) goes
   through a CSS custom property, `style={{ "--row-h": h }}`, and a class
@@ -1875,8 +1887,12 @@ rules. This prose is the contract; the linter is the proof.
   names the constraint, not the rule. `src/components/ui/**` is exempt from
   `no-restyle`, `no-arbitrary-values`, and `require-static-classes` because
   the registry defines the variants.
-- `package.json` caps the design warnings with `--max-warnings`. A change
-  may lower the cap. It may not raise it.
+- `package.json` caps the design warnings with `--max-warnings 0`. A
+  warning is a defect or a recorded exception; the cap does not go up. The
+  recorded exceptions are the two `react-resizable-panels` sites in
+  `src/shell/sub-panel.tsx`, where the library sets inline geometry that
+  only an inline style outranks and its resize handle shares the registry
+  `Separator`'s name.
 
 ## Accessibility And Quality Gates
 
@@ -1892,7 +1908,7 @@ Every UI feature must satisfy:
 - Logs remain responsive at 100+ events/second.
 - Bundle stays under the plan's gzipped size budget.
 - `npm run lint -w packages/nimbus-ui` passes: zero Biome errors, zero
-  design-rule errors, and design warnings at or under the cap.
+  design-rule errors, and zero design warnings outside a recorded exception.
 
 ## References Used
 

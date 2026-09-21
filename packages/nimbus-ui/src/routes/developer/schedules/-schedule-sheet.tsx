@@ -91,8 +91,8 @@ function JobBody({
   const cancellable = (job.status ?? "").toLowerCase() === "pending";
   return (
     <>
-      <SheetHeader className="pr-12">
-        <SheetTitle className="flex min-w-0 items-center gap-2">
+      <SheetHeader>
+        <SheetTitle>
           <span
             className="min-w-0 truncate font-mono text-sm text-text-1"
             title={job.functionPath ?? job._id}
@@ -101,7 +101,7 @@ function JobBody({
           </span>
           <StatePill state={job.status} data-testid={`${TESTID}-status`} />
         </SheetTitle>
-        <SheetDescription className="flex items-center gap-2">
+        <SheetDescription>
           <CategoryPill value="scheduled" />
           <span className="font-mono text-xs text-text-3">
             {jobIdFromDocumentId(job._id) ?? shortId(job._id, 14)}
@@ -178,14 +178,14 @@ function CronBody({
   const inFlight = actions.pending[key];
   return (
     <>
-      <SheetHeader className="pr-12">
-        <SheetTitle className="flex min-w-0 items-center gap-2">
+      <SheetHeader>
+        <SheetTitle>
           <span className="min-w-0 truncate font-mono text-sm text-text-1">
             {cron.name ?? shortId(cron._id, 12)}
           </span>
           <StatePill state={cron.status} data-testid={`${TESTID}-status`} />
         </SheetTitle>
-        <SheetDescription className="flex items-center gap-2">
+        <SheetDescription>
           <CategoryPill value="cron" />
           <span className="font-mono text-xs text-text-3">
             {formatSchedule(cron.schedule)}
@@ -245,7 +245,7 @@ function CronBody({
 function Missing({ loading }: { loading: boolean }) {
   return (
     <>
-      <SheetHeader className="pr-12">
+      <SheetHeader>
         <SheetTitle>{loading ? "Reading…" : "Not in this list"}</SheetTitle>
         <SheetDescription>
           {loading

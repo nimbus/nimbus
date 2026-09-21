@@ -137,10 +137,9 @@ function TablesSubPanelList({ tables }: { tables: TableDoc[] }) {
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",
                 active
-                  ? "bg-bg-raised text-text-1"
+                  ? "border-l-accent bg-bg-raised text-text-1"
                   : "text-text-3 hover:bg-bg-raised hover:text-text-1",
               )}
-              style={active ? { borderLeftColor: "var(--accent)" } : undefined}
             >
               <span className="flex-1 truncate font-mono text-xs">{name}</span>
               {typeof table.rowCount === "number" ? (

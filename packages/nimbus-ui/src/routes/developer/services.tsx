@@ -293,7 +293,7 @@ export function ServicesTable({
               />
               {row.actionError ? (
                 <span
-                  className="truncate text-xs text-[color:var(--error)]"
+                  className="truncate text-xs text-error"
                   title={row.actionError}
                   data-testid={`services-row-error-${nameOf(row)}`}
                 >

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,13 @@ export function LoadingStatus({
   );
 }
 
-const WIDTHS = ["w-2/5", "w-1/4", "w-1/5", "w-1/6", "w-1/3", "w-1/4"] as const;
+// Bar widths cycle so a block of placeholder text reads as prose, not as a
+// ruler. They travel as a custom property the static `w-(--w)` class reads.
+const WIDTHS = ["40%", "25%", "20%", "16.67%", "33.33%", "25%"] as const;
+
+function barWidth(index: number): string {
+  return WIDTHS[index % WIDTHS.length];
+}
 
 // TableSkeleton stands in for a dense table: a header row and `rows` body
 // rows inside the panel frame the table takes when it arrives.
@@ -49,7 +55,9 @@ export function TableSkeleton({
   testid?: string;
   className?: string;
 }) {
-  const grid = { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` };
+  const grid = {
+    "--cols": `repeat(${columns}, minmax(0, 1fr))`,
+  } as CSSProperties;
   return (
     <LoadingStatus
       label={label}
@@ -60,7 +68,7 @@ export function TableSkeleton({
       )}
     >
       <div
-        className="grid gap-6 border-b border-border-1 px-4 py-3"
+        className="grid grid-cols-(--cols) gap-6 border-b border-border-1 px-4 py-3"
         style={grid}
       >
         {Array.from({ length: columns }, (_, column) => (
@@ -73,14 +81,15 @@ export function TableSkeleton({
           // biome-ignore lint/suspicious/noArrayIndexKey: placeholder rows are positional and never reorder
           key={row}
           data-testid="skeleton-row"
-          className="grid gap-6 border-b border-border-1 px-4 py-3.5 last:border-b-0"
+          className="grid grid-cols-(--cols) gap-6 border-b border-border-1 px-4 py-3.5 last:border-b-0"
           style={grid}
         >
           {Array.from({ length: columns }, (_, column) => (
             <Skeleton
               // biome-ignore lint/suspicious/noArrayIndexKey: placeholder cells are positional and never reorder
               key={column}
-              className={cn("h-3.5", WIDTHS[(row + column) % WIDTHS.length])}
+              className="h-3.5 w-(--w)"
+              style={{ "--w": barWidth(row + column) } as CSSProperties}
             />
           ))}
         </div>
@@ -113,7 +122,8 @@ export function CardSkeleton({
           <Skeleton
             // biome-ignore lint/suspicious/noArrayIndexKey: placeholder lines are positional and never reorder
             key={line}
-            className={cn("h-3.5", WIDTHS[line % WIDTHS.length])}
+            className="h-3.5 w-(--w)"
+            style={{ "--w": barWidth(line) } as CSSProperties}
           />
         ))}
       </div>
@@ -143,10 +153,10 @@ export function CardGridSkeleton({
           key={card}
           className="flex gap-3 rounded-md border border-border-1 bg-bg-panel p-4"
         >
-          <Skeleton className="size-9 shrink-0 rounded-md" />
+          <Skeleton shape="tile" className="size-9 shrink-0" />
           <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
             <Skeleton className="h-3.5 w-1/2" />
-            <Skeleton className="size-3/4" />
+            <Skeleton className="h-3 w-3/4" />
             <Skeleton className="h-3 w-1/3" />
           </div>
         </div>
@@ -171,7 +181,7 @@ export function DetailSkeleton({
     >
       <Skeleton className="h-3.5 w-20" />
       <div className="flex items-center gap-3">
-        <Skeleton className="size-10 rounded-md" />
+        <Skeleton shape="tile" className="size-10" />
         <div className="flex flex-col gap-2">
           <Skeleton className="h-5 w-56" />
           <Skeleton className="h-3.5 w-36" />

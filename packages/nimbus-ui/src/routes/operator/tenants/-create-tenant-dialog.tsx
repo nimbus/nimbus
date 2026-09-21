@@ -95,30 +95,32 @@ function CreateTenantForm({
           A tenant owns its own tables, documents, and services.
         </DialogDescription>
       </DialogHeader>
-      <DialogBody className="flex flex-col gap-1.5">
-        <label htmlFor={inputId} className="text-xs font-medium text-text-3">
-          Tenant id
-        </label>
-        <Input
-          ref={inputRef}
-          id={inputId}
-          value={id}
-          onChange={(event) => setId(event.target.value)}
-          autoComplete="off"
-          spellCheck={false}
-          disabled={busy}
-          placeholder="acme"
-          aria-describedby={hintId}
-          aria-invalid={error ? true : undefined}
-          className="font-mono"
-          data-testid="tenants-create-input"
-        />
-        <p id={hintId} className="text-xs text-text-3">
-          ASCII letters, digits, <code className="text-text-2">_</code> and{" "}
-          <code className="text-text-2">-</code>, up to 128 characters. A
-          leading <code className="text-text-2">_</code> is reserved for the
-          system tenant.
-        </p>
+      <DialogBody>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={inputId} className="text-xs font-medium text-text-3">
+            Tenant id
+          </label>
+          <Input
+            ref={inputRef}
+            id={inputId}
+            value={id}
+            onChange={(event) => setId(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={busy}
+            placeholder="acme"
+            aria-describedby={hintId}
+            aria-invalid={error ? true : undefined}
+            className="font-mono"
+            data-testid="tenants-create-input"
+          />
+          <p id={hintId} className="text-xs text-text-3">
+            ASCII letters, digits, <code className="text-text-2">_</code> and{" "}
+            <code className="text-text-2">-</code>, up to 128 characters. A
+            leading <code className="text-text-2">_</code> is reserved for the
+            system tenant.
+          </p>
+        </div>
       </DialogBody>
       <DialogError>{error}</DialogError>
       <DialogFooter>

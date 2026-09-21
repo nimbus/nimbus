@@ -2,6 +2,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight, type LucideIcon } from "lucide-react";
 import {
+  type CSSProperties,
   createContext,
   type ReactNode,
   useCallback,
@@ -322,6 +323,7 @@ function ResizableGroup({
       onLayoutChange={onLayoutChange}
       onLayoutChanged={onLayoutChanged}
       className="min-h-0"
+      // eslint-disable-next-line shadcn/no-inline-styles -- react-resizable-panels sets the group's own inline width and flex, and only an inline style outranks them
       style={{ width: "auto", flex: "1 1 0%", minWidth: 0 }}
     >
       {spec ? (
@@ -374,6 +376,8 @@ function ResizableGroup({
           // That is also why the line cannot be gold in both themes: a
           // keyline would triple it, and 1px of gold is 1.88:1 on white. A
           // 1px line has no area, so it takes `--accent-text`.
+          //
+          // eslint-disable-next-line shadcn/no-restyle -- this Separator is the react-resizable-panels resize handle, not the registry Separator
           className="w-px shrink-0 bg-border-2 outline-none transition-colors duration-150 ease-standard data-[separator=active]:bg-accent-text data-[separator=focus]:bg-accent-text data-[separator=hover]:bg-accent-text"
         />
       ) : null}
@@ -387,11 +391,13 @@ function ResizableGroup({
 // The library's inner panel div scrolls by default. Both panels here are
 // columns whose children own their scrolling, so the div is a flex column
 // that clips.
+/* eslint-disable shadcn/no-inline-styles -- the library sets overflow inline on its panel div, and only an inline style outranks it */
 const PANEL_STYLE = {
   display: "flex",
   flexDirection: "column",
   overflow: "hidden",
 } as const;
+/* eslint-enable shadcn/no-inline-styles */
 
 // ---------------------------------------------------------------------------
 // Sheet mode (tablet and mobile)
@@ -450,8 +456,13 @@ function SheetSubPanel({
               aria-label={spec.title}
               data-testid="sub-panel-overlay"
               data-kind={spec.kind}
-              style={{ top: anchor.top, left: anchor.left }}
-              className="fixed bottom-0 z-50 flex w-64 flex-col border-r border-border-2 bg-bg-panel shadow-lg outline-none"
+              style={
+                {
+                  "--anchor-top": `${anchor.top}px`,
+                  "--anchor-left": `${anchor.left}px`,
+                } as CSSProperties
+              }
+              className="fixed top-(--anchor-top) bottom-0 left-(--anchor-left) z-50 flex w-64 flex-col border-r border-border-2 bg-bg-panel shadow-lg outline-none"
             >
               <SubPanelBody
                 spec={spec}
@@ -521,11 +532,8 @@ function SubPanelRail({
               data-active={item.active ? "true" : "false"}
               className={cn(
                 "flex h-8 w-full items-center justify-center border-l-2 border-transparent text-text-3 transition-colors hover:bg-bg-hover hover:text-text-1",
-                item.active && "bg-bg-hover text-text-1",
+                item.active && "border-l-accent bg-bg-hover text-text-1",
               )}
-              style={
-                item.active ? { borderLeftColor: "var(--accent)" } : undefined
-              }
             >
               <Icon size={14} aria-hidden />
             </button>
@@ -627,7 +635,7 @@ function SubPanelStaticList({
         const row = cn(
           "flex h-8 items-center gap-2 rounded-sm border-l-2 border-transparent px-2 text-sm",
           active
-            ? "bg-bg-hover text-text-1"
+            ? "border-l-accent bg-bg-hover text-text-1"
             : "text-text-3 hover:bg-bg-hover hover:text-text-1",
         );
         const label = <span className="flex-1 truncate">{item.label}</span>;
@@ -640,7 +648,6 @@ function SubPanelStaticList({
               data-testid={`sub-panel-item-${item.id}`}
               data-active={active ? "true" : "false"}
               className={row}
-              style={active ? { borderLeftColor: "var(--accent)" } : undefined}
             >
               {label}
               {typeof item.count === "number" ? (

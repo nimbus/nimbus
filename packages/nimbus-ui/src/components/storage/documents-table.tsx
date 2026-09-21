@@ -182,9 +182,8 @@ export function DocumentsTable({
             </Button>
             <Button
               type="button"
-              variant="ghost"
+              variant="destructive-ghost"
               size="xs"
-              className="text-error hover:text-error"
               onClick={() => onDelete([docId(row.original)])}
               data-testid={`documents-delete-${docId(row.original)}`}
             >

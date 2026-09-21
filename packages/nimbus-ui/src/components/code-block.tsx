@@ -155,7 +155,7 @@ export function CodeBlock({
   if (html === null) {
     return (
       <pre
-        className="m-0 h-full overflow-auto whitespace-pre bg-bg-raised p-3 font-mono text-sm leading-[1.5] text-text-1"
+        className="m-0 h-full overflow-auto whitespace-pre bg-bg-raised p-3 font-mono text-sm leading-normal text-text-1"
         data-testid={testid}
       >
         {code}
@@ -167,7 +167,7 @@ export function CodeBlock({
     <div
       ref={containerRef}
       // 1.5 leading, per DESIGN.md's code-block spec; `leading-5` was 1.667.
-      className="nimbus-code h-full overflow-auto text-sm leading-[1.5]"
+      className="nimbus-code h-full overflow-auto text-sm leading-normal"
       data-testid={testid}
       // biome-ignore lint/security/noDangerouslySetInnerHtml: Shiki escapes source text before it returns this highlighted markup.
       dangerouslySetInnerHTML={{ __html: html }}
