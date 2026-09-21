@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { ConfirmDialog } from "../../../components/confirm-dialog";
 import { Button } from "../../../components/ui/button";
@@ -195,7 +195,7 @@ function ShutdownDialog({
       setError(result.error);
       return;
     }
-    toast("Shutdown requested", {
+    toast.message("Shutdown requested", {
       description:
         "Server will close listeners. The disconnect overlay will appear shortly.",
     });

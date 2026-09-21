@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { fetchVersionInfo, type VersionInfo } from "../api/system";
 import {
@@ -145,7 +145,7 @@ export function useStaleness(deps: UseStalenessDeps = {}): StalenessApi {
           setDismissed(dismissedFor === latest);
           if (lastAnnouncedRef.current !== latest && dismissedFor !== latest) {
             lastAnnouncedRef.current = latest;
-            toast(`Nimbus ${latest} available`, {
+            toast.message(`Nimbus ${latest} available`, {
               description: `Update from ${next.current}.`,
               action: {
                 label: "Update",
@@ -153,14 +153,13 @@ export function useStaleness(deps: UseStalenessDeps = {}): StalenessApi {
                   setState("confirming");
                 },
               },
-              cancel: {
-                label: "Dismiss",
-                onClick: () => {
-                  writeDismissedVersion(latest);
-                  setDismissed(true);
-                },
+              // Closing the toast without taking the update is the dismissal
+              // the operator asked for: remember it for this version.
+              onDismiss: () => {
+                writeDismissedVersion(latest);
+                setDismissed(true);
               },
-              duration: Number.POSITIVE_INFINITY,
+              timeout: 0,
             });
           }
         } else if (
@@ -277,7 +276,7 @@ export function useStaleness(deps: UseStalenessDeps = {}): StalenessApi {
     }
     setState("upgrading");
     const hostLabel = info.host || "the server host";
-    toast(`Copied — run on ${hostLabel}`, { duration: 4000 });
+    toast.message(`Copied — run on ${hostLabel}`);
   }, [info]);
 
   const dismissToast = useCallback(() => {

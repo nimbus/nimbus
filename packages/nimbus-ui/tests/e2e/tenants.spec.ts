@@ -35,7 +35,7 @@ async function listTenants(page: Page, baseURL: string): Promise<string[]> {
 // The overview shots read better without the session toast over them.
 async function hideToasts(page: Page): Promise<void> {
   await page.addStyleTag({
-    content: "[data-sonner-toaster] { display: none !important; }",
+    content: "[data-slot="toast-viewport"] { display: none !important; }",
   });
 }
 
@@ -75,7 +75,7 @@ test.describe("tenants", () => {
     });
     await createDialog.getByTestId("tenants-create-submit").click();
     await expect(
-      page.locator("[data-sonner-toast]").filter({
+      page.locator('[data-slot="toast"]').filter({
         hasText: `Created tenant ${TENANT_ID}`,
       }),
     ).toBeVisible();
@@ -121,7 +121,7 @@ test.describe("tenants", () => {
     });
     await deleteDialog.getByTestId("tenants-delete-dialog-confirm").click();
     await expect(
-      page.locator("[data-sonner-toast]").filter({
+      page.locator('[data-slot="toast"]').filter({
         hasText: `Deleted tenant ${TENANT_ID}`,
       }),
     ).toBeVisible();

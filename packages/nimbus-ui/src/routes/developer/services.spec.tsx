@@ -47,7 +47,7 @@ const { serviceApiMock, toastMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/api-mutations", () => ({ services: serviceApiMock }));
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 import { ServicesLoaderError } from "../../components/service-loader-errors";
 import type { ServiceDoc } from "../../lib/types/service";

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { machines } from "../../lib/api-mutations";
 import type { MachineDoc } from "./-machine-types";
@@ -104,7 +104,7 @@ export function useMachineActions(): MachineActions {
       if (!result.ok) {
         setErrors((prev) => ({ ...prev, [key]: result.error }));
       } else {
-        toast(`${capitalize(action)} sent to ${machine.name}`);
+        toast.message(`${capitalize(action)} sent to ${machine.name}`);
       }
       setPending((prev) => {
         const next = { ...prev };

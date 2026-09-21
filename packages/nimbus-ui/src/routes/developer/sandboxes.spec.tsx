@@ -48,7 +48,9 @@ vi.mock("../../shell/sub-panel", () => ({
   useSubPanelSearch: () => "",
 }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 import { useUiStore } from "../../store/ui-store";
 import { routeComponent } from "../../test/route-internals";

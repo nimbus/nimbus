@@ -1,6 +1,6 @@
 import { Plus, Trash2 } from "lucide-react";
 import { type FormEvent, useCallback, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";

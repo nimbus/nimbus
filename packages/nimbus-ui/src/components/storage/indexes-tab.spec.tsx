@@ -14,7 +14,9 @@ import {
 import type { TableSchemaShape } from "../../lib/types/table";
 import { IndexesTab } from "./indexes-tab";
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 const server = setupServer();
 

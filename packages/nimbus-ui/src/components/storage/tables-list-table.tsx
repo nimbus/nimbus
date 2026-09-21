@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { Button } from "@/components/ui/button";
 import type { TableDoc } from "../../lib/types/table";
@@ -184,7 +184,7 @@ export function TablesListTable({
       onSelect: () => {
         void navigator.clipboard
           .writeText(name)
-          .then(() => toast("Copied table name"))
+          .then(() => toast.message("Copied table name"))
           .catch(() => toast.error("Failed to copy table name"));
       },
     },

@@ -1,6 +1,6 @@
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { services as serviceApi } from "../../../lib/api-mutations";
 import type { ServiceDoc } from "../../../lib/types/service";

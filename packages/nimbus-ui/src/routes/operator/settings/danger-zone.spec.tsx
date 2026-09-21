@@ -5,10 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { rotateToken, shutdown, toast } = vi.hoisted(() => ({
   rotateToken: vi.fn(),
   shutdown: vi.fn(),
-  toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
+  toast: { message: vi.fn(), success: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("sonner", () => ({ toast }));
+vi.mock("@/components/toast", () => ({ toast }));
 vi.mock("../../../lib/api-mutations", () => ({
   system: { rotateToken, shutdown },
 }));

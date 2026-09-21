@@ -1,7 +1,7 @@
 import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
@@ -315,7 +315,7 @@ function TableDocumentsPage() {
                 ) : null}
               </div>
             ),
-            duration: FAILED_DELETE_TOAST_MS,
+            timeout: FAILED_DELETE_TOAST_MS,
           },
         );
       } else if (failures.length === 0) {
@@ -337,7 +337,7 @@ function TableDocumentsPage() {
             // Long enough to read several "<id>: <reason>" lines; the default
             // four seconds is not, and this is the only place the reason is
             // ever shown.
-            duration: FAILED_DELETE_TOAST_MS,
+            timeout: FAILED_DELETE_TOAST_MS,
           },
         );
         // Leave exactly the failures selected: the surviving rows come back on

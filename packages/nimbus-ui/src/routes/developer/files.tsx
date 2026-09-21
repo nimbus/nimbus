@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import {
   Breadcrumb,
@@ -221,7 +221,7 @@ function FilesPage() {
       const link = `${window.location.origin}${objectApi.url(tenant, bucket, object.key)}`;
       try {
         await navigator.clipboard.writeText(link);
-        toast("Copied link", { description: link });
+        toast.message("Copied link", { description: link });
       } catch {
         toast.error("Failed to copy link");
       }

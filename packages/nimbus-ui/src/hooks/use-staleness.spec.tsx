@@ -25,29 +25,19 @@ function makeInfo(over: Partial<VersionInfo> = {}): VersionInfo {
   };
 }
 
-const sonnerMocks = vi.hoisted(() => {
-  const base = vi.fn();
-  const error = vi.fn();
-  const success = vi.fn();
-  return { base, error, success };
-});
+const toastMocks = vi.hoisted(() => ({
+  message: vi.fn(),
+  error: vi.fn(),
+  success: vi.fn(),
+}));
 
-vi.mock("sonner", () => {
-  const toast = Object.assign(
-    (message: string, opts?: unknown) => sonnerMocks.base(message, opts),
-    {
-      error: sonnerMocks.error,
-      success: sonnerMocks.success,
-    },
-  );
-  return { toast };
-});
+vi.mock("@/components/toast", () => ({ toast: toastMocks }));
 
 beforeEach(() => {
   window.localStorage.clear();
-  sonnerMocks.base.mockClear();
-  sonnerMocks.error.mockClear();
-  sonnerMocks.success.mockClear();
+  toastMocks.message.mockClear();
+  toastMocks.error.mockClear();
+  toastMocks.success.mockClear();
 });
 
 afterEach(() => {
@@ -64,7 +54,7 @@ describe("useStaleness", () => {
       expect(result.current.snapshot.state).toBe("available");
     });
     expect(result.current.snapshot.info?.latest).toBe("0.1.41");
-    expect(sonnerMocks.base).toHaveBeenCalledTimes(1);
+    expect(toastMocks.message).toHaveBeenCalledTimes(1);
   });
 
   it("stays hidden when checkStatus is disabled", async () => {
@@ -78,7 +68,7 @@ describe("useStaleness", () => {
     );
     await waitFor(() => expect(fetchInfo).toHaveBeenCalled());
     expect(result.current.snapshot.state).toBe("hidden");
-    expect(sonnerMocks.base).not.toHaveBeenCalled();
+    expect(toastMocks.message).not.toHaveBeenCalled();
   });
 
   it("does not re-emit the toast for the same latest", async () => {
@@ -89,10 +79,10 @@ describe("useStaleness", () => {
     await waitFor(() => {
       expect(result.current.snapshot.state).toBe("available");
     });
-    const before = sonnerMocks.base.mock.calls.length;
+    const before = toastMocks.message.mock.calls.length;
     // wait long enough for several poll intervals
     await new Promise((r) => setTimeout(r, 60));
-    expect(sonnerMocks.base.mock.calls.length).toBe(before);
+    expect(toastMocks.message.mock.calls.length).toBe(before);
   });
 
   it("re-emits the toast when latest flips to a new version", async () => {
@@ -106,13 +96,13 @@ describe("useStaleness", () => {
     await waitFor(() =>
       expect(result.current.snapshot.state).toBe("available"),
     );
-    expect(sonnerMocks.base).toHaveBeenCalledTimes(1);
+    expect(toastMocks.message).toHaveBeenCalledTimes(1);
 
     info = makeInfo({ latest: "0.1.42" });
     await waitFor(() => {
       expect(result.current.snapshot.info?.latest).toBe("0.1.42");
     });
-    await waitFor(() => expect(sonnerMocks.base.mock.calls.length).toBe(2));
+    await waitFor(() => expect(toastMocks.message.mock.calls.length).toBe(2));
   });
 
   it("skips the toast when localStorage records dismissal for that version", async () => {
@@ -127,7 +117,7 @@ describe("useStaleness", () => {
     await waitFor(() =>
       expect(result.current.snapshot.state).toBe("available"),
     );
-    expect(sonnerMocks.base).not.toHaveBeenCalled();
+    expect(toastMocks.message).not.toHaveBeenCalled();
     expect(result.current.snapshot.dismissed).toBe(true);
   });
 
@@ -213,7 +203,7 @@ describe("useStaleness", () => {
       await result.current.startUpgrade();
     });
     expect(result.current.snapshot.state).toBe("available");
-    expect(sonnerMocks.error).toHaveBeenCalled();
+    expect(toastMocks.error).toHaveBeenCalled();
   });
 
   it("copyCommand transitions to upgrading without invoking the bridge", async () => {

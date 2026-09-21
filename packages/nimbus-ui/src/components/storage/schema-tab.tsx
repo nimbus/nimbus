@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";

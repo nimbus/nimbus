@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { sandboxes as sandboxApi } from "../../../lib/api-mutations";
 import type { SandboxResource } from "../../../lib/types/sandbox";

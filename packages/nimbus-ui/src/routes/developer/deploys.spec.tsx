@@ -33,7 +33,7 @@ vi.mock("../../shell/sub-panel", () => ({
 const { toastMock } = vi.hoisted(() => ({
   toastMock: { success: vi.fn(), error: vi.fn() },
 }));
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 import type { DeployActivation, DeployHistory } from "../../lib/types/deploy";
 import { routeComponent } from "../../test/route-internals";

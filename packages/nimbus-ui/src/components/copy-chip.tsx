@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { cn } from "@/lib/utils";
 
@@ -26,7 +26,7 @@ export function CopyChip({
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
-      toast(`Copied ${label}`, { description: value });
+      toast.message(`Copied ${label}`, { description: value });
       setTimeout(() => setCopied(false), 1200);
     } catch {
       toast.error(`Failed to copy ${label}`);

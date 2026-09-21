@@ -2,12 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { toastMock } = vi.hoisted(() => ({
-  toastMock: Object.assign(vi.fn(), {
-    error: vi.fn(),
-  }),
+  toastMock: { message: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("sonner", () => ({
+vi.mock("@/components/toast", () => ({
   toast: toastMock,
 }));
 
@@ -24,7 +22,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  toastMock.mockClear();
+  toastMock.message.mockClear();
   toastMock.error.mockClear();
 });
 
@@ -57,7 +55,7 @@ describe("CopyChip", () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("abc123");
     });
-    expect(toastMock).toHaveBeenCalledWith("Copied bundle", {
+    expect(toastMock.message).toHaveBeenCalledWith("Copied bundle", {
       description: "abc123",
     });
     await waitFor(() => {

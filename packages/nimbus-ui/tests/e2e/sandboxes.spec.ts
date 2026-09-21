@@ -38,7 +38,7 @@ async function createTenant(page: Page, baseURL: string): Promise<void> {
 
 async function hideToasts(page: Page): Promise<void> {
   await page.addStyleTag({
-    content: "[data-sonner-toaster] { display: none !important; }",
+    content: "[data-slot="toast-viewport"] { display: none !important; }",
   });
 }
 

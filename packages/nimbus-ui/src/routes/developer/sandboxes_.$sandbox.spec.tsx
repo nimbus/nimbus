@@ -49,7 +49,9 @@ vi.mock("../../shell/sub-panel", () => ({
   useSubPanelSearch: () => "",
 }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 // The console has its own spec; here it is a stub that shows what it got.
 vi.mock("./sandboxes/-sandbox-console", () => ({

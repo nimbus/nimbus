@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Ellipsis, Rocket } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { CopyChip } from "../../components/copy-chip";

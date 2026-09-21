@@ -3,12 +3,9 @@ import {
   Outlet,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import type { ToastT } from "sonner";
-import { toast, useSonner } from "sonner";
+import { useEffect } from "react";
 
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { StalenessProvider } from "../hooks/use-staleness";
 import { CommandPalette } from "../shell/command-palette";
@@ -40,7 +37,6 @@ export const Route = createRootRoute({
 });
 
 function ShellLayout() {
-  const [toastRegion, setToastRegion] = useState<HTMLElement | null>(null);
   // Below 640px the sidebar is a sheet behind a top-bar button; above it,
   // the column. The tree differs on either side of the line, so the choice
   // is made here and not in a stylesheet.
@@ -98,173 +94,10 @@ function ShellLayout() {
             <CommandPalette />
             <SystemTenantLens />
           </SubPanelProvider>
-          <ToastLifetimes />
-          <ToastOverflow region={toastRegion} />
-          <Toaster
-            ref={setToastRegion}
-            position="bottom-right"
-            visibleToasts={VISIBLE_TOAST_LIMIT}
-            // Never expire a toast on sonner's clock. See ToastLifetimes: this is
-            // half of the split, and the half that keeps an error on screen.
-            duration={Number.POSITIVE_INFINITY}
-            // A toast that never expires has to be closable, and swiping is not
-            // a keyboard gesture. Every toast gets the button so the affordance
-            // does not appear only on the failures.
-            toastOptions={{ closeButton: true }}
-          />
+          <Toaster />
         </TooltipProvider>
       </StalenessProvider>
     </AppErrorBoundary>
-  );
-}
-
-/** How long a toast that only confirms an action the operator took stays up. */
-export const TRANSIENT_TOAST_MS = 4000;
-
-/**
- * How long `entry` may stay on screen, or `null` when this component must not
- * put a clock on it at all.
- */
-function transientLifetimeMs(entry: ToastT): number | null {
-  // DESIGN.md: "Errors show until dismissed; never auto-disappear." For a
-  // rejected tenant create the toast text is the entire failure report, and
-  // the bulk-delete partial count (`Deleted 3/5 documents`) is written nowhere
-  // else, so an expiring error toast loses the only record of what went wrong.
-  if (entry.type === "error") return null;
-  // A loading toast ends when its promise settles.
-  if (entry.type === "loading") return null;
-  // A caller that named its own duration has already answered this, and sonner
-  // still runs that toast's timer itself.
-  if (entry.duration !== undefined) return null;
-  return TRANSIENT_TOAST_MS;
-}
-
-/**
- * Gives confirmations a lifetime and errors none.
- *
- * sonner resolves one duration for every toast it renders --
- * `toast.duration || durationFromToaster || TOAST_LIFETIME` -- so the Toaster
- * has no per-type clock to set. Its 4000ms default applied to errors too,
- * which is the rule DESIGN.md writes down and the console was breaking. The
- * Toaster is therefore infinite, and the transient half of the split lives
- * here: a toast that is only confirming an action still goes away by itself.
- *
- * The cost of owning this timer is sonner's pauses: a confirmation no longer
- * stops its clock on hover or while the tab is hidden. That is worth trading
- * for an error that stays, and it costs nothing where it matters -- an error
- * has no clock to pause.
- */
-function ToastLifetimes() {
-  const { toasts } = useSonner();
-  // A Map, not a ref, so the identity is stable without a `.current` read in
-  // the cleanup that runs after the component is gone.
-  const [timers] = useState(
-    () => new Map<ToastT["id"], ReturnType<typeof setTimeout>>(),
-  );
-
-  useEffect(() => {
-    const live = new Set(toasts.map((entry) => entry.id));
-    for (const [id, timer] of timers) {
-      if (live.has(id)) continue;
-      clearTimeout(timer);
-      timers.delete(id);
-    }
-    for (const entry of toasts) {
-      const scheduled = timers.get(entry.id);
-      const lifetime = transientLifetimeMs(entry);
-      if (lifetime === null) {
-        // A toast can change type in place -- `toast.promise` resolves its
-        // loading toast into an error under the same id -- so a clock already
-        // running on it has to come off.
-        if (scheduled !== undefined) {
-          clearTimeout(scheduled);
-          timers.delete(entry.id);
-        }
-        continue;
-      }
-      if (scheduled !== undefined) continue;
-      timers.set(
-        entry.id,
-        setTimeout(() => {
-          timers.delete(entry.id);
-          toast.dismiss(entry.id);
-        }, lifetime),
-      );
-    }
-  }, [toasts, timers]);
-
-  useEffect(
-    () => () => {
-      for (const timer of timers.values()) clearTimeout(timer);
-      timers.clear();
-    },
-    [timers],
-  );
-
-  return null;
-}
-
-/**
- * How many toasts sonner keeps on screen at once. DESIGN.md:1054: "Never stack
- * more than three; collapse the rest into '+N more.'"
- *
- * Passed to the Toaster rather than left to sonner's identical default, so the
- * cap and the count of what it hides come from the same number.
- */
-const VISIBLE_TOAST_LIMIT = 3;
-
-/**
- * The "+N more" line DESIGN.md:1054 asks for.
- *
- * sonner keeps every toast past the third mounted at `opacity: 0;
- * pointer-events: none`. Hovering the stack does not reveal them and they
- * cannot be clicked shut; they surface only as the visible three are
- * dismissed. That was survivable while every toast expired after four seconds.
- * Errors now stay until dismissed (see ToastLifetimes), so a fourth failure
- * waits off-stack for as long as the operator leaves the first three alone --
- * a failure report the console holds and never shows. This line is the only
- * evidence that there is anything behind the stack.
- *
- * It is portaled into sonner's own list because that is where the geometry
- * is. `--front-toast-height` is the height sonner measured for the front
- * toast, and a collapsed stack lifts each toast behind it by `--gap`, so the
- * top of a full stack sits `--front-toast-height + 2 * --gap` above the
- * list's bottom edge. Anchoring from outside would mean measuring the stack on
- * every change and still lagging its 400ms transitions.
- */
-function ToastOverflow({ region }: { region: HTMLElement | null }) {
-  const { toasts } = useSonner();
-  const [list, setList] = useState<HTMLElement | null>(null);
-  const hidden = toasts.length - VISIBLE_TOAST_LIMIT;
-
-  useEffect(() => {
-    // sonner drops the list when the stack empties and builds a new one for
-    // the next toast, so this cannot be a mount-time lookup. It can key off
-    // the overflow count because the list only ever goes away with the last
-    // toast, which drives that count below one first.
-    if (hidden < 1) {
-      setList(null);
-      return;
-    }
-    setList(
-      region?.querySelector<HTMLElement>("[data-sonner-toaster]") ?? null,
-    );
-  }, [region, hidden]);
-
-  if (hidden < 1 || list === null) return null;
-
-  return createPortal(
-    // An <li> because the target is an <ol>, and with no live region of its
-    // own: sonner's list already sits inside one (aria-live="polite",
-    // aria-relevant="additions text"), which announces this line when it
-    // appears and again whenever the count changes.
-    <li
-      data-testid="toast-overflow"
-      className="absolute right-0 bottom-[calc(var(--front-toast-height)_+_2_*_var(--gap)_+_8px)] rounded-xs border px-2 py-0.5 font-mono text-xs border-border-2 bg-bg-panel text-text-3"
-    >
-      +{hidden} more
-    </li>,
-    list,
   );
 }
 

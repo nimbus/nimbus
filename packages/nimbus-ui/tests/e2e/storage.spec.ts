@@ -103,7 +103,7 @@ async function seedSchema(page: Page, baseURL: string): Promise<void> {
 // from the release feed, so it cannot be pre-dismissed), so hide the toaster.
 async function hideToasts(page: Page): Promise<void> {
   await page.addStyleTag({
-    content: "[data-sonner-toaster] { display: none !important; }",
+    content: "[data-slot="toast-viewport"] { display: none !important; }",
   });
 }
 

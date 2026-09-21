@@ -78,8 +78,6 @@ export default defineConfig([
       "shadcn/no-restyle": "off",
       "shadcn/no-arbitrary-values": "off",
       "shadcn/require-static-classes": "off",
-      // `toaster` is sonner's own hook class, shipped by the registry.
-      "shadcn/no-unknown-classes": ["error", { allow: ["toaster"] }],
     },
   },
   {

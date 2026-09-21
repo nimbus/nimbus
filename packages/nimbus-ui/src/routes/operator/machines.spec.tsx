@@ -39,10 +39,10 @@ vi.mock("../../shell/sub-panel", () => ({
 }));
 
 const { toastMock } = vi.hoisted(() => ({
-  toastMock: Object.assign(vi.fn(), { error: vi.fn() }),
+  toastMock: { message: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 // The page's lifecycle side effects live in this hook. Mocking it is what
 // lets a test hold a row in its in-flight state without driving a fetch.
@@ -85,7 +85,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  toastMock.mockClear();
+  toastMock.message.mockClear();
+  toastMock.error.mockClear();
   toastMock.error.mockClear();
 });
 
@@ -105,7 +106,9 @@ describe("MachinesPage empty state", () => {
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith("nimbus machine init"),
     );
-    expect(toastMock).toHaveBeenCalledWith("Copied nimbus machine init");
+    expect(toastMock.message).toHaveBeenCalledWith(
+      "Copied nimbus machine init",
+    );
   });
 
   it("says so when the host has no clipboard", async () => {
@@ -126,7 +129,9 @@ describe("MachinesPage empty state", () => {
         "Copy failed. The clipboard is not available.",
       ),
     );
-    expect(toastMock).not.toHaveBeenCalledWith("Copied nimbus machine init");
+    expect(toastMock.message).not.toHaveBeenCalledWith(
+      "Copied nimbus machine init",
+    );
   });
 
   it("keeps the empty state distinct from the loading state", () => {
