@@ -485,8 +485,10 @@ fn node24_loader_context_crypto_dh_safe_prime_batch_fixture() {
     );
 }
 
+// Node.js 20 computes the DH secret before it classifies the key, and
+// v20.20.2 bundles OpenSSL 3.0.19, so test-crypto-dh.js expects
+// "Supplied key is too small" for an empty key.
 #[test]
-#[ignore = "Pinned Node20 legacy-lane divergence: test-crypto-dh.js still expects the older OpenSSL invalid-secret message while the verified Node22 baseline now returns the newer unspecified-validation shape"]
 fn node20_loader_context_crypto_dh_legacy_watchpoint_batch() {
     run_node_compat_watchpoint_entry_batch(
         "node20-loader-context-crypto-dh-legacy-watchpoints",
@@ -496,7 +498,6 @@ fn node20_loader_context_crypto_dh_legacy_watchpoint_batch() {
 }
 
 #[test]
-#[ignore = "Pinned Deno-family crypto gap: authenticated-stream and DES3 wrap fixtures require cipher families not exposed by the embedded crypto backend yet"]
 fn node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
         "node22-loader-context-crypto-authenticated-and-aes-wrap-batch",
@@ -506,7 +507,6 @@ fn node22_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Deno-family crypto gap: authenticated-stream and DES3 wrap fixtures require cipher families not exposed by the embedded crypto backend yet"]
 fn node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
         "node20-loader-context-crypto-authenticated-and-aes-wrap-batch",
@@ -516,7 +516,6 @@ fn node20_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Deno-family crypto gap: authenticated-stream/authenticated error text and DES3 wrap fixtures require cipher behavior not exposed by the embedded crypto backend yet"]
 fn node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture() {
     run_node_compat_watchpoint_entry_batch(
         "node24-loader-context-crypto-authenticated-and-aes-wrap-batch",
@@ -526,7 +525,6 @@ fn node24_loader_context_crypto_authenticated_and_aes_wrap_batch_fixture() {
 }
 
 #[test]
-#[ignore = "Pinned Node20 legacy-lane divergence: test-crypto-authenticated.js still expects the older deprecation-warning ordering without DEP0182"]
 fn node20_loader_context_crypto_authenticated_legacy_watchpoint_batch() {
     run_node_compat_watchpoint_entry_batch(
         "node20-loader-context-crypto-authenticated-legacy-watchpoints",
@@ -2827,6 +2825,86 @@ const ASYNC_HOOKS_PROMOTED_NODE26_PATHS: &[&str] = &[
 ];
 
 #[test]
+fn node20_async_hooks_no_startup_orphans_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-async-hooks-no-startup-orphans.js",
+        "regression/async-hooks/test-async-hooks-no-startup-orphans.js",
+        &[],
+        NodeCompatLane::Node20,
+    );
+}
+
+#[test]
+fn node22_async_hooks_no_startup_orphans_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-async-hooks-no-startup-orphans.js",
+        "regression/async-hooks/test-async-hooks-no-startup-orphans.js",
+        &[],
+        NodeCompatLane::Node22,
+    );
+}
+
+#[test]
+fn node24_async_hooks_no_startup_orphans_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-async-hooks-no-startup-orphans.js",
+        "regression/async-hooks/test-async-hooks-no-startup-orphans.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node26_async_hooks_no_startup_orphans_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-async-hooks-no-startup-orphans.js",
+        "regression/async-hooks/test-async-hooks-no-startup-orphans.js",
+        &[],
+        NodeCompatLane::Node26,
+    );
+}
+
+#[test]
+fn node20_handle_close_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-handle-close-contract.js",
+        "regression/handle-wrap/test-handle-close-contract.js",
+        &[],
+        NodeCompatLane::Node20,
+    );
+}
+
+#[test]
+fn node22_handle_close_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-handle-close-contract.js",
+        "regression/handle-wrap/test-handle-close-contract.js",
+        &[],
+        NodeCompatLane::Node22,
+    );
+}
+
+#[test]
+fn node24_handle_close_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-handle-close-contract.js",
+        "regression/handle-wrap/test-handle-close-contract.js",
+        &[],
+        NodeCompatLane::Node24,
+    );
+}
+
+#[test]
+fn node26_handle_close_contract_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-handle-close-contract.js",
+        "regression/handle-wrap/test-handle-close-contract.js",
+        &[],
+        NodeCompatLane::Node26,
+    );
+}
+
+#[test]
 fn node22_async_hooks_enable_recursive_fsreqcallback_regression() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-async-hooks-enable-recursive-fsreqcallback-regression.js",
@@ -3864,6 +3942,21 @@ const NETWORKING_CRYPTO_PROMOTED_NODE24_ONLY_PATHS: &[&str] = &[
 ];
 
 #[test]
+fn node20_legacy_lane_executes_networking_crypto_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NETWORKING_CRYPTO_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node20-legacy-lane-executes-networking-crypto-promoted-batch",
+        NodeCompatLane::Node20,
+        &fixture_paths,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
 fn node22_supported_lane_executes_networking_crypto_promoted_batch_fixture() {
     let fixture_paths: Vec<String> = NETWORKING_CRYPTO_PROMOTED_COMMON_PATHS
         .iter()
@@ -3888,6 +3981,21 @@ fn node24_default_lane_executes_networking_crypto_promoted_batch_fixture() {
     run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
         "node24-default-lane-executes-networking-crypto-promoted-batch",
         NodeCompatLane::Node24,
+        &fixture_paths,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
+        NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS,
+    );
+}
+
+#[test]
+fn node26_current_lane_executes_networking_crypto_promoted_batch_fixture() {
+    let fixture_paths: Vec<String> = NETWORKING_CRYPTO_PROMOTED_COMMON_PATHS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    run_node_compat_watchpoint_path_batch_with_lane_extra_dirs(
+        "node26-current-lane-executes-networking-crypto-promoted-batch",
+        NodeCompatLane::Node26,
         &fixture_paths,
         NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_RUNTIME_FILES,
         NETWORKING_CRYPTO_REQUIRED_GAP_EXTRA_DIRS,
@@ -5115,6 +5223,7 @@ const PARALLEL_JS_PLATFORM_PROMOTED_COMMON_PATHS: &[&str] = &[
     "test/parallel/test-util-getcallsites-preparestacktrace.js",
     "test/parallel/test-util-inspect-getters-accessing-this.js",
     "test/parallel/test-util-inspect-namespace.js",
+    "test/parallel/test-util-inspect-proxy.js",
     "test/parallel/test-util-isDeepStrictEqual.js",
     "test/parallel/test-util-primordial-monkeypatching.js",
     "test/parallel/test-util-stripvtcontrolcharacters.js",
@@ -5344,6 +5453,7 @@ const NODE26_UNPROMOTED_SURFACE_PROMOTED_PATHS: &[&str] = &[
     "test/parallel/test-async-hooks-http-parser-destroy.js",
     "test/parallel/test-async-local-storage-weak-asyncwrap-leak.js",
     "test/parallel/test-blob-createobjecturl.js",
+    "test/parallel/test-crypto-des3-wrap.js",
     "test/parallel/test-diagnostic-channel-http-request-created.js",
     "test/parallel/test-diagnostic-channel-http-response-created.js",
     "test/parallel/test-dns-channel-cancel-promise.js",
@@ -5583,6 +5693,7 @@ const CORE_SEMANTICS_UTIL_PROMOTED_NODE26_PATHS: &[&str] = &[
     "test/parallel/test-util-getcallsites-preparestacktrace.js",
     "test/parallel/test-util-inspect-getters-accessing-this.js",
     "test/parallel/test-util-inspect-namespace.js",
+    "test/parallel/test-util-inspect-proxy.js",
     "test/parallel/test-util-isDeepStrictEqual.js",
     "test/parallel/test-util-primordial-monkeypatching.js",
     "test/parallel/test-util-promisify-custom-names.mjs",
@@ -6108,8 +6219,10 @@ fn node22_fs_rmdir_recursive_fixture() {
     );
 }
 
+// fs.stat, fs.lstat and fs.readlink validate the path synchronously, as
+// Node's lib/fs.js does, so an invalid path throws ERR_INVALID_ARG_TYPE before
+// the callback is queued. The fixture asserts this with common.mustNotCall().
 #[test]
-#[ignore = "Node20 divergence: official v20.20.2 test-fs-stat.js requires the older JSON.stringify(Stats) field shape, so the fixture fails with `AssertionError [ERR_ASSERTION]: function should not have been called`"]
 fn node20_fs_stat_watchpoint() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-fs-stat.js",
@@ -6241,7 +6354,6 @@ fn node20_buffer_isutf8_watchpoint() {
 }
 
 #[test]
-#[ignore = "Node20 heap-ceiling gap: test-buffer-slow.js exercises SlowBuffer(buffer.kMaxLength) and the runtime reaches its 128 MB heap ceiling first, so the fixture fails with `Cannot evaluate dynamically imported module, because JavaScript execution has been terminated`"]
 fn node20_buffer_slow_watchpoint() {
     run_node_compat_watchpoint_for_lane(
         "test/parallel/test-buffer-slow.js",

@@ -21,7 +21,7 @@ lifecycle changes before public docs move.
 Future changes to release metadata must update this proof because the verifier
 requires these digest markers:
 
-- tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: bfcd0f33987e3e80beb5c08bd5043ea5e552c0fedc42f33b610ba7ffe6e210f3
+- tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: 41a895a2ccfac6f974d94fee0a217dada792df9a038134a7f5f3ebb2cf116beb
 - tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: bf47d0f1c5c53d02efdb9e251e7c7f9af19ff91ae474875fe51c385ae7ef6bc8
 
 ## Files Changed
@@ -63,6 +63,9 @@ NFRC11 followed the wide-then-focused loop for release drift:
 - Node20 is legacy-grace/EOL regression coverage.
 - Node26 is Current/non-LTS, not product default and not supported LTS.
 - Latest official tags match the lane registry and fixture corpus tags.
+- In the live probe, the dist index `openssl` field of each lane's release
+  matches the registry `openssl_version`, which the runtime reports as
+  `process.versions.openssl`.
 - Dashboard lane roles match registry roles: `legacy`, `supported`, `default`,
   and `current`.
 - Generated release-train docs match current inputs.

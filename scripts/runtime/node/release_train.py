@@ -358,6 +358,17 @@ def collect_errors(
                         ),
                     }
                 )
+            elif dist_entry.get("openssl") != lane.get("openssl_version"):
+                errors["tag_drift"].append(
+                    {
+                        "lane": lane_name,
+                        "message": (
+                            f"dist index {dist_entry.get('version')} openssl "
+                            f"{dist_entry.get('openssl')} != registry openssl_version "
+                            f"{lane.get('openssl_version')}"
+                        ),
+                    }
+                )
 
     if schedule is not None:
         as_of = date.fromisoformat(str(registry.get("as_of")))
@@ -729,6 +740,19 @@ def command_self_test(_: argparse.Namespace) -> int:
     ):
         return ([{"version": "v24.99.0"}], None)
 
+    def openssl_drift(
+        registry_payload: dict[str, Any],
+        _latest: dict[str, Any],
+        _status: dict[str, Any],
+        _dashboard: dict[str, Any],
+    ):
+        dist_index = [
+            {"version": lane["upstream_tag"], "openssl": lane["openssl_version"]}
+            for lane in lanes_by_name(registry_payload).values()
+        ]
+        dist_index[0]["openssl"] = "0.0.0"
+        return (dist_index, None)
+
     def lifecycle_drift(
         _registry: dict[str, Any],
         _latest: dict[str, Any],
@@ -769,6 +793,7 @@ def command_self_test(_: argparse.Namespace) -> int:
         dashboard["canary_report_count"] = 0
 
     expect_drift("tag_drift", tag_drift, "tag_drift")
+    expect_drift("openssl_drift", openssl_drift, "tag_drift")
     expect_drift("lifecycle_drift", lifecycle_drift, "lifecycle_drift")
     expect_drift("role_drift", role_drift, "role_drift")
     expect_drift("default_drift", default_drift, "role_drift")

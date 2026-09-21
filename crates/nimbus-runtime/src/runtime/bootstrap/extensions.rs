@@ -257,6 +257,7 @@ impl NodeBootstrapExtensionSlot {
                 false,
                 InMemoryBroadcastChannel::default(),
                 url_search_params_null_policy(context.limits.compatibility_target),
+                proxy_inspect_policy(context.limits.compatibility_target),
             ),
             Self::Crypto => deno_crypto::deno_crypto::init(
                 None,
@@ -288,6 +289,15 @@ impl NodeBootstrapExtensionSlot {
                 aes_gcm_implicit_short_tag_policy(context.limits.compatibility_target),
                 dgram_default_lookup_policy(context.limits.compatibility_target),
                 closed_readable_adapter_policy(context.limits.compatibility_target),
+                cipher_auth_tag_policy(context.limits.compatibility_target),
+                password_cipher_api_policy(context.limits.compatibility_target),
+                events_options_policy(context.limits.compatibility_target),
+                dh_compute_secret_policy(context.limits.compatibility_target),
+                readable_read_policy(context.limits.compatibility_target),
+                buffer_max_length_policy(context.limits.compatibility_target),
+                assertion_error_diff_policy(context.limits.compatibility_target),
+                deep_equal_cycle_policy(context.limits.compatibility_target),
+                assert_api_policy(context.limits.compatibility_target),
             ),
             Self::NodeRuntimeBootstrap => node22_runtime_bootstrap_extension(),
         }
@@ -398,6 +408,18 @@ fn url_search_params_null_policy(
     }
 }
 
+fn proxy_inspect_policy(target: RuntimeCompatibilityTarget) -> deno_web::ProxyInspectPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20
+        | RuntimeCompatibilityTarget::Node22
+        | RuntimeCompatibilityTarget::Node24 => deno_web::ProxyInspectPolicy::TargetOnly,
+        RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => deno_web::ProxyInspectPolicy::AnnotateTarget,
+    }
+}
+
 fn dgram_default_lookup_policy(
     target: RuntimeCompatibilityTarget,
 ) -> deno_node::DgramDefaultLookupPolicy {
@@ -429,6 +451,158 @@ fn closed_readable_adapter_policy(
         | RuntimeCompatibilityTarget::WasmComponent => {
             deno_node::ClosedReadableAdapterPolicy::PropagateError
         }
+    }
+}
+
+/// Node.js 24.2 (nodejs/node#58547) stopped returning a zero-filled tag from
+/// `Cipheriv#getAuthTag()` after a failed `final()`.
+fn cipher_auth_tag_policy(target: RuntimeCompatibilityTarget) -> deno_node::CipherAuthTagPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            deno_node::CipherAuthTagPolicy::ZeroFilledAfterFailedFinal
+        }
+        RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::CipherAuthTagPolicy::RequireComputedTag
+        }
+    }
+}
+
+/// Node.js 22 (nodejs/node#50973) removed `crypto.createCipher()`,
+/// `crypto.createDecipher()`, `Cipher` and `Decipher` (DEP0106), but kept
+/// `Cipher` and `Decipher` as `undefined` exports until Node.js 24
+/// (nodejs/node#57266).
+fn password_cipher_api_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_node::PasswordCipherApiPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 => deno_node::PasswordCipherApiPolicy::ExposeDeprecated,
+        RuntimeCompatibilityTarget::Node22 => {
+            deno_node::PasswordCipherApiPolicy::RemovedWithUndefinedClassExports
+        }
+        RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => deno_node::PasswordCipherApiPolicy::Removed,
+    }
+}
+
+/// Node.js 22 added `validateObject(options, 'options')` to `events.once()` and
+/// `events.on()` (nodejs/node#46018). Node.js 20 reads `options.signal` without
+/// that check, so `once(emitter, name, null)` resolves there.
+fn events_options_policy(target: RuntimeCompatibilityTarget) -> deno_node::EventsOptionsPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 => deno_node::EventsOptionsPolicy::ReadWithoutValidation,
+        RuntimeCompatibilityTarget::Node22
+        | RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::EventsOptionsPolicy::RequireObject
+        }
+    }
+}
+
+/// `DiffieHellman#computeSecret()` validates the other party's key
+/// differently on each release line. Node.js 20 computes first and classifies
+/// the key only when OpenSSL rejects the secret. Node.js 22 runs
+/// `DH_check_pub_key()` first. Node.js 24 and later check only the key range
+/// on the OpenSSL 3 provider path.
+fn dh_compute_secret_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_node::DhComputeSecretPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 => deno_node::DhComputeSecretPolicy::ComputeThenClassify,
+        RuntimeCompatibilityTarget::Node22 => deno_node::DhComputeSecretPolicy::CheckPublicKey,
+        RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::DhComputeSecretPolicy::CheckRangeThenCompute
+        }
+    }
+}
+
+/// Node.js 26 changed `Readable#read()` without a size to return one buffered
+/// chunk at a time (nodejs/node#60441). Node.js 24 and earlier return all
+/// buffered data, so a paused byte stream yields one concatenated chunk.
+fn readable_read_policy(target: RuntimeCompatibilityTarget) -> deno_node::ReadableReadPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20
+        | RuntimeCompatibilityTarget::Node22
+        | RuntimeCompatibilityTarget::Node24 => deno_node::ReadableReadPolicy::ConcatenateBuffered,
+        RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::ReadableReadPolicy::OneBufferAtATime
+        }
+    }
+}
+
+/// Node.js 20 limits a Buffer to 2^32 bytes (`buffer.kMaxLength`). Node.js 22
+/// and later limit it to `Number.MAX_SAFE_INTEGER`.
+fn buffer_max_length_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_node::BufferMaxLengthPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 => deno_node::BufferMaxLengthPolicy::Uint32Range,
+        RuntimeCompatibilityTarget::Node22
+        | RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => {
+            deno_node::BufferMaxLengthPolicy::SafeInteger
+        }
+    }
+}
+
+fn assertion_error_diff_policy(
+    target: RuntimeCompatibilityTarget,
+) -> deno_node::AssertionErrorDiffPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 => deno_node::AssertionErrorDiffPolicy::LineByLine,
+        RuntimeCompatibilityTarget::Node22
+        | RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => deno_node::AssertionErrorDiffPolicy::Myers,
+    }
+}
+
+fn deep_equal_cycle_policy(target: RuntimeCompatibilityTarget) -> deno_node::DeepEqualCyclePolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 | RuntimeCompatibilityTarget::Node22 => {
+            deno_node::DeepEqualCyclePolicy::BothSides
+        }
+        RuntimeCompatibilityTarget::Node24
+        | RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => deno_node::DeepEqualCyclePolicy::EitherSide,
+    }
+}
+
+/// Node.js 20 has no `Assert` class and no `partialDeepStrictEqual`. Node.js 25
+/// removed `CallTracker` (DEP0173).
+fn assert_api_policy(target: RuntimeCompatibilityTarget) -> deno_node::AssertApiPolicy {
+    match target {
+        RuntimeCompatibilityTarget::Node20 => deno_node::AssertApiPolicy::CallTrackerOnly,
+        RuntimeCompatibilityTarget::Node22 | RuntimeCompatibilityTarget::Node24 => {
+            deno_node::AssertApiPolicy::AssertClassAndCallTracker
+        }
+        RuntimeCompatibilityTarget::Node26
+        | RuntimeCompatibilityTarget::WebStandardIsolate
+        | RuntimeCompatibilityTarget::BunJsc
+        | RuntimeCompatibilityTarget::WasmComponent => deno_node::AssertApiPolicy::AssertClassOnly,
     }
 }
 
@@ -864,6 +1038,31 @@ mod tests {
     }
 
     #[test]
+    fn proxy_inspect_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+        ] {
+            assert_eq!(
+                proxy_inspect_policy(target),
+                deno_web::ProxyInspectPolicy::TargetOnly
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                proxy_inspect_policy(target),
+                deno_web::ProxyInspectPolicy::AnnotateTarget
+            );
+        }
+    }
+
+    #[test]
     fn node_dgram_default_lookup_policy_tracks_the_compatibility_target() {
         for target in [
             RuntimeCompatibilityTarget::Node20,
@@ -909,6 +1108,220 @@ mod tests {
             assert_eq!(
                 closed_readable_adapter_policy(target),
                 deno_node::ClosedReadableAdapterPolicy::PropagateError
+            );
+        }
+    }
+
+    #[test]
+    fn node_cipher_auth_tag_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+        ] {
+            assert_eq!(
+                cipher_auth_tag_policy(target),
+                deno_node::CipherAuthTagPolicy::ZeroFilledAfterFailedFinal
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                cipher_auth_tag_policy(target),
+                deno_node::CipherAuthTagPolicy::RequireComputedTag
+            );
+        }
+    }
+
+    #[test]
+    fn node_password_cipher_api_policy_tracks_the_compatibility_target() {
+        assert_eq!(
+            password_cipher_api_policy(RuntimeCompatibilityTarget::Node20),
+            deno_node::PasswordCipherApiPolicy::ExposeDeprecated
+        );
+        assert_eq!(
+            password_cipher_api_policy(RuntimeCompatibilityTarget::Node22),
+            deno_node::PasswordCipherApiPolicy::RemovedWithUndefinedClassExports
+        );
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                password_cipher_api_policy(target),
+                deno_node::PasswordCipherApiPolicy::Removed
+            );
+        }
+    }
+
+    #[test]
+    fn node_events_options_policy_tracks_the_compatibility_target() {
+        assert_eq!(
+            events_options_policy(RuntimeCompatibilityTarget::Node20),
+            deno_node::EventsOptionsPolicy::ReadWithoutValidation
+        );
+        for target in [
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                events_options_policy(target),
+                deno_node::EventsOptionsPolicy::RequireObject
+            );
+        }
+    }
+
+    #[test]
+    fn node_dh_compute_secret_policy_tracks_the_compatibility_target() {
+        assert_eq!(
+            dh_compute_secret_policy(RuntimeCompatibilityTarget::Node20),
+            deno_node::DhComputeSecretPolicy::ComputeThenClassify
+        );
+        assert_eq!(
+            dh_compute_secret_policy(RuntimeCompatibilityTarget::Node22),
+            deno_node::DhComputeSecretPolicy::CheckPublicKey
+        );
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                dh_compute_secret_policy(target),
+                deno_node::DhComputeSecretPolicy::CheckRangeThenCompute
+            );
+        }
+    }
+
+    #[test]
+    fn node_readable_read_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+        ] {
+            assert_eq!(
+                readable_read_policy(target),
+                deno_node::ReadableReadPolicy::ConcatenateBuffered
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                readable_read_policy(target),
+                deno_node::ReadableReadPolicy::OneBufferAtATime
+            );
+        }
+    }
+
+    #[test]
+    fn node_buffer_max_length_policy_tracks_the_compatibility_target() {
+        assert_eq!(
+            buffer_max_length_policy(RuntimeCompatibilityTarget::Node20),
+            deno_node::BufferMaxLengthPolicy::Uint32Range
+        );
+        for target in [
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                buffer_max_length_policy(target),
+                deno_node::BufferMaxLengthPolicy::SafeInteger
+            );
+        }
+    }
+
+    #[test]
+    fn node_assertion_error_diff_policy_tracks_the_compatibility_target() {
+        assert_eq!(
+            assertion_error_diff_policy(RuntimeCompatibilityTarget::Node20),
+            deno_node::AssertionErrorDiffPolicy::LineByLine
+        );
+        for target in [
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                assertion_error_diff_policy(target),
+                deno_node::AssertionErrorDiffPolicy::Myers
+            );
+        }
+    }
+
+    #[test]
+    fn node_deep_equal_cycle_policy_tracks_the_compatibility_target() {
+        for target in [
+            RuntimeCompatibilityTarget::Node20,
+            RuntimeCompatibilityTarget::Node22,
+        ] {
+            assert_eq!(
+                deep_equal_cycle_policy(target),
+                deno_node::DeepEqualCyclePolicy::BothSides
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node24,
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                deep_equal_cycle_policy(target),
+                deno_node::DeepEqualCyclePolicy::EitherSide
+            );
+        }
+    }
+
+    #[test]
+    fn node_assert_api_policy_tracks_the_compatibility_target() {
+        assert_eq!(
+            assert_api_policy(RuntimeCompatibilityTarget::Node20),
+            deno_node::AssertApiPolicy::CallTrackerOnly
+        );
+        for target in [
+            RuntimeCompatibilityTarget::Node22,
+            RuntimeCompatibilityTarget::Node24,
+        ] {
+            assert_eq!(
+                assert_api_policy(target),
+                deno_node::AssertApiPolicy::AssertClassAndCallTracker
+            );
+        }
+        for target in [
+            RuntimeCompatibilityTarget::Node26,
+            RuntimeCompatibilityTarget::WebStandardIsolate,
+            RuntimeCompatibilityTarget::BunJsc,
+            RuntimeCompatibilityTarget::WasmComponent,
+        ] {
+            assert_eq!(
+                assert_api_policy(target),
+                deno_node::AssertApiPolicy::AssertClassOnly
             );
         }
     }

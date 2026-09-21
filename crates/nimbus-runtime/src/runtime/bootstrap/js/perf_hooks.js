@@ -3,6 +3,11 @@
 // This is served through Nimbus's node:perf_hooks builtin override path in the
 // restricted module loader so we can keep compatibility-specific module deltas
 // local until they are worth promoting into the shared fork.
+//
+// Ownership: this file is the whole node:perf_hooks module surface (entries,
+// observers, histograms, resource timing, and timerify). It passes 1,500
+// lines because deno_web supplies only the web Performance base, so every
+// Node-specific type lives here until it moves into the fork.
 
 // TODO(petamoriken): enable prefer-primordials for node polyfills
 // deno-lint-ignore-file prefer-primordials
@@ -21,6 +26,7 @@ const {
 
 const {
   ERR_ILLEGAL_CONSTRUCTOR,
+  ERR_INTERNAL_ASSERTION,
   ERR_INVALID_ARG_TYPE,
   ERR_INVALID_ARG_VALUE,
   ERR_INVALID_THIS,
@@ -846,7 +852,6 @@ function installGcPerformanceHook() {
 
 installGcPerformanceHook();
 
-const kResourceTiming = Symbol("kResourceTiming");
 const enqueueResourceTimingSymbol = Symbol.for("nimbus.perf_hooks.enqueueResourceTiming");
 const denoPrivateCustomInspectSymbol = Symbol.for("Deno.privateCustomInspect");
 const resourceTimingEntries = [];
@@ -946,13 +951,47 @@ function createPerformanceEntryList(entries) {
   };
 }
 
+// Node's PerformanceResourceTiming (lib/internal/perf/resource_timing.js)
+// keeps the caller's timingInfo as-is and reads each field on access: a
+// missing finalConnectionTimingInfo yields undefined connection timings,
+// and name/initiatorType are the raw arguments. Every accessor first checks
+// that the receiver carries the internal field it reads.
+const kCacheMode = Symbol("kCacheMode");
+const kRequestedUrl = Symbol("kRequestedUrl");
+const kTimingInfo = Symbol("kTimingInfo");
+const kInitiatorType = Symbol("kInitiatorType");
+const kDeliveryType = Symbol("kDeliveryType");
+const kResponseStatus = Symbol("kResponseStatus");
+const kSkipThrow = Symbol("kSkipThrow");
+
+// Node 22 added the deliveryType and responseStatus members and the two
+// trailing markResourceTiming parameters, and moved accessor receiver checks
+// from ERR_INVALID_ARG_TYPE (validateInternalField) to ERR_INVALID_THIS
+// (validateThisInternalField). The module is evaluated into the
+// target-invariant Node startup snapshot, so this defaults to the current
+// shape and post_bootstrap.js narrows it for a Node20 target.
+let resourceTimingHasDeliveryFields = true;
+let resourceTimingThisErrorIsArgType = false;
+
+function validateResourceTimingThis(object, fieldKey, className) {
+  if (
+    typeof object !== "object" || object === null ||
+    !Object.prototype.hasOwnProperty.call(object, fieldKey)
+  ) {
+    if (resourceTimingThisErrorIsArgType) {
+      throw new ERR_INVALID_ARG_TYPE("this", className, object);
+    }
+    throw new ERR_INVALID_THIS(className);
+  }
+}
+
 function resourceTimingFields(entry) {
-  return {
+  const fields = {
     name: entry.name,
     entryType: entry.entryType,
     startTime: entry.startTime,
     duration: entry.duration,
-    initiatorType: entry.initiatorType,
+    initiatorType: entry[kInitiatorType],
     nextHopProtocol: entry.nextHopProtocol,
     workerStart: entry.workerStart,
     redirectStart: entry.redirectStart,
@@ -969,149 +1008,190 @@ function resourceTimingFields(entry) {
     transferSize: entry.transferSize,
     encodedBodySize: entry.encodedBodySize,
     decodedBodySize: entry.decodedBodySize,
-    deliveryType: entry.deliveryType,
-    responseStatus: entry.responseStatus,
   };
-}
-
-function normalizeResourceConnectionTiming(connection) {
-  return {
-    domainLookupStartTime: connection?.domainLookupStartTime ?? 0,
-    domainLookupEndTime: connection?.domainLookupEndTime ?? 0,
-    connectionStartTime: connection?.connectionStartTime ?? 0,
-    connectionEndTime: connection?.connectionEndTime ?? 0,
-    secureConnectionStartTime: connection?.secureConnectionStartTime ?? 0,
-    ALPNNegotiatedProtocol: connection?.ALPNNegotiatedProtocol ?? [],
-  };
+  if (resourceTimingHasDeliveryFields) {
+    fields.deliveryType = entry.deliveryType;
+    fields.responseStatus = entry.responseStatus;
+  }
+  return fields;
 }
 
 class PerformanceResourceTiming {
-  constructor(resourceTiming = undefined) {
-    if (resourceTiming === undefined) {
+  constructor(skipThrowSymbol = undefined) {
+    if (skipThrowSymbol !== kSkipThrow) {
       throw new ERR_ILLEGAL_CONSTRUCTOR();
     }
-    this[kResourceTiming] = resourceTiming;
   }
 
   get name() {
-    return this[kResourceTiming].name;
+    validateResourceTimingThis(this, kRequestedUrl, "PerformanceResourceTiming");
+    return this[kRequestedUrl];
   }
 
+  // Node inherits entryType from PerformanceEntry.prototype. The deno_web
+  // PerformanceEntry getter requires a brand that only deno_web can create,
+  // so this class supplies the value itself.
   get entryType() {
+    validateResourceTimingThis(this, kRequestedUrl, "PerformanceEntry");
     return "resource";
   }
 
   get startTime() {
-    return this[kResourceTiming].startTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].startTime;
   }
 
   get duration() {
-    return Math.max(0, this.responseEnd - this.startTime);
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].endTime - this[kTimingInfo].startTime;
   }
 
   get initiatorType() {
-    return this[kResourceTiming].initiatorType;
+    validateResourceTimingThis(this, kInitiatorType, "PerformanceResourceTiming");
+    return this[kInitiatorType];
   }
 
   get workerStart() {
-    return this[kResourceTiming].finalServiceWorkerStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalServiceWorkerStartTime;
   }
 
   get redirectStart() {
-    return this[kResourceTiming].redirectStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].redirectStartTime;
   }
 
   get redirectEnd() {
-    return this[kResourceTiming].redirectEndTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].redirectEndTime;
   }
 
   get fetchStart() {
-    return this[kResourceTiming].postRedirectStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].postRedirectStartTime;
   }
 
   get domainLookupStart() {
-    return this[kResourceTiming].connection.domainLookupStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalConnectionTimingInfo?.domainLookupStartTime;
   }
 
   get domainLookupEnd() {
-    return this[kResourceTiming].connection.domainLookupEndTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalConnectionTimingInfo?.domainLookupEndTime;
   }
 
   get connectStart() {
-    return this[kResourceTiming].connection.connectionStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalConnectionTimingInfo?.connectionStartTime;
   }
 
   get connectEnd() {
-    return this[kResourceTiming].connection.connectionEndTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalConnectionTimingInfo?.connectionEndTime;
   }
 
   get secureConnectionStart() {
-    return this[kResourceTiming].connection.secureConnectionStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalConnectionTimingInfo?.secureConnectionStartTime;
   }
 
   get nextHopProtocol() {
-    return this[kResourceTiming].connection.ALPNNegotiatedProtocol;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalConnectionTimingInfo?.ALPNNegotiatedProtocol;
   }
 
   get requestStart() {
-    return this[kResourceTiming].finalNetworkRequestStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalNetworkRequestStartTime;
   }
 
   get responseStart() {
-    return this[kResourceTiming].finalNetworkResponseStartTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].finalNetworkResponseStartTime;
   }
 
   get responseEnd() {
-    return this[kResourceTiming].endTime;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].endTime;
   }
 
   get encodedBodySize() {
-    return this[kResourceTiming].encodedBodySize;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].encodedBodySize;
   }
 
   get decodedBodySize() {
-    return this[kResourceTiming].decodedBodySize;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kTimingInfo].decodedBodySize;
   }
 
   get transferSize() {
-    if (this[kResourceTiming].cacheMode === "local") {
-      return 0;
-    }
-    return this.encodedBodySize === 0 ? 0 : this.encodedBodySize + 300;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    if (this[kCacheMode] === "local") return 0;
+    if (this[kCacheMode] === "validated") return 300;
+
+    return this[kTimingInfo].encodedBodySize + 300;
   }
 
   get deliveryType() {
-    return this[kResourceTiming].deliveryType;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kDeliveryType];
   }
 
   get responseStatus() {
-    return this[kResourceTiming].responseStatus;
+    validateResourceTimingThis(this, kTimingInfo, "PerformanceResourceTiming");
+    return this[kResponseStatus];
   }
 
   toJSON() {
+    validateResourceTimingThis(this, kInitiatorType, "PerformanceResourceTiming");
     return resourceTimingFields(this);
   }
 
   [customInspectSymbol](depth, options) {
     if (depth < 0) {
-      return "[PerformanceResourceTiming]";
+      return this;
     }
     const inspectOptions = {
       ...options,
       depth: options?.depth == null ? null : options.depth - 1,
     };
-    return `PerformanceResourceTiming ${inspect(resourceTimingFields(this), inspectOptions)}`;
+    return `${this.constructor.name} ${inspect(this.toJSON(), inspectOptions)}`;
   }
 
   [denoPrivateCustomInspectSymbol](inspectValue, inspectOptions) {
-    return `PerformanceResourceTiming ${inspectValue(resourceTimingFields(this), inspectOptions)}`;
+    return `${this.constructor.name} ${inspectValue(this.toJSON(), inspectOptions)}`;
   }
 }
 
 Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prototype);
-Object.defineProperty(PerformanceResourceTiming.prototype, Symbol.toStringTag, {
-  value: "PerformanceResourceTiming",
-  configurable: true,
+const resourceTimingEnumerableProperty = { enumerable: true };
+Object.defineProperties(PerformanceResourceTiming.prototype, {
+  initiatorType: resourceTimingEnumerableProperty,
+  nextHopProtocol: resourceTimingEnumerableProperty,
+  workerStart: resourceTimingEnumerableProperty,
+  redirectStart: resourceTimingEnumerableProperty,
+  redirectEnd: resourceTimingEnumerableProperty,
+  fetchStart: resourceTimingEnumerableProperty,
+  domainLookupStart: resourceTimingEnumerableProperty,
+  domainLookupEnd: resourceTimingEnumerableProperty,
+  connectStart: resourceTimingEnumerableProperty,
+  connectEnd: resourceTimingEnumerableProperty,
+  secureConnectionStart: resourceTimingEnumerableProperty,
+  requestStart: resourceTimingEnumerableProperty,
+  responseStart: resourceTimingEnumerableProperty,
+  responseEnd: resourceTimingEnumerableProperty,
+  transferSize: resourceTimingEnumerableProperty,
+  encodedBodySize: resourceTimingEnumerableProperty,
+  decodedBodySize: resourceTimingEnumerableProperty,
+  deliveryType: resourceTimingEnumerableProperty,
+  responseStatus: resourceTimingEnumerableProperty,
+  toJSON: resourceTimingEnumerableProperty,
+  [Symbol.toStringTag]: {
+    value: "PerformanceResourceTiming",
+    configurable: true,
+  },
 });
 
 const nodeTimingMarkNames = new Set(["nodeStart", "bootstrapComplete"]);
@@ -1229,34 +1309,28 @@ performance.toJSON = () => ({
   eventLoopUtilization: eventLoopUtilization(),
 });
 
-performance.markResourceTiming = (
+// https://w3c.github.io/resource-timing/#dfn-mark-resource-timing
+function recordResourceTiming(
   timingInfo,
   requestedUrl,
   initiatorType,
-  _global,
   cacheMode,
-  _bodyInfo,
-  responseStatus = 0,
-  deliveryType = "",
-) => {
-  const resourceTiming = new PerformanceResourceTiming({
-    name: `${requestedUrl}`,
-    startTime: timingInfo?.startTime ?? 0,
-    redirectStartTime: timingInfo?.redirectStartTime ?? 0,
-    redirectEndTime: timingInfo?.redirectEndTime ?? 0,
-    postRedirectStartTime: timingInfo?.postRedirectStartTime ?? 0,
-    finalServiceWorkerStartTime: timingInfo?.finalServiceWorkerStartTime ?? 0,
-    finalNetworkRequestStartTime: timingInfo?.finalNetworkRequestStartTime ?? 0,
-    finalNetworkResponseStartTime: timingInfo?.finalNetworkResponseStartTime ?? 0,
-    endTime: timingInfo?.endTime ?? 0,
-    encodedBodySize: timingInfo?.encodedBodySize ?? 0,
-    decodedBodySize: timingInfo?.decodedBodySize ?? 0,
-    connection: normalizeResourceConnectionTiming(timingInfo?.finalConnectionTimingInfo),
-    initiatorType: `${initiatorType}`,
-    cacheMode,
-    responseStatus,
-    deliveryType,
-  });
+  responseStatus,
+  deliveryType,
+) {
+  // https://w3c.github.io/resource-timing/#dfn-setup-the-resource-timing-entry
+  if (cacheMode !== "" && cacheMode !== "local") {
+    throw new ERR_INTERNAL_ASSERTION("cache must be an empty string or 'local'");
+  }
+  const resourceTiming = new PerformanceResourceTiming(kSkipThrow);
+  resourceTiming[kInitiatorType] = initiatorType;
+  resourceTiming[kRequestedUrl] = requestedUrl;
+  resourceTiming[kTimingInfo] = timingInfo;
+  resourceTiming[kCacheMode] = cacheMode;
+  if (resourceTimingHasDeliveryFields) {
+    resourceTiming[kDeliveryType] = deliveryType;
+    resourceTiming[kResponseStatus] = responseStatus;
+  }
   // Node calls enqueue() (notify observers) before bufferResourceTiming()
   // (lib/internal/perf/resource_timing.js markResourceTiming). Observers receive
   // every entry; the global buffer applies the size limit / overflow event.
@@ -1265,7 +1339,68 @@ performance.markResourceTiming = (
   }
   bufferResourceTiming(resourceTiming);
   return resourceTiming;
-};
+}
+
+function markResourceTiming(
+  timingInfo,
+  requestedUrl,
+  initiatorType,
+  global,
+  cacheMode,
+  bodyInfo,
+  responseStatus,
+  deliveryType = "",
+) {
+  return recordResourceTiming(
+    timingInfo,
+    requestedUrl,
+    initiatorType,
+    cacheMode,
+    responseStatus,
+    deliveryType,
+  );
+}
+
+// Node20 markResourceTiming (length 5) takes no bodyInfo, responseStatus, or
+// deliveryType.
+function node20MarkResourceTiming(
+  timingInfo,
+  requestedUrl,
+  initiatorType,
+  global,
+  cacheMode,
+) {
+  return recordResourceTiming(timingInfo, requestedUrl, initiatorType, cacheMode);
+}
+
+// Node defines markResourceTiming on Performance as a non-enumerable,
+// writable, configurable data property.
+Object.defineProperty(performance, "markResourceTiming", {
+  configurable: true,
+  enumerable: false,
+  writable: true,
+  value: markResourceTiming,
+});
+
+function configureResourceTimingForNodeMajor(nodeMajor) {
+  if (nodeMajor !== 20) {
+    return;
+  }
+  resourceTimingHasDeliveryFields = false;
+  resourceTimingThisErrorIsArgType = true;
+  delete PerformanceResourceTiming.prototype.deliveryType;
+  delete PerformanceResourceTiming.prototype.responseStatus;
+  performance.markResourceTiming = node20MarkResourceTiming;
+}
+
+// post_bootstrap.js calls this once the compatibility target is known, then
+// deletes it.
+Object.defineProperty(globalThis, "__nimbusConfigurePerfHooksForNodeMajor", {
+  value: configureResourceTimingForNodeMajor,
+  configurable: true,
+  enumerable: false,
+  writable: true,
+});
 
 const recordHistogramDuration = (histogram, startTime) => {
   if (!histogram || typeof histogram.record !== "function") {

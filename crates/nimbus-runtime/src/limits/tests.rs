@@ -63,7 +63,17 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
         "Node20 is EOL legacy and Node26 is Current/non-LTS, so neither is supported LTS"
     );
 
-    for (target, major, phase, version, tag, codename, module_version, product_default) in [
+    for (
+        target,
+        major,
+        phase,
+        version,
+        tag,
+        codename,
+        module_version,
+        openssl_version,
+        product_default,
+    ) in [
         (
             RuntimeCompatibilityTarget::Node20,
             20,
@@ -72,6 +82,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             "v20.20.2",
             Some("Iron"),
             "115",
+            "3.0.19",
             false,
         ),
         (
@@ -82,6 +93,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             "v22.23.2",
             Some("Jod"),
             "127",
+            "3.5.7",
             false,
         ),
         (
@@ -92,6 +104,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             "v24.20.0",
             Some("Krypton"),
             "137",
+            "3.5.7",
             true,
         ),
         (
@@ -102,6 +115,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
             "v26.8.1",
             None,
             "147",
+            "3.5.7",
             false,
         ),
     ] {
@@ -115,6 +129,7 @@ fn runtime_node_lts_metadata_is_derived_from_registry() {
         assert_eq!(target.node_release_name(), Some("node"));
         assert_eq!(target.node_release_lts_codename(), codename);
         assert_eq!(target.node_module_version(), Some(module_version));
+        assert_eq!(target.node_openssl_version(), Some(openssl_version));
         assert_eq!(target.is_supported_node_lts(), phase.is_supported_lts());
         assert_eq!(metadata.product_default, product_default);
         assert_eq!(

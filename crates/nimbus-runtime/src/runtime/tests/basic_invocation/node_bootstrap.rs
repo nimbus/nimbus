@@ -65,6 +65,7 @@ globalThis.__nimbusInvoke = function () {
     stderrClearLineType: typeof globalThis.process?.stderr?.clearLine,
     stderrClearScreenDownType: typeof globalThis.process?.stderr?.clearScreenDown,
     refreshOpStateHelperType: typeof globalThis.__nimbusRefreshNodeRuntimeOpState,
+    perfHooksLaneHookType: typeof globalThis.__nimbusConfigurePerfHooksForNodeMajor,
   };
 };
 
@@ -126,6 +127,7 @@ export {};
             "stderrClearLineType": "undefined",
             "stderrClearScreenDownType": "undefined",
             "refreshOpStateHelperType": "undefined",
+            "perfHooksLaneHookType": "undefined",
         })
     );
 }

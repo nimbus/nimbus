@@ -155,27 +155,6 @@ decisions belong in `docs/private/plans/archive/node-lts-compatibility-plan.md`.
   - evidence:
     `runtime::tests::node_compat::node20_stream_transform_split_objectmode_watchpoint`
 
-- `test/parallel/test-stream-readable-infinite-read.js`
-  - classification: `validation_lane_divergence`
-  - reason: the official Node20 file still depends on the older default
-    `Readable` highWaterMark accumulation path, while the current runtime
-    matches the later Node22/Node24 explicit-highWaterMark shape carried by
-    the newer official files
-  - owner: validation-lane contract difference, not a blocking Node22 runtime
-    seam
-  - evidence:
-    `runtime::tests::node_compat::node20_stream_readable_infinite_read_watchpoint`
-
-- `test/parallel/test-fs-stat.js`
-  - classification: `validation_lane_divergence`
-  - reason: the official Node20 file still requires the older
-    `JSON.stringify(Stats)` field shape, while the current runtime intentionally
-    matches the newer Node22/Node24 `Stats` contract
-  - owner: validation-lane contract difference, not a blocking Node22 runtime
-    seam
-  - evidence:
-    `runtime::tests::node_compat::node20_fs_stat_watchpoint`
-
 ## Node24 Preview Status
 
 - Status: `default-lane watchpoint; not a green support claim`

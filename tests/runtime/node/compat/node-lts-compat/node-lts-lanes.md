@@ -5,7 +5,8 @@ Status: canonical lane registry index
 The checked-in registry is
 [`node-lts-lanes.json`](node-lts-lanes.json). It is the source of truth for
 Node major support phase, product default, upstream release line, fixture corpus
-binding, Node release metadata, ABI/module version, and evidence policy.
+binding, Node release metadata, ABI/module version, bundled OpenSSL version,
+and evidence policy.
 
 Latest official suite tags and current fixture-corpus drift are tracked in
 [`node-latest-suite-tags.json`](node-latest-suite-tags.json) and summarized in
@@ -25,8 +26,8 @@ bash scripts/verify-node-release-train.sh
 
 Do not copy lane facts into hand-written architecture prose. Read
 `node-lts-lanes.json` for the current lane list, support phase, upstream tag,
-fixture corpus tag, LTS dates, release metadata, ABI/module version, and
-evidence policy.
+fixture corpus tag, LTS dates, release metadata, ABI/module version, bundled
+OpenSSL version, and evidence policy.
 
 The product default is a routing default, not an evidence priority. Supported
 LTS lanes must have lane-local evidence before public support claims use that

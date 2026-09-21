@@ -89,7 +89,7 @@
     "proof_readme": "tests/runtime/node/compat/provenance/README.md",
     "proof_readme_lists_artifact": true,
     "required_digest_markers": [
-      "tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: bfcd0f33987e3e80beb5c08bd5043ea5e552c0fedc42f33b610ba7ffe6e210f3",
+      "tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: 41a895a2ccfac6f974d94fee0a217dada792df9a038134a7f5f3ebb2cf116beb",
       "tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: bf47d0f1c5c53d02efdb9e251e7c7f9af19ff91ae474875fe51c385ae7ef6bc8"
     ]
   },
@@ -98,7 +98,7 @@
   "source_digests": [
     {
       "path": "tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json",
-      "sha256": "bfcd0f33987e3e80beb5c08bd5043ea5e552c0fedc42f33b610ba7ffe6e210f3"
+      "sha256": "41a895a2ccfac6f974d94fee0a217dada792df9a038134a7f5f3ebb2cf116beb"
     },
     {
       "path": "tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json",

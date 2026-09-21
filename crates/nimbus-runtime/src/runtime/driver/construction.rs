@@ -6,8 +6,8 @@ use crate::backends::v8::embedder::{
     JsRuntime, RuntimeOptions, SharedArrayBufferStore, ValidateImportAttributesCb, v8,
 };
 use crate::backends::v8::{
-    RuntimeStartupSnapshotKey, V8RuntimeConstructionMode, V8StartupSnapshot,
-    create_v8_startup_snapshot, packaged_runtime_extension_source_provider,
+    BackingStoreAllocationState, RuntimeStartupSnapshotKey, V8RuntimeConstructionMode,
+    V8StartupSnapshot, create_v8_startup_snapshot, packaged_runtime_extension_source_provider,
 };
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeCompatibilityTarget;
@@ -165,12 +165,18 @@ impl NimbusRuntime {
             startup_snapshot.is_some(),
             self.policy.limits().compatibility_target,
         );
+        let backing_store_allocation = BackingStoreAllocationState::default();
         let mut runtime = JsRuntime::new(self.runtime_options(
             bundle,
             startup_snapshot,
             use_locker,
             worker_bootstrap_state,
+            &backing_store_allocation,
         )?);
+        runtime
+            .op_state()
+            .borrow_mut()
+            .put(backing_store_allocation);
         install_missing_runtime_extension_state(&mut runtime);
         self.initialize_runtime_state(&mut runtime, bundle)?;
         if startup_snapshot.is_none() {
@@ -203,6 +209,7 @@ impl NimbusRuntime {
         startup_snapshot: Option<&V8StartupSnapshot>,
         use_locker: bool,
         worker_bootstrap_state: InstalledRuntimeWorkerBootstrapState,
+        backing_store_allocation: &BackingStoreAllocationState,
     ) -> Result<RuntimeOptions> {
         let path_policy = RuntimePathPolicy::for_bundle(bundle, self.policy.limits())?;
         let loader_hook_registry = self
@@ -233,7 +240,7 @@ impl NimbusRuntime {
             .map(V8StartupSnapshot::residual_lazy_esm_sources)
             .unwrap_or_default();
         Ok(RuntimeOptions {
-            create_params: Some(self.create_isolate_params()),
+            create_params: Some(self.create_isolate_params(backing_store_allocation)),
             module_loader: Some(Rc::new(RestrictedModuleLoader::new(
                 path_policy.clone(),
                 self.policy.limits().compatibility_target,
@@ -266,13 +273,17 @@ impl NimbusRuntime {
         })
     }
 
-    pub(crate) fn create_isolate_params(&self) -> v8::CreateParams {
+    pub(crate) fn create_isolate_params(
+        &self,
+        backing_store_allocation: &BackingStoreAllocationState,
+    ) -> v8::CreateParams {
         let heap_megabyte = 1usize << 20;
         v8::Isolate::create_params()
             .heap_limits(
                 self.policy.limits().initial_heap_mb * heap_megabyte,
                 self.policy.limits().max_heap_mb * heap_megabyte,
             )
+            .array_buffer_allocator(backing_store_allocation.array_buffer_allocator())
             .allow_atomics_wait(false)
     }
 

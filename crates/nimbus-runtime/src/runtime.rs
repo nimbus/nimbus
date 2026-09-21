@@ -114,6 +114,7 @@ mod tests {
     mod capture_ordering;
     mod captured_dispatch;
     mod cooperative;
+    mod heap_limit;
     mod host_bridge;
     mod locker;
     #[path = "node/mod.rs"]

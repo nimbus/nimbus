@@ -45,6 +45,7 @@ pub(super) struct RuntimeNodeApiContractDescriptor {
     release_name: &'static str,
     release_lts: Option<&'static str>,
     module_version: &'static str,
+    openssl_version: &'static str,
 }
 
 #[op2]
@@ -67,6 +68,7 @@ pub(super) fn op_nimbus_runtime_contract(state: &mut OpState) -> RuntimeContract
                 release_name: metadata.release_name.as_str(),
                 release_lts: metadata.codename.as_deref(),
                 module_version: metadata.node_module_version.as_str(),
+                openssl_version: metadata.openssl_version.as_str(),
             }),
         runtime_mode: limits.mode,
         runtime_language: limits.language,

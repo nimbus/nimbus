@@ -98,6 +98,814 @@ export {};
     }
 }
 
+// Expected values are real Node.js v20.20.2, v22.23.1, v24.20.0 and v26.8.1 output.
+#[tokio::test]
+async fn node_password_cipher_api_tracks_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import crypto from "node:crypto";
+
+globalThis.__nimbusInvoke = async function () {
+  const warnings = [];
+  const onWarning = (warning) => {
+    warnings.push({
+      name: warning.name,
+      code: warning.code ?? null,
+      message: warning.message,
+    });
+  };
+  process.on("warning", onWarning);
+  try {
+    const surface = {
+      createCipher: typeof crypto.createCipher,
+      createDecipher: typeof crypto.createDecipher,
+      Cipher: typeof crypto.Cipher,
+      Decipher: typeof crypto.Decipher,
+      enumerable: Object.keys(crypto).filter((key) =>
+        /^(create)?(De)?[Cc]ipher$/.test(key)
+      ),
+    };
+    if (typeof crypto.createCipher !== "function") {
+      return { node: process.versions.node, surface };
+    }
+    const errorOf = (fn) => {
+      try {
+        fn();
+        return null;
+      } catch (error) {
+        return { name: error.name, code: error.code };
+      }
+    };
+    const cbc = crypto.createCipher("aes-128-cbc", "pw");
+    const cbcHex = cbc.update("hi", "utf8", "hex") + cbc.final("hex");
+    const cbcPlain = crypto.createDecipher("aes-128-cbc", "pw");
+    const roundTrip = cbcPlain.update(cbcHex, "hex", "utf8") +
+      cbcPlain.final("utf8");
+    const calledWithoutNew =
+      crypto.Cipher("aes-128-cbc", "pw") instanceof crypto.Cipher;
+    const gcm = crypto.createCipher("aes-256-gcm", "pw");
+    const gcmHex = gcm.update("hello", "utf8", "hex") + gcm.final("hex");
+    const gcmTag = gcm.getAuthTag().toString("hex");
+    const gcmPlain = crypto.createDecipher("aes-256-gcm", "pw");
+    gcmPlain.setAuthTag(Buffer.from(gcmTag, "hex"));
+    const gcmRoundTrip = gcmPlain.update(gcmHex, "hex", "utf8") +
+      gcmPlain.final("utf8");
+    const errors = {
+      cipherType: errorOf(() => crypto.createCipher(1, "pw")),
+      passwordType: errorOf(() => crypto.createCipher("aes-128-cbc", 1)),
+      unknownCipher: errorOf(() => crypto.createCipher("nope", "pw")),
+      authTagLength: errorOf(() =>
+        crypto.createCipher("aes-128-ccm", "pw", { authTagLength: -1 })
+      ),
+    };
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const realEmitWarning = process.emitWarning;
+    const overrideCalls = [];
+    process.emitWarning = (message) => {
+      overrideCalls.push(String(message));
+    };
+    for (const [name, options] of [
+      ["aes-128-ctr"],
+      ["aes-128-gcm"],
+      ["aes-128-ccm", { authTagLength: 16 }],
+      ["aes-128-ocb", { authTagLength: 16 }],
+      ["chacha20-poly1305", { authTagLength: 16 }],
+      ["aes-128-cbc"],
+    ]) {
+      crypto.createCipher(name, "pw", options);
+      crypto.createDecipher(name, "pw", options);
+    }
+    process.emitWarning = () => {
+      throw new Error("foo");
+    };
+    let throwingOverride = null;
+    try {
+      crypto.createCipher("aes-256-gcm", "pw");
+    } catch (error) {
+      throwingOverride = String(error);
+    }
+    process.emitWarning = realEmitWarning;
+    return {
+      node: process.versions.node,
+      surface,
+      cbcHex,
+      roundTrip,
+      calledWithoutNew,
+      gcmHex,
+      gcmTag,
+      gcmRoundTrip,
+      errors,
+      warnings,
+      overrideCalls,
+      throwingOverride,
+    };
+  } finally {
+    process.off("warning", onWarning);
+  }
+};
+
+export {};
+"#,
+    );
+
+    let removed_surface = |enumerable: Value| {
+        serde_json::json!({
+            "createCipher": "undefined",
+            "createDecipher": "undefined",
+            "Cipher": "undefined",
+            "Decipher": "undefined",
+            "enumerable": enumerable,
+        })
+    };
+    let cases = [
+        (
+            RuntimeLimits::application_node20_local_development(),
+            "20",
+            serde_json::json!({
+                "surface": {
+                    "createCipher": "function",
+                    "createDecipher": "function",
+                    "Cipher": "function",
+                    "Decipher": "function",
+                    "enumerable": ["Cipher", "Decipher"],
+                },
+                "cbcHex": "3346aed96f62dae82a27d5639e78f573",
+                "roundTrip": "hi",
+                "calledWithoutNew": true,
+                "gcmHex": "97cbed0c3c",
+                "gcmTag": "242a1180041dd291e7f20d95a8faa93a",
+                "gcmRoundTrip": "hello",
+                "errors": {
+                    "cipherType": { "name": "TypeError", "code": "ERR_INVALID_ARG_TYPE" },
+                    "passwordType": { "name": "TypeError", "code": "ERR_INVALID_ARG_TYPE" },
+                    "unknownCipher": { "name": "Error", "code": "ERR_CRYPTO_UNKNOWN_CIPHER" },
+                    "authTagLength": { "name": "TypeError", "code": "ERR_INVALID_ARG_VALUE" },
+                },
+                "warnings": [
+                    {
+                        "name": "DeprecationWarning",
+                        "code": "DEP0106",
+                        "message": "crypto.createCipher is deprecated.",
+                    },
+                    {
+                        "name": "Warning",
+                        "code": null,
+                        "message": "Use Cipheriv for counter mode of aes-256-gcm",
+                    },
+                ],
+                "overrideCalls": [
+                    "Use Cipheriv for counter mode of aes-128-ctr",
+                    "Use Cipheriv for counter mode of aes-128-gcm",
+                    "Use Cipheriv for counter mode of aes-128-ccm",
+                ],
+                "throwingOverride": "Error: foo",
+            }),
+        ),
+        (
+            RuntimeLimits::application_node22_local_development(),
+            "22",
+            serde_json::json!({ "surface": removed_surface(serde_json::json!(["Cipher", "Decipher"])) }),
+        ),
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            serde_json::json!({ "surface": removed_surface(serde_json::json!([])) }),
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            serde_json::json!({ "surface": removed_surface(serde_json::json!([])) }),
+        ),
+    ];
+
+    for (limits, expected_major, expected) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let mut result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("password cipher bundle should execute");
+
+        let node = result
+            .as_object_mut()
+            .and_then(|result| result.remove("node"))
+            .unwrap_or(Value::Null);
+        assert!(
+            node.as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {node}"
+        );
+        assert_eq!(
+            result, expected,
+            "Node {expected_major} password cipher API"
+        );
+    }
+}
+
+// Expected values come from official Node.js 20.20.2, 22.23.1, 24.20.0 and
+// 26.8.1 running the same script.
+#[tokio::test]
+async fn node_events_once_and_on_options_track_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import { EventEmitter, on, once } from "node:events";
+
+globalThis.__nimbusInvoke = async function () {
+  const errorOf = (error) => ({ name: error.name, code: error.code ?? null });
+  const onceWith = async (options) => {
+    const emitter = new EventEmitter();
+    process.nextTick(() => emitter.emit("event", 42));
+    try {
+      return { value: await once(emitter, "event", options) };
+    } catch (error) {
+      return { error: errorOf(error) };
+    }
+  };
+  const onWith = (options) => {
+    try {
+      on(new EventEmitter(), "event", options).return();
+      return { iterator: true };
+    } catch (error) {
+      return { error: errorOf(error) };
+    }
+  };
+  const reason = new Error("stop");
+  const aborted = AbortSignal.abort(reason);
+  let earlyOnce;
+  let earlyOn;
+  try {
+    await once(new EventEmitter(), "event", { signal: aborted });
+  } catch (error) {
+    earlyOnce = error;
+  }
+  try {
+    on(new EventEmitter(), "event", { signal: aborted });
+  } catch (error) {
+    earlyOn = error;
+  }
+  const controller = new AbortController();
+  const emitter = new EventEmitter();
+  const pending = once(emitter, "event", { signal: controller.signal })
+    .catch((error) => error);
+  const next = on(emitter, "event", { signal: controller.signal }).next()
+    .catch((error) => error);
+  controller.abort(reason);
+  const [lateOnce, lateOn] = await Promise.all([pending, next]);
+  return {
+    node: process.versions.node,
+    onceNull: await onceWith(null),
+    onceString: await onceWith("hi"),
+    onNull: onWith(null),
+    onNumber: onWith(1),
+    abortCause: [earlyOnce, earlyOn, lateOnce, lateOn].map((error) => ({
+      name: error?.name,
+      causeIsReason: error?.cause === reason,
+    })),
+  };
+};
+
+export {};
+"#,
+    );
+
+    let aborts = serde_json::json!([
+        { "name": "AbortError", "causeIsReason": true },
+        { "name": "AbortError", "causeIsReason": true },
+        { "name": "AbortError", "causeIsReason": true },
+        { "name": "AbortError", "causeIsReason": true },
+    ]);
+    let invalid = serde_json::json!({
+        "error": { "name": "TypeError", "code": "ERR_INVALID_ARG_TYPE" },
+    });
+    let validated = serde_json::json!({
+        "onceNull": invalid,
+        "onceString": invalid,
+        "onNull": invalid,
+        "onNumber": invalid,
+        "abortCause": aborts,
+    });
+    let cases = [
+        (
+            RuntimeLimits::application_node20_local_development(),
+            "20",
+            serde_json::json!({
+                "onceNull": { "value": [42] },
+                "onceString": { "value": [42] },
+                "onNull": { "error": { "name": "TypeError", "code": null } },
+                "onNumber": { "iterator": true },
+                "abortCause": aborts,
+            }),
+        ),
+        (
+            RuntimeLimits::application_node22_local_development(),
+            "22",
+            validated.clone(),
+        ),
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            validated.clone(),
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            validated,
+        ),
+    ];
+
+    for (limits, expected_major, expected) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let mut result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("events options bundle should execute");
+
+        let node = result
+            .as_object_mut()
+            .and_then(|result| result.remove("node"))
+            .unwrap_or(Value::Null);
+        assert!(
+            node.as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {node}"
+        );
+        assert_eq!(result, expected, "Node {expected_major} events options");
+    }
+}
+
+// Expected values come from official Node.js 20.20.2, 22.23.2, 24.21.0 and
+// 26.9.0 running the same script.
+#[tokio::test]
+async fn node_buffer_max_length_tracks_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import buffer, { Buffer, constants, kMaxLength } from "node:buffer";
+
+globalThis.__nimbusInvoke = async function () {
+  let overLimit = null;
+  try {
+    Buffer.alloc(kMaxLength + 1);
+  } catch (error) {
+    overLimit = { name: error.name, code: error.code ?? null };
+  }
+  return {
+    node: process.versions.node,
+    kMaxLength,
+    defaultKMaxLength: buffer.kMaxLength,
+    maxLength: constants.MAX_LENGTH,
+    overLimit,
+  };
+};
+
+export {};
+"#,
+    );
+
+    // The values exceed the int32 range, so they reach Rust as `f64`.
+    let expected_for = |max_length: f64| {
+        serde_json::json!({
+            "kMaxLength": max_length,
+            "defaultKMaxLength": max_length,
+            "maxLength": max_length,
+            "overLimit": { "name": "RangeError", "code": "ERR_OUT_OF_RANGE" },
+        })
+    };
+    let safe_integer = 9_007_199_254_740_991_f64;
+    let cases = [
+        (
+            RuntimeLimits::application_node20_local_development(),
+            "20",
+            expected_for(4_294_967_296_f64),
+        ),
+        (
+            RuntimeLimits::application_node22_local_development(),
+            "22",
+            expected_for(safe_integer),
+        ),
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            expected_for(safe_integer),
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            expected_for(safe_integer),
+        ),
+    ];
+
+    for (limits, expected_major, expected) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let mut result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("buffer max length bundle should execute");
+
+        let node = result
+            .as_object_mut()
+            .and_then(|result| result.remove("node"))
+            .unwrap_or(Value::Null);
+        assert!(
+            node.as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {node}"
+        );
+        assert_eq!(result, expected, "Node {expected_major} buffer max length");
+    }
+}
+
+// Expected messages come from official Node.js 20.20.2, 22.23.2, 24.21.0 and
+// 26.9.0 running the same script. Node 22, 24 and 26 agree.
+#[tokio::test]
+async fn node_assertion_error_diff_tracks_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import assert from "node:assert";
+
+globalThis.__nimbusInvoke = async function () {
+  const capture = (fn) => {
+    try {
+      fn();
+      return null;
+    } catch (error) {
+      return error;
+    }
+  };
+  const u8buf = capture(() =>
+    assert.deepStrictEqual(
+      new Uint8Array([120, 121, 122, 10]),
+      Buffer.from([120, 121, 122, 10]),
+    )
+  );
+  const big = capture(() =>
+    assert.deepStrictEqual(
+      Array.from({ length: 40 }, (_, i) => i),
+      Array.from({ length: 40 }, (_, i) => (i === 20 ? 99 : i)),
+    )
+  );
+  const cause = capture(() =>
+    assert.deepStrictEqual(
+      new Error("a", { cause: 1 }),
+      new Error("a", { cause: 2 }),
+    )
+  );
+  const custom = capture(() =>
+    assert.deepStrictEqual({ a: 1 }, { a: 2 }, "custom")
+  );
+  return {
+    node: process.versions.node,
+    u8buf: u8buf.message,
+    big: big.message,
+    cause: cause?.message ?? null,
+    custom: custom.message,
+    ownDiff: Object.hasOwn(u8buf, "diff"),
+  };
+};
+
+export {};
+"#,
+    );
+
+    let node20: Value = serde_json::from_str(
+        r##"{"u8buf":"Expected values to be strictly deep-equal:\n+ actual - expected ... Lines skipped\n\n+ Uint8Array(4) [\n- Buffer(4) [Uint8Array] [\n    120,\n...\n    122,\n    10\n  ]","big":"Expected values to be strictly deep-equal:\n+ actual - expected ... Lines skipped\n\n  [\n    0,\n...\n    18,\n    19,\n+   20,\n-   99,\n    21,\n...\n    38,\n    39\n  ]","cause":"Values have same structure but are not reference-equal:\n\n[Error: a]\n","custom":"custom\n+ actual - expected\n\n  {\n+   a: 1\n-   a: 2\n  }","ownDiff":false}"##,
+    )
+    .expect("Node 20 expectation should parse");
+    let myers: Value = serde_json::from_str(
+        r##"{"u8buf":"Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ Uint8Array(4) [\n- Buffer(4) [Uint8Array] [\n    120,\n    121,\n    122,\n    10\n  ]\n","big":"Expected values to be strictly deep-equal:\n+ actual - expected\n... Skipped lines\n\n  [\n    0,\n    1,\n    2,\n    3,\n...\n    19,\n+   20,\n-   99,\n    21,\n    22,\n    23,\n    24,\n    25,\n","cause":"Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [Error: a] {\n+   [cause]: 1\n-   [cause]: 2\n  }\n","custom":"custom\n+ actual - expected\n\n  {\n+   a: 1\n-   a: 2\n  }\n","ownDiff":true}"##,
+    )
+    .expect("Node 22 expectation should parse");
+    let cases = [
+        (
+            RuntimeLimits::application_node20_local_development(),
+            "20",
+            node20,
+        ),
+        (
+            RuntimeLimits::application_node22_local_development(),
+            "22",
+            myers.clone(),
+        ),
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            myers.clone(),
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            myers,
+        ),
+    ];
+
+    for (limits, expected_major, expected) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let mut result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("assertion error diff bundle should execute");
+
+        let node = result
+            .as_object_mut()
+            .and_then(|result| result.remove("node"))
+            .unwrap_or(Value::Null);
+        assert!(
+            node.as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {node}"
+        );
+        assert_eq!(
+            result, expected,
+            "Node {expected_major} assertion error diff"
+        );
+    }
+}
+
+// Node.js 20 has no `Assert` class and no `partialDeepStrictEqual` (added in
+// 22.19.0 and 22.13.0). Node.js 25 removed `CallTracker` (DEP0173). Expected
+// values come from official Node.js 20.20.2, 22.23.2, 24.21.0 and 26.9.0 running
+// the same script.
+#[tokio::test]
+async fn node_assert_api_surface_tracks_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import assert from "node:assert";
+import * as assertNs from "node:assert";
+import * as strictNs from "node:assert/strict";
+
+globalThis.__nimbusInvoke = async function () {
+  const versioned = ["Assert", "CallTracker", "partialDeepStrictEqual"];
+  const surface = (target) =>
+    Object.fromEntries(
+      versioned.map((name) => [
+        name,
+        Object.hasOwn(target, name) ? typeof target[name] : "absent",
+      ]),
+    );
+  const bindings = (namespace) =>
+    Object.fromEntries(versioned.map((name) => [name, typeof namespace[name]]));
+  return {
+    node: process.versions.node,
+    default: surface(assert),
+    strict: surface(assert.strict),
+    esm: bindings(assertNs),
+    strictEsm: bindings(strictNs),
+    keys: Object.keys(assert).length,
+  };
+};
+
+export {};
+"#,
+    );
+
+    let node20: Value = serde_json::from_str(
+        r#"{"default":{"Assert":"absent","CallTracker":"function","partialDeepStrictEqual":"absent"},"strict":{"Assert":"absent","CallTracker":"function","partialDeepStrictEqual":"absent"},"esm":{"Assert":"undefined","CallTracker":"function","partialDeepStrictEqual":"undefined"},"strictEsm":{"Assert":"undefined","CallTracker":"function","partialDeepStrictEqual":"undefined"},"keys":20}"#,
+    )
+    .expect("Node 20 expectation should parse");
+    let node22: Value = serde_json::from_str(
+        r#"{"default":{"Assert":"function","CallTracker":"function","partialDeepStrictEqual":"function"},"strict":{"Assert":"function","CallTracker":"function","partialDeepStrictEqual":"function"},"esm":{"Assert":"function","CallTracker":"function","partialDeepStrictEqual":"function"},"strictEsm":{"Assert":"function","CallTracker":"function","partialDeepStrictEqual":"function"},"keys":22}"#,
+    )
+    .expect("Node 22 expectation should parse");
+    let node26: Value = serde_json::from_str(
+        r#"{"default":{"Assert":"function","CallTracker":"absent","partialDeepStrictEqual":"function"},"strict":{"Assert":"function","CallTracker":"absent","partialDeepStrictEqual":"function"},"esm":{"Assert":"function","CallTracker":"undefined","partialDeepStrictEqual":"function"},"strictEsm":{"Assert":"function","CallTracker":"undefined","partialDeepStrictEqual":"function"},"keys":21}"#,
+    )
+    .expect("Node 26 expectation should parse");
+    let cases = [
+        (
+            RuntimeLimits::application_node20_local_development(),
+            "20",
+            node20,
+        ),
+        (
+            RuntimeLimits::application_node22_local_development(),
+            "22",
+            node22.clone(),
+        ),
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            node22,
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            node26,
+        ),
+    ];
+
+    for (limits, expected_major, expected) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let mut result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("assert API surface bundle should execute");
+
+        let node = result
+            .as_object_mut()
+            .and_then(|result| result.remove("node"))
+            .unwrap_or(Value::Null);
+        assert!(
+            node.as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {node}"
+        );
+        assert_eq!(result, expected, "Node {expected_major} assert API surface");
+    }
+}
+
+// Node.js 24 (nodejs/node#57622) stops the recursion when either side reaches a
+// circular reference. Expected values come from official Node.js 20.20.2,
+// 22.23.2, 24.21.0 and 26.9.0 running the same script.
+#[tokio::test]
+async fn node_deep_equal_cycle_stop_tracks_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import assert from "node:assert";
+import util from "node:util";
+
+globalThis.__nimbusInvoke = async function () {
+  const a = {};
+  a.a = a;
+  const b = {};
+  b.a = b;
+  const c = {};
+  c.a = a;
+  const bothSides = util.isDeepStrictEqual(b, c);
+  const reverse = util.isDeepStrictEqual(c, b);
+  let assertDeepEqual = true;
+  try {
+    assert.deepEqual(b, c);
+  } catch {
+    assertDeepEqual = false;
+  }
+  return {
+    node: process.versions.node,
+    bothSides,
+    reverse,
+    assertDeepEqual,
+  };
+};
+
+export {};
+"#,
+    );
+
+    let both_sides = serde_json::json!({
+        "bothSides": true,
+        "reverse": true,
+        "assertDeepEqual": true,
+    });
+    let either_side = serde_json::json!({
+        "bothSides": false,
+        "reverse": false,
+        "assertDeepEqual": false,
+    });
+    let cases = [
+        (
+            RuntimeLimits::application_node20_local_development(),
+            "20",
+            both_sides.clone(),
+        ),
+        (
+            RuntimeLimits::application_node22_local_development(),
+            "22",
+            both_sides,
+        ),
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            either_side.clone(),
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            either_side,
+        ),
+    ];
+
+    for (limits, expected_major, expected) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let mut result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("deep-equal cycle bundle should execute");
+
+        let node = result
+            .as_object_mut()
+            .and_then(|result| result.remove("node"))
+            .unwrap_or(Value::Null);
+        assert!(
+            node.as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {node}"
+        );
+        assert_eq!(
+            result, expected,
+            "Node {expected_major} deep-equal cycle stop"
+        );
+    }
+}
+
 #[tokio::test]
 async fn application_node22_reads_local_files_hides_non_allowlisted_env_and_denies_escape_writes() {
     let _guard = acquire_basic_invocation_suite_lock().await;

@@ -8,6 +8,7 @@ use crate::execution_plan::RuntimeExecutionPlan;
 use crate::runtime::RuntimeInvocationExecution;
 
 pub(crate) mod embedder;
+mod heap_limit;
 mod lifecycle;
 mod startup;
 mod startup_key;
@@ -15,6 +16,9 @@ mod warm_pool;
 
 use self::embedder::JsRuntime;
 
+pub(crate) use self::heap_limit::{
+    BackingStoreAllocationState, NearHeapLimitCause, NearHeapLimitClassifier,
+};
 pub(crate) use self::lifecycle::{
     RuntimeReuseLifecycle, WarmRuntimeBoundaryMaintenance, WarmRuntimeCondemnationReason,
     WarmRuntimeRetentionDecision, prepare_warm_runtime_for_retention,
