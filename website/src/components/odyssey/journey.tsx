@@ -22,6 +22,7 @@ import {
   visibilityWindow,
 } from './timeline';
 import { drawFrame, rgb, setFonts } from './world';
+import { Install } from './install';
 
 import { Mascot } from '@/components/mascot';
 import '@/styles/odyssey.css';
@@ -65,7 +66,7 @@ function classify(token: string, shell: boolean, first: boolean) {
 }
 
 function CodeSnippet({ snippet }: { snippet: Snippet }) {
-  const shell = snippet.file === 'shell';
+  const shell = snippet.file.startsWith('shell');
   return (
     <pre className="snippet" aria-label={shell ? 'Shell commands' : `Code from ${snippet.file}`}>
       <span className="snippet-file" aria-hidden="true">
@@ -821,7 +822,7 @@ function mountJourney(handles: JourneyHandles) {
   };
 }
 
-// Static storyboard: seven stills from the same world, one per chapter, with
+// Static storyboard: one still from the same world per chapter, with
 // the tonal arc carried into each card's colours.
 function mountStoryboard(section: HTMLElement) {
   const stills = Array.from(section.querySelectorAll<HTMLCanvasElement>('canvas.still'));
@@ -1002,7 +1003,7 @@ export function Journey() {
                 </p>
                 {index === 0 ? <h1>{beat.title}</h1> : <h2>{beat.title}</h2>}
                 <p>{beat.copy}</p>
-                <CodeSnippet snippet={beat.snippet} />
+                {beat.snippet ? <CodeSnippet snippet={beat.snippet} /> : <Install />}
                 <span className="proof">{beat.proof}</span>
                 {index === lastIndex ? (
                   <div className="final-actions">

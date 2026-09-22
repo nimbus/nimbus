@@ -79,7 +79,9 @@ function txnBox(progress: number) {
 }
 const PUBLISH = { x: 4220, y: 0, w: 150, h: 60 };
 const FANOUT_X = 4480;
-const BINARY = { x0: 800, x1: 7200, y0: -520, y1: 1250 };
+// The left edge stands off the doors, so at the far zoom the door stack and
+// the outline read as two lines, not one.
+const BINARY = { x0: 740, x1: 7200, y0: -520, y1: 1250 };
 // The cloud sits above the process: the binary rises into a rack there. In
 // the cluster chapter the rack splits into three, spread across a region
 // that widens with them, and the mesh between them is drawn beneath. The
@@ -217,7 +219,9 @@ function routeFor(layout: Layout): RoutePoint[] {
   const born = appChipY(REQUEST_DOOR);
   const g = layout.doorGap;
   return [
-    { x: APP.x - 10, y: born, at: 0.0061 },
+    // The request is born just past the lit chip's end, so its diamond
+    // covers none of the chip's label at the rich zoom.
+    { x: APP.x + 4, y: born, at: 0.0061 },
     { x: APP.x + APP.w / 2, y: born, at: 0.0399 },
     { x: 620, y: -1.8 * g, at: 0.0578 },
     { x: DOOR_X - layout.doorW / 2, y: -2 * g, at: 0.0714 },
@@ -283,12 +287,12 @@ function routeFor(layout: Layout): RoutePoint[] {
     // Then rise into the rack in the cloud. This host keeps its place when
     // the cluster spreads, so the request stays in its slot.
     { x: 7650, y: -900, at: 0.8136 },
-    { x: RACK.x - RACK.w / 2 + 40, y: slotY, at: 0.828 },
-    { x: RACK.x - RACK.w / 2 + 40, y: slotY, at: 0.8995 },
+    { x: RACK.x - RACK.w / 2 + 56, y: slotY, at: 0.828 },
+    { x: RACK.x - RACK.w / 2 + 56, y: slotY, at: 0.8995 },
     // The descent: out of the slot, down to the region floor, then straight
     // down the cable to the laptop screen. The operator chapter holds it on
     // the lid.
-    { x: RACK.x - RACK.w / 2 + 40, y: RACK.y + RACK.h / 2 + 30, at: 0.9013 },
+    { x: RACK.x - RACK.w / 2 + 56, y: RACK.y + RACK.h / 2 + 30, at: 0.9013 },
     { x: LAPTOP.x, y: CLOUD.y + CLOUD.h / 2 + CLOUD.spreadH + 40, at: 0.9033 },
     { x: LAPTOP.x, y: LAPTOP.y - LAPTOP.h / 2 - 40, at: 0.9101 },
     { x: LAPTOP.x + LAPTOP.w / 2 - 36, y: LAPTOP.y - LAPTOP.h / 2 + 32, at: 0.916 },
@@ -409,10 +413,12 @@ function drawDoors(scene: Scene, progress: number, layout: Layout) {
 
     scene.panel(DOOR_X, dy, doorW, DOOR_H, alpha * wake, 0.25 + passing * 0.75, color);
     ctx.fillStyle = rgba(color, alpha * wake * (0.6 + passing * 0.4));
-    ctx.fillRect(doorLeft + 14, dy - 20, 4, 40);
+    ctx.fillRect(doorLeft + 14, dy - 28, 4, 56);
+    // The name and the port sit apart, so the request crosses the door on its
+    // centre line between them and covers neither.
     scene.mono(12, 560);
-    scene.text(door.name, doorLeft + 30, dy - 12, palette.ink, alpha * wake);
-    scene.tag(door.port, doorLeft + 30, dy + 13, alpha * wake * 0.9);
+    scene.text(door.name, doorLeft + 30, dy - 22, palette.ink, alpha * wake);
+    scene.tag(door.port, doorLeft + 30, dy + 23, alpha * wake * 0.9);
 
     // Lane from the door into the adapter bar; lanes converge behind the bar.
     // The lanes leave with the doors, so none runs under the edge copy.
@@ -789,9 +795,12 @@ function drawCommit(scene: Scene, progress: number) {
 // Storage backends: the shelf beneath the transaction. The commit drops onto
 // the default engine, and the other engines sit beside it as the same storage
 // layer with a different flag. The KV and the byte plane sit on the row below.
-// One engine tile: the name, the tenant model as a chip, and one line on
-// where its bytes live. Titles stay until the camera is far out; the rest
-// needs the detail band.
+// One engine tile: the name and the tenant model as a chip inside the
+// cylinder, and one line on where its bytes live as a caption under it. The
+// rows inside are set in screen pixels, so on a short stage, where the frame
+// pulls the camera back, two rows still fit in the body; a third would sit
+// on the rim. Titles stay until the camera is far out; the rest needs the
+// detail band.
 function drawEngineTile(scene: Scene, tile: { name: string; chip: string; sub: string }, x: number, y: number, alpha: number, lit: number) {
   const { palette } = scene;
   const { far, richText } = scene;
@@ -799,24 +808,25 @@ function drawEngineTile(scene: Scene, tile: { name: string; chip: string; sub: s
   const left = x - ENGINE_TILE.w / 2 + 16;
   const bodyTop = scene.cylinderBodyTop(y, ENGINE_TILE.w, ENGINE_TILE.h);
   scene.mono(11.5, 620);
-  scene.text(tile.name, left, bodyTop + scene.px(15), mixRgb(palette.ink, palette.accentText, lit), alpha * far);
-  scene.chip(tile.chip, left, bodyTop + scene.px(31), alpha * richText, lit, palette.accent, 'left', ENGINE_TILE.w - 32);
+  scene.text(tile.name, left, bodyTop + scene.px(14), mixRgb(palette.ink, palette.accentText, lit), alpha * far);
+  scene.chip(tile.chip, left, bodyTop + scene.px(29), alpha * richText, lit, palette.accent, 'left', ENGINE_TILE.w - 32);
   scene.mono(10.5);
-  scene.text(tile.sub, left, bodyTop + scene.px(47), palette.muted, alpha * richText);
+  scene.text(tile.sub, left, y + ENGINE_TILE.h / 2 + scene.px(12), palette.muted, alpha * richText);
 }
 
 // The process edge, before the whole outline is drawn in the binary chapter:
 // a dashed line where a lane leaves the process for a server the operator
 // runs. It fades as the real outline arrives.
-function drawEdgeHint(scene: Scene, progress: number, x0: number, x1: number, alpha: number, label: string, text = 1) {
+function drawEdgeHint(scene: Scene, progress: number, x0: number, x1: number, alpha: number, label: string, text = 1, labelX = x0) {
   const outline = visibilityWindow(progress, 0.6921, 0.8432, 0.038);
   const show = alpha * (1 - outline);
   if (show <= 0.01) return;
   const { palette } = scene;
   scene.line(x0, BINARY.y1, x1, BINARY.y1, palette.accent, show * 0.45, 1.2, [8, 8]);
   // The label sits just inside the edge and a step in from its start, so it
-  // never meets a title below it or the copy column beside it.
-  scene.tag(label, x0 + scene.px(24), BINARY.y1 - scene.px(14), show * scene.richText * text, palette.muted);
+  // never meets a title below it or the copy column beside it. A caller
+  // whose card hangs down to the edge starts the label past that card.
+  scene.tag(label, labelX + scene.px(24), BINARY.y1 - scene.px(14), show * scene.richText * text, palette.muted);
 }
 
 function drawBackends(scene: Scene, progress: number) {
@@ -992,7 +1002,10 @@ function drawFiles(scene: Scene, progress: number) {
   const storeTop = OBJECT_STORE.y - OBJECT_STORE.h / 2;
   scene.line(FILES.x, layout.bottom, FILES.x, mix(layout.bottom, storeTop, cloud), palette.muted, alpha * cloud * 0.55, 1.2, [6, 8]);
   scene.lineTraffic(FILES.x, layout.bottom, FILES.x, mix(layout.bottom, storeTop, cloud), palette.muted, alpha * cloud * 0.8, { count: 1, speed: 1.2, phase: 0.7 });
-  scene.tag('placement · optional', FILES.x + scene.px(10), (layout.bottom + BINARY.y1) / 2, alpha * cloud * richText, palette.muted);
+  // The lane's note sits below the process edge, beside the lane, so it
+  // never meets the edge hint on a short frame where the panel and the
+  // edge sit close.
+  scene.tag('placement · optional', FILES.x + scene.px(10), (BINARY.y1 + storeTop) / 2, alpha * cloud * richText, palette.muted);
   scene.cylinder(OBJECT_STORE.x, OBJECT_STORE.y, OBJECT_STORE.w, OBJECT_STORE.h, alpha * cloud, 0.2, palette.accent);
   const storeLeft = OBJECT_STORE.x - OBJECT_STORE.w / 2 + 16;
   const storeBody = scene.cylinderBodyTop(OBJECT_STORE.y, OBJECT_STORE.w, OBJECT_STORE.h);
@@ -1075,7 +1088,7 @@ function drawSandbox(scene: Scene, progress: number) {
   scene.text('HOST', hostLeft + 22, hostTop + titleDrop, palette.ink, alpha * ground * far);
   const hostW = scene.measure('HOST');
   scene.tag('host machine · Linux · macOS via VM', hostLeft + 22 + hostW + scene.px(12), hostTop + titleDrop, alpha * ground * boxText);
-  drawEdgeHint(scene, progress, hostLeft, BINARY.x1, alpha * ground, 'nimbus process above · the host below', 1 - past);
+  drawEdgeHint(scene, progress, hostLeft, BINARY.x1, alpha * ground, 'nimbus process above · the host below', 1 - past, CONTROL.x + CONTROL.w / 2);
 
   // The tenant door, inside the process above the box: the control plane is
   // the Nimbus API in the process. It admits the SDK call against the
@@ -1384,9 +1397,9 @@ function drawSandbox(scene: Scene, progress: number) {
   scene.line(BINARY.x1, ingressTop - 220, BINARY.x1, BINARY.y1, palette.accent, ingressAlpha * (1 - edgeOutline) * 0.45, 1.2, [8, 8]);
   scene.panel(INGRESS.x, INGRESS.y, ingressW, DOOR_H, ingressAlpha, 0.25, palette.accent);
   ctx.fillStyle = rgba(palette.accent, ingressAlpha * 0.6);
-  ctx.fillRect(ingressRight - 18, INGRESS.y - 20, 4, 40);
-  scene.text('INGRESS', ingressLeft + 22, INGRESS.y - 12, palette.ink, ingressAlpha * far);
-  scene.tag('leased for the service', ingressLeft + 22, INGRESS.y + 13, ingressAlpha * 0.9 * scene.richText);
+  ctx.fillRect(ingressRight - 18, INGRESS.y - 28, 4, 56);
+  scene.text('INGRESS', ingressLeft + 22, INGRESS.y - 22, palette.ink, ingressAlpha * far);
+  scene.tag('leased for the service', ingressLeft + 22, INGRESS.y + 23, ingressAlpha * 0.9 * scene.richText);
   const factAlpha = full * ingressFacts * scene.richText;
   const factStep = scene.px(18);
   const factBase = ingressTop - factStep;
@@ -1481,16 +1494,18 @@ function drawServices(scene: Scene, progress: number) {
 
   // The service backs the sandbox: a lane down through the process, past the
   // tenant door, across the edge into the box on the host. The notes stand
-  // left of the lane, clear of the request that rides it.
+  // left of the lane, clear of the request that rides it, and keep to two
+  // short lines so they clear the control plane card below them on a short
+  // frame, where the card's screen-sized rows push its underside down. The
+  // Kubernetes comparison is the chapter's proof line.
   const backsAlpha = alpha * backs;
   scene.line(SERVICE.lane, serviceBottom, SERVICE.lane, mix(serviceBottom, sandboxTop, backs), palette.accent, backsAlpha * 0.7, 1.6);
   // Calls to the name keep reaching the box.
   scene.lineTraffic(SERVICE.lane, serviceBottom, SERVICE.lane, mix(serviceBottom, sandboxTop, backs), palette.accent, backsAlpha * 0.9, { count: 2, speed: 2.4 });
   const noteX = SERVICE.lane - scene.px(40);
-  const noteY = serviceBottom + scene.px(24);
+  const noteY = serviceBottom + scene.px(20);
   scene.tag('backs the sandbox', noteX, noteY, backsAlpha * serviceText, palette.accentText, 'right');
-  scene.tag('owner: service agent', noteX, noteY + scene.px(18), backsAlpha * serviceText, palette.muted, 'right');
-  scene.tag('like a Kubernetes Service', noteX, noteY + scene.px(36), backsAlpha * serviceText, palette.accentText, 'right');
+  scene.tag('owner: service agent', noteX, noteY + scene.px(16), backsAlpha * serviceText, palette.muted, 'right');
   // The service is a record the control plane keeps: a dashed lane from the
   // card's underside, between the notes and the lane it backs the box with,
   // down to the control plane card that holds the record.
@@ -1997,7 +2012,7 @@ function drawRack(scene: Scene, x: number, alpha: number, settled: number, label
   scene.mono(11);
   const commandW = scene.measure(label);
   // The request sits at the left end of the slot; the label starts right of it.
-  const labelX = rx + 34 + scene.px(34);
+  const labelX = rx + 50 + scene.px(34);
   if (nameW + scene.px(46) + commandW <= RACK.w - 32 - 48) {
     scene.mono(11.5, 600);
     scene.text('nimbus', labelX, slotY, palette.accentText, alpha * settled);
@@ -2423,10 +2438,14 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   const textWidth = scene.measure(label);
   const padX = scene.px(8);
   const pillH = scene.px(20);
-  // On a phone the app card sits under the copy's footer, so the pill rides
-  // above the card while the request is born inside it.
-  const appLane = scene.viewport === 'compact' ? visibilityWindow(progress, -0.95, 0.0381, 0.019) : 0;
-  const engineLane = visibilityWindow(progress, 0.1316, 0.1574, 0.019);
+  // While the request is born inside the app card the pill rides above the
+  // card: beside the request it would cover the chip the request sits on,
+  // and on a phone the card sits under the copy's footer.
+  const appLane = visibilityWindow(progress, -0.95, 0.0381, 0.019);
+  // The engine lane opens as the request leaves the adapters for the engine,
+  // so the pill is already above the engine card at the chapter's stop and
+  // never sits on the card's chips below the request.
+  const engineLane = visibilityWindow(progress, 0.1107, 0.1574, 0.019);
   const doorLane = scene.viewport === 'wide' ? 0 : visibilityWindow(progress, 0.0665, 0.0947, 0.019);
   // Inside the runtime box, through the functions and the Node chapters, the
   // pill rides above the box, clear of the isolate card and the direct lane
@@ -2455,8 +2474,8 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   // it sits left of the request and above the lane, clear of the card.
   const publishLane = visibilityWindow(progress, 0.2996, 0.3071, 0.0057);
   const fanLane = visibilityWindow(progress, 0.3071, 0.3471, 0.0057);
-  // On the storage shelf the pill sits under the default engine, clear of
-  // its base and of the row note beside it.
+  // On the storage shelf the pill sits under the default engine, a clear
+  // row below its caption at every stage height.
   const shelfLane = visibilityWindow(progress, 0.3539, 0.3939, 0.019);
   // Beside the files panel the pill sits to the left of the request, clear
   // of the panel heading.
@@ -2464,6 +2483,10 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   // Inside the sandbox the pill rides above the agent card, centred, clear of
   // the column of facts beside it.
   const sandboxLane = visibilityWindow(progress, 0.6811, 0.7983, 0.0095);
+  // In the rack the pill sits in the empty slot under the request, centred
+  // on that slot and short of its activity lights, through the deployment
+  // and the cluster chapters.
+  const rackLane = visibilityWindow(progress, 0.828, 0.8995, 0.0095);
   // Where the camera is too far out for the box to carry detail text, the
   // pill would sit on the box title, and the status bar already carries the
   // state, so the pill stays out.
@@ -2499,6 +2522,12 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   // A rest point near the frame edge keeps its pill inside the stage.
   const pillInset = scene.px(14);
   pillX = clamp(pillX, scene.viewLeft + pillInset, scene.viewRight - pillInset - pillW);
+  const slotLeft = RACK.x - RACK.w / 2 + 16;
+  const lightsLeft = RACK.x + RACK.w / 2 - 40 - 24 - 2;
+  pillX = mix(pillX, Math.max(slotLeft + scene.px(8), Math.min(pillX, lightsLeft - scene.px(8) - pillW)), rackLane);
+  // Where the pill is wider than the slot short of its lights, it stays out;
+  // the status bar carries the state.
+  const rackOut = rackLane * (1 - smoothstep(range(lightsLeft - slotLeft - scene.px(16) - pillW, 0, scene.px(8))));
   let pillY = point.y + (DOOR_H / 2 + scene.px(14)) * beside;
   pillY = mix(pillY, ENGINE.y - ENGINE.h / 2 - scene.px(14), engineLane);
   pillY = mix(pillY, -1.5 * layout.doorGap, doorLane);
@@ -2509,11 +2538,12 @@ function drawRequest(scene: Scene, progress: number, time: number, route: Route,
   pillY = mix(pillY, mix(point.y - (AUTHORIZE.h / 2 + scene.px(34)), txnBox(progress).top - scene.px(42), writesHandoff), writesLane);
   pillY = mix(pillY, PUBLISH.y - PUBLISH.h / 2 - scene.px(14), publishLane);
   pillY = mix(pillY, point.y - scene.px(24), fanLane);
-  pillY = mix(pillY, ENGINE_TILE.embeddedY + ENGINE_TILE.h / 2 + scene.px(46), shelfLane);
+  pillY = mix(pillY, ENGINE_TILE.embeddedY + ENGINE_TILE.h / 2 + scene.px(74), shelfLane);
   pillY = mix(pillY, point.y - (scene.viewport === 'compact' ? scene.px(38) : 0), filesLane);
   pillY = mix(pillY, AGENT.y - AGENT.h / 2 - scene.px(14), sandboxLane);
   pillY = mix(pillY, APP.y - APP.h / 2 - scene.px(14), appLane);
-  const pillAlpha = labelAlpha * (1 - phoneRest);
+  pillY = mix(pillY, rackSlotY(RACK_SLOT + 1), rackLane);
+  const pillAlpha = labelAlpha * (1 - phoneRest) * (1 - rackOut);
   if (pillAlpha <= 0.01) return;
   scene.roundRect(pillX, pillY - pillH / 2, pillW, pillH, pillH / 2);
   ctx.fillStyle = rgba(palette.background, pillAlpha * 0.86);
@@ -2605,12 +2635,14 @@ export function drawFrame(ctx: CanvasRenderingContext2D, options: FrameOptions) 
   const composed = options.camera !== undefined;
   if (options.camera) Object.assign(camera, options.camera);
   const lodZoom = camera.zoom;
+  let fit = 1;
   if (composed) {
     // The caller's frame is the frame.
   } else if (viewport !== 'compact') {
     const composedH = 900 - CHROME.wide.top - CHROME.wide.bottom;
     const composedTabletH = 768 - CHROME.medium.top - CHROME.medium.bottom;
-    camera.zoom *= clamp(safeH / (viewport === 'wide' ? composedH : composedTabletH), 0.8, 1) * clamp(width / (viewport === 'wide' ? 1440 : 1024), 0.8, 1);
+    fit = clamp(safeH / (viewport === 'wide' ? composedH : composedTabletH), 0.8, 1) * clamp(width / (viewport === 'wide' ? 1440 : 1024), 0.8, 1);
+    camera.zoom *= fit;
   } else if (!centered) {
     // Phone keyframes are composed for 390×844. The copy block above the world
     // has a fixed height, so the world scales with the room left below it and
@@ -2637,12 +2669,12 @@ export function drawFrame(ctx: CanvasRenderingContext2D, options: FrameOptions) 
   // A fitted still may drop below the detail band; it keeps the detail text.
   // A still composed at the desktop detail zoom keeps that detail level even
   // where the frame pulls the zoom back to fit its world height.
-  const scene = new Scene(ctx, { ...options, lodZoom, forceRich: options.forceRich || (richStill !== undefined && richStill.zoom >= 0.5) }, camera, palette);
+  const scene = new Scene(ctx, { ...options, lodZoom, fit, forceRich: options.forceRich || (richStill !== undefined && richStill.zoom >= 0.5) }, camera, palette);
   drawBinary(scene, progress);
   drawTenantSheets(scene, progress);
   // The interior steps back while the workloads board is up, so the host
   // and the service card behind the copy column do not compete with it.
-  ctx.globalAlpha = tenantDeck(scene, progress).dim * (1 - 0.7 * visibilityWindow(progress, 0.6067, 0.6467, 0.0104));
+  ctx.globalAlpha = tenantDeck(scene, progress).dim * (1 - 0.85 * visibilityWindow(progress, 0.6067, 0.6467, 0.0104));
   drawApp(scene, progress, layout);
   drawDoors(scene, progress, layout);
   drawEngine(scene, progress);

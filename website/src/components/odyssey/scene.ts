@@ -39,6 +39,10 @@ export type FrameOptions = {
   // The zoom the chapter was composed at, before the stage pulled the camera
   // back to fit; small labels fade by it.
   lodZoom?: number;
+  // How far the frame pulled the camera back to fit the stage (1 = composed
+  // size). The minimum label size follows it, so labels stay in proportion
+  // to their cards instead of growing against them on a shorter stage.
+  fit?: number;
   // A frame composed by its caller: the splash names its own camera, and the
   // stage fitting that follows the chapter keyframes is skipped.
   camera?: Partial<Camera>;
@@ -126,8 +130,8 @@ function minFontPx(viewport: Viewport) {
 // text and its hover targets agree. Without a document (a script), the mono
 // face's advance stands in.
 let gauge: CanvasRenderingContext2D | null | undefined;
-export function measureMono(text: string, size: number, weight: number, zoom: number, viewport: Viewport) {
-  const fontSize = Math.max(size, minFontPx(viewport) / zoom);
+export function measureMono(text: string, size: number, weight: number, zoom: number, viewport: Viewport, fit = 1) {
+  const fontSize = Math.max(size, (minFontPx(viewport) * fit) / zoom);
   if (gauge === undefined) gauge = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
   if (!gauge) return fontSize * 0.6 * text.length;
   gauge.font = `${weight} ${fontSize.toFixed(2)}px ${monoFamily}`;
@@ -257,7 +261,7 @@ export class Scene {
     this.zoom = camera.zoom;
     this.time = options.time;
     this.ambient = options.ambient;
-    this.minPx = minFontPx(options.viewport);
+    this.minPx = minFontPx(options.viewport) * (options.fit ?? 1);
     this.viewport = options.viewport;
     const [lodLow, lodHigh] = layouts[options.viewport].lod;
     this.detail = smoothstep(range(options.lodZoom ?? camera.zoom, lodLow, lodHigh));

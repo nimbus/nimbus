@@ -845,6 +845,19 @@ body:has(.odyssey) {
   pointer-events: none;
 }
 
+/* The install tabs close the journey where the hero opened it. The block is
+   the hero's, moved onto the chapters' night code surface: like the snippet
+   tokens, its gold is the gold outright, on a night that does not move with
+   the beat. */
+.beat-final .hero-install {
+  --hero-background: var(--stage-screen);
+  --hero-ink: var(--stage-screen-ink);
+  --hero-accent: var(--accent);
+  --hero-accent-carrier: var(--stage-screen);
+  margin-top: 24px;
+  max-width: none;
+}
+
 .final-actions {
   display: flex;
   flex-wrap: wrap;
@@ -987,6 +1000,10 @@ body:has(.odyssey) {
     padding: 26px 14px 12px;
     font-size: 11px;
     line-height: 1.55;
+  }
+
+  .beat-final .hero-install {
+    margin-top: 18px;
   }
 
   .beat-left {
@@ -1138,6 +1155,27 @@ body:has(.odyssey) {
 
   .beat .proof {
     margin-top: 18px;
+  }
+
+  /* The last chapter carries the install tabs, the proof and the two buttons
+     above the afterword row, so on a short stage every step of that stack
+     tightens to keep a clear row over the afterword. */
+  .beat-final .hero-install {
+    margin-top: 16px;
+  }
+
+  .beat-final .hero-install pre {
+    padding: 8px 18px 12px;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .beat-final .proof {
+    margin-top: 14px;
+  }
+
+  .beat-final .final-actions {
+    margin-top: 20px;
   }
 }
 
