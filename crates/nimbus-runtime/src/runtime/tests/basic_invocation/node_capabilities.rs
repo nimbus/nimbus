@@ -98,6 +98,118 @@ export {};
     }
 }
 
+// Expected keys are the `process.features` keys of official Node.js v24.21.0
+// and v26.10.0. Node 26.10.0 added `dtls`, a getter over the `node_use_dtls`
+// build variable gated by `--experimental-dtls`, so an official binary reports
+// `false`.
+#[tokio::test]
+async fn node_process_features_keys_track_the_compatibility_target() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+globalThis.__nimbusInvoke = async function () {
+  const keys = Object.keys(process.features).sort();
+  return {
+    node: process.versions.node,
+    keys,
+    dtls: process.features.dtls,
+    quic: process.features.quic,
+  };
+};
+
+export {};
+"#,
+    );
+
+    let cases = [
+        (
+            RuntimeLimits::application_node24_local_development(),
+            "24",
+            serde_json::json!([
+                "cached_builtins",
+                "debug",
+                "inspector",
+                "ipv6",
+                "openssl_is_boringssl",
+                "quic",
+                "require_module",
+                "tls",
+                "tls_alpn",
+                "tls_ocsp",
+                "tls_sni",
+                "typescript",
+                "uv",
+            ]),
+            Value::Null,
+        ),
+        (
+            RuntimeLimits::application_node26_local_development(),
+            "26",
+            serde_json::json!([
+                "cached_builtins",
+                "debug",
+                "dtls",
+                "inspector",
+                "ipv6",
+                "openssl_is_boringssl",
+                "quic",
+                "require_module",
+                "tls",
+                "tls_alpn",
+                "tls_ocsp",
+                "tls_sni",
+                "typescript",
+                "uv",
+            ]),
+            serde_json::json!(false),
+        ),
+    ];
+
+    for (limits, expected_major, expected_keys, expected_dtls) in cases {
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(RecordingHost::default()),
+            runtime_test_policy_with_real_fs(limits),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let result = runtime
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &InvocationRequest {
+                    kind: InvocationKind::Query,
+                    function_name: "messages:list".to_string(),
+                    args: Value::Null,
+                    page_size: None,
+                    cursor: None,
+                    auth: None,
+                    services: Default::default(),
+                },
+                "tenant-a",
+            )
+            .await
+            .expect("process features bundle should execute");
+
+        assert!(
+            result["node"]
+                .as_str()
+                .is_some_and(|version| version.starts_with(expected_major)),
+            "unexpected Node version payload for Node {expected_major}: {result}"
+        );
+        assert_eq!(
+            result["keys"], expected_keys,
+            "unexpected process.features keys for Node {expected_major}"
+        );
+        assert_eq!(
+            result["dtls"], expected_dtls,
+            "unexpected process.features.dtls for Node {expected_major}"
+        );
+        assert_eq!(
+            result["quic"],
+            serde_json::json!(false),
+            "unexpected process.features.quic for Node {expected_major}"
+        );
+    }
+}
+
 // Expected values are real Node.js v20.20.2, v22.23.1, v24.20.0 and v26.8.1 output.
 #[tokio::test]
 async fn node_password_cipher_api_tracks_the_compatibility_target() {

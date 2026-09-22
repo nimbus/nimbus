@@ -325,6 +325,14 @@ const COMMON_PERSON_JPG_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
         fixture_source_path: "test/fixtures/person.jpg",
     }];
 
+/// `test/common/crypto.js` alone. Node 26.10.0 moved the BoringSSL check of the
+/// oneshot-hash and hash-stream fixtures into that helper.
+const COMMON_CRYPTO_HELPER_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
+    &[NodeCompatExtraFixtureEntry {
+        runtime_path: "test/common/crypto.js",
+        fixture_source_path: "test/common/crypto.js",
+    }];
+
 const COMMON_CRYPTO_HASH_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/common/crypto.js",
@@ -759,6 +767,63 @@ const COMMON_TLS_KEY_COUNTDOWN_GC_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = 
 ];
 
 const COMMON_TLS_EXTENDED_CERT_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/agent1-key.pem",
+        fixture_source_path: "test/fixtures/keys/agent1-key.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/agent1-cert.pem",
+        fixture_source_path: "test/fixtures/keys/agent1-cert.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/agent2-key.pem",
+        fixture_source_path: "test/fixtures/keys/agent2-key.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/agent2-cert.pem",
+        fixture_source_path: "test/fixtures/keys/agent2-cert.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/agent3-key.pem",
+        fixture_source_path: "test/fixtures/keys/agent3-key.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/agent3-cert.pem",
+        fixture_source_path: "test/fixtures/keys/agent3-cert.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/ca1-cert.pem",
+        fixture_source_path: "test/fixtures/keys/ca1-cert.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/ca2-cert.pem",
+        fixture_source_path: "test/fixtures/keys/ca2-cert.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/rsa_private.pem",
+        fixture_source_path: "test/fixtures/keys/rsa_private.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/rsa_cert.crt",
+        fixture_source_path: "test/fixtures/keys/rsa_cert.crt",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/ec-key.pem",
+        fixture_source_path: "test/fixtures/keys/ec-key.pem",
+    },
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/fixtures/keys/ec-cert.pem",
+        fixture_source_path: "test/fixtures/keys/ec-cert.pem",
+    },
+];
+
+/// The TLS extended-cert set plus `test/common/crypto.js`. Node 26.10.0 moved the
+/// BoringSSL check of the options-boolean-check fixtures into that helper.
+const COMMON_TLS_EXTENDED_CERT_CRYPTO_HELPER_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
+    NodeCompatExtraFixtureEntry {
+        runtime_path: "test/common/crypto.js",
+        fixture_source_path: "test/common/crypto.js",
+    },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/keys/agent1-key.pem",
         fixture_source_path: "test/fixtures/keys/agent1-key.pem",

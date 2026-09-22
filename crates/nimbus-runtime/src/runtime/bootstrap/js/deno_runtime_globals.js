@@ -222,11 +222,26 @@ const __nimbusCreateNodeProcessFeatures = function __nimbusCreateNodeProcessFeat
       "openssl_is_boringssl",
       __nimbusNodeFeatureBoolean(source, "openssl_is_boringssl"),
     );
+    if (nodeMajor === "26") {
+      // Node 26.10.0 added `process.features.dtls`. Its getter returns the
+      // `node_use_dtls` build variable gated by `--experimental-dtls`, so an
+      // official binary reports `false`.
+      __nimbusDefineNodeFeature(
+        features,
+        "dtls",
+        __nimbusNodeFeatureBoolean(source, "dtls"),
+      );
+    }
     if (nodeMajor === "24" || nodeMajor === "26") {
+      // Node 24 and 26 gate `process.features.quic` on the `node_use_quic`
+      // build variable and `--experimental-quic`, so an official binary
+      // reports `false`. Derive it like every other feature: the polyfill's
+      // feature object is shared across lanes, so a value the anchor lane
+      // removed would otherwise surface here as `undefined`.
       __nimbusDefineNodeFeature(
         features,
         "quic",
-        source && typeof source === "object" ? source.quic : undefined,
+        __nimbusNodeFeatureBoolean(source, "quic"),
       );
     }
   }

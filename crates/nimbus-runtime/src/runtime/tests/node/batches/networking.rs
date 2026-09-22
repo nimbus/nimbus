@@ -395,7 +395,7 @@ const NETWORKING_BATCH: &[NodeCompatBatchEntry] = &[
     ),
     shared_official_batch_case_with_extra!(
         "test/parallel/test-https-options-boolean-check.js",
-        COMMON_TLS_EXTENDED_CERT_EXTRA_FILES
+        COMMON_TLS_EXTENDED_CERT_CRYPTO_HELPER_EXTRA_FILES
     ),
     shared_official_batch_case_with_extra!(
         "test/parallel/test-https-server-async-dispose.js",
@@ -490,7 +490,7 @@ const NETWORKING_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-tls-connect-timeout-option.js"),
     shared_official_batch_case_with_extra!(
         "test/parallel/test-tls-options-boolean-check.js",
-        COMMON_TLS_EXTENDED_CERT_EXTRA_FILES
+        COMMON_TLS_EXTENDED_CERT_CRYPTO_HELPER_EXTRA_FILES
     ),
     shared_official_batch_case_with_extra!(
         "test/parallel/test-tls-server-parent-constructor-options.js",
