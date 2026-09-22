@@ -11,7 +11,7 @@ const INSTALLS: InstallPath[] = [
     id: 'brew',
     label: 'Homebrew',
     note: 'macOS and Linux',
-    lines: ['brew trust --cask nimbus/tap/nimbus', 'brew install --cask nimbus/tap/nimbus', 'nimbus init convex my-app && cd my-app', 'nimbus dev'],
+    lines: ['brew install nimbus/tap/nimbus', 'nimbus init convex my-app && cd my-app', 'nimbus dev'],
   },
   {
     id: 'script',
