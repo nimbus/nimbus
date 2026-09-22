@@ -8,8 +8,8 @@ struct DurablePublishPause {
 }
 
 impl DurablePublishPause {
-    fn arm(engine: &Engine) -> Self {
-        let faults = engine.commit_fault_handle_for_testing();
+    fn arm(engine: &Engine, tenant_id: &TenantId) -> Self {
+        let faults = engine.commit_faults_for_testing().for_tenant(tenant_id);
         faults.arm(crate::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
         Self {
             faults,
@@ -89,7 +89,7 @@ impl PpscEngineRunner {
             .engine
             .mutation_journal_stats_for_testing(&tenant_id)
             .expect("PPSC pre-pause frontiers should read");
-        let mut pause = DurablePublishPause::arm(self.engine.as_ref());
+        let mut pause = DurablePublishPause::arm(self.engine.as_ref(), &tenant_id);
         let (_, mut write) =
             self.spawn_route_insert(step, tenant, route, "durable-before-publish", 401);
         pause
@@ -156,7 +156,7 @@ impl PpscEngineRunner {
             .engine
             .mutation_journal_stats_for_testing(&tenant_id)
             .expect("PPSC predecessor-race frontiers should read");
-        let mut pause = DurablePublishPause::arm(self.engine.as_ref());
+        let mut pause = DurablePublishPause::arm(self.engine.as_ref(), &tenant_id);
         let (_, predecessor) =
             self.spawn_route_insert(step, tenant, predecessor_route, "held-predecessor", 411);
         pause
@@ -252,7 +252,8 @@ impl PpscEngineRunner {
             .tenant_runtime_identity_for_testing(&tenant_id)
             .expect("PPSC pre-panic runtime identity should read");
         self.engine
-            .commit_fault_handle_for_testing()
+            .commit_faults_for_testing()
+            .for_tenant(&tenant_id)
             .inject_panic_on_nth_hit(crate::commit_fault_labels::DURABLE_BEFORE_PUBLISH, 1);
         let (document_id, write) =
             self.spawn_route_insert(step, tenant, route, "panic-after-durable", 421);

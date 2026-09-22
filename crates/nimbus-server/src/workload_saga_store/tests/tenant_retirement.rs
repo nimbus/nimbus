@@ -10,7 +10,7 @@ use nimbus_workloads::{
 };
 
 use super::super::EngineWorkloadSagaStore;
-use super::{engine, initial_record, valid_successor};
+use super::{engine, initial_record, valid_successor, workload_saga_faults};
 
 fn retirement(label: &str, incarnation: u64) -> TenantRetirementRecord {
     TenantRetirementRecord::new(
@@ -96,7 +96,7 @@ async fn different_workloads_retry_shared_tenant_epoch_contention_without_false_
     let second =
         nimbus_workloads::WorkloadSagaRecord::new(second_key, first.active_intent().clone())
             .expect("second fixture saga is valid");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = workload_saga_faults(&engine);
     faults.arm(commit_fault_labels::PRE_ASSIGN);
 
     let first_commit = tokio::spawn({
@@ -366,7 +366,7 @@ async fn retirement_commit_inspects_exact_truth_after_ambiguous_engine_outcome()
     let next = current
         .advance(TenantRetirementPhase::ChildrenRecorded)
         .unwrap();
-    engine.commit_fault_handle_for_testing().inject(
+    workload_saga_faults(&engine).inject(
         commit_fault_labels::DURABLE_BEFORE_PUBLISH,
         Fault::Error(Error::Internal(
             "injected durable tenant-retirement outcome".to_owned(),

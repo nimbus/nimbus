@@ -253,7 +253,9 @@ async fn projection_tombstone_prevents_deleted_row_resurrection() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn projection_row_indexes_fence_and_commit_log_roll_back_together() {
     let (_fixture, engine, tenant_id, table) = fixture("projection-fence-rollback").await;
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine
+        .commit_faults_for_testing()
+        .for_tenant(&system_tenant_id().expect("system tenant id should build"));
     faults.inject(
         commit_fault_labels::PRE_PERSIST,
         Fault::Error(Error::Internal("injected projection rollback".to_string())),
@@ -316,7 +318,9 @@ async fn projection_row_indexes_fence_and_commit_log_roll_back_together() {
 async fn projection_retry_after_ambiguous_commit_is_idempotent() {
     let (_fixture, engine, tenant_id, table) = fixture("projection-fence-ambiguous").await;
     let source = token(9, 12);
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine
+        .commit_faults_for_testing()
+        .for_tenant(&system_tenant_id().expect("system tenant id should build"));
     faults.inject(
         commit_fault_labels::DURABLE_BEFORE_PUBLISH,
         Fault::Error(Error::Internal(
@@ -358,7 +362,9 @@ async fn projection_retry_after_ambiguous_commit_is_idempotent() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn projection_conflicts_retry_from_fresh_snapshots_with_a_fixed_bound() {
     let (_fixture, engine, tenant_id, table) = fixture("projection-fence-conflicts").await;
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine
+        .commit_faults_for_testing()
+        .for_tenant(&system_tenant_id().expect("system tenant id should build"));
     faults.inject_retryable_conflicts(commit_fault_labels::PRE_PERSIST, 2, None);
 
     assert_eq!(
@@ -418,7 +424,9 @@ async fn projection_publication_contract_matches_memory_redb_and_sqlite() {
             .await
             .expect("system tenant should prepare");
 
-        let faults = engine.commit_fault_handle_for_testing();
+        let faults = engine
+            .commit_faults_for_testing()
+            .for_tenant(&system_tenant_id().expect("system tenant id should build"));
         faults.inject(
             commit_fault_labels::PRE_PERSIST,
             Fault::Error(Error::Internal(format!(

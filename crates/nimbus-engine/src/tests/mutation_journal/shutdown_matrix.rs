@@ -17,8 +17,8 @@ enum ShutdownPoint {
 }
 
 impl ArmedFault {
-    fn new(engine: &Engine, point: ShutdownPoint) -> Self {
-        let faults = engine.commit_fault_handle_for_testing();
+    fn new(engine: &Engine, tenant_id: &TenantId, point: ShutdownPoint) -> Self {
+        let faults = engine.commit_faults_for_testing().for_tenant(tenant_id);
         match point {
             ShutdownPoint::AfterAssignment => {
                 faults.arm(crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE);
@@ -111,7 +111,7 @@ fn shutdown_insert(
 
 async fn shutdown_after_assignment_rolls_back_unaccepted_suffix() {
     let (_fixture, engine, tenant_id) = shutdown_fixture("shutdown-after-assignment");
-    let mut pause = ArmedFault::new(engine.as_ref(), ShutdownPoint::AfterAssignment);
+    let mut pause = ArmedFault::new(engine.as_ref(), &tenant_id, ShutdownPoint::AfterAssignment);
     let write = shutdown_insert(engine.clone(), tenant_id.clone(), "assigned");
     pause
         .wait_until_entered("shutdown case should pause after assignment")
@@ -154,7 +154,11 @@ async fn shutdown_after_assignment_rolls_back_unaccepted_suffix() {
 
 async fn shutdown_during_persistence_drains_durable_batch() {
     let (_fixture, engine, tenant_id) = shutdown_fixture("shutdown-during-persistence");
-    let mut pause = ArmedFault::new(engine.as_ref(), ShutdownPoint::DurableBeforePublish);
+    let mut pause = ArmedFault::new(
+        engine.as_ref(),
+        &tenant_id,
+        ShutdownPoint::DurableBeforePublish,
+    );
     let write = shutdown_insert(engine.clone(), tenant_id.clone(), "durable");
     pause
         .wait_until_entered("shutdown case should pause after durable append")
@@ -191,7 +195,11 @@ async fn shutdown_during_persistence_drains_durable_batch() {
 
 async fn shutdown_after_publication_drains_response_and_fanout() {
     let (_fixture, engine, tenant_id) = shutdown_fixture("shutdown-after-publication");
-    let mut pause = ArmedFault::new(engine.as_ref(), ShutdownPoint::PostPublishPreFanout);
+    let mut pause = ArmedFault::new(
+        engine.as_ref(),
+        &tenant_id,
+        ShutdownPoint::PostPublishPreFanout,
+    );
     let write = shutdown_insert(engine.clone(), tenant_id.clone(), "published");
     pause
         .wait_until_entered("shutdown case should pause before fan-out")

@@ -304,7 +304,8 @@ export {};
             .mutation_journal
             .applied_head;
         service
-            .commit_fault_handle_for_testing()
+            .commit_faults_for_testing()
+            .for_tenant(&tenant_id)
             .inject_retryable_conflicts(commit_fault_labels::PRE_ASSIGN, 1, Some(applied_head));
 
         let response = server
@@ -663,7 +664,8 @@ export {};
             .mutation_journal
             .applied_head;
         service
-            .commit_fault_handle_for_testing()
+            .commit_faults_for_testing()
+            .for_tenant(&tenant_id)
             .inject_retryable_conflicts(commit_fault_labels::PRE_ASSIGN, 1, Some(applied_head));
         let allowed_origin = server.http_url("").trim_end_matches('/').to_string();
 

@@ -300,7 +300,7 @@ async fn production_provider_queued_mutation_reaches_ordered_publisher() {
             .shutdown_trigger_candidates_for_testing(&tenant_id)
             .expect("trigger cursor should not add unrelated records");
 
-        let faults = engine.commit_fault_handle_for_testing();
+        let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
         let pause = labels::POST_PUBLISH_PRE_FANOUT;
         faults.arm(pause);
         let write = tokio::spawn({

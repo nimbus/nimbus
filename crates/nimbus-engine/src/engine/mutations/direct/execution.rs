@@ -90,6 +90,7 @@ impl Engine {
                 };
                 self.wait_for_commit_fault(
                     crate::engine::execution_units::labels::PREPARE_COMPLETE,
+                    tenant_id,
                 )?;
                 let shadow_dependencies =
                     prepared_document_dependencies(&prepared_commit, |_| None);

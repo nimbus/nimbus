@@ -85,7 +85,7 @@ pub(crate) fn persist_and_apply_assigned_batch(
             .map_err(DurableBatchFailure::Ambiguous)?;
     }
     commit_faults
-        .wait(labels::DURABLE_BEFORE_PUBLISH)
+        .wait(labels::DURABLE_BEFORE_PUBLISH, runtime.tenant_id())
         .into_result()
         .map_err(DurableBatchFailure::Ambiguous)?;
     let applied_head = if provider_applied {

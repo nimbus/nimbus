@@ -316,7 +316,7 @@ async fn assignment_failure_mid_batch_discards_staged_suffix_and_keeps_tenant_li
     let runtime_before = engine
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("runtime identity should load");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.inject_error_on_nth_hit(
         crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
         1,
@@ -451,7 +451,8 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("runtime identity should load");
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_error_on_nth_hit(
             crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
             1,
@@ -1336,7 +1337,8 @@ async fn assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_live() 
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("runtime identity should load");
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_panic_on_nth_hit(
             crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
             1,
@@ -1412,7 +1414,8 @@ async fn serial_assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("runtime identity should load");
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_panic_on_nth_hit(
             crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
             1,

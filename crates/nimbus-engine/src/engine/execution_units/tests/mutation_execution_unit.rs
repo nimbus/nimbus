@@ -242,7 +242,7 @@ async fn mutation_execution_unit_pre_assign_label_forces_commit_interleaving() {
         )
         .expect("second insert should stage");
 
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(labels::PRE_ASSIGN);
     let first_commit = tokio::task::spawn_blocking({
         let first_unit = first_unit.clone();
@@ -336,7 +336,7 @@ async fn commit_timestamps_are_monotonic_with_sequence_across_paths() {
             serde_json::Map::from_iter([("path".to_string(), json!("execution-unit"))]),
         )
         .expect("execution-unit insert should stage");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(labels::PRE_ASSIGN);
     let execution_commit = tokio::task::spawn_blocking({
         let execution_unit = execution_unit.clone();
@@ -480,7 +480,7 @@ async fn schema_epoch_race_pending_index_add_conflicts_concurrent_write() {
         )
         .expect("write should stage against the initial schema");
 
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE);
     let schema_change = tokio::spawn({
         let engine = engine.clone();
@@ -632,7 +632,7 @@ fn mutation_execution_unit_pre_persist_fault_leaves_no_partial_state() {
         )
         .expect("insert should stage");
 
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.inject(
         labels::PRE_PERSIST,
         Fault::Error(Error::storage(
@@ -799,7 +799,7 @@ async fn mutation_execution_unit_conflict_scan_and_append_are_sequence_atomic() 
         )
         .expect("second staged insert should succeed");
 
-    let pause = engine.commit_fault_handle_for_testing();
+    let pause = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     pause.arm(labels::POST_VALIDATE_PRE_STAGE);
 
     let first_commit = tokio::task::spawn_blocking({

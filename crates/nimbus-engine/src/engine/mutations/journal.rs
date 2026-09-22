@@ -691,7 +691,7 @@ fn assign_queued_mutation_batch(
         };
         runtime.stage_pending_write_log_commits([record.as_commit_entry()], runtime.store.now());
         if let Err(error) = commit_faults
-            .wait(labels::JOURNAL_ASSIGN_AFTER_STAGE)
+            .wait(labels::JOURNAL_ASSIGN_AFTER_STAGE, runtime.tenant_id())
             .into_result()
         {
             return Err(FailedQueuedMutationAssignment { error, deferred });

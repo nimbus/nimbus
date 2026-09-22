@@ -95,10 +95,13 @@ fn query_value(unit: &MutationExecutionUnit, table: &TableName, op: FilterOp, va
 }
 
 async fn pause_before_assign(
-    engine: &Arc<Engine>,
+    h: &HermitageFixture,
     unit: Arc<MutationExecutionUnit>,
 ) -> (CommitFaultHandle, CommitTask) {
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = h
+        .engine
+        .commit_faults_for_testing()
+        .for_tenant(&h.tenant_id);
     faults.arm(labels::PRE_ASSIGN);
     let commit = tokio::task::spawn_blocking(move || unit.commit());
     let reached = tokio::task::spawn_blocking({
@@ -149,7 +152,7 @@ async fn hermitage_g0_write_cycles_prevented() {
     update_value(&second, &h.table, &h.first_id, 12);
     update_value(&second, &h.table, &h.second_id, 22);
 
-    let (faults, first_commit) = pause_before_assign(&h.engine, first).await;
+    let (faults, first_commit) = pause_before_assign(&h, first).await;
     commit_success(&second);
     release_and_expect_conflict(faults, first_commit).await;
     assert_eq!(
@@ -187,7 +190,7 @@ async fn hermitage_g1b_intermediate_read_prevented() {
     // Repeated writes collapse into one StagedWriteEntry. PRE_ASSIGN proves
     // that even a fully prepared commit exposes neither the intermediate 101
     // nor final 11 before the single atomic persistence call.
-    let (faults, commit) = pause_before_assign(&h.engine, writer).await;
+    let (faults, commit) = pause_before_assign(&h, writer).await;
     assert_eq!(read_value(&h.begin(), &h.table, &h.first_id), 10);
     release_commit(faults, commit)
         .await
@@ -206,7 +209,7 @@ async fn hermitage_g1c_circular_information_flow_prevented() {
     assert_eq!(read_value(&first, &h.table, &h.second_id), 20);
     assert_eq!(read_value(&second, &h.table, &h.first_id), 10);
 
-    let (faults, first_commit) = pause_before_assign(&h.engine, first).await;
+    let (faults, first_commit) = pause_before_assign(&h, first).await;
     commit_success(&second);
     release_and_expect_conflict(faults, first_commit).await;
     assert_eq!(
@@ -225,7 +228,7 @@ async fn hermitage_otv_observed_transaction_vanishes_prevented() {
     update_value(&vanishing, &h.table, &h.first_id, 11);
     update_value(&vanishing, &h.table, &h.second_id, 19);
     let observer = h.begin();
-    let (faults, vanishing_commit) = pause_before_assign(&h.engine, vanishing).await;
+    let (faults, vanishing_commit) = pause_before_assign(&h, vanishing).await;
 
     let winner = h.begin();
     update_value(&winner, &h.table, &h.first_id, 12);
@@ -252,7 +255,7 @@ async fn hermitage_pmp_read_prevented() {
     reader
         .insert_document(h.table.clone(), value_fields(99))
         .expect("reader marker write should stage");
-    let (faults, reader_commit) = pause_before_assign(&h.engine, reader).await;
+    let (faults, reader_commit) = pause_before_assign(&h, reader).await;
 
     let phantom = h.begin();
     phantom
@@ -276,7 +279,7 @@ async fn hermitage_pmp_write_prevented() {
     deleter
         .delete_document(h.table.clone(), h.second_id.clone())
         .expect("predicate-selected delete should stage");
-    let (faults, updater_commit) = pause_before_assign(&h.engine, updater).await;
+    let (faults, updater_commit) = pause_before_assign(&h, updater).await;
     commit_success(&deleter);
     release_and_expect_conflict(faults, updater_commit).await;
     assert!(matches!(
@@ -296,7 +299,7 @@ async fn hermitage_p4_lost_update_prevented() {
     update_value(&first, &h.table, &h.first_id, 11);
     update_value(&second, &h.table, &h.first_id, 12);
 
-    let (faults, first_commit) = pause_before_assign(&h.engine, first).await;
+    let (faults, first_commit) = pause_before_assign(&h, first).await;
     commit_success(&second);
     release_and_expect_conflict(faults, first_commit).await;
     assert_eq!(h.committed_value(&h.first_id), 12);
@@ -311,7 +314,7 @@ async fn hermitage_g_single_read_skew_prevented() {
     let writer = h.begin();
     update_value(&writer, &h.table, &h.first_id, 12);
     update_value(&writer, &h.table, &h.second_id, 18);
-    let (faults, writer_commit) = pause_before_assign(&h.engine, writer).await;
+    let (faults, writer_commit) = pause_before_assign(&h, writer).await;
     assert_eq!(read_value(&reader, &h.table, &h.second_id), 20);
     release_commit(faults, writer_commit)
         .await
@@ -341,7 +344,7 @@ async fn hermitage_g2_item_write_skew_prevented() {
     update_value(&first, &h.table, &h.first_id, 11);
     update_value(&second, &h.table, &h.second_id, 21);
 
-    let (faults, first_commit) = pause_before_assign(&h.engine, first).await;
+    let (faults, first_commit) = pause_before_assign(&h, first).await;
     commit_success(&second);
     release_and_expect_conflict(faults, first_commit).await;
     assert_eq!(
@@ -367,7 +370,7 @@ async fn hermitage_g2_anti_dependency_cycles_prevented() {
         .insert_document(h.table.clone(), value_fields(102))
         .expect("second cycle insert should stage");
 
-    let (faults, first_commit) = pause_before_assign(&h.engine, first).await;
+    let (faults, first_commit) = pause_before_assign(&h, first).await;
     commit_success(&second);
     release_and_expect_conflict(faults, first_commit).await;
     assert_eq!(query_value(&h.begin(), &h.table, FilterOp::Gt, 100), 1);

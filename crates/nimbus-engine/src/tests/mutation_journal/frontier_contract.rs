@@ -124,7 +124,9 @@ async fn publisher_stall_diagnostics_distinguish_assignment_apply_and_publicatio
         .mutation_journal_stats_for_testing(&assignment_tenant)
         .expect("assignment baseline should load")
         .durable_head;
-    let assignment_faults = assignment_engine.commit_fault_handle_for_testing();
+    let assignment_faults = assignment_engine
+        .commit_faults_for_testing()
+        .for_tenant(&assignment_tenant);
     let assignment_pause = crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE;
     assignment_faults.arm(assignment_pause);
     let assignment_write = tokio::spawn({

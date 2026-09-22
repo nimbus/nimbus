@@ -5,7 +5,7 @@ use nimbus_workloads::{
 };
 
 use super::super::EngineWorkloadSagaStore;
-use super::{engine, initial_record, valid_successor};
+use super::{engine, initial_record, valid_successor, workload_saga_faults};
 
 #[tokio::test]
 async fn pre_persist_commit_error_is_ambiguous_and_fresh_truth_remains_old() {
@@ -21,7 +21,7 @@ async fn pre_persist_commit_error_is_ambiguous_and_fresh_truth_remains_old() {
     );
     let next = valid_successor(&initial);
 
-    engine.commit_fault_handle_for_testing().inject(
+    workload_saga_faults(&engine).inject(
         commit_fault_labels::PRE_PERSIST,
         Fault::Error(Error::Internal(
             "injected workload-saga pre-persist failure".to_owned(),
@@ -55,7 +55,7 @@ async fn durable_before_publish_error_is_ambiguous_and_fresh_truth_is_exact_next
     );
     let next = valid_successor(&initial);
 
-    engine.commit_fault_handle_for_testing().inject(
+    workload_saga_faults(&engine).inject(
         commit_fault_labels::DURABLE_BEFORE_PUBLISH,
         Fault::Error(Error::Internal(
             "injected workload-saga durable-before-publish failure".to_owned(),
@@ -92,7 +92,7 @@ async fn post_publish_pre_fanout_error_is_ambiguous_and_fresh_truth_is_exact_nex
     );
     let next = valid_successor(&initial);
 
-    engine.commit_fault_handle_for_testing().inject(
+    workload_saga_faults(&engine).inject(
         commit_fault_labels::POST_PUBLISH_PRE_FANOUT,
         Fault::Error(Error::Internal(
             "injected workload-saga post-publish-pre-fanout failure".to_owned(),
@@ -128,8 +128,7 @@ async fn commit_task_panic_after_durability_is_ambiguous_and_truth_is_exact_next
         Ok(WorkloadSagaCommit::Applied)
     );
     let next = valid_successor(&initial);
-    engine
-        .commit_fault_handle_for_testing()
+    workload_saga_faults(&engine)
         .inject_panic_on_nth_hit(commit_fault_labels::DURABLE_BEFORE_PUBLISH, 1);
 
     assert_eq!(

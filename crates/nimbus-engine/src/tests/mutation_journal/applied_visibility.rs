@@ -22,7 +22,7 @@ async fn fanout_never_precedes_applied_head() {
         .await
         .expect("initial subscription result should arrive");
 
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     let pause_label = crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT;
     faults.arm(pause_label);
     let insert = tokio::spawn({
