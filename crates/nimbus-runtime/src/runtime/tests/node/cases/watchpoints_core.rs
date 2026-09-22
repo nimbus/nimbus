@@ -748,7 +748,7 @@ fn node24_events_add_abort_listener_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-events-add-abort-listener.mjs",
         "node24/test/parallel/test-events-add-abort-listener.mjs",
-        NODE24_COMMON_INDEX_MJS_EXTRA_FILES,
+        COMMON_INDEX_MJS_EXTRA_FILES,
     );
 }
 
@@ -811,7 +811,7 @@ fn node22_readline_promises_csi_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-readline-promises-csi.mjs",
         "node22/test/parallel/test-readline-promises-csi.mjs",
-        NODE22_COMMON_INDEX_MJS_EXTRA_FILES,
+        COMMON_INDEX_MJS_EXTRA_FILES,
     );
 }
 

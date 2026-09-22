@@ -1867,7 +1867,7 @@ fn node22_process_load_env_file_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-process-load-env-file.js",
         "node22/test/parallel/test-process-load-env-file.js",
-        NODE22_PROCESS_LOAD_ENV_FILE_EXTRA_FILES,
+        PROCESS_LOAD_ENV_FILE_EXTRA_FILES,
     );
 }
 
@@ -1876,7 +1876,7 @@ fn node24_process_load_env_file_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-process-load-env-file.js",
         "node24/test/parallel/test-process-load-env-file.js",
-        NODE24_PROCESS_LOAD_ENV_FILE_EXTRA_FILES,
+        PROCESS_LOAD_ENV_FILE_EXTRA_FILES,
     );
 }
 
@@ -2077,7 +2077,7 @@ fn node22_fs_glob_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-glob.mjs",
         "node22/test/parallel/test-fs-glob.mjs",
-        NODE22_COMMON_INDEX_MJS_EXTRA_FILES,
+        COMMON_INDEX_MJS_EXTRA_FILES,
     );
 }
 
@@ -2086,7 +2086,7 @@ fn node24_fs_glob_fixture() {
     run_node_compat_watchpoint(
         "test/parallel/test-fs-glob.mjs",
         "node24/test/parallel/test-fs-glob.mjs",
-        NODE24_COMMON_INDEX_MJS_EXTRA_FILES,
+        COMMON_INDEX_MJS_EXTRA_FILES,
     );
 }
 

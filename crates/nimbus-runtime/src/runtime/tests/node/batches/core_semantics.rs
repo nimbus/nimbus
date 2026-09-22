@@ -361,7 +361,7 @@ const CORE_SEMANTICS_BATCH: &[NodeCompatBatchEntry] = &[
     shared_batch_case_with_extra!(
         "test/parallel/test-events-add-abort-listener.mjs",
         "node20/test/parallel/test-events-add-abort-listener.mjs",
-        NODE20_COMMON_INDEX_MJS_EXTRA_FILES
+        COMMON_INDEX_MJS_EXTRA_FILES
     ),
     node22_only_batch_case!(
         "test/parallel/test-events-once.js",

@@ -13,16 +13,17 @@ mod supplementary_batches;
 
 include!("corpus_baseline.rs");
 include!("batches.rs");
+include!("batch_declarations.rs");
 
 include!("behavior.rs");
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NodeCompatExtraFixtureEntry {
     runtime_path: &'static str,
     fixture_source_path: &'static str,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeCompatLane {
     Node20,
     Node22,
@@ -57,6 +58,16 @@ fn node_compat_lane_name(lane: NodeCompatLane) -> &'static str {
     }
 }
 
+/// Whether a lane reads a top-level `NIMBUS_NODE_COMPAT_SKIP` as a skip.
+///
+/// Every entry point that runs a lane fixture must ask this question here. A
+/// batch entry point and a watchpoint entry point that answered it differently
+/// measured the same fixture as a skip under one and as an execution failure
+/// under the other, so the merged result depended on which entry point ran.
+fn lane_captures_top_level_skip(lane: NodeCompatLane) -> bool {
+    matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26)
+}
+
 fn node_compat_lane_from_manifest_name(lane: &str) -> std::result::Result<NodeCompatLane, String> {
     match lane {
         "node20" => Ok(NodeCompatLane::Node20),
@@ -83,7 +94,7 @@ fn inferred_node_compat_lane_from_fixture_source_path(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NodeCompatBatchEntry {
     test_relative_path: &'static str,
     node20_fixture_source_path: Option<&'static str>,
@@ -701,23 +712,74 @@ fn read_node_compat_fixture_text(fixture_source_path: &str) -> String {
 
 fn read_node_compat_extra_fixture_entries(
     extra_files: &[NodeCompatExtraFixtureEntry],
+    lane: Option<NodeCompatLane>,
 ) -> Vec<(String, Vec<u8>)> {
     extra_files
         .iter()
         .map(|entry| {
             (
                 entry.runtime_path.to_string(),
-                read_node_compat_fixture_bytes(entry.fixture_source_path),
+                read_node_compat_extra_fixture_bytes(entry, lane),
             )
         })
         .collect()
 }
 
-const NODE_COMPAT_SYNTHETIC_COMMON_RUNTIME_PATHS: &[&str] = &[
-    "test/common/index.js",
-    "test/common/fixtures.js",
-    "test/common/tmpdir.js",
+/// Reads one staged helper from the lane's own vendored tree when it has one.
+///
+/// An upstream helper evolves with Node, so a lane fixture and a shared helper
+/// are not interchangeable. `test/common/crypto.js` gained `hasFIPS` after the
+/// shared copy was vendored, so a node26 fixture that required it died with
+/// `hasFIPS is not a function`, and the baseline recorded that harness error as
+/// a Nimbus gap. `test/common/index.mjs` is the same story in reverse: each
+/// lane's facade re-exports exactly the names that lane's fixtures import, so
+/// the shared copy owes node26 `skipIfPerfettoEnabled` and node20 nine names
+/// besides. Reading every helper lane first is what keeps a fixture and its
+/// helpers from different releases of Node.
+///
+/// Only the synthetic commons stay shared, because the harness writes them
+/// rather than vendoring them. A helper is therefore declared once, without a
+/// lane, and this is the single place that decides which tree a lane reads it
+/// from.
+fn read_node_compat_extra_fixture_bytes(
+    entry: &NodeCompatExtraFixtureEntry,
+    lane: Option<NodeCompatLane>,
+) -> Vec<u8> {
+    if let Some(lane) = lane
+        && !node_compat_helper_is_synthetic(entry.runtime_path)
+        && inferred_node_compat_lane_from_fixture_source_path(entry.fixture_source_path).is_none()
+    {
+        let lane_source_path = node_compat_fixture_root()
+            .join(node_compat_lane_name(lane))
+            .join(entry.fixture_source_path);
+        if lane_source_path.is_file() {
+            return std::fs::read(&lane_source_path).unwrap_or_else(|error| {
+                panic!(
+                    "node_compat extra fixture `{}` should read: {error}",
+                    lane_source_path.display()
+                )
+            });
+        }
+    }
+    read_node_compat_fixture_bytes(entry.fixture_source_path)
+}
+
+// The helpers the harness writes into every bundle itself, with the content it
+// writes. `write_node_compat_bundle` stages exactly this list and the two
+// readers below refuse to stage a lane copy over it, so membership and supply
+// are one fact. They were two, and a path added here that the harness did not
+// write removed the helper from the bundle instead of replacing it.
+const NODE_COMPAT_SYNTHETIC_COMMON_FILES: &[(&str, &str)] = &[
+    ("test/common/index.js", COMMON_INDEX_FIXTURE),
+    ("test/common/fixtures.js", COMMON_FIXTURES_FIXTURE),
+    ("test/common/tmpdir.js", COMMON_TMPDIR_FIXTURE),
 ];
+
+fn node_compat_helper_is_synthetic(runtime_path: &str) -> bool {
+    NODE_COMPAT_SYNTHETIC_COMMON_FILES
+        .iter()
+        .any(|(path, _)| *path == runtime_path)
+}
 
 fn append_lane_extra_fixture_file(
     owned_extra_files: &mut Vec<(String, Vec<u8>)>,
@@ -788,10 +850,7 @@ fn append_lane_extra_fixture_directory(
             })
             .to_string_lossy()
             .into_owned();
-        if NODE_COMPAT_SYNTHETIC_COMMON_RUNTIME_PATHS
-            .iter()
-            .any(|path| path == &runtime_path)
-        {
+        if node_compat_helper_is_synthetic(&runtime_path) {
             continue;
         }
         let bytes = std::fs::read(&source_path).unwrap_or_else(|error| {
@@ -1645,16 +1704,13 @@ export {{}};
     )
     .expect("bundle should write");
 
-    let common_path = bundle_dir.join("test/common/index.js");
-    std::fs::create_dir_all(common_path.parent().expect("common parent should resolve"))
-        .expect("common dir should build");
-    std::fs::write(&common_path, COMMON_INDEX_FIXTURE).expect("common fixture should write");
-    let common_fixtures_path = bundle_dir.join("test/common/fixtures.js");
-    std::fs::write(&common_fixtures_path, COMMON_FIXTURES_FIXTURE)
-        .expect("common fixtures module should write");
-    let common_tmpdir_path = bundle_dir.join("test/common/tmpdir.js");
-    std::fs::write(&common_tmpdir_path, COMMON_TMPDIR_FIXTURE)
-        .expect("common tmpdir module should write");
+    for (runtime_path, source) in NODE_COMPAT_SYNTHETIC_COMMON_FILES {
+        let common_path = bundle_dir.join(runtime_path);
+        std::fs::create_dir_all(common_path.parent().expect("common parent should resolve"))
+            .expect("common dir should build");
+        std::fs::write(&common_path, source)
+            .unwrap_or_else(|error| panic!("common module `{runtime_path}` should write: {error}"));
+    }
 
     let test_path = bundle_dir.join(test_relative_path);
     std::fs::create_dir_all(test_path.parent().expect("test parent should resolve"))
@@ -2619,7 +2675,9 @@ fn execute_manifested_node_compat_test(
     postlude_script: Option<&str>,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
     let test_source = read_node_compat_fixture_text(fixture_source_path);
-    let owned_extra_files = read_node_compat_extra_fixture_entries(extra_files);
+    let staged_lane =
+        lane.or_else(|| inferred_node_compat_lane_from_fixture_source_path(fixture_source_path));
+    let owned_extra_files = read_node_compat_extra_fixture_entries(extra_files, staged_lane);
     let borrowed_extra_files: Vec<(&str, &[u8])> = owned_extra_files
         .iter()
         .map(|(runtime_path, source)| (runtime_path.as_str(), source.as_slice()))
@@ -2635,7 +2693,7 @@ fn execute_manifested_node_compat_test(
         &test_source,
         &borrowed_extra_files,
         capture_top_level_skip,
-        lane.or_else(|| inferred_node_compat_lane_from_fixture_source_path(fixture_source_path)),
+        staged_lane,
         prelude_script.or_else(|| resolved_prelude_behavior.map(|behavior| behavior.script())),
         postlude_script.or_else(|| resolved_postlude_behavior.map(|behavior| behavior.script())),
     )
@@ -2650,7 +2708,7 @@ fn execute_manifested_node_compat_test_with_lane_extra_dirs(
     lane: NodeCompatLane,
 ) -> std::result::Result<NodeCompatFixtureOutcome, String> {
     let test_source = read_node_compat_fixture_text(fixture_source_path);
-    let mut owned_extra_files = read_node_compat_extra_fixture_entries(extra_files);
+    let mut owned_extra_files = read_node_compat_extra_fixture_entries(extra_files, Some(lane));
     for extra_runtime_file in extra_runtime_files {
         append_lane_extra_fixture_file(&mut owned_extra_files, lane, extra_runtime_file);
     }
@@ -3336,7 +3394,7 @@ pub(super) fn materialize_seeded_fixture_bundle_for_lane(
         test_relative_path,
         test_source: &test_source,
         extra_files: &borrowed_extra_files,
-        capture_top_level_skip: matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
+        capture_top_level_skip: lane_captures_top_level_skip(lane),
         lane: Some(lane),
         prelude_script: Some(effective_prelude.as_str()),
         postlude_script: resolved_postlude_behavior.map(NodeCompatNamedPostludeBehavior::script),
@@ -3640,7 +3698,7 @@ fn run_manifested_subset_for_lane_excluding(
                     fixture.test_relative_path,
                     fixture_source_path.as_ref(),
                     fixture.extra_files_for_lane(lane),
-                    matches!(lane, NodeCompatLane::Node24 | NodeCompatLane::Node26),
+                    lane_captures_top_level_skip(lane),
                     Some(lane),
                     None,
                     None,
@@ -3745,7 +3803,7 @@ fn run_node_compat_watchpoint_for_lane(
         test_relative_path,
         fixture_source_path,
         extra_files,
-        false,
+        lane_captures_top_level_skip(lane),
         Some(lane),
         None,
         None,

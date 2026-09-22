@@ -264,11 +264,15 @@ def merge_observed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]
     A fixture can run more than once across batch and watchpoint entry points.
     A pass does not erase a failure, because the lane must react to the failure.
     """
+    # `unexpected_pass` reports a pass, so it must rank below the two failure
+    # outcomes. Ranking it above `known_gap` let one passing entry point erase
+    # a failing one, and the refresh then deleted an entry that the corpus had
+    # just observed failing.
     severity = {
         OUTCOME_PASSED: 0,
         OUTCOME_SKIPPED: 1,
-        OUTCOME_KNOWN_GAP: 2,
-        OUTCOME_UNEXPECTED_PASS: 3,
+        OUTCOME_UNEXPECTED_PASS: 2,
+        OUTCOME_KNOWN_GAP: 3,
         OUTCOME_FAILED: 4,
     }
     merged: dict[tuple[str, str], dict[str, Any]] = {}
