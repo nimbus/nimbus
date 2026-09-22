@@ -23,6 +23,7 @@ const isASan = process.config?.variables?.asan === 1;
 const hasInspector = process.features?.inspector === true;
 const hasSQLite = Boolean(process.versions?.sqlite);
 const hasTemporal = Boolean(process.config?.variables?.v8_enable_temporal_support);
+const hasPerfetto = Boolean(process.config?.variables?.v8_use_perfetto);
 let localhostIPv4 = null;
 const localIPv6Hosts = ['localhost'];
 const tmpdir = require('./tmpdir.js');
@@ -235,6 +236,17 @@ function skipIfDumbTerminal() {
 function skipIfInspectorDisabled() {
   if (!hasInspector) {
     skip('V8 inspector is disabled');
+  }
+}
+
+// Upstream skips a trace-events test when the build routes tracing through
+// Perfetto, because the test reads the legacy trace file the Perfetto build no
+// longer writes. Nimbus builds V8 without Perfetto, so this never skips, but
+// the helper must exist: a fixture that calls a missing helper dies with a
+// TypeError, and the corpus then records a harness error as a Nimbus gap.
+function skipIfPerfettoEnabled() {
+  if (hasPerfetto) {
+    skip('Perfetto is enabled');
   }
 }
 
@@ -2173,6 +2185,7 @@ module.exports = {
   skipIf32Bits,
   skipIfDumbTerminal,
   skipIfInspectorDisabled,
+  skipIfPerfettoEnabled,
   skipIfSQLiteMissing,
   skipIfWorker,
   invalidArgTypeHelper,

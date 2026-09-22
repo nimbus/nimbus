@@ -5,10 +5,10 @@ macro_rules! node22_node24_fs_cp_case {
             node20_fixture_source_path: None,
             node22_fixture_source_path: Some(concat!("node22/", $test_relative_path)),
             node24_fixture_source_path: Some(concat!("node24/", $test_relative_path)),
-            shared_extra_files: &[],
+            shared_extra_files: FS_CP_EXTRA_FILES,
             node20_extra_files: &[],
-            node22_extra_files: NODE22_FS_CP_EXTRA_FILES,
-            node24_extra_files: NODE24_FS_CP_EXTRA_FILES,
+            node22_extra_files: &[],
+            node24_extra_files: &[],
         }
     };
 }
@@ -20,123 +20,69 @@ macro_rules! node24_fs_cp_case {
             node20_fixture_source_path: None,
             node22_fixture_source_path: None,
             node24_fixture_source_path: Some(concat!("node24/", $test_relative_path)),
-            shared_extra_files: &[],
+            shared_extra_files: FS_CP_EXTRA_FILES,
             node20_extra_files: &[],
             node22_extra_files: &[],
-            node24_extra_files: NODE24_FS_CP_EXTRA_FILES,
+            node24_extra_files: &[],
         }
     };
 }
 
-const NODE22_FS_CP_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
+const FS_CP_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/common/index.mjs",
-        fixture_source_path: "node22/test/common/index.mjs",
+        fixture_source_path: "test/common/index.mjs",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/common/fs.js",
-        fixture_source_path: "node22/test/common/fs.js",
+        fixture_source_path: "test/common/fs.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/README.md",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/README.md",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/README.md",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/index.js",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/index.js",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/index.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/a/index.js",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/a/index.js",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/a/index.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/a/b/README2.md",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/a/b/README2.md",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/a/b/README2.md",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/a/b/index.js",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/a/b/index.js",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/a/b/index.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/a/c/README2.md",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/a/c/README2.md",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/a/c/README2.md",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/a/c/index.js",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/a/c/index.js",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/a/c/index.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/a/c/d/README3.md",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/a/c/d/README3.md",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/a/c/d/README3.md",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/kitchen-sink/a/c/d/index.js",
-        fixture_source_path: "node22/test/fixtures/copy/kitchen-sink/a/c/d/index.js",
+        fixture_source_path: "test/fixtures/copy/kitchen-sink/a/c/d/index.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/utf/新建文件夹/index.js",
-        fixture_source_path: "node22/test/fixtures/copy/utf/新建文件夹/index.js",
+        fixture_source_path: "test/fixtures/copy/utf/新建文件夹/index.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/copy/utf/新建文件夹/experimental.json",
-        fixture_source_path: "node22/test/fixtures/copy/utf/新建文件夹/experimental.json",
+        fixture_source_path: "test/fixtures/copy/utf/新建文件夹/experimental.json",
     },
 ];
 
-const NODE24_FS_CP_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/common/index.mjs",
-        fixture_source_path: "node24/test/common/index.mjs",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/common/fs.js",
-        fixture_source_path: "node24/test/common/fs.js",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/README.md",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/README.md",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/index.js",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/index.js",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/a/index.js",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/a/index.js",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/a/b/README2.md",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/a/b/README2.md",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/a/b/index.js",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/a/b/index.js",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/a/c/README2.md",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/a/c/README2.md",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/a/c/index.js",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/a/c/index.js",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/a/c/d/README3.md",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/a/c/d/README3.md",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/kitchen-sink/a/c/d/index.js",
-        fixture_source_path: "node24/test/fixtures/copy/kitchen-sink/a/c/d/index.js",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/utf/新建文件夹/index.js",
-        fixture_source_path: "node24/test/fixtures/copy/utf/新建文件夹/index.js",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/copy/utf/新建文件夹/experimental.json",
-        fixture_source_path: "node24/test/fixtures/copy/utf/新建文件夹/experimental.json",
-    },
-];
 
 const FS_CP_BATCH: &[NodeCompatBatchEntry] = &[
     node22_node24_fs_cp_case!("test/parallel/test-fs-cp-async-async-filter-function.mjs"),

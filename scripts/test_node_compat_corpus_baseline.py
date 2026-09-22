@@ -134,5 +134,63 @@ class CheckBatchCompletenessTests(unittest.TestCase):
         corpus_baseline.check_batch_completeness(records)
 
 
+def observed(outcome, path="test/parallel/test-one.js", lane="node20"):
+    return {"lane": lane, "test_relative_path": path, "outcome": outcome}
+
+
+class MergeObservedRecordsTests(unittest.TestCase):
+    """The merge decides what the refresh writes, so it owns a contract.
+
+    One fixture can run under more than one entry point. When those entry
+    points disagree, the failing observation is the one the lane must react
+    to, and the merge keeps it whichever order the shards arrive in.
+    """
+
+    def merged_outcome(self, records):
+        merged = corpus_baseline.merge_observed_records(records)
+        self.assertEqual(len(merged), 1)
+        return merged[0]["outcome"]
+
+    def test_a_recorded_failure_survives_a_pass_from_another_entry_point(self):
+        for records in (
+            [observed("known_gap"), observed("unexpected_pass")],
+            [observed("unexpected_pass"), observed("known_gap")],
+        ):
+            with self.subTest(order=[r["outcome"] for r in records]):
+                self.assertEqual(self.merged_outcome(records), "known_gap")
+
+    def test_a_regression_survives_a_pass_from_another_entry_point(self):
+        for records in (
+            [observed("failed"), observed("passed")],
+            [observed("passed"), observed("failed")],
+        ):
+            with self.subTest(order=[r["outcome"] for r in records]):
+                self.assertEqual(self.merged_outcome(records), "failed")
+
+    def test_a_regression_outranks_a_recorded_failure(self):
+        self.assertEqual(
+            self.merged_outcome([observed("known_gap"), observed("failed")]),
+            "failed",
+        )
+
+    def test_a_skip_does_not_erase_a_failure(self):
+        self.assertEqual(
+            self.merged_outcome([observed("skipped"), observed("known_gap")]),
+            "known_gap",
+        )
+
+    def test_one_fixture_in_two_lanes_stays_two_results(self):
+        merged = corpus_baseline.merge_observed_records(
+            [
+                observed("known_gap", lane="node20"),
+                observed("passed", lane="node22"),
+            ]
+        )
+        self.assertEqual(
+            [(r["lane"], r["outcome"]) for r in merged],
+            [("node20", "known_gap"), ("node22", "passed")],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

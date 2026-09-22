@@ -319,10 +319,6 @@ const NODE_TOOLS_TRACE_EVENTS_FOUNDATION_BATCH: &[NodeCompatBatchEntry] = &[
         "node22/test/parallel/test-trace-events-api.js"
     ),
     node22_exclusive_batch_case!(
-        "test/parallel/test-trace-events-api.js",
-        "node22/test/parallel/test-trace-events-api.js"
-    ),
-    node22_exclusive_batch_case!(
         "test/parallel/test-trace-events-binding.js",
         "node22/test/parallel/test-trace-events-binding.js"
     ),

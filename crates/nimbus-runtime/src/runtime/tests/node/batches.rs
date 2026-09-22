@@ -276,40 +276,25 @@ macro_rules! shared_node20_node22_with_node24_override_case_with_extra {
 const NODE20_ASSERT_FIRST_LINE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/assert-first-line.js",
-        fixture_source_path: "node20/test/fixtures/assert-first-line.js",
+        fixture_source_path: "test/fixtures/assert-first-line.js",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/assert-long-line.js",
-        fixture_source_path: "node20/test/fixtures/assert-long-line.js",
+        fixture_source_path: "test/fixtures/assert-long-line.js",
     },
 ];
 
 const NODE20_CONSOLE_GROUP_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
     &[NodeCompatExtraFixtureEntry {
         runtime_path: "test/common/hijackstdio.js",
-        fixture_source_path: "node20/test/common/hijackstdio.js",
+        fixture_source_path: "test/common/hijackstdio.js",
     }];
 
 const COMMON_HIJACKSTDIO_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
     NODE20_CONSOLE_GROUP_EXTRA_FILES;
 
-const NODE20_COMMON_INDEX_MJS_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
-    &[NodeCompatExtraFixtureEntry {
-        runtime_path: "test/common/index.mjs",
-        fixture_source_path: "node20/test/common/index.mjs",
-    }];
 
-const NODE22_COMMON_INDEX_MJS_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
-    &[NodeCompatExtraFixtureEntry {
-        runtime_path: "test/common/index.mjs",
-        fixture_source_path: "node22/test/common/index.mjs",
-    }];
 
-const NODE24_COMMON_INDEX_MJS_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
-    &[NodeCompatExtraFixtureEntry {
-        runtime_path: "test/common/index.mjs",
-        fixture_source_path: "node24/test/common/index.mjs",
-    }];
 
 const COMMON_INDEX_MJS_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
     &[NodeCompatExtraFixtureEntry {
@@ -708,7 +693,7 @@ const COMMON_REPL_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
 const NODE22_COMMON_UDP_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
     &[NodeCompatExtraFixtureEntry {
         runtime_path: "test/common/udp.js",
-        fixture_source_path: "node22/test/common/udp.js",
+        fixture_source_path: "test/common/udp.js",
     }];
 
 const COMMON_TLS_KEY_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
@@ -869,7 +854,7 @@ const COMMON_TLS_SESSION_CERT_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
 
 const PATH_RESOLVE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[NodeCompatExtraFixtureEntry {
     runtime_path: "test/fixtures/path-resolve.js",
-    fixture_source_path: "node20/test/fixtures/path-resolve.js",
+    fixture_source_path: "test/fixtures/path-resolve.js",
 }];
 
 const URL_PARSE_DEPRECATION_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
@@ -878,28 +863,18 @@ const URL_PARSE_DEPRECATION_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
         fixture_source_path: "test/fixtures/node_modules/url-deprecations.js",
     }];
 
-const NODE20_UTIL_PARSE_ENV_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
+const UTIL_PARSE_ENV_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
     &[NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/dotenv/valid.env",
-        fixture_source_path: "node20/test/fixtures/dotenv/valid.env",
+        fixture_source_path: "test/fixtures/dotenv/valid.env",
     }];
 
-const NODE22_UTIL_PARSE_ENV_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
-    &[NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/valid.env",
-        fixture_source_path: "node22/test/fixtures/dotenv/valid.env",
-    }];
 
-const NODE24_UTIL_PARSE_ENV_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
-    &[NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/valid.env",
-        fixture_source_path: "node24/test/fixtures/dotenv/valid.env",
-    }];
 
-const NODE20_PROCESS_LOAD_ENV_FILE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
+const PROCESS_LOAD_ENV_FILE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/dotenv/valid.env",
-        fixture_source_path: "node20/test/fixtures/dotenv/valid.env",
+        fixture_source_path: "test/fixtures/dotenv/valid.env",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/fixtures/dotenv/.env",
@@ -911,35 +886,7 @@ const NODE20_PROCESS_LOAD_ENV_FILE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
     },
 ];
 
-const NODE22_PROCESS_LOAD_ENV_FILE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/valid.env",
-        fixture_source_path: "node22/test/fixtures/dotenv/valid.env",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/.env",
-        fixture_source_path: "test/fixtures/dotenv/.env",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/basic-valid.env",
-        fixture_source_path: "test/fixtures/dotenv/basic-valid.env",
-    },
-];
 
-const NODE24_PROCESS_LOAD_ENV_FILE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/valid.env",
-        fixture_source_path: "node24/test/fixtures/dotenv/valid.env",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/.env",
-        fixture_source_path: "test/fixtures/dotenv/.env",
-    },
-    NodeCompatExtraFixtureEntry {
-        runtime_path: "test/fixtures/dotenv/basic-valid.env",
-        fixture_source_path: "test/fixtures/dotenv/basic-valid.env",
-    },
-];
 
 const MIME_WHATWG_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
     NodeCompatExtraFixtureEntry {
@@ -1171,7 +1118,7 @@ const INSPECTOR_FRONT_EDGE_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] =
 const PROCESS_FINALIZATION_WATCHPOINT_EXTRA_FILES: &[NodeCompatExtraFixtureEntry] = &[
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/common/index.mjs",
-        fixture_source_path: "node20/test/common/index.mjs",
+        fixture_source_path: "test/common/index.mjs",
     },
     NodeCompatExtraFixtureEntry {
         runtime_path: "test/common/child_process.js",

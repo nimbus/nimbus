@@ -1031,10 +1031,7 @@ const LOADER_CONTEXT_BATCH: &[NodeCompatBatchEntry] = &[
         "test/parallel/test-inspector-invalid-args.js",
         INSPECTOR_FRONT_EDGE_EXTRA_FILES
     ),
-    shared_official_batch_case_with_extra!(
-        "test/parallel/test-inspector-open.js",
-        INSPECTOR_FRONT_EDGE_EXTRA_FILES
-    ),
+    shared_official_batch_case!("test/parallel/test-inspector-open.js"),
     shared_official_batch_case!("test/parallel/test-inspector-open-port-integer-overflow.js"),
     shared_official_batch_case!("test/parallel/test-inspector-enabled.js"),
 ];
