@@ -120,6 +120,28 @@ This is a live hazard, not a hypothetical: the Coverage lane ran
 `cargo test` per shard and spent three weeks red on 68 collisions that said
 nothing about the code under test.
 
+## A leak reported on macOS names an innocent test
+
+`LEAK` on a local macOS run is almost never a leak. Do not go looking for a
+stray subprocess in the test it names, and do not "fix" the test.
+
+Leak detection asks whether a test's captured pipe is still open once the test
+process has exited, which only one thing can cause: another process holding the
+write end. macOS has no `pipe2`, so `std` creates the pipe and sets CLOEXEC in
+separate calls. A test spawning on another thread inside that window inherits
+the raw write end and holds it for its own lifetime, and the pipe stays open
+after an unrelated test exits. The report lands on whoever's pipe was borrowed.
+
+The signature is a duration equal to the test's real work plus the whole
+leak-timeout, on a test that obviously spawns nothing -- an argument-parsing
+test is a common victim -- and a different victim on the next run. Measured
+here at roughly 3 in 1000 spawns across 16 threads, and 0 in 400 with one
+spawning thread.
+
+`.config/nextest.toml` therefore reports the leak on macOS without failing, and
+keeps the hard gate on Linux, where `pipe2(O_CLOEXEC)` closes the window. Every
+CI lane is Linux, so a `LEAK` that fails a run is still real and still yours.
+
 ## Host ports in tests
 
 Do not discover a host port with a probe. A probe binds port zero, reads the
