@@ -14,11 +14,29 @@ slow-timeout = { period = "45s", terminate-after = 3 }
 # default 100-millisecond grace period.
 leak-timeout = { period = "100ms", result = "fail" }
 
-# A local macOS run reproduces nextest-rs/nextest#1469 without a child process.
-# Keep the hard failure and give the runner five seconds to observe pipe closure.
+# Leak detection asks whether a test's captured pipe is still open once the
+# test process has exited. That question is only answerable where the OS can
+# create the pipe close-on-exec atomically. macOS has no `pipe2`, so `std`
+# creates the pipe and sets CLOEXEC in separate calls (see the `_` arm of
+# `library/std/src/sys/pipe/unix.rs`); a test spawning on another thread inside
+# that window inherits the raw write end and holds it for its own lifetime. The
+# pipe then stays open after an unrelated, innocent test exits, and that test is
+# reported as the leaker.
+#
+# Measured here: a `/usr/bin/true` child that spawns nothing kept its captured
+# pipe open for exactly as long as a concurrent `sleep 2` -- about 3 in 1000
+# spawns across 16 threads, and 0 in 400 single-threaded. Whole-suite runs flag
+# a different victim each time, including tests that only parse arguments. This
+# is the unexplained half of nextest-rs/nextest#1469.
+#
+# No timeout separates a borrowed write end from a real leak, because the
+# borrower lives as long as whichever test borrowed it -- up to the 15-minute
+# harness lanes. So on macOS report the leak and do not fail on it. Every CI
+# lane runs on Linux, where `pipe2(O_CLOEXEC)` closes the window and the hard
+# gate above still holds.
 [[profile.default.overrides]]
 platform = { host = 'cfg(target_os = "macos")' }
-leak-timeout = { period = "5s", result = "fail" }
+leak-timeout = { period = "5s", result = "pass" }
 
 [[profile.default.overrides]]
 filter = 'test(/listener_rejects_non_loopback_bind/)'
