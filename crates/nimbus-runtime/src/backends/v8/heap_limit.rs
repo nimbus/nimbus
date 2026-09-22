@@ -79,7 +79,16 @@ impl BackingStoreAllocationState {
 
     /// Returns an ArrayBuffer allocator with the semantics of the V8 default
     /// allocator that records its results in this state.
-    pub(crate) fn array_buffer_allocator(&self) -> v8::UniqueRef<v8::Allocator> {
+    ///
+    /// `max_allocation_bytes` lowers the maximum allocation size that the
+    /// allocator reports. V8 reads that size before it allocates, so a lowered
+    /// ceiling makes an oversized typed-array constructor throw `RangeError:
+    /// Invalid typed array length` instead of failing at allocation time. `None`
+    /// keeps the ceiling of the V8 build.
+    pub(crate) fn array_buffer_allocator(
+        &self,
+        max_allocation_bytes: Option<usize>,
+    ) -> v8::UniqueRef<v8::Allocator> {
         static VTABLE: v8::RustAllocatorVtable<AtomicU8> = v8::RustAllocatorVtable {
             allocate,
             allocate_uninitialized,
@@ -89,7 +98,13 @@ impl BackingStoreAllocationState {
         let handle = Arc::into_raw(self.0.clone());
         // SAFETY: `handle` comes from `Arc::into_raw` and `drop_state` releases
         // it once, when V8 destroys the allocator.
-        unsafe { v8::new_rust_allocator(handle, &VTABLE) }
+        let allocator = unsafe { v8::new_rust_allocator(handle, &VTABLE) };
+        match max_allocation_bytes {
+            Some(max_allocation_bytes) => {
+                v8::new_limited_allocator(allocator, max_allocation_bytes)
+            }
+            None => allocator,
+        }
     }
 }
 

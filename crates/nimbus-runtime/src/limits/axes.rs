@@ -282,6 +282,27 @@ impl RuntimeCompatibilityTarget {
             .is_some_and(RuntimeNodeSupportPhase::is_supported_lts)
     }
 
+    /// Returns the largest `ArrayBuffer` allocation that this target accepts,
+    /// or `None` when the target keeps the ceiling of the V8 build.
+    ///
+    /// V8 150.4 compiles `kMaxByteLength` at `2^53 - 1` and exposes no flag for
+    /// it, but it reads the maximum allocation size from the array buffer
+    /// allocator and caches it per isolate. Node 20 runs V8 11.3, which rejects
+    /// more than `2^32`, so the Node 20 target lowers the ceiling to that value.
+    /// Every other target keeps the ceiling of the build. The ceiling is per
+    /// isolate, so no lane is traded against another.
+    pub fn max_array_buffer_bytes(self) -> Option<usize> {
+        match self {
+            Self::Node20 => Some(1usize << 32),
+            Self::Node22
+            | Self::Node24
+            | Self::Node26
+            | Self::WebStandardIsolate
+            | Self::BunJsc
+            | Self::WasmComponent => None,
+        }
+    }
+
     pub fn node_lts_lane_name(self) -> Option<&'static str> {
         match self {
             Self::Node20 => Some("node20"),

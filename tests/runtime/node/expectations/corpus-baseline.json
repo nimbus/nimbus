@@ -75,11 +75,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
-        "test_relative_path": "test/parallel/test-buffer-alloc.js",
-        "fixture_source_relative_path": "node20/test/parallel/test-buffer-alloc.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
-      },
-      {
         "test_relative_path": "test/parallel/test-buffer-sharedarraybuffer.js",
         "fixture_source_relative_path": "node20/test/parallel/test-buffer-sharedarraybuffer.js",
         "reason": "runtime JavaScript error: ReferenceError: SharedArrayBuffer is not defined"

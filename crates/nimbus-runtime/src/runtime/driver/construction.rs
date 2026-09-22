@@ -283,7 +283,14 @@ impl NimbusRuntime {
                 self.policy.limits().initial_heap_mb * heap_megabyte,
                 self.policy.limits().max_heap_mb * heap_megabyte,
             )
-            .array_buffer_allocator(backing_store_allocation.array_buffer_allocator())
+            .array_buffer_allocator(
+                backing_store_allocation.array_buffer_allocator(
+                    self.policy
+                        .limits()
+                        .compatibility_target
+                        .max_array_buffer_bytes(),
+                ),
+            )
             .allow_atomics_wait(false)
     }
 
