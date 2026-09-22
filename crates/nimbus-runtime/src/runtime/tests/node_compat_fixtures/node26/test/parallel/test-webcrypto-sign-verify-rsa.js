@@ -6,7 +6,7 @@ if (!common.hasCrypto)
   common.skip('missing crypto');
 
 const assert = require('assert');
-const { hasFIPS } = require('../common/crypto');
+const { hasFIPS, isBoringSSL } = require('../common/crypto');
 const { subtle } = globalThis.crypto;
 const fips3 = hasFIPS(3);
 const rejectsSha1Signing = hasFIPS(3) && !hasFIPS(3, 5);
@@ -227,22 +227,26 @@ async function testSaltLength(keyLength, hash, hLen) {
 
   const signature = await subtle.sign(
     { name: 'RSA-PSS', saltLength: max }, privateKey, data);
-  await assert.rejects(
-    subtle.sign({ name: 'RSA-PSS', saltLength: max + 1 }, privateKey, data), (err) => {
-      assert.strictEqual(err.name, 'OperationError');
-      assert.strictEqual(err.cause?.code, 'ERR_OUT_OF_RANGE');
-      assert.strictEqual(err.cause?.message, `The value of "algorithm.saltLength" is out of range. It must be >= 0 && <= ${max}. Received ${max + 1}`);
-      return true;
-    });
-  await subtle.verify(
-    { name: 'RSA-PSS', saltLength: max }, publicKey, signature, data);
-  await assert.rejects(
-    subtle.verify({ name: 'RSA-PSS', saltLength: max + 1 }, publicKey, signature, data), (err) => {
-      assert.strictEqual(err.name, 'OperationError');
-      assert.strictEqual(err.cause?.code, 'ERR_OUT_OF_RANGE');
-      assert.strictEqual(err.cause?.message, `The value of "algorithm.saltLength" is out of range. It must be >= 0 && <= ${max}. Received ${max + 1}`);
-      return true;
-    });
+  assert.strictEqual(await subtle.verify(
+    { name: 'RSA-PSS', saltLength: max }, publicKey, signature, data), true);
+
+  for (const saltLength of [max + 1, 0x7fffffff]) {
+    await assert.rejects(
+      subtle.sign({ name: 'RSA-PSS', saltLength }, privateKey, data), {
+        name: 'OperationError',
+      });
+    assert.strictEqual(await subtle.verify(
+      { name: 'RSA-PSS', saltLength }, publicKey, signature, data), false);
+  }
+
+  for (const saltLength of [0x80000000, 0xffffffff]) {
+    await assert.rejects(
+      subtle.sign({ name: 'RSA-PSS', saltLength }, privateKey, data), {
+        name: 'OperationError',
+      });
+    assert.strictEqual(await subtle.verify(
+      { name: 'RSA-PSS', saltLength }, publicKey, signature, data), false);
+  }
 }
 
 (async function() {
@@ -265,7 +269,7 @@ async function testSaltLength(keyLength, hash, hLen) {
       ['SHA-256', 32],
       ['SHA-384', 48],
       ['SHA-512', 64],
-      ...(!process.features.openssl_is_boringssl ? [
+      ...(!isBoringSSL ? [
         ['SHA3-256', 32],
         ['SHA3-384', 48],
         ['SHA3-512', 64],

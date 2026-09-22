@@ -8,18 +8,18 @@
   "runtime_limits_preset": "application_node24",
   "upstream": {
     "repo": "nodejs/node",
-    "tag": "v24.20.0",
-    "commit": "71b8b174857e25106d39b61a9e6f30d927da8b01",
-    "tag_object": "8392e555cbdef2145d2cd2a2a7d29204d88d4e15",
+    "tag": "v24.21.0",
+    "commit": "955266bfdd854cd280dffd47548673914484e4c0",
+    "tag_object": "f37d7da830134b5314a14ced553273786a2bb4cd",
     "fixture_subtree": "test",
     "source_kind": "vendored_official_fixture_corpus"
   },
   "fixture_provenance": {
-    "synced_at": "2026-09-01T05:15:00Z",
-    "selection_command": "python3 scripts/runtime/node/sync.py --lane node24 --upstream-tag v24.20.0 --apply",
-    "nimbus_sync_commit": "af5bf1455bb9fddaa8bc05bb22fd8e89f08e859b",
-    "recorded_at": "2026-09-01",
-    "recorded_from": "nodejs/node annotated tag resolved with git ls-remote and fixture subtree fetched from GitHub"
+    "synced_at": "2026-09-22T18:23:15Z",
+    "selection_command": "python3 scripts/runtime/node/sync.py --lane node24 --upstream-tag v24.21.0 --apply",
+    "nimbus_sync_commit": "cd3cef4fd0acceb5e34d933815f1bc43e8eeaec9",
+    "recorded_at": "2026-09-22",
+    "recorded_from": "local nodejs/node checkout via git rev-parse v24.21.0 and git rev-parse v24.21.0^{commit} after git fetch --tags"
   },
   "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
   "manifest_docs": [

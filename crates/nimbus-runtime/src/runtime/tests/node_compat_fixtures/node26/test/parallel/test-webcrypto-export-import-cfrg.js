@@ -8,7 +8,7 @@ if (!common.hasCrypto)
 
 const assert = require('assert');
 const crypto = require('crypto');
-const { hasFIPS } = require('../common/crypto');
+const { hasFIPS, isBoringSSL } = require('../common/crypto');
 const { subtle } = globalThis.crypto;
 const rejectsXCurves = hasFIPS(3, 5);
 
@@ -96,7 +96,7 @@ const testVectors = [
   },
 ];
 
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   testVectors.push(
     {
       name: 'Ed448',
@@ -430,6 +430,41 @@ async function testImportRaw({ name, publicUsages }) {
     }
   }
   await Promise.all(tests);
+})().then(common.mustCall());
+
+// JWK key usage validation precedes `key_ops` validation.
+(async function() {
+  for (const { name, publicUsages, privateUsages } of testVectors) {
+    const jwk = keyData[name].jwk;
+    const publicJwk = {
+      kty: jwk.kty,
+      crv: jwk.crv,
+      x: jwk.x,
+    };
+    const isKeyAgreement = name.startsWith('X');
+    const invalidUsage = isKeyAgreement ?
+      privateUsages[0] : publicUsages[0];
+    const invalidJwk = isKeyAgreement ? publicJwk : jwk;
+
+    await assert.rejects(
+      subtle.importKey(
+        'jwk',
+        { ...invalidJwk, key_ops: [invalidUsage, invalidUsage] },
+        { name },
+        true,
+        [invalidUsage]),
+      { name: 'SyntaxError', message: /Unsupported key usage/ });
+
+    const validUsage = privateUsages[0];
+    await assert.rejects(
+      subtle.importKey(
+        'jwk',
+        { ...jwk, key_ops: [validUsage, validUsage] },
+        { name },
+        true,
+        [validUsage]),
+      { name: 'DataError', message: 'Duplicate key operation' });
+  }
 })().then(common.mustCall());
 
 {

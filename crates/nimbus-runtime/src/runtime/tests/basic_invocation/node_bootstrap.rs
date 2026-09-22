@@ -334,8 +334,8 @@ export {};
     assert_eq!(
         result,
         serde_json::json!({
-            "processVersion": "v26.8.1",
-            "nodeVersion": "26.8.1",
+            "processVersion": "v26.10.0",
+            "nodeVersion": "26.10.0",
             "moduleVersion": "147",
             "releaseName": "node",
             "releaseLts": null,

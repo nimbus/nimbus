@@ -8,14 +8,14 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 - support phase: `Current non-LTS`
 - product default: `no`
 - evidence policy: `Current non-LTS; promote to LTS support only after LTS and lane-local evidence`
-- upstream fixture line: `v26.8.1`
+- upstream fixture line: `v26.10.0`
 - runtime execution target: `Node26`
-- vendored official fixtures: `5940`
-- passed official fixtures: `2090`
-- expected failure / known gap fixtures: `3795`
-- skipped / excluded fixtures: `55`
+- vendored official fixtures: `6201`
+- passed official fixtures: `2093`
+- expected failure / known gap fixtures: `4041`
+- skipped / excluded fixtures: `67`
 - unclassified fixtures: `0`
-- official fixture pass rate: `35.2%`
+- official fixture pass rate: `33.8%`
 - classified coverage: `100.0%`
 
 ## Classification Catalog
@@ -24,8 +24,8 @@ This page is generated from the checked-in Node compatibility evidence snapshots
 
 | Expectation | Count |
 | --- | ---: |
-| Known gap | 3795 |
-| Skipped / excluded | 55 |
+| Known gap | 4041 |
+| Skipped / excluded | 67 |
 
 ## Canary Coverage
 

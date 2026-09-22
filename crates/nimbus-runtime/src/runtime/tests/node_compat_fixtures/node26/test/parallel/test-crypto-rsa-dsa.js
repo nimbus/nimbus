@@ -12,6 +12,7 @@ const fixtures = require('../common/fixtures');
 const {
   hasOpenSSL,
   hasFIPS,
+  isBoringSSL,
 } = require('../common/crypto');
 const fips3 = hasFIPS(3);
 const fips35 = hasFIPS(3, 5);
@@ -26,41 +27,18 @@ const keyPem = fixtures.readKey('rsa_private.pem');
 const rsaKeySize = 2048;
 const rsaPubPem = fixtures.readKey('rsa_public.pem', 'ascii');
 const rsaKeyPem = fixtures.readKey('rsa_private.pem', 'ascii');
-const rsaKeyPemEncryptedLegacy = fixtures.readKey(
+// Fixed ciphertexts keep wrong passwords from occasionally producing valid
+// padding and a decoder error instead of the expected bad decrypt.
+const rsaKeyPemEncrypted = fixtures.readKey(
   'rsa_private_encrypted.pem', 'ascii');
-const rsaKeyPemEncrypted = fips3 ?
-  crypto.createPrivateKey(rsaKeyPem).export({
-    type: 'pkcs8',
-    format: 'pem',
-    cipher: 'aes-256-cbc',
-    passphrase: 'password',
-  }) : rsaKeyPemEncryptedLegacy;
 const dsaPubPem = fixtures.readKey('dsa_public.pem', 'ascii');
 const dsaKeyPem = fixtures.readKey('dsa_private.pem', 'ascii');
-const dsaKeyPemEncryptedLegacy = fixtures.readKey(
+const dsaKeyPemEncrypted = fixtures.readKey(
   'dsa_private_encrypted.pem', 'ascii');
-const dsaKeyPemEncrypted = fips3 ?
-  crypto.createPrivateKey(dsaKeyPem).export({
-    type: 'pkcs8',
-    format: 'pem',
-    cipher: 'aes-256-cbc',
-    passphrase: 'password',
-  }) : dsaKeyPemEncryptedLegacy;
 const rsaPkcs8KeyPem = fixtures.readKey('rsa_private_pkcs8.pem');
 const dsaPkcs8KeyPem = fixtures.readKey('dsa_private_pkcs8.pem');
 
 const ec = new TextEncoder();
-
-if (fips3) {
-  for (const key of [rsaKeyPemEncryptedLegacy, dsaKeyPemEncryptedLegacy]) {
-    assert.throws(() => crypto.createPrivateKey({
-      key,
-      passphrase: 'password',
-    }), {
-      code: 'ERR_OSSL_EVP_UNSUPPORTED',
-    });
-  }
-}
 
 const openssl1DecryptError = {
   message: 'error:06065064:digital envelope routines:EVP_DecryptFinal_ex:' +
@@ -74,7 +52,7 @@ const openssl1DecryptError = {
 const decryptError = fips4 ?
   { code: 'ERR_OSSL_BAD_DECRYPT' } : hasOpenSSL(3) ?
     { message: 'error:1C800064:Provider routines::bad decrypt' } :
-    process.features.openssl_is_boringssl ? {
+    isBoringSSL ? {
       message: 'error:1e000065:Cipher functions:OPENSSL_internal:BAD_DECRYPT',
       code: 'ERR_OSSL_BAD_DECRYPT',
       reason: 'BAD_DECRYPT',
@@ -87,7 +65,7 @@ const decryptPrivateKeyError = fips4 ? {
   code: 'ERR_OSSL_BAD_DECRYPT',
 } : hasOpenSSL(3) ? {
   message: 'error:1C800064:Provider routines::bad decrypt',
-} : process.features.openssl_is_boringssl ? {
+} : isBoringSSL ? {
   message: 'error:1e000065:Cipher functions:OPENSSL_internal:BAD_DECRYPT',
 } : openssl1DecryptError;
 
@@ -373,7 +351,7 @@ function test_rsa(padding, encryptOaepHash, decryptOaepHash) {
 test_rsa('RSA_NO_PADDING');
 test_rsa('RSA_PKCS1_OAEP_PADDING');
 
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   test_rsa('RSA_PKCS1_PADDING');
 } else {
   common.printSkipMessage('Skipping unsupported RSA_PKCS1_PADDING test case');
@@ -548,7 +526,7 @@ assert.throws(() => {
 //
 // Test DSA signing and verification
 //
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   const input = 'I AM THE WALRUS';
 
   // DSA signatures vary across runs so there is no static string to verify
@@ -586,7 +564,7 @@ if (!process.features.openssl_is_boringssl) {
 //
 // Test DSA signing and verification with PKCS#8 private key
 //
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   const input = 'I AM THE WALRUS';
 
   // DSA signatures vary across runs so there is no static string to verify
@@ -618,7 +596,7 @@ const input = 'I AM THE WALRUS';
   }, decryptPrivateKeyError);
 }
 
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   // DSA signatures vary across runs so there is no static string to verify
   // against.
   const dsaDigest = fips3 ? 'SHA256' : 'SHA1';

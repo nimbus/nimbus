@@ -5,7 +5,7 @@ if (!common.hasCrypto)
 
 const assert = require('assert');
 const crypto = require('crypto');
-const { hasOpenSSL, hasFIPS } = require('../common/crypto');
+const { hasOpenSSL, hasFIPS, isBoringSSL } = require('../common/crypto');
 const {
   DH_CHECK_P_NOT_PRIME,
   DH_CHECK_P_NOT_SAFE_PRIME,
@@ -21,7 +21,7 @@ const p = 'FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74' +
           'EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381FFFFFFFFFFFFFFFF';
 crypto.createDiffieHellman(p, 'hex');
 
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   const notPrime = Buffer.from(p, 'hex');
   notPrime[notPrime.length - 1] = 0xfd;
   assert.strictEqual(
@@ -63,7 +63,7 @@ assert.throws(
   });
 
 // Confirm DH_check() results are exposed for optional examination.
-const bad_dh = process.features.openssl_is_boringssl ?
+const bad_dh = isBoringSSL ?
   crypto.createDiffieHellman('abcd', 'hex', 0) :
   crypto.createDiffieHellman('02', 'hex');
 assert.notStrictEqual(bad_dh.verifyError, 0);
@@ -77,7 +77,7 @@ if (hasOpenSSL(3)) {
     () => crypto.createDiffieHellman(Buffer.from(p, 'hex'),
                                      Buffer.from(p, 'hex')),
     { code: 'ERR_OSSL_DH_BAD_GENERATOR' });
-} else if (!process.features.openssl_is_boringssl) {
+} else if (!isBoringSSL) {
   assert.strictEqual(
     crypto.createDiffieHellman(Buffer.from(p, 'hex'),
                                Buffer.from(p, 'hex')).verifyError,
@@ -144,9 +144,15 @@ if (availableCurves.has('prime256v1') && availableCurves.has('secp256k1')) {
     ecdh4.setPrivateKey(ecdh1.getPrivateKey());
     ecdh4.setPublicKey(ecdh1.getPublicKey());
 
+    const ecdh4Secret = ecdh4.computeSecret(ecdh2.getPublicKey());
+    assert.deepStrictEqual(ecdh4.computeSecret(ecdh2.getPublicKey()),
+                           ecdh4Secret);
+
     assert.throws(() => {
       ecdh4.setPublicKey(ecdh3.getPublicKey());
     }, { message: 'Failed to convert Buffer to EC_POINT' });
+    assert.deepStrictEqual(ecdh4.computeSecret(ecdh2.getPublicKey()),
+                           ecdh4Secret);
 
     // Verify that we can use ECDH without having to use newly generated keys.
     const ecdh5 = crypto.createECDH('secp256k1');
@@ -189,6 +195,8 @@ if (availableCurves.has('prime256v1') && availableCurves.has('secp256k1')) {
     assert.strictEqual(ecdh5.computeSecret(peerPubPtComp, 'hex', 'hex'),
                        sharedSecret);
     assert.strictEqual(ecdh5.computeSecret(peerPubPtUnComp, 'hex', 'hex'),
+                       sharedSecret);
+    assert.strictEqual(ecdh5.computeSecret(peerPubPtComp, 'hex', 'hex'),
                        sharedSecret);
 
     // Verify that we still have the same key pair as before the computation.
@@ -259,4 +267,32 @@ if (availableCurves.has('prime256v1') && availableHashes.has('sha256')) {
     'pQhByd5eyj3lgZ7m7jbchtdgyOF8Io/1ng==\n' +
     '-----END EC PRIVATE KEY-----';
   crypto.createSign('SHA256').sign(ecPrivateKey);
+}
+
+if (hasFIPS(3) && availableCurves.has('secp256k1')) {
+  const originalFips = crypto.getFips();
+
+  try {
+    crypto.setFips(0);
+    const local = crypto.createECDH('secp256k1');
+    const peer = crypto.createECDH('secp256k1');
+    local.generateKeys();
+    const peerPublicKey = peer.generateKeys();
+
+    local.computeSecret(peerPublicKey);
+    crypto.setFips(1);
+    assert.throws(() => local.computeSecret(peerPublicKey), {
+      code: 'ERR_CRYPTO_INVALID_KEYPAIR',
+      name: 'RangeError',
+    });
+
+    const installed = crypto.createECDH('secp256k1');
+    installed.setPrivateKey(Buffer.from('cafebabe'.repeat(8), 'hex'));
+    assert.throws(() => installed.computeSecret(peerPublicKey), {
+      code: 'ERR_CRYPTO_INVALID_KEYPAIR',
+      name: 'RangeError',
+    });
+  } finally {
+    crypto.setFips(originalFips);
+  }
 }

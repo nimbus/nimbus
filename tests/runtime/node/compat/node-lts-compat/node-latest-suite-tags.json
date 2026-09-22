@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "registry_kind": "nimbus_node_latest_suite_tags",
-  "as_of": "2026-09-01",
+  "as_of": "2026-09-22",
   "source_urls": [
     "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json",
     "https://nodejs.org/dist/index.json",
@@ -36,26 +36,26 @@
     {
       "lane": "node24",
       "support_phase": "active_lts",
-      "latest_official_tag": "v24.20.0",
-      "latest_official_tag_object": "8392e555cbdef2145d2cd2a2a7d29204d88d4e15",
-      "latest_official_commit": "71b8b174857e25106d39b61a9e6f30d927da8b01",
-      "fixture_corpus_current_tag": "v24.20.0",
-      "fixture_corpus_current_tag_object": "8392e555cbdef2145d2cd2a2a7d29204d88d4e15",
-      "fixture_corpus_current_commit": "71b8b174857e25106d39b61a9e6f30d927da8b01",
+      "latest_official_tag": "v24.21.0",
+      "latest_official_tag_object": "f37d7da830134b5314a14ced553273786a2bb4cd",
+      "latest_official_commit": "955266bfdd854cd280dffd47548673914484e4c0",
+      "fixture_corpus_current_tag": "v24.21.0",
+      "fixture_corpus_current_tag_object": "f37d7da830134b5314a14ced553273786a2bb4cd",
+      "fixture_corpus_current_commit": "955266bfdd854cd280dffd47548673914484e4c0",
       "fixture_sync_required": false,
-      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node24 --upstream-tag v24.20.0 --apply"
+      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node24 --upstream-tag v24.21.0 --apply"
     },
     {
       "lane": "node26",
       "support_phase": "current_non_lts",
-      "latest_official_tag": "v26.8.1",
-      "latest_official_tag_object": "03c764c3c9fc07333d5fa4fc58c56ee946f56b2f",
-      "latest_official_commit": "7be6d3af31a65adea57c94c41e50c2b071ed0b3a",
-      "fixture_corpus_current_tag": "v26.8.1",
-      "fixture_corpus_current_tag_object": "03c764c3c9fc07333d5fa4fc58c56ee946f56b2f",
-      "fixture_corpus_current_commit": "7be6d3af31a65adea57c94c41e50c2b071ed0b3a",
+      "latest_official_tag": "v26.10.0",
+      "latest_official_tag_object": "59da6b44a953cf9b45f2591ae80f569ce1ec9da5",
+      "latest_official_commit": "151845ab90d3926ceb36eedf1eade09619c3adc9",
+      "fixture_corpus_current_tag": "v26.10.0",
+      "fixture_corpus_current_tag_object": "59da6b44a953cf9b45f2591ae80f569ce1ec9da5",
+      "fixture_corpus_current_commit": "151845ab90d3926ceb36eedf1eade09619c3adc9",
       "fixture_sync_required": false,
-      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.8.1 --apply"
+      "intended_sync_command": "python3 scripts/runtime/node/sync.py --lane node26 --upstream-tag v26.10.0 --apply"
     }
   ]
 }

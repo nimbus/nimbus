@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-04T20:12:50.763153+00:00",
+  "generated_at": "2026-09-22T18:54:58.749676+00:00",
   "report_kind": "node_compat_trend_snapshot",
   "baseline_available": true,
   "current_sources": {
@@ -8,8 +8,8 @@
     "dashboard": "target/node-compat/dashboard/dashboard-summary.json"
   },
   "baseline_sources": {
-    "status": "target/node-compat/head-baseline.4ckTly/tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
-    "dashboard": "target/node-compat/head-baseline.4ckTly/tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
+    "status": "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
+    "dashboard": "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json"
   },
   "lane_trends": [
     {
@@ -18,11 +18,11 @@
       "baseline_upstream_tag": "v20.20.2",
       "vendored_test_file_count": 4248,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 919,
+      "documented_manifested_green_count": 938,
       "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.216337,
+      "documented_manifested_green_ratio": 0.22081,
       "documented_manifested_green_ratio_delta": 0.0
     },
     {
@@ -31,37 +31,37 @@
       "baseline_upstream_tag": "v22.23.2",
       "vendored_test_file_count": 4762,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 2362,
+      "documented_manifested_green_count": 2364,
       "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.49601,
+      "documented_manifested_green_ratio": 0.49643,
       "documented_manifested_green_ratio_delta": 0.0
     },
     {
       "lane": "node24",
-      "upstream_tag": "v24.20.0",
-      "baseline_upstream_tag": "v24.20.0",
-      "vendored_test_file_count": 5671,
+      "upstream_tag": "v24.21.0",
+      "baseline_upstream_tag": "v24.21.0",
+      "vendored_test_file_count": 5729,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 2397,
+      "documented_manifested_green_count": 2399,
       "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.422677,
+      "documented_manifested_green_ratio": 0.418747,
       "documented_manifested_green_ratio_delta": 0.0
     },
     {
       "lane": "node26",
-      "upstream_tag": "v26.8.1",
-      "baseline_upstream_tag": "v26.8.1",
-      "vendored_test_file_count": 5940,
+      "upstream_tag": "v26.10.0",
+      "baseline_upstream_tag": "v26.10.0",
+      "vendored_test_file_count": 6201,
       "vendored_test_file_count_delta": 0,
-      "documented_manifested_green_count": 2090,
+      "documented_manifested_green_count": 2093,
       "documented_manifested_green_count_delta": 0,
       "unmanifested_or_unclassified_count": 0,
       "unmanifested_or_unclassified_count_delta": 0,
-      "documented_manifested_green_ratio": 0.351852,
+      "documented_manifested_green_ratio": 0.337526,
       "documented_manifested_green_ratio_delta": 0.0
     }
   ],
@@ -72,14 +72,14 @@
       "delta": 0
     },
     "expectation_catalog_entry_count": {
-      "current": 150,
-      "baseline": 150,
+      "current": 129,
+      "baseline": 129,
       "delta": 0
     },
     "oracle_report_count": {
       "current": 4,
-      "baseline": 0,
-      "delta": 4
+      "baseline": 4,
+      "delta": 0
     },
     "required_canary_gap_count": {
       "current": 0,
@@ -87,8 +87,8 @@
       "delta": 0
     },
     "rust_ignore_count": {
-      "current": 150,
-      "baseline": 150,
+      "current": 129,
+      "baseline": 129,
       "delta": 0
     },
     "slice_report_count": {

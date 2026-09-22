@@ -1,11 +1,11 @@
 # NFRC11 Release-Train Automation
 
 Initial date: 2026-05-28
-Last refreshed: 2026-09-01
+Last refreshed: 2026-09-22
 Authoring agent: Codex
 Initial repository baseline: `e7e8b9d6`
-Refresh repository baseline: `af5bf1455`
-Relevant Node lanes: Node20 `v20.20.2`, Node22 `v22.23.2`, Node24 `v24.20.0`, Node26 `v26.8.1`
+Refresh repository baseline: `cd3cef4fd`
+Relevant Node lanes: Node20 `v20.20.2`, Node22 `v22.23.2`, Node24 `v24.21.0`, Node26 `v26.10.0`
 
 ## Git Status Summary
 
@@ -21,8 +21,8 @@ lifecycle changes before public docs move.
 Future changes to release metadata must update this proof because the verifier
 requires these digest markers:
 
-- tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: 41a895a2ccfac6f974d94fee0a217dada792df9a038134a7f5f3ebb2cf116beb
-- tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: bf47d0f1c5c53d02efdb9e251e7c7f9af19ff91ae474875fe51c385ae7ef6bc8
+- tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: 74d6e560865153183b2b46ffed8396ed4722e75531c12b6bdfd2e190194610dd
+- tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: 243a9686bfc38a26e673286f9f7cad4165171de87645148a24470165783675ee
 
 ## Files Changed
 
@@ -103,6 +103,29 @@ loader slices. It retained observed incompatibilities as failures in the raw
 reports. The release-train gate verifies metadata and evidence integrity. It
 does not claim complete Node compatibility.
 
+## 2026-09-22 Release-Train Refresh
+
+The scheduled live probe reported tag drift for two lanes. The official
+`dist/index.json` listed `v24.21.0` and `v26.10.0`, while the checked-in
+registry still recorded `v24.20.0` and `v26.8.1`. Node20 `v20.20.2` and Node22
+`v22.23.2` had no drift. The refresh resolved each annotated tag to its tag
+object and peeled commit from a local `nodejs/node` checkout after
+`git fetch --tags`. It recorded the official fixture identities, synchronized
+the official fixture subtree for both lanes, and regenerated the classification
+catalogs with existing classifications preserved. New fixtures received the
+default non-green classification. The refresh does not convert known gaps into
+pass claims.
+
+The refreshed evidence contains `20940` official vendored test files,
+`7794` documented manifested green files, `129` explicit Rust
+watchpoints, `79` canary claims, and `101` current canary
+checks. Every official file is either in the measured green subset or has an
+explicit expected-failure, known-gap, or skipped classification.
+
+Oracle runs used official Node binaries that match each lane tag exactly:
+`v20.20.2`, `v22.23.2`, `v24.21.0`, and `v26.10.0`. The representative live
+replay covered the core, process, stream, network, and loader slices.
+
 ## Wide Feedback And Focused Fixes
 
 Initial live probe:
@@ -149,10 +172,14 @@ Node24 `v24.20.0`, and Node26 `v26.8.1`. It reports `79` canary claims, no
 required canary gaps, and no release-train drift. Two fresh canary reports
 contain `101` checks for the current candidate.
 
+The 2026-09-22 refresh reports the same lane roles with Node24 `v24.21.0` and
+Node26 `v26.10.0`. It reports `79` canary claims, `101` canary
+checks, no required canary gaps, and no release-train drift.
+
 ## Verification
 
-- `python3 scripts/runtime/node/release_train.py publish`: pass. It generated
-  `node-release-train.json` and `node-release-train.md`.
+Results from the 2026-09-22 refresh:
+
 - `python3 scripts/runtime/node/release_train.py publish --check-proof`: pass.
   The summary has a proof file, a proof README entry, and all digest markers.
 - `bash scripts/verify-node-release-train.sh`: pass. Four lanes and zero drift
@@ -163,15 +190,33 @@ contain `101` checks for the current candidate.
   tests detected tag, lifecycle, dashboard-role, product-default, and missing
   canary-execution drift.
 - `python3 scripts/runtime/node/release_train.py probe-live`: pass with
-  network approval, 4 lanes matched official release feeds.
-- `make node-compat-canaries PRESET=application`: pass, with current application
-  and host-heavy evidence for Node20, Node22, Node24, and Node26.
-- `make node-compat-canaries PRESET=tooling`: pass for Node22 and Node24.
+  network approval, 4 lanes matched official release feeds. The first run
+  reported OpenSSL drift for Node24 and Node26, because `v24.21.0` and
+  `v26.10.0` ship OpenSSL `3.5.8`. The registry now records `3.5.8` for both
+  lanes.
+- `make node-compat-refresh LANE=node24 TAG=v24.21.0 APPLY=1 FORCE=1` and
+  `make node-compat-refresh LANE=node26 TAG=v26.10.0 APPLY=1 FORCE=1`: pass
+  for every pipeline step.
+- `bash scripts/runtime/node/canaries-run.sh --preset application`: pass,
+  91 canaries passed and 0 failed, with current application and host-heavy
+  evidence for Node20, Node22, Node24, and Node26.
+- `bash scripts/runtime/node/canaries-run.sh --preset tooling`: pass,
+  10 canaries passed and 0 failed for Node22 and Node24.
+- Representative slices with `--capture-live`: pass for the core, process,
+  stream, network, and loader slices.
+- `bash scripts/runtime/node/oracle-run.sh --lane <lane>` with
+  `test/parallel/test-buffer-alloc.js`: pass for all four lanes against the
+  official binaries `v20.20.2`, `v22.23.2`, `v24.21.0`, and `v26.10.0`.
+- `python3 scripts/runtime/node/fixture_provenance.py validate`: pass, 4
+  vendored corpora and 4 strict identity manifests.
+- `bash scripts/runtime/node/validate-claims.sh`: pass, 79 active claim
+  mappings across 16 categories against 37 registered canaries.
 - `bash scripts/verify-node-latest-suite-tags.sh`: pass, 4 lanes, 0 needing
   fixture sync, negative self-tests passed.
 - `bash scripts/verify-node-lts-lanes.sh`: pass, 4 lanes, product default
   `node24`.
-- `npm run docs:validate-refs:strict`: pass, 232 working-tree Markdown files.
+- `make node-compat-baseline-verify`: pass, 1328 recorded gaps across 5 lanes.
+- `make node-compat-classifications CHECK=1`: pass, all four catalogs current.
 - `git diff --check`: pass.
 
 ## Decisions

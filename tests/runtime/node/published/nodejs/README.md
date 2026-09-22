@@ -57,8 +57,8 @@ import nodeFs from "node:fs";
 | --- | --- | --- | --- |
 | Node20 | Legacy-grace selectable target; EOL | `v20.20.2` | [Compatibility](compatibility.md) |
 | Node22 | Supported Maintenance LTS | `v22.23.2` | [Compatibility](compatibility.md) |
-| Node24 | Product default; Active LTS | `v24.20.0` | [Compatibility](compatibility.md) |
-| Node26 | Current/non-LTS compatibility target | `v26.8.1` | [Compatibility](compatibility.md) |
+| Node24 | Product default; Active LTS | `v24.21.0` | [Compatibility](compatibility.md) |
+| Node26 | Current/non-LTS compatibility target | `v26.10.0` | [Compatibility](compatibility.md) |
 
 Product default is a routing default, not an evidence priority. Current lane
 support phase, release metadata, and evidence policy come from
