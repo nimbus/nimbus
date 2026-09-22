@@ -144,15 +144,56 @@ fn preserve_rejected_config(path: &Path, bytes: &[u8], version: u32) -> Option<P
 }
 
 /// Render the trailing "preserved at ..." clause for a rejected-config error,
-/// or an empty string when the backup could not be written.
+/// or an empty string when there is no backup to point at.
+///
+/// A backup is absent for two reasons, and the operator needs the remedy in
+/// both: the reader ran before the machine lock and wrote nothing, or the
+/// best-effort copy failed.
 fn preserved_config_hint(backup: Option<&PathBuf>) -> String {
     match backup {
         Some(path) => format!(
-            " Your previous configuration was preserved at {}.",
+            " Your previous configuration was preserved at {}; it keeps your declared settings to re-apply.",
             path.display()
         ),
         None => String::new(),
     }
+}
+
+/// The rejection for a machine config whose schema version this build does not
+/// support.
+///
+/// Both config readers reject the same fact, so both state it the same way and
+/// both name the remedy. They differ only in whether a copy was preserved:
+/// preserving is the job of the reader that owns the machine lock, and the
+/// reader that runs before it passes `None`. A version mismatch an operator
+/// cannot act on is the same dead end whichever reader found it.
+///
+/// The remedy never names `nimbus machine rm`. Config is declared intent that
+/// exists nowhere else, so a strict loader must not prescribe the command that
+/// destroys it; it describes the outcome and leaves the operator to choose.
+fn unsupported_machine_config_version(
+    path: &Path,
+    version: u32,
+    preserved: Option<&PathBuf>,
+) -> Error {
+    let current = super::CURRENT_MACHINE_CONFIG_VERSION;
+    let hint = preserved_config_hint(preserved);
+    if version > current {
+        // A version above the current one usually means a newer build wrote
+        // it, but the number alone does not prove that: pre-launch the config
+        // schema collapsed its dev-era history to version 1, so a higher
+        // number on disk can equally be a file an older build left behind.
+        // The message offers both remedies instead of asserting a provenance
+        // it cannot verify and sending the operator to upgrade for nothing.
+        return Error::InvalidInput(format!(
+            "machine config at {} records schema version {version}; this build supports version {current}. Upgrade nimbus if this config came from a newer build, or recreate the machine to regenerate the config at the current schema version.{hint}",
+            path.display(),
+        ));
+    }
+    Error::InvalidInput(format!(
+        "machine config at {} uses an unsupported older schema version {version}; this build supports version {current}. Recreate the machine to regenerate the config at the current schema version.{hint}",
+        path.display(),
+    ))
 }
 
 pub(super) fn load_machine_config_if_exists(
@@ -167,24 +208,11 @@ pub(super) fn load_machine_config_if_exists(
         super::CURRENT_MACHINE_CONFIG_VERSION => {
             parse_machine_record::<MachineConfigRecord>(path, &bytes, "machine config").map(Some)
         }
-        newer if newer > super::CURRENT_MACHINE_CONFIG_VERSION => {
-            let hint =
-                preserved_config_hint(preserve_rejected_config(path, &bytes, newer).as_ref());
-            let current = super::CURRENT_MACHINE_CONFIG_VERSION;
-            Err(Error::InvalidInput(format!(
-                "machine config at {} was written by a newer nimbus build (schema version {newer}; this build supports version {current}).{hint} Upgrade nimbus to load it, or recreate the machine to regenerate the config at the current schema version.",
-                path.display(),
-            )))
-        }
-        older => {
-            let hint =
-                preserved_config_hint(preserve_rejected_config(path, &bytes, older).as_ref());
-            let current = super::CURRENT_MACHINE_CONFIG_VERSION;
-            Err(Error::InvalidInput(format!(
-                "machine config at {} uses an unsupported older schema version {older}; this build supports version {current}.{hint} Recreate the machine to regenerate the config at the current schema version; the preserved copy keeps your declared settings to re-apply.",
-                path.display(),
-            )))
-        }
+        mismatch => Err(unsupported_machine_config_version(
+            path,
+            mismatch,
+            preserve_rejected_config(path, &bytes, mismatch).as_ref(),
+        )),
     }
 }
 
@@ -202,11 +230,10 @@ pub(super) fn read_machine_config_snapshot_if_exists(
     };
     let version = probe_machine_record_version(path, &bytes, "machine config")?;
     if version != super::CURRENT_MACHINE_CONFIG_VERSION {
-        return Err(Error::InvalidInput(format!(
-            "machine config at {} uses schema version {version}; expected {}",
-            path.display(),
-            super::CURRENT_MACHINE_CONFIG_VERSION
-        )));
+        // No backup: this reader runs before the machine lock and writes
+        // nothing. The operator still gets the remedy, and the locked loader
+        // preserves the copy when it reads the same file.
+        return Err(unsupported_machine_config_version(path, version, None));
     }
     parse_machine_record(path, &bytes, "machine config").map(Some)
 }

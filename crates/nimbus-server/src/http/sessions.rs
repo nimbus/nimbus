@@ -484,9 +484,9 @@ fn optional_tenant_id(value: Option<&str>) -> Result<Option<TenantId>, AppError>
 pub(super) fn service_manager(
     state: &AppState,
 ) -> Result<Arc<nimbus_services::ServiceManager>, AppError> {
-    state
-        .service_manager()
-        .ok_or_else(|| AppError::not_found("session routes require a server-owned service manager"))
+    state.service_manager().ok_or_else(|| {
+        AppError::route_not_found("session routes require a server-owned service manager")
+    })
 }
 
 pub(super) fn session_not_found(session_id: &str) -> AppError {

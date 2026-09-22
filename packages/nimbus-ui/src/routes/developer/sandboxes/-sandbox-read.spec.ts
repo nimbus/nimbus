@@ -12,21 +12,38 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-// A Response body reads once, so each request gets a fresh 404.
-const notFound = () =>
+// A Response body reads once, so each request gets a fresh 404. The two 404s
+// these pages meet are different facts: the service-control routes are not
+// mounted on this server, or a sandbox id names nothing. The server gives each
+// its own code; the pages branch on the status and show the message.
+const routeNotFound = () =>
   HttpResponse.json(
-    { error: { code: "service.route_not_found", message: "no such route" } },
+    {
+      error: {
+        code: "service.route_not_found",
+        message: "no route matches GET /api/tenants/acme/sandboxes",
+      },
+    },
+    { status: 404 },
+  );
+
+const resourceNotFound = () =>
+  HttpResponse.json(
+    { error: { code: "op.not_found", message: "no sandbox `ghost`" } },
     { status: 404 },
   );
 
 describe("useSandboxList", () => {
-  it("maps a 404 to the unavailable state with the server's message", async () => {
-    server.use(http.get("*/api/tenants/:t/sandboxes", notFound));
+  it("maps an unmounted route to the unavailable state with the server's message", async () => {
+    server.use(http.get("*/api/tenants/:t/sandboxes", routeNotFound));
     const { result } = renderHook(() => useSandboxList("acme", 0, 20));
     await waitFor(() =>
       expect(result.current).toEqual({
         kind: "ok",
-        value: { kind: "unavailable", message: "no such route" },
+        value: {
+          kind: "unavailable",
+          message: "no route matches GET /api/tenants/acme/sandboxes",
+        },
       }),
     );
   });
@@ -78,11 +95,11 @@ describe("useSandboxList", () => {
 });
 
 describe("useSandbox", () => {
-  it("maps a 404 to the missing state and a found sandbox to its resource", async () => {
+  it("maps an absent sandbox to the missing state and a found one to its resource", async () => {
     server.use(
       http.get("*/api/tenants/:t/sandboxes/:id", ({ params }) =>
         params.id === "ghost"
-          ? notFound()
+          ? resourceNotFound()
           : HttpResponse.json(makeSandbox({ id: String(params.id) })),
       ),
     );
@@ -90,7 +107,7 @@ describe("useSandbox", () => {
     await waitFor(() =>
       expect(missing.result.current).toEqual({
         kind: "ok",
-        value: { kind: "missing", message: "no such route" },
+        value: { kind: "missing", message: "no sandbox `ghost`" },
       }),
     );
     const found = renderHook(() => useSandbox("acme", "sb-9", 0, 20));

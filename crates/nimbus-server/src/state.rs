@@ -117,6 +117,12 @@ pub(crate) enum AppError {
     Core(Error),
     Unauthorized(String),
     Forbidden(String),
+    /// This listener serves no endpoint for the request. Owned by the router's
+    /// fallback, by an adapter that declines a path, and by a route family
+    /// that this deployment does not host; never by a handler that ran and
+    /// found nothing.
+    RouteNotFound(String),
+    /// A handler ran and the resource the request named does not exist.
     NotFound(String),
     Structured(Box<StructuredHttpError>),
 }
@@ -148,6 +154,7 @@ impl From<ComputeError> for AppError {
             ComputeError::Core(error) => Self::Core(error),
             ComputeError::Unauthorized(message) => Self::Unauthorized(message),
             ComputeError::Forbidden(message) => Self::Forbidden(message),
+            ComputeError::RouteNotFound(message) => Self::RouteNotFound(message),
             ComputeError::NotFound(message) => Self::NotFound(message),
         }
     }
@@ -171,6 +178,10 @@ impl AppError {
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self::NotFound(message.into())
     }
+
+    pub(crate) fn route_not_found(message: impl Into<String>) -> Self {
+        Self::RouteNotFound(message.into())
+    }
 }
 
 impl std::fmt::Display for AppError {
@@ -180,6 +191,7 @@ impl std::fmt::Display for AppError {
             Self::Core(error) => write!(f, "{error}"),
             Self::Unauthorized(message) => write!(f, "{message}"),
             Self::Forbidden(message) => write!(f, "{message}"),
+            Self::RouteNotFound(message) => write!(f, "{message}"),
             Self::NotFound(message) => write!(f, "{message}"),
         }
     }

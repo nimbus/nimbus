@@ -20,6 +20,33 @@ pub(crate) enum ErrorSeverity {
     Warning,
 }
 
+/// The wire surface that is about to carry an error.
+///
+/// `requestId` correlates an error to the request that caused it. A caller
+/// that supplies its own request id (a WebSocket `op` frame carries one) wins;
+/// a caller that does not — every HTTP request, and every WebSocket frame sent
+/// outside a request — gets a server-minted id instead, and the surface
+/// supplies its label so an id read from a log or a support ticket says where
+/// it came from. The label is therefore a property of the surface, never a
+/// default baked into the error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ErrorSurface {
+    /// The WebSocket protocol: session frames, and the HTTP response that
+    /// rejects an upgrade before a session exists.
+    WebSocket,
+    /// Any other response on the HTTP listener.
+    Http,
+}
+
+impl ErrorSurface {
+    fn next_request_id(self) -> String {
+        next_runtime_server_request_id(match self {
+            Self::WebSocket => "ws-protocol",
+            Self::Http => "http",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ErrorRemediation {
     action: &'static str,
@@ -82,6 +109,7 @@ impl PublicError {
                 "upgrade_server",
                 "Update Nimbus or offer a supported protocol version.",
             )),
+            ErrorSurface::WebSocket,
         )
     }
 
@@ -96,6 +124,7 @@ impl PublicError {
                 "retry",
                 "Reconnect and send client_hello immediately after hello.",
             )),
+            ErrorSurface::WebSocket,
         )
     }
 
@@ -110,6 +139,7 @@ impl PublicError {
                 "fix_request",
                 "Send a valid JSON text frame for the negotiated protocol.",
             )),
+            ErrorSurface::WebSocket,
         )
     }
 
@@ -127,6 +157,7 @@ impl PublicError {
                 "fix_request",
                 "Reply to hello with a client_hello frame first.",
             )),
+            ErrorSurface::WebSocket,
         )
     }
 
@@ -141,6 +172,7 @@ impl PublicError {
                 "upgrade_client",
                 "Use the negotiated protocol version echoed by the server.",
             )),
+            ErrorSurface::WebSocket,
         )
     }
 
@@ -155,10 +187,11 @@ impl PublicError {
                 "fix_request",
                 "Send a JSON client_hello text frame instead of binary data.",
             )),
+            ErrorSurface::WebSocket,
         )
     }
 
-    pub(crate) fn auth_unauthorized(message: impl Into<String>) -> Self {
+    pub(crate) fn auth_unauthorized(message: impl Into<String>, surface: ErrorSurface) -> Self {
         Self::new(
             "auth.unauthorized",
             message.into(),
@@ -169,10 +202,11 @@ impl PublicError {
                 "reauthenticate",
                 "Present a valid authentication token and retry.",
             )),
+            surface,
         )
     }
 
-    pub(crate) fn auth_forbidden(message: impl Into<String>) -> Self {
+    pub(crate) fn auth_forbidden(message: impl Into<String>, surface: ErrorSurface) -> Self {
         Self::new(
             "auth.forbidden",
             message.into(),
@@ -183,10 +217,15 @@ impl PublicError {
                 "contact_operator",
                 "Update access policy or use an allowed principal.",
             )),
+            surface,
         )
     }
 
-    pub(crate) fn route_not_found(message: impl Into<String>) -> Self {
+    /// No route on this listener matches the request. This is a statement
+    /// about the server's routing table, not about anything the request
+    /// asked for; a request that reached a route and found nothing there is
+    /// [`resource_not_found`](Self::resource_not_found).
+    pub(crate) fn route_not_found(message: impl Into<String>, surface: ErrorSurface) -> Self {
         Self::new(
             "service.route_not_found",
             message.into(),
@@ -194,10 +233,44 @@ impl PublicError {
             false,
             Value::Null,
             None,
+            surface,
         )
     }
 
-    pub(crate) fn from_core_error(error: &Error) -> Self {
+    /// A route handled the request and the resource it named does not exist.
+    /// Shares the code `nimbus_core::Error::NotFound` already maps to, so the
+    /// same fact reads the same whichever layer discovered it.
+    pub(crate) fn resource_not_found(message: impl Into<String>, surface: ErrorSurface) -> Self {
+        Self::new(
+            "op.not_found",
+            message.into(),
+            ErrorSeverity::Error,
+            false,
+            Value::Null,
+            None,
+            surface,
+        )
+    }
+
+    pub(crate) fn from_core_error(error: &Error, surface: ErrorSurface) -> Self {
+        // Every arm below reports the same core error on the same surface, so
+        // the surface is bound once here rather than repeated 32 times.
+        let on_surface = |code: &'static str,
+                          message: String,
+                          severity: ErrorSeverity,
+                          retryable: bool,
+                          detail: Value,
+                          remediation: Option<ErrorRemediation>| {
+            Self::new(
+                code,
+                message,
+                severity,
+                retryable,
+                detail,
+                remediation,
+                surface,
+            )
+        };
         if let Some(class) = error.commit_class() {
             return match class {
                 CommitErrorClass::Conflict => {
@@ -210,7 +283,7 @@ impl PublicError {
                     else {
                         unreachable!("commit class and error variant must agree")
                     };
-                    Self::new(
+                    on_surface(
                         "op.conflict",
                         error.to_string(),
                         ErrorSeverity::Error,
@@ -222,7 +295,7 @@ impl PublicError {
                         )),
                     )
                 }
-                CommitErrorClass::Overloaded => Self::new(
+                CommitErrorClass::Overloaded => on_surface(
                     "rate.overloaded",
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -237,7 +310,7 @@ impl PublicError {
                     let Error::CommitterFull { capacity, .. } = error else {
                         unreachable!("commit class and error variant must agree")
                     };
-                    Self::new(
+                    on_surface(
                         "rate.committer_full",
                         error.to_string(),
                         ErrorSeverity::Error,
@@ -252,7 +325,7 @@ impl PublicError {
                         )),
                     )
                 }
-                CommitErrorClass::RejectedBeforeExecution => Self::new(
+                CommitErrorClass::RejectedBeforeExecution => on_surface(
                     "rate.rejected_before_execution",
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -267,7 +340,7 @@ impl PublicError {
                     let Error::RateLimited { retry_after, .. } = error else {
                         unreachable!("commit class and error variant must agree")
                     };
-                    Self::new(
+                    on_surface(
                         "rate.limited",
                         error.to_string(),
                         ErrorSeverity::Error,
@@ -289,7 +362,7 @@ impl PublicError {
                     else {
                         unreachable!("commit class and error variant must agree")
                     };
-                    Self::new(
+                    on_surface(
                         "op.out_of_retention",
                         error.to_string(),
                         ErrorSeverity::Error,
@@ -313,7 +386,7 @@ impl PublicError {
                     else {
                         unreachable!("commit class and error variant must agree")
                     };
-                    Self::new(
+                    on_surface(
                         "op.cap_exceeded",
                         error.to_string(),
                         ErrorSeverity::Error,
@@ -334,7 +407,7 @@ impl PublicError {
         }
 
         match error {
-            Error::Cancelled => Self::new(
+            Error::Cancelled => on_surface(
                 "op.cancelled",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -353,7 +426,7 @@ impl PublicError {
                         "Ensure returned promises settle and background work completes within the configured system timeout.",
                     ),
                 };
-                Self::new(
+                on_surface(
                     code,
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -369,7 +442,7 @@ impl PublicError {
                 function_path,
                 message,
                 stack,
-            } => Self::new(
+            } => on_surface(
                 "function.thrown",
                 message.clone(),
                 ErrorSeverity::Error,
@@ -380,7 +453,7 @@ impl PublicError {
                     "Read the message and the stack, then fix the function or the input it received.",
                 )),
             ),
-            Error::RuntimePromiseStalled => Self::new(
+            Error::RuntimePromiseStalled => on_surface(
                 "runtime.promise_stalled",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -391,7 +464,7 @@ impl PublicError {
                     "Ensure every returned promise has a reachable resolution or rejection path.",
                 )),
             ),
-            Error::TenantNotFound(tenant_id) => Self::new(
+            Error::TenantNotFound(tenant_id) => on_surface(
                 "session.tenant_not_found",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -399,7 +472,7 @@ impl PublicError {
                 json!({ "tenantId": tenant_id.to_string() }),
                 None,
             ),
-            Error::DocumentNotFound(document_id) => Self::new(
+            Error::DocumentNotFound(document_id) => on_surface(
                 "op.document_not_found",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -407,7 +480,7 @@ impl PublicError {
                 json!({ "documentId": document_id.to_string() }),
                 None,
             ),
-            Error::ScheduledJobNotFound(job_id) => Self::new(
+            Error::ScheduledJobNotFound(job_id) => on_surface(
                 "op.scheduled_job_not_found",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -415,7 +488,7 @@ impl PublicError {
                 json!({ "jobId": job_id.to_string() }),
                 None,
             ),
-            Error::AlreadyExists(_) => Self::new(
+            Error::AlreadyExists(_) => on_surface(
                 "op.already_exists",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -423,7 +496,7 @@ impl PublicError {
                 Value::Null,
                 None,
             ),
-            Error::ResourceExhausted(_) => Self::new(
+            Error::ResourceExhausted(_) => on_surface(
                 "rate.resource_exhausted",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -434,7 +507,7 @@ impl PublicError {
                     "Wait for capacity to recover before retrying.",
                 )),
             ),
-            Error::PermissionDenied(_) => Self::new(
+            Error::PermissionDenied(_) => on_surface(
                 "auth.permission_denied",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -442,7 +515,7 @@ impl PublicError {
                 Value::Null,
                 None,
             ),
-            Error::PreconditionFailed(_) => Self::new(
+            Error::PreconditionFailed(_) => on_surface(
                 "op.precondition_failed",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -453,7 +526,7 @@ impl PublicError {
                     "Refresh the resource, then retry with the latest generation or resource version.",
                 )),
             ),
-            Error::MissingIndex { fields } => Self::new(
+            Error::MissingIndex { fields } => on_surface(
                 "op.missing_index",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -464,7 +537,7 @@ impl PublicError {
                     "Create an index covering the required fields, then retry.",
                 )),
             ),
-            Error::InvalidInput(_) => Self::new(
+            Error::InvalidInput(_) => on_surface(
                 "op.invalid_input",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -475,7 +548,7 @@ impl PublicError {
                     "Correct the request payload before retrying.",
                 )),
             ),
-            Error::SchemaValidation(_) => Self::new(
+            Error::SchemaValidation(_) => on_surface(
                 "op.schema_validation",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -486,7 +559,7 @@ impl PublicError {
                     "Update the document to satisfy the active schema.",
                 )),
             ),
-            Error::SchemaNotFound(table) => Self::new(
+            Error::SchemaNotFound(table) => on_surface(
                 "op.schema_not_found",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -495,7 +568,7 @@ impl PublicError {
                 None,
             ),
             Error::Storage { kind, .. } => match kind {
-                StorageErrorKind::Busy => Self::new(
+                StorageErrorKind::Busy => on_surface(
                     "service.storage_busy",
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -506,7 +579,7 @@ impl PublicError {
                         "Wait briefly and retry the request.",
                     )),
                 ),
-                StorageErrorKind::Transient => Self::new(
+                StorageErrorKind::Transient => on_surface(
                     "service.storage_transient",
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -517,7 +590,7 @@ impl PublicError {
                         "Retry the request after the transient storage condition clears.",
                     )),
                 ),
-                StorageErrorKind::Unavailable => Self::new(
+                StorageErrorKind::Unavailable => on_surface(
                     "service.unavailable",
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -528,7 +601,7 @@ impl PublicError {
                         "Retry once the storage backend becomes available.",
                     )),
                 ),
-                StorageErrorKind::Corruption => Self::new(
+                StorageErrorKind::Corruption => on_surface(
                     "service.storage_corruption",
                     error.to_string(),
                     ErrorSeverity::Fatal,
@@ -539,7 +612,7 @@ impl PublicError {
                         "Storage corruption requires operator intervention.",
                     )),
                 ),
-                StorageErrorKind::Io => Self::new(
+                StorageErrorKind::Io => on_surface(
                     "service.storage_io",
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -550,7 +623,7 @@ impl PublicError {
                         "Retry after the storage I/O issue clears.",
                     )),
                 ),
-                StorageErrorKind::Other => Self::new(
+                StorageErrorKind::Other => on_surface(
                     "service.storage_other",
                     error.to_string(),
                     ErrorSeverity::Error,
@@ -559,7 +632,7 @@ impl PublicError {
                     None,
                 ),
             },
-            Error::HistoricalRead { kind, .. } => Self::new(
+            Error::HistoricalRead { kind, .. } => on_surface(
                 "op.historical_read",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -574,7 +647,7 @@ impl PublicError {
                     "Use a supported historical read target and retry within the retained history window.",
                 )),
             ),
-            Error::Serialization(_) => Self::new(
+            Error::Serialization(_) => on_surface(
                 "service.serialization",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -582,8 +655,8 @@ impl PublicError {
                 Value::Null,
                 None,
             ),
-            Error::Internal(_) => Self::internal(error),
-            Error::NotFound(_) => Self::new(
+            Error::Internal(_) => Self::internal(error, surface),
+            Error::NotFound(_) => on_surface(
                 "op.not_found",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -591,7 +664,7 @@ impl PublicError {
                 Value::Null,
                 None,
             ),
-            Error::Transport(_) => Self::new(
+            Error::Transport(_) => on_surface(
                 "service.transport",
                 error.to_string(),
                 ErrorSeverity::Error,
@@ -602,11 +675,11 @@ impl PublicError {
                     "Retry once the transport or connection issue clears.",
                 )),
             ),
-            _ => Self::internal(error),
+            _ => Self::internal(error, surface),
         }
     }
 
-    fn internal(error: &Error) -> Self {
+    fn internal(error: &Error, surface: ErrorSurface) -> Self {
         let public = Self::new(
             "service.internal",
             "An internal server error occurred.",
@@ -617,6 +690,7 @@ impl PublicError {
                 "contact_operator",
                 "Internal server failures require operator investigation.",
             )),
+            surface,
         );
         tracing::error!(
             request_id = %public.request_id,
@@ -638,7 +712,15 @@ impl PublicError {
         retryable: bool,
         request_id: Option<impl Into<String>>,
     ) -> Self {
-        let mut error = Self::new(code, message, severity, retryable, Value::Null, None);
+        let mut error = Self::new(
+            code,
+            message,
+            severity,
+            retryable,
+            Value::Null,
+            None,
+            ErrorSurface::WebSocket,
+        );
         if let Some(request_id) = request_id {
             error.request_id = request_id.into();
         }
@@ -665,6 +747,7 @@ impl PublicError {
         retryable: bool,
         detail: Value,
         remediation: Option<ErrorRemediation>,
+        surface: ErrorSurface,
     ) -> Self {
         let timestamp = OffsetDateTime::now_utc()
             .format(&Rfc3339)
@@ -672,7 +755,7 @@ impl PublicError {
         Self {
             code,
             message: message.into(),
-            request_id: next_runtime_server_request_id("ws-protocol"),
+            request_id: surface.next_request_id(),
             timestamp,
             severity,
             retryable,
@@ -705,18 +788,25 @@ impl StructuredHttpError {
     }
 
     pub(crate) fn from_app_error(error: crate::state::AppError) -> Self {
+        const SURFACE: ErrorSurface = ErrorSurface::Http;
         match error {
             crate::state::AppError::Structured(error) => *error,
             crate::state::AppError::Unauthorized(message) => Self::new(
                 StatusCode::UNAUTHORIZED,
-                PublicError::auth_unauthorized(message),
+                PublicError::auth_unauthorized(message, SURFACE),
             ),
-            crate::state::AppError::Forbidden(message) => {
-                Self::new(StatusCode::FORBIDDEN, PublicError::auth_forbidden(message))
-            }
-            crate::state::AppError::NotFound(message) => {
-                Self::new(StatusCode::NOT_FOUND, PublicError::route_not_found(message))
-            }
+            crate::state::AppError::Forbidden(message) => Self::new(
+                StatusCode::FORBIDDEN,
+                PublicError::auth_forbidden(message, SURFACE),
+            ),
+            crate::state::AppError::RouteNotFound(message) => Self::new(
+                StatusCode::NOT_FOUND,
+                PublicError::route_not_found(message, SURFACE),
+            ),
+            crate::state::AppError::NotFound(message) => Self::new(
+                StatusCode::NOT_FOUND,
+                PublicError::resource_not_found(message, SURFACE),
+            ),
             crate::state::AppError::Core(error) => {
                 let status = if let Some(class) = error.commit_class() {
                     match class {
@@ -781,7 +871,7 @@ impl StructuredHttpError {
                         _ => StatusCode::INTERNAL_SERVER_ERROR,
                     }
                 };
-                Self::new(status, PublicError::from_core_error(&error))
+                Self::new(status, PublicError::from_core_error(&error, SURFACE))
             }
         }
     }
@@ -790,7 +880,7 @@ impl StructuredHttpError {
         let Some(vocabulary) = nimbus_convex::convex_commit_error_vocabulary(&error) else {
             return Self::from_app_error(crate::state::AppError::Core(error));
         };
-        let mut public = PublicError::from_core_error(&error);
+        let mut public = PublicError::from_core_error(&error, ErrorSurface::Http);
         public.code = vocabulary.code;
         let mut detail = match public.detail {
             Value::Object(detail) => detail,
@@ -913,7 +1003,7 @@ mod tests {
 
         // A remediation is optional on the wire, and its absence must drop the
         // key rather than encode a null the SDK would have to special-case.
-        let without = PublicError::route_not_found("no route");
+        let without = PublicError::route_not_found("no route", ErrorSurface::Http);
         let serialized_without =
             serde_json::to_value(&without).expect("public error should serialize");
         assert!(
@@ -940,7 +1030,7 @@ mod tests {
 
         assert_commit_taxonomy_mapping(
             |error| {
-                let public = PublicError::from_core_error(error);
+                let public = PublicError::from_core_error(error, ErrorSurface::Http);
                 (
                     public.code,
                     public.retryable,
@@ -1005,11 +1095,73 @@ mod tests {
         );
     }
 
+    /// A missing route and a missing resource are both 404, and they are not
+    /// the same statement. The router says the path names nothing on this
+    /// listener; a handler that ran says the thing the path named is not
+    /// there. The published taxonomy gives each its own code, so a client can
+    /// tell "you called the wrong server" from "that record is gone".
+    #[test]
+    fn a_missing_route_and_a_missing_resource_carry_different_codes() {
+        let route = StructuredHttpError::from_app_error(crate::state::AppError::route_not_found(
+            "no route matches GET /nope",
+        ));
+        let resource =
+            StructuredHttpError::from_app_error(crate::state::AppError::not_found("no such run"));
+
+        assert_eq!(route.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resource.status(), StatusCode::NOT_FOUND);
+        assert_eq!(route.envelope.error.code, "service.route_not_found");
+        assert_eq!(resource.envelope.error.code, "op.not_found");
+        assert_eq!(
+            resource.envelope.error.code,
+            PublicError::from_core_error(
+                &Error::NotFound("no such run".to_string()),
+                ErrorSurface::Http,
+            )
+            .code,
+            "the same fact must read the same whichever layer discovered it"
+        );
+    }
+
+    /// `requestId` is provenance. The label says which listener minted it, so
+    /// an id copied out of a browser console or a support ticket points at the
+    /// surface that produced it. An HTTP response labelled `ws-protocol` sends
+    /// an operator to the wrong log.
+    #[test]
+    fn a_request_id_is_labelled_by_the_surface_that_minted_it() {
+        let http = StructuredHttpError::from_app_error(crate::state::AppError::route_not_found(
+            "no route matches GET /nope",
+        ));
+        assert!(
+            http.envelope.error.request_id.starts_with("http-"),
+            "an HTTP error must not borrow the WebSocket's label: {}",
+            http.envelope.error.request_id
+        );
+
+        let websocket = PublicError::protocol_no_overlap(vec!["nimbus.v1".to_string()]);
+        assert!(
+            websocket.request_id.starts_with("ws-protocol-"),
+            "a WebSocket protocol error keeps its own label: {}",
+            websocket.request_id
+        );
+
+        // Every surface draws from one counter, so two errors never share an
+        // id however they were raised.
+        let second = StructuredHttpError::from_app_error(crate::state::AppError::route_not_found(
+            "no route matches GET /nope",
+        ));
+        assert_ne!(
+            http.envelope.error.request_id,
+            second.envelope.error.request_id
+        );
+    }
+
     #[test]
     fn internal_errors_are_redacted_and_correlated() {
-        let public = PublicError::from_core_error(&Error::Internal(
-            "sensitive-internal-diagnostic-marker".to_string(),
-        ));
+        let public = PublicError::from_core_error(
+            &Error::Internal("sensitive-internal-diagnostic-marker".to_string()),
+            ErrorSurface::Http,
+        );
 
         assert_eq!(public.code, "service.internal");
         assert_eq!(public.message, "An internal server error occurred.");

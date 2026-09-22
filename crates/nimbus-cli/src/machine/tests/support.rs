@@ -129,5 +129,25 @@ pub(super) fn run_machine_command_for_test(
                     .unwrap_or(&layout.config_root)
                     .join("engine"),
             ),
+            Some(&isolated_local_server_paths(layout)),
         ))
+}
+
+/// Local-server paths inside the layout's own temp root.
+///
+/// Nothing writes a discovery file there, so lifecycle commands stay local
+/// and a live `nimbus dev` on the developer's machine cannot answer them.
+pub(super) fn isolated_local_server_paths(
+    layout: &MachineRootLayout,
+) -> nimbus_operator::LocalServerPaths {
+    let root = layout
+        .config_root
+        .parent()
+        .unwrap_or(&layout.config_root)
+        .join("local-server");
+    nimbus_operator::LocalServerPaths {
+        auth_token_path: root.join("auth").join("token"),
+        server_discovery_path: root.join("run").join("server.json"),
+        audit_log_path: root.join("logs").join("access.jsonl"),
+    }
 }

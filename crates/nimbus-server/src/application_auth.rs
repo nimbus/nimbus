@@ -70,7 +70,9 @@ pub(crate) fn grpc_status_from_app_error(error: AppError) -> Status {
     match error {
         AppError::Unauthorized(message) => Status::unauthenticated(message),
         AppError::Forbidden(message) => Status::permission_denied(message),
-        AppError::NotFound(message) => Status::not_found(message),
+        AppError::RouteNotFound(message) | AppError::NotFound(message) => {
+            Status::not_found(message)
+        }
         AppError::Core(error) => Status::internal(error.to_string()),
         AppError::Structured(error) => {
             let status = error.status();

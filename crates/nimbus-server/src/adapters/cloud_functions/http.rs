@@ -17,6 +17,7 @@ use nimbus_cloud_functions::build_http_request_args;
 use tenant::resolve_cloud_functions_http_tenant;
 
 use super::{CloudFunctionsHttpExposure, CloudFunctionsRegistry, CloudFunctionsTargetBinding};
+use crate::adapters::http_mount::no_route;
 use crate::state::{AppError, AppState};
 
 pub(crate) async fn http_handler(
@@ -27,17 +28,29 @@ pub(crate) async fn http_handler(
     query: AxumQuery<HashMap<String, String>>,
     body: Bytes,
 ) -> std::result::Result<Response, AppError> {
-    let deployment = state.current_deployment();
-    let Some(registry) = deployment.cloud_functions_registry() else {
-        return Err(AppError::not_found(
-            "cloud functions http handler requires an active Cloud Functions registry",
-        ));
-    };
     let request_path = original_uri.0.path().to_string();
+    let deployment = state.current_deployment();
+    // This handler is the router's fallback, so most requests that reach it
+    // are simply unrouted. Declining one is `no_route` and nothing more: a
+    // client cannot tell a missing Cloud Functions target from a missing
+    // route, and telling it which subsystem looked last would describe the
+    // deployment rather than the request. The reason an operator does need
+    // — whether a registry was even loaded — goes to the log.
+    let Some(registry) = deployment.cloud_functions_registry() else {
+        tracing::debug!(
+            method = %method,
+            path = %request_path,
+            "cloud functions fallback declined: deployment has no active registry"
+        );
+        return Err(no_route(&method, &request_path));
+    };
     let Some(target) = registry.resolve_https_target(&request_path) else {
-        return Err(AppError::not_found(
-            "cloud functions http handler not found",
-        ));
+        tracing::debug!(
+            method = %method,
+            path = %request_path,
+            "cloud functions fallback declined: no https target matches"
+        );
+        return Err(no_route(&method, &request_path));
     };
     let entrypoint = target.entrypoint.clone();
     let tenant_binding = resolve_cloud_functions_http_tenant(&state, deployment.as_ref())?;
@@ -505,6 +518,73 @@ export {};
                 .await
                 .expect("error body should decode")
                 .contains("trusted deployment tenant binding")
+        );
+    }
+
+    /// The Cloud Functions handler is the router's fallback, so an unrouted
+    /// path reaches it whatever the request was about. It must answer the
+    /// question the client asked — "is there a route here?" — and not report
+    /// the state of the Cloud Functions deployment, which the client did not
+    /// ask about and cannot act on.
+    #[tokio::test]
+    async fn cloud_functions_http_fallback_answers_an_unrouted_path_as_a_missing_route() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
+        service
+            .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
+            .expect("tenant should create");
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(
+            app_dir.path(),
+            &[CloudFunctionsTargetDefinition {
+                name: "helloWorld".to_owned(),
+                entrypoint: "registry.helloWorld".to_owned(),
+                authoring_surface: CloudFunctionsAuthoringSurface::FunctionsFramework,
+                signature_type: CloudFunctionsSignatureType::Http,
+                binding: CloudFunctionsTargetBinding::Https {
+                    exposure: CloudFunctionsHttpExposure::Http,
+                    path: "/hello".to_owned(),
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
+                },
+            }],
+            r#"
+globalThis.__nimbusInvoke = async function () {
+  return { status: 200, body_kind: "text", body: "must not run" };
+};
+
+export {};
+"#,
+        );
+        let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
+            .expect("cloud functions registry should load");
+        let server = ServerFixture::start(
+            crate::router::RouterBuildConfig::core(service)
+                .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
+                .build(),
+        )
+        .await;
+
+        let response = server
+            .client()
+            .get(server.http_url("/favicon.ico"))
+            .send()
+            .await
+            .expect("request should send");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body: Value = response.json().await.expect("error body should decode");
+        assert_eq!(body["error"]["code"], "service.route_not_found");
+        assert_eq!(
+            body["error"]["message"], "no route matches GET /favicon.ico",
+            "an unrouted path must not be described in Cloud Functions vocabulary"
+        );
+        let request_id = body["error"]["requestId"]
+            .as_str()
+            .expect("an error carries a request id");
+        assert!(
+            request_id.starts_with("http-"),
+            "an HTTP error must be labelled for the HTTP listener: {request_id}"
         );
     }
 

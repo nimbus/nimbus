@@ -74,7 +74,9 @@ fn boot_compute_error(error: ComputeError) -> Error {
         ComputeError::Unauthorized(message) | ComputeError::Forbidden(message) => {
             Error::PermissionDenied(message)
         }
-        ComputeError::NotFound(message) => Error::NotFound(message),
+        ComputeError::RouteNotFound(message) | ComputeError::NotFound(message) => {
+            Error::NotFound(message)
+        }
     }
 }
 
