@@ -14,35 +14,40 @@ use super::handlers::emit_machine_stdout;
 use super::record::{MachineRootLayout, MachineVolume};
 use super::render::{MachineCommandResult, render_machine_action_view};
 
+/// The discovery paths a machine command may consult, or `None` when no
+/// running server can answer it.
+///
+/// Only a lifecycle command is ever handed to a server, and only for such a
+/// command is it right to ask the platform where a server would be. `machine
+/// guest-config apply` runs inside the guest with no `HOME`, where resolution
+/// fails on a question that command never asks.
+pub(super) fn lifecycle_discovery_paths(
+    command: &MachineSubcommand,
+) -> Result<Option<LocalServerPaths>, Error> {
+    if !is_lifecycle_command(command) {
+        return Ok(None);
+    }
+    LocalServerPaths::resolve_for_current_platform()
+        .map(Some)
+        .map_err(|error| Error::Internal(format!("failed to resolve local server paths: {error}")))
+}
+
+/// Hand a lifecycle command to the local server that `paths` describes, and
+/// report whether it answered.
+///
+/// The discovery paths arrive from the caller rather than from the platform,
+/// so the set of servers this can reach is whatever the composition root
+/// chose. The CLI passes the platform's paths; a test passes paths inside its
+/// own temp root and therefore reaches no server at all.
 pub(super) async fn try_run_lifecycle_command_via_live_server(
     command: &MachineSubcommand,
     roots: &MachineRootLayout,
-) -> Result<bool, Error> {
-    if !is_lifecycle_command(command) {
-        return Ok(false);
-    }
-
-    let paths = LocalServerPaths::resolve_for_current_platform().map_err(|error| {
-        Error::Internal(format!("failed to resolve local server paths: {error}"))
-    })?;
-    try_run_lifecycle_command_via_live_server_with_paths(
-        command,
-        roots,
-        &paths,
-        reqwest::Client::new(),
-    )
-    .await
-}
-
-async fn try_run_lifecycle_command_via_live_server_with_paths(
-    command: &MachineSubcommand,
-    roots: &MachineRootLayout,
-    paths: &LocalServerPaths,
+    paths: Option<&LocalServerPaths>,
     http_client: reqwest::Client,
 ) -> Result<bool, Error> {
-    if !is_lifecycle_command(command) {
+    let Some(paths) = paths.filter(|_| is_lifecycle_command(command)) else {
         return Ok(false);
-    }
+    };
     let Some(client) = LocalServerHttpClient::discover(paths, http_client)? else {
         return Ok(false);
     };
@@ -448,10 +453,10 @@ mod tests {
                             name: Some("team-a".to_owned()),
                             ..MachineStartCommand::default()
                         });
-                        let handled = try_run_lifecycle_command_via_live_server_with_paths(
+                        let handled = try_run_lifecycle_command_via_live_server(
                             &command,
                             &roots,
-                            &local_paths,
+                            Some(&local_paths),
                             reqwest::Client::new(),
                         )
                         .await
@@ -482,10 +487,10 @@ mod tests {
             name: Some("team-a".to_owned()),
         });
 
-        let handled = try_run_lifecycle_command_via_live_server_with_paths(
+        let handled = try_run_lifecycle_command_via_live_server(
             &command,
             &roots,
-            &local_paths,
+            Some(&local_paths),
             reqwest::Client::new(),
         )
         .await
@@ -494,25 +499,48 @@ mod tests {
         assert!(!handled);
     }
 
-    #[tokio::test]
+    /// `machine guest-config apply` runs inside the guest, where `HOME` is
+    /// unset and no local server exists. Asking the platform for discovery
+    /// paths there fails, so a command that is never handed to a server must
+    /// not ask.
+    #[test]
     #[serial_test::serial]
-    async fn guest_config_apply_does_not_resolve_home_for_live_server_discovery() {
+    fn guest_config_apply_does_not_resolve_home_for_live_server_discovery() {
         let _home = EnvVarGuard::unset("HOME");
-        let temp = tempdir().expect("tempdir should build");
-        let roots = MachineRootLayout::test_sibling_roots(
-            temp.path().join("machine-config"),
-            temp.path().join("machine-state"),
-            temp.path().join("run"),
-        );
         let command = MachineSubcommand::GuestConfig(MachineGuestConfigCommand {
             command: MachineGuestConfigSubcommand::Apply(MachineGuestConfigApplyCommand {
                 config_dir: PathBuf::from("/run/nimbus-machine-config"),
             }),
         });
 
-        let handled = try_run_lifecycle_command_via_live_server(&command, &roots)
-            .await
+        let paths = lifecycle_discovery_paths(&command)
             .expect("guest-config apply should skip HOME-dependent live server discovery");
+
+        assert!(paths.is_none());
+    }
+
+    /// A command with nowhere to look never reaches a server, whatever a
+    /// developer happens to be running.
+    #[tokio::test]
+    async fn a_command_without_discovery_paths_is_never_handed_to_a_server() {
+        let temp = tempdir().expect("tempdir should build");
+        let roots = MachineRootLayout::test_sibling_roots(
+            temp.path().join("machine-config"),
+            temp.path().join("machine-state"),
+            temp.path().join("run"),
+        );
+        let command = MachineSubcommand::Stop(MachineStopCommand {
+            name: Some("team-a".to_owned()),
+        });
+
+        let handled = try_run_lifecycle_command_via_live_server(
+            &command,
+            &roots,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .expect("an unaddressed command should not fail");
 
         assert!(!handled);
     }

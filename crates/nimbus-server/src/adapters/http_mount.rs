@@ -8,15 +8,39 @@
 //! chain in `router::RouterBuildConfig::build`. Contrast with
 //! [`super::wire::WireProtocolAdapter`], which registers sibling
 //! listeners on their own ports rather than routes on this shared router.
+//!
+//! The chain always ends at [`route_not_found`]. "No route matches this
+//! path" is the router's own answer, so it reads the same on every build
+//! whatever set of adapters happens to be mounted, and an adapter that
+//! claims the fallback slot declines a path through [`no_route`] rather than
+//! describing the request in its own vocabulary.
 
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::OriginalUri;
+use axum::http::Method;
 use axum::routing::any;
 
 use crate::adapters::cloud_functions;
 use crate::adapters::cloudflare::{self, CloudflareConfig};
-use crate::state::AppState;
+use crate::state::{AppError, AppState};
+
+/// The one answer to a request that matched no route on this listener.
+///
+/// A fallback adapter that inspects a path and does not own it returns this
+/// too: from the client's side the two are the same fact, and which internal
+/// surface looked last is server detail.
+pub(crate) fn no_route(method: &Method, path: &str) -> AppError {
+    AppError::route_not_found(format!("no route matches {method} {path}"))
+}
+
+/// Terminates the fallback chain. Installed by [`mount_adapters`] whenever no
+/// enabled adapter claimed the slot, so an unknown path is answered in the
+/// server's error envelope on every build.
+async fn route_not_found(method: Method, OriginalUri(uri): OriginalUri) -> AppError {
+    no_route(&method, uri.path())
+}
 
 /// One HTTP-mounted protocol surface, registered into the router build in a
 /// fixed order.
@@ -32,7 +56,10 @@ pub(crate) trait HttpProtocolAdapter {
     /// Whether this adapter installs a router-wide fallback instead of
     /// merging routes. [`mount_adapters`] asserts at most one enabled
     /// adapter in a registration list reports `true` here — a second
-    /// fallback would silently replace the first with no signal.
+    /// fallback would silently replace the first with no signal — and skips
+    /// its own [`route_not_found`] terminator when one claims the slot. An
+    /// adapter that claims it therefore owns the end of the chain, and must
+    /// answer a path it does not handle with [`no_route`].
     fn is_fallback(&self) -> bool {
         false
     }
@@ -44,7 +71,8 @@ pub(crate) trait HttpProtocolAdapter {
 }
 
 /// Merges every enabled adapter's routes onto `router` in registration
-/// order, asserting at most one enabled adapter installs a fallback.
+/// order, asserting at most one enabled adapter installs a fallback, and
+/// terminating the chain with [`route_not_found`] when none did.
 pub(crate) fn mount_adapters(
     mut router: Router<Arc<AppState>>,
     adapters: Vec<Box<dyn HttpProtocolAdapter>>,
@@ -58,12 +86,18 @@ pub(crate) fn mount_adapters(
         fallback_adapters.len() <= 1,
         "at most one enabled HTTP adapter may install a router fallback, got {fallback_adapters:?}"
     );
+    let mut fallback_claimed = false;
     for adapter in adapters {
         if adapter.enabled() {
+            fallback_claimed |= adapter.is_fallback();
             router = adapter.mount(router);
         }
     }
-    router
+    if fallback_claimed {
+        router
+    } else {
+        router.fallback(route_not_found)
+    }
 }
 
 /// Convex is mounted unconditionally: its routes exist on every build
@@ -142,6 +176,10 @@ impl HttpProtocolAdapter for CloudflareHttpAdapter {
     }
 }
 
+/// Claims the fallback slot so a deployed Cloud Function can answer a path
+/// that is not in the static routing table. It is therefore also the end of
+/// the chain: a path it does not resolve to a target is a path no route
+/// matches, and it says so with [`no_route`].
 pub(crate) struct CloudFunctionsHttpAdapter {
     enabled: bool,
 }
@@ -294,6 +332,62 @@ mod tests {
             status,
             StatusCode::NOT_FOUND,
             "a disabled adapter must not have its route mounted, so its path 404s"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unmatched_path_answers_the_route_not_found_envelope_without_a_fallback_adapter() {
+        let (state, _fixture) = test_state();
+        let router = mount_adapters(
+            Router::new(),
+            vec![Box::new(StubAdapter {
+                name: "/mounted",
+                enabled: true,
+                is_fallback: false,
+            })],
+        )
+        .with_state(state);
+
+        let (status, body) = get(&router, "/nothing-here").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let envelope: serde_json::Value = serde_json::from_slice(&body)
+            .expect("the terminator must answer in the error envelope");
+        assert_eq!(
+            envelope["error"]["code"], "service.route_not_found",
+            "a build with no fallback adapter must still name the routing table as the reason"
+        );
+        assert_eq!(
+            envelope["error"]["message"],
+            "no route matches GET /nothing-here"
+        );
+    }
+
+    /// The Cloud Functions adapter owns the fallback slot on a normal build.
+    /// A deployment with no Cloud Functions must still answer an unknown path
+    /// exactly as the terminator would: the client asked about a route, and
+    /// which internal surface looked last is not part of the answer.
+    #[tokio::test]
+    async fn the_cloud_functions_fallback_declines_an_unrouted_path_as_the_terminator_would() {
+        let (state, _fixture) = test_state();
+        let with_adapter = mount_adapters(
+            Router::new(),
+            vec![Box::new(CloudFunctionsHttpAdapter::new(true))],
+        )
+        .with_state(state.clone());
+        let without_adapter = mount_adapters(Router::new(), Vec::new()).with_state(state);
+
+        let (declined_status, declined_body) = get(&with_adapter, "/nothing-here").await;
+        let (terminator_status, terminator_body) = get(&without_adapter, "/nothing-here").await;
+
+        assert_eq!(declined_status, terminator_status);
+        let declined: serde_json::Value = serde_json::from_slice(&declined_body).expect("envelope");
+        let terminator: serde_json::Value =
+            serde_json::from_slice(&terminator_body).expect("envelope");
+        assert_eq!(declined["error"]["code"], terminator["error"]["code"]);
+        assert_eq!(declined["error"]["message"], terminator["error"]["message"]);
+        assert_eq!(
+            declined["error"]["message"], "no route matches GET /nothing-here",
+            "declining must not describe Cloud Functions or the deployment's registry"
         );
     }
 

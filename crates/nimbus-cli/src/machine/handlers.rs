@@ -70,7 +70,9 @@ pub(crate) async fn run_machine_command(
     persistence_config: Option<&EnginePersistenceConfig>,
 ) -> Result<(), Error> {
     let roots = resolve_roots_for_command(&command)?;
-    run_machine_command_with_layout(command, &roots, persistence_config).await
+    let local_server = super::local_server::lifecycle_discovery_paths(&command.command)?;
+    run_machine_command_with_layout(command, &roots, persistence_config, local_server.as_ref())
+        .await
 }
 
 pub(crate) fn machine_command_requires_canonical_engine_authority(
@@ -184,12 +186,28 @@ pub(crate) fn ensure_default_machine_api_client_started(
     Ok(client)
 }
 
+/// Run one machine command against `roots`.
+///
+/// `local_server` names the discovery files this call may consult. It is a
+/// parameter because which servers a command can be handed to is a decision
+/// of the composition root, not an ambient property of the host: `nimbus
+/// machine` passes the platform's paths, and a test passes paths inside its
+/// own temp root so a `nimbus dev` on the developer's machine cannot answer a
+/// command the test meant to run locally.
 pub(super) async fn run_machine_command_with_layout(
     command: MachineCommand,
     roots: &MachineRootLayout,
     persistence_config: Option<&EnginePersistenceConfig>,
+    local_server: Option<&nimbus_operator::LocalServerPaths>,
 ) -> Result<(), Error> {
-    if try_run_lifecycle_command_via_live_server(&command.command, roots).await? {
+    if try_run_lifecycle_command_via_live_server(
+        &command.command,
+        roots,
+        local_server,
+        reqwest::Client::new(),
+    )
+    .await?
+    {
         return Ok(());
     }
     if command_requires_canonical_engine_authority(&command.command) && persistence_config.is_none()
@@ -214,14 +232,28 @@ pub(super) async fn run_machine_command_with_layout(
     }
 }
 
+/// The test entry point for a machine command.
+///
+/// It differs from `run_machine_command_with_layout` in the network authority
+/// it composes: a test opens port leases under its own state root instead of
+/// claiming the process-wide default, so machine tests can run beside one
+/// another. The discovery paths are injected the same way in both.
 #[cfg(test)]
 pub(super) async fn run_machine_command_with_layout_for_test(
     command: MachineCommand,
     roots: &MachineRootLayout,
     network_state_root: &std::path::Path,
     persistence_config: &EnginePersistenceConfig,
+    local_server: Option<&nimbus_operator::LocalServerPaths>,
 ) -> Result<(), Error> {
-    if try_run_lifecycle_command_via_live_server(&command.command, roots).await? {
+    if try_run_lifecycle_command_via_live_server(
+        &command.command,
+        roots,
+        local_server,
+        reqwest::Client::new(),
+    )
+    .await?
+    {
         return Ok(());
     }
 

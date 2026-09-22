@@ -763,7 +763,7 @@ pub fn ensure_service_manager_available(compute: &ComputeState) -> Result<(), Co
 
 fn service_manager(compute: &ComputeState) -> Result<Arc<ServiceManager>, ComputeError> {
     compute.service_manager().ok_or_else(|| {
-        ComputeError::not_found(
+        ComputeError::route_not_found(
             "service lifecycle endpoints require a server-owned service manager",
         )
     })

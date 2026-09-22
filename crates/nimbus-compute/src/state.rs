@@ -670,6 +670,13 @@ pub enum ComputeError {
     Core(nimbus_core::Error),
     Unauthorized(String),
     Forbidden(String),
+    /// The server hosts no endpoint for this request, because the capability
+    /// the route family needs is not composed here. The transport renders it
+    /// as a missing endpoint, not as a missing resource: a caller can act on
+    /// "this server does not serve that" and cannot act on which internal
+    /// component was absent.
+    RouteNotFound(String),
+    /// A request reached its route and the resource it named does not exist.
     NotFound(String),
 }
 
@@ -691,6 +698,10 @@ impl ComputeError {
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::NotFound(message.into())
     }
+
+    pub fn route_not_found(message: impl Into<String>) -> Self {
+        Self::RouteNotFound(message.into())
+    }
 }
 
 impl std::fmt::Display for ComputeError {
@@ -699,7 +710,7 @@ impl std::fmt::Display for ComputeError {
             Self::Core(error) => write!(f, "{error}"),
             Self::Unauthorized(message) => write!(f, "{message}"),
             Self::Forbidden(message) => write!(f, "{message}"),
-            Self::NotFound(message) => write!(f, "{message}"),
+            Self::RouteNotFound(message) | Self::NotFound(message) => write!(f, "{message}"),
         }
     }
 }

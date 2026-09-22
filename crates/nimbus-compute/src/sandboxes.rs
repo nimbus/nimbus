@@ -312,7 +312,7 @@ impl SandboxResourceResponse {
 
 fn service_manager(compute: &ComputeState) -> Result<Arc<ServiceManager>, ComputeError> {
     compute.service_manager().ok_or_else(|| {
-        ComputeError::not_found("sandbox routes require a server-owned service manager")
+        ComputeError::route_not_found("sandbox routes require a server-owned service manager")
     })
 }
 

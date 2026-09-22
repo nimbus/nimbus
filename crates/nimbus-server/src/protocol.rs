@@ -11,7 +11,7 @@ use nimbus_runtime::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::error_envelope::{ErrorSeverity, PublicError};
+use crate::error_envelope::{ErrorSeverity, ErrorSurface, PublicError};
 use crate::ws::NegotiatedWebSocketProtocol;
 
 #[derive(Debug, Deserialize)]
@@ -240,7 +240,7 @@ pub(crate) enum ServerMessage {
 impl ServerMessage {
     pub(crate) fn auth_error(message: impl Into<String>) -> Self {
         Self::AuthError {
-            error: PublicError::auth_unauthorized(message),
+            error: PublicError::auth_unauthorized(message, ErrorSurface::WebSocket),
         }
     }
 
@@ -268,7 +268,8 @@ impl ServerMessage {
         let request_id = request_id.into();
         Self::Error {
             request_id: Some(request_id.clone()),
-            error: PublicError::from_core_error(error).with_request_id(request_id),
+            error: PublicError::from_core_error(error, ErrorSurface::WebSocket)
+                .with_request_id(request_id),
         }
     }
 

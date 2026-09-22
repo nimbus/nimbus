@@ -79,6 +79,7 @@ fn production_machine_stop_fallback_never_invents_engine_persistence() {
             },
             &layout,
             None,
+            Some(&isolated_local_server_paths(&layout)),
         ))
         .expect_err("a direct fallback without the canonical server Engine must fail closed");
 
@@ -656,16 +657,19 @@ fn load_machine_config_rejects_newer_schema_version_preserving_a_backup() {
 
     let rendered = error.to_string();
     assert!(
-        rendered.contains("newer nimbus build"),
-        "unexpected error: {rendered}"
-    );
-    assert!(
         rendered.contains(&(CURRENT_MACHINE_CONFIG_VERSION + 1).to_string()),
-        "should name the newer schema version: {rendered}"
+        "should name the recorded schema version: {rendered}"
+    );
+    // A higher number on disk does not prove a newer build wrote it: the
+    // pre-launch schema collapse leaves retired dev-era versions above the
+    // current one. The message offers the upgrade without asserting it.
+    assert!(
+        rendered.contains("Upgrade nimbus if this config came from a newer build"),
+        "should offer the non-destructive upgrade path conditionally: {rendered}"
     );
     assert!(
-        rendered.contains("Upgrade nimbus"),
-        "should offer the non-destructive upgrade path: {rendered}"
+        rendered.contains("recreate the machine"),
+        "should also offer the remedy that works for a retired dev-era version: {rendered}"
     );
     assert!(
         !rendered.contains("nimbus machine rm"),
@@ -690,6 +694,72 @@ fn load_machine_config_rejects_newer_schema_version_preserving_a_backup() {
     assert_eq!(
         preserved, original,
         "backup must be a byte-for-byte copy of the rejected config"
+    );
+}
+
+/// Two readers reject a stale machine config, and an operator meets whichever
+/// one their command happened to take. The snapshot reader runs before the
+/// machine lock, so it writes no backup -- but a version number with no remedy
+/// is a dead end, so it must still say what to do.
+#[test]
+fn both_config_readers_tell_an_operator_how_to_recover_from_a_stale_schema() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let paths = layout.paths(DEFAULT_MACHINE_NAME);
+    fs::create_dir_all(&paths.config_dir).expect("config dir should exist");
+    let stale = CURRENT_MACHINE_CONFIG_VERSION + 2;
+    fs::write(
+        &paths.config_path,
+        serde_json::to_vec(&serde_json::json!({ "version": stale }))
+            .expect("stale config should serialize"),
+    )
+    .expect("stale config should write");
+
+    let snapshot = read_machine_config_snapshot_if_exists(&paths.config_path)
+        .expect_err("a stale schema version must be rejected")
+        .to_string();
+
+    assert!(
+        snapshot.contains(&format!("schema version {stale}")),
+        "the operator needs the version they have: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("Upgrade nimbus") && snapshot.contains("recreate the machine"),
+        "the operator needs a remedy, not just a number: {snapshot}"
+    );
+    assert!(
+        !snapshot.contains("preserved"),
+        "this reader writes nothing, so it must not claim a preserved copy: {snapshot}"
+    );
+
+    let file_name = paths
+        .config_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("config path should have a file name");
+    assert!(
+        !paths
+            .config_path
+            .with_file_name(format!("{file_name}.v{stale}.bak"))
+            .exists(),
+        "a read taken before the machine lock must leave no file behind"
+    );
+
+    // The locked loader states the same fact and adds the copy it wrote.
+    let locked = load_machine_config_if_exists(&paths.config_path)
+        .expect_err("a stale schema version must be rejected")
+        .to_string();
+    assert!(
+        locked.contains("Upgrade nimbus") && locked.contains("recreate the machine"),
+        "both readers must name the same remedies: {locked}"
+    );
+    assert!(
+        locked.contains("preserved"),
+        "the locked loader keeps the operator's declared settings: {locked}"
     );
 }
 

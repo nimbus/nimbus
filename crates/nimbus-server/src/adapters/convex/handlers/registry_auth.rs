@@ -78,7 +78,7 @@ async fn resolve_registry_and_auth(
     if nimbus_system::is_system_tenant_id(tenant_id) {
         let registry = state
             .system_convex_registry()
-            .ok_or_else(|| AppError::not_found(expectation))?;
+            .ok_or_else(|| AppError::route_not_found(expectation))?;
         let auth_method = match authorize_standard_server_access(
             headers,
             state.local_server_security().as_deref(),
@@ -123,7 +123,7 @@ async fn resolve_registry_and_auth(
     let deployment = state.current_deployment();
     let registry = deployment
         .convex_registry()
-        .ok_or_else(|| AppError::not_found(expectation))?;
+        .ok_or_else(|| AppError::route_not_found(expectation))?;
     let silo_auth_authority = deployment.convex_silo_auth().authority_for_silo(tenant_id);
     let auth = match verify_optional_convex_auth_from_headers(&silo_auth_authority, headers).await {
         Ok(auth) => {

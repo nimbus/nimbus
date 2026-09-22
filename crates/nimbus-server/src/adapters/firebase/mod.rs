@@ -477,7 +477,7 @@ pub(crate) async fn run_document_action_under_parent_document(
         .await
         .map(IntoResponse::into_response);
     }
-    Err(AppError::not_found("firebase route not found"))
+    Err(AppError::route_not_found("firebase route not found"))
 }
 
 async fn list_collection_ids_for_parent_document(
@@ -719,7 +719,7 @@ fn ensure_firebase_enabled(state: &Arc<AppState>) -> std::result::Result<(), App
         .current_deployment()
         .firebase_config()
         .map(|_| ())
-        .ok_or_else(|| AppError::not_found("firebase adapter is disabled"))
+        .ok_or_else(|| AppError::route_not_found("firebase adapter is disabled"))
 }
 
 /// The active deployment's Firebase config, or the same not-enabled error
@@ -731,7 +731,7 @@ fn firebase_config_for_request(
     state
         .current_deployment()
         .firebase_config()
-        .ok_or_else(|| AppError::not_found("firebase adapter is disabled"))
+        .ok_or_else(|| AppError::route_not_found("firebase adapter is disabled"))
 }
 
 fn parse_json_body(body: &Bytes) -> Result<Value> {
