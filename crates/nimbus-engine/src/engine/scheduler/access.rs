@@ -67,6 +67,7 @@ pub(super) fn write_scheduler_state_blocking(
     let initiated_eviction_for_commit = initiated_eviction.clone();
     let runtime_for_commit = runtime.clone();
     let commit_faults = engine.commit_faults.clone();
+    let tenant_id = tenant_id.clone();
     let result = runtime.submit_internal_committer(move || {
         runtime_for_commit.persist_scheduler_write(
             operation,
@@ -74,7 +75,7 @@ pub(super) fn write_scheduler_state_blocking(
             || Ok(()),
             move || {
                 commit_faults
-                    .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK)
+                    .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK, &tenant_id)
                     .into_result()
             },
             initiated_eviction_for_commit,
@@ -111,7 +112,7 @@ pub(super) async fn write_scheduler_state(
                 || Ok(()),
                 move || {
                     commit_faults
-                        .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK)
+                        .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK, &tenant_id)
                         .into_result()
                 },
                 initiated_eviction_for_commit,
@@ -182,7 +183,7 @@ where
                 },
                 move || {
                     commit_faults
-                        .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK)
+                        .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK, &tenant_id)
                         .into_result()
                 },
                 initiated_eviction_for_commit,

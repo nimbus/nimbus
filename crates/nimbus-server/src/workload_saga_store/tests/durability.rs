@@ -12,7 +12,7 @@ use super::super::schema::{
     exact_table_schema, exact_tenant_epoch_table_schema, exact_tenant_retirement_table_schema,
     workload_saga_table, workload_saga_tenant,
 };
-use super::{document_for, engine, initial_record};
+use super::{document_for, engine, initial_record, workload_saga_faults};
 
 #[test]
 fn exact_schema_includes_optional_teardown_disposition_without_new_index() {
@@ -335,7 +335,7 @@ async fn pre_persist_failure_leaves_no_document_index_or_journal_effect() {
         .await
         .expect("journal should read before transition");
     let record = initial_record("atomic-rollback");
-    engine.commit_fault_handle_for_testing().inject(
+    workload_saga_faults(&engine).inject(
         commit_fault_labels::PRE_PERSIST,
         Fault::Error(Error::Internal(
             "injected workload-saga pre-persist rollback".to_owned(),

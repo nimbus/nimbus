@@ -661,7 +661,9 @@ mod tests {
         let (engine, ctx, _t) = fixture();
         let arn = create_streamed_orders(&engine, &ctx);
 
-        let faults = engine.commit_fault_handle_for_testing();
+        let faults = engine
+            .commit_faults_for_testing()
+            .for_tenant(ctx.tenant_id());
         faults.arm(commit_fault_labels::PREPARE_COMPLETE);
         let batched = std::thread::spawn({
             let engine = engine.clone();
@@ -740,7 +742,9 @@ mod tests {
         let arn = create_streamed_orders(&engine, &ctx);
         put(&engine, &ctx, "y", "1");
 
-        let faults = engine.commit_fault_handle_for_testing();
+        let faults = engine
+            .commit_faults_for_testing()
+            .for_tenant(ctx.tenant_id());
         faults.arm(commit_fault_labels::PREPARE_COMPLETE);
         let batched = std::thread::spawn({
             let engine = engine.clone();
@@ -840,7 +844,9 @@ mod tests {
         // Fail the second op's commit only. Each op commits in its own
         // single-item transaction, so the second hit of the commit fault is the
         // second op: the failure lands mid-batch, after the first op is durable.
-        let faults = engine.commit_fault_handle_for_testing();
+        let faults = engine
+            .commit_faults_for_testing()
+            .for_tenant(ctx.tenant_id());
         faults.inject_error_on_nth_hit(
             commit_fault_labels::PREPARE_COMPLETE,
             2,

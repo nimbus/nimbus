@@ -14,7 +14,7 @@ async fn pause_direct_update_after_prepare(
     crate::engine::CommitFaultHandle,
     tokio::task::JoinHandle<nimbus_core::Result<DocumentId>>,
 ) {
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(tenant_id);
     faults.arm(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
     let direct = tokio::task::spawn_blocking({
         let engine = Arc::clone(engine);

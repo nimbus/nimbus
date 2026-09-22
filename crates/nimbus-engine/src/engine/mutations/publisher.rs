@@ -496,7 +496,7 @@ pub(crate) fn persist_assigned_batch_once(
     // Obligation #9c: the applied watermark became visible inside the shared
     // durable-batch core, before fan-out control transfer below.
     commit_faults
-        .wait(labels::POST_PUBLISH_PRE_FANOUT)
+        .wait(labels::POST_PUBLISH_PRE_FANOUT, runtime.tenant_id())
         .into_result()
         .map_err(PublishAttemptError::Ambiguous)?;
     let publish = publish_started.elapsed();

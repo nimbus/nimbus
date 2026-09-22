@@ -1334,7 +1334,7 @@ async fn committed_observers_preserve_order_across_execution_unit_and_direct_han
             serde_json::Map::from_iter([("index".to_string(), json!(1))]),
         )
         .expect("first insert should stage");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT);
     let first_commit = tokio::task::spawn_blocking(move || first.commit());
     let wait_faults = faults.clone();

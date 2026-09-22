@@ -1502,7 +1502,9 @@ mod tests {
             .unwrap()
         };
 
-        let faults = engine.commit_fault_handle_for_testing();
+        let faults = engine
+            .commit_faults_for_testing()
+            .for_tenant(ctx.tenant_id());
         faults.arm(commit_fault_labels::PREPARE_COMPLETE);
         let first = std::thread::spawn({
             let engine = engine.clone();
@@ -1565,7 +1567,9 @@ mod tests {
             .unwrap()
         };
 
-        let faults = engine.commit_fault_handle_for_testing();
+        let faults = engine
+            .commit_faults_for_testing()
+            .for_tenant(ctx.tenant_id());
         faults.arm(commit_fault_labels::PREPARE_COMPLETE);
         let first = std::thread::spawn({
             let engine = engine.clone();

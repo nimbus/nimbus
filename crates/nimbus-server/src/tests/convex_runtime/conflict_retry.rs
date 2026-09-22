@@ -140,7 +140,8 @@ async fn forced_conflict_integration_test() {
     );
     let document_id = seed_counter(&api).await;
     flush_seed_observers(&engine).await;
-    let faults = engine.commit_fault_handle_for_testing();
+    let tenant_id = TenantId::new("demo").expect("tenant id should build");
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(commit_fault_labels::PRE_ASSIGN);
 
     let first_client = server.client().clone();
@@ -225,7 +226,7 @@ async fn retry_exhaustion_test() {
         .expect("tenant diagnostics should load")
         .mutation_journal
         .applied_head;
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     let pre_assign_baseline = faults.hit_count(commit_fault_labels::PRE_ASSIGN);
     faults.inject_retryable_conflicts(commit_fault_labels::PRE_ASSIGN, 3, Some(applied_head));
 
@@ -295,7 +296,7 @@ async fn wait_before_retry_test() {
             serde_json::Map::from_iter([("writer".to_string(), json!(true))]),
         )
         .expect("writer update should stage");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(commit_fault_labels::DURABLE_BEFORE_PUBLISH);
     let writer_task = tokio::task::spawn_blocking(move || writer.commit());
     let wait_faults = faults.clone();

@@ -23,7 +23,7 @@ pub use engine::{
     TenantRuntimeObserver, TenantRuntimeObserverIdentity,
 };
 #[cfg(any(test, feature = "test-hooks"))]
-pub use engine::{CommitFaultHandle, Fault, commit_fault_labels};
+pub use engine::{CommitFaultHandle, CommitFaults, Fault, FaultScope, commit_fault_labels};
 pub use evaluator::{
     encode_cursor, evaluate_paginated, evaluate_paginated_with_docs, evaluate_query,
     evaluate_query_with_docs,

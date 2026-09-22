@@ -1016,7 +1016,7 @@ async fn out_of_window_stale_prepare_falls_back_to_caller_wait() {
         .tenant_engine_diagnostics(&tenant_id)
         .expect("diagnostics should load")
         .commit_phases;
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(crate::engine::commit_fault_labels::PREPARE_COMPLETE);
     let update = tokio::task::spawn_blocking({
         let engine = engine.clone();
@@ -1295,7 +1295,7 @@ async fn rejected_ordered_opaque_job_returns_typed_retryable_publisher_error() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
 
     let first = tokio::spawn({
@@ -1387,7 +1387,7 @@ async fn rejected_response_fence_is_bounded_and_stages_no_suffix() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     faults.arm(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
 
     let first = tokio::spawn({
@@ -1665,7 +1665,7 @@ async fn publisher_accumulator_preserves_fsync_amortization_when_assignment_gets
         .tenant_engine_diagnostics(&tenant_id)
         .expect("phase metrics before publisher backlog should load")
         .commit_phases;
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     let pause_label = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
     faults.arm(pause_label);
 

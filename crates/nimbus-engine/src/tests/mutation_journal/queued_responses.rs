@@ -807,7 +807,8 @@ async fn assignment_failure_keeps_the_cancelled_requests_own_outcome() {
     .await;
 
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_error_on_nth_hit(
             crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
             1,
@@ -934,7 +935,8 @@ async fn ordered_assignment_panic_keeps_preassigned_outcomes_and_fails_active_re
     .await;
 
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_panic_on_nth_hit(
             crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
             1,

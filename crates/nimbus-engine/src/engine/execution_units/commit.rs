@@ -77,16 +77,17 @@ impl MutationExecutionUnit {
         );
         maybe_warn_wide_read_set(&self.tenant_id, &prepared_commit.read_set);
         self.engine
-            .wait_for_commit_fault(labels::PREPARE_COMPLETE)?;
+            .wait_for_commit_fault(labels::PREPARE_COMPLETE, &self.tenant_id)?;
         let has_scheduled_insert = prepared_commit.has_scheduled_insert();
 
         let result = (|| -> Result<Option<CommitEntry>> {
-            self.engine.wait_for_commit_fault(labels::PRE_ASSIGN)?;
+            self.engine
+                .wait_for_commit_fault(labels::PRE_ASSIGN, &self.tenant_id)?;
             #[cfg(any(test, feature = "test-hooks"))]
             if self
                 .engine
                 .commit_faults
-                .is_armed(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE)
+                .is_armed(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE, &self.tenant_id)
             {
                 ensure_schema_unchanged(
                     &self.runtime,
@@ -131,10 +132,13 @@ impl MutationExecutionUnit {
                         &prepared_commit.read_set,
                     )?;
                     phases.conflict_check = conflict_check_started.elapsed();
-                    engine.wait_for_commit_fault(labels::POST_VALIDATE_PRE_STAGE)?;
+                    engine.wait_for_commit_fault(
+                        labels::POST_VALIDATE_PRE_STAGE,
+                        runtime.tenant_id(),
+                    )?;
                     // This retained fault seam sits immediately before assignment;
                     // pending-window staging follows the assignment stamp below.
-                    engine.wait_for_commit_fault(labels::PRE_PERSIST)?;
+                    engine.wait_for_commit_fault(labels::PRE_PERSIST, runtime.tenant_id())?;
                     let previous_sequence = runtime.durable_head();
                     let expected_sequence =
                         crate::tenant::assign_and_validate(previous_sequence, 1)?[0];
@@ -206,7 +210,10 @@ impl MutationExecutionUnit {
                         debug_assert_eq!(commit.sequence, expected_sequence);
                     }
                     phases.durable_append = durable_append_started.elapsed();
-                    engine.wait_for_commit_fault(labels::DURABLE_BEFORE_PUBLISH)?;
+                    engine.wait_for_commit_fault(
+                        labels::DURABLE_BEFORE_PUBLISH,
+                        runtime.tenant_id(),
+                    )?;
                     if let Some(commit) = &commit {
                         let publish_started = Instant::now();
                         let published_frontier = runtime.publish_write_log_through(commit.sequence);
@@ -233,7 +240,7 @@ impl MutationExecutionUnit {
                 },
             )?;
             self.engine
-                .wait_for_commit_fault(labels::POST_PUBLISH_PRE_FANOUT)?;
+                .wait_for_commit_fault(labels::POST_PUBLISH_PRE_FANOUT, &self.tenant_id)?;
             if commit.is_some() {
                 self.runtime.record_commit_phase_sample(
                     "execution-unit",

@@ -324,7 +324,7 @@ fn apply_set_table_schema(
         }
     };
     stage_assigned_schema_record(runtime, previous_durable_head, journal_progress)?;
-    pause_assigned_schema_before_visibility(commit_faults)?;
+    pause_assigned_schema_before_visibility(commit_faults, tenant_id)?;
 
     let mut schema = previous_schema;
     Arc::make_mut(&mut schema)
@@ -409,7 +409,7 @@ fn apply_delete_table_schema(
         }
     };
     stage_assigned_schema_record(runtime, previous_durable_head, journal_progress)?;
-    pause_assigned_schema_before_visibility(commit_faults)?;
+    pause_assigned_schema_before_visibility(commit_faults, tenant_id)?;
 
     let mut schema = previous_schema;
     Arc::make_mut(&mut schema).tables.remove(table);
@@ -460,12 +460,15 @@ fn stage_assigned_schema_record(
     Ok(())
 }
 
-fn pause_assigned_schema_before_visibility(commit_faults: &CommitFaultClient) -> Result<()> {
-    if !commit_faults.is_armed(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE) {
+fn pause_assigned_schema_before_visibility(
+    commit_faults: &CommitFaultClient,
+    tenant_id: &TenantId,
+) -> Result<()> {
+    if !commit_faults.is_armed(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE, tenant_id) {
         return Ok(());
     }
     commit_faults
-        .wait(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE)
+        .wait(labels::SCHEMA_ASSIGNED_BEFORE_VISIBLE, tenant_id)
         .into_result()
 }
 

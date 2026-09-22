@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use nimbus_core::{Document, TenantId, WorkloadId};
-use nimbus_engine::Engine;
+use nimbus_engine::{CommitFaultHandle, Engine};
 use nimbus_network::{
     EndpointProtocol, NetworkAddressFamily, NetworkAttachmentCapabilitySet,
     NetworkAttachmentProviderRegistration, NetworkBindRealmKind, NetworkCapabilityBundle,
@@ -23,7 +23,7 @@ use nimbus_workloads::{
 };
 
 use super::codec::encode_workload_saga_record;
-use super::schema::workload_saga_table;
+use super::schema::{workload_saga_table, workload_saga_tenant};
 
 mod ambiguity;
 mod codec;
@@ -314,4 +314,12 @@ fn document_for(record: &WorkloadSagaRecord) -> Document {
         workload_saga_table().expect("private table is valid"),
         encode_workload_saga_record(record).expect("fixture encodes"),
     )
+}
+
+/// Commit faults scoped to the reserved workload-saga tenant, where every
+/// store commit lands.
+fn workload_saga_faults(engine: &Engine) -> CommitFaultHandle {
+    engine
+        .commit_faults_for_testing()
+        .for_tenant(&workload_saga_tenant().expect("workload saga tenant id should build"))
 }

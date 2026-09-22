@@ -88,7 +88,7 @@ async fn journal_progress_sync_cannot_overtake_publisher() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     let pause = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
     faults.arm(pause);
 
@@ -160,7 +160,7 @@ async fn opaque_internal_job_cannot_overtake_ordered_publisher() {
     engine
         .disable_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     let pause = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
     faults.arm(pause);
 
@@ -274,7 +274,7 @@ async fn ordered_publisher_serializes_queued_direct_and_execution_unit_paths() {
         .await
         .expect("seed trigger cursor should drain");
 
-    let faults = engine.commit_fault_handle_for_testing();
+    let faults = engine.commit_faults_for_testing().for_tenant(&tenant_id);
     let pause = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
     faults.arm(pause);
     let queued = tokio::spawn({

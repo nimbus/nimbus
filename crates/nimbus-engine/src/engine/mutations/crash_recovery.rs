@@ -424,12 +424,15 @@ async fn run_crash_case(case: CrashCase) {
             if case.state.tail == TailState::Torn {
                 storage_faults.arm();
             } else {
-                engine.commit_fault_handle_for_testing().inject(
-                    labels::JOURNAL_ASSIGN_AFTER_STAGE,
-                    Fault::Error(Error::Internal(
-                        "injected crash after sequence assignment".to_string(),
-                    )),
-                );
+                engine
+                    .commit_faults_for_testing()
+                    .for_tenant(&tenant_id)
+                    .inject(
+                        labels::JOURNAL_ASSIGN_AFTER_STAGE,
+                        Fault::Error(Error::Internal(
+                            "injected crash after sequence assignment".to_string(),
+                        )),
+                    );
             }
             insert_case_document(&engine, &tenant_id, case.name)
                 .await
@@ -440,10 +443,13 @@ async fn run_crash_case(case: CrashCase) {
                 PublishState::NotPublished => labels::DURABLE_BEFORE_PUBLISH,
                 PublishState::Published => labels::POST_PUBLISH_PRE_FANOUT,
             };
-            engine.commit_fault_handle_for_testing().inject(
-                label,
-                Fault::Error(Error::Internal(format!("injected crash for {}", case.name))),
-            );
+            engine
+                .commit_faults_for_testing()
+                .for_tenant(&tenant_id)
+                .inject(
+                    label,
+                    Fault::Error(Error::Internal(format!("injected crash for {}", case.name))),
+                );
             insert_case_document(&engine, &tenant_id, case.name)
                 .await
                 .expect_err("durable crash point must fail the in-flight writer");

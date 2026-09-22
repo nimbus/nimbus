@@ -725,7 +725,7 @@ async fn postgres_acquisition_reconciles_predecessor_heads_and_records_fenced_re
             serde_json::Map::from_iter([("title".to_string(), json!("successor"))]),
         )
         .expect("successor insert should stage");
-        let faults = engine_b.commit_fault_handle_for_testing();
+        let faults = engine_b.commit_faults_for_testing().for_tenant(&tenant_id);
         faults.arm(labels::PRE_ASSIGN);
         let commit = tokio::task::spawn_blocking({
             let unit = unit.clone();

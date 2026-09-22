@@ -182,7 +182,8 @@ pub(crate) async fn exercise_provider_publisher_contract(
     // original result instead of surfacing an error that invites a duplicate
     // insert or strands a claimed job.
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_error_on_nth_hit(
             crate::engine::commit_fault_labels::SCHEDULER_DURABLE_BEFORE_ACK,
             1,
@@ -214,7 +215,8 @@ pub(crate) async fn exercise_provider_publisher_contract(
         "acknowledgement recovery must not duplicate the scheduled job"
     );
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_error_on_nth_hit(
             crate::engine::commit_fault_labels::SCHEDULER_DURABLE_BEFORE_ACK,
             1,
@@ -325,7 +327,8 @@ pub(crate) async fn exercise_provider_publisher_contract(
         .await
         .expect("pre-error sequence should load");
     engine
-        .commit_fault_handle_for_testing()
+        .commit_faults_for_testing()
+        .for_tenant(&tenant_id)
         .inject_error_on_nth_hit(
             crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
             1,

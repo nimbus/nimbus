@@ -70,7 +70,9 @@ pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver}
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 #[cfg(any(test, feature = "test-hooks"))]
-pub use execution_units::{CommitFaultHandle, Fault, labels as commit_fault_labels};
+pub use execution_units::{
+    CommitFaultHandle, CommitFaults, Fault, FaultScope, labels as commit_fault_labels,
+};
 pub use metadata_retention::{MetadataRetentionDiagnosticsSnapshot, MetadataRetentionRunResult};
 pub use mutations::phase_metrics::CommitPhaseMetricsSnapshot;
 pub(crate) use mutations::phase_metrics::{
@@ -679,8 +681,9 @@ impl Engine {
     pub(in crate::engine) fn wait_for_commit_fault(
         &self,
         label: execution_units::Label,
+        tenant_id: &TenantId,
     ) -> Result<()> {
-        self.commit_faults.wait(label).into_result()
+        self.commit_faults.wait(label, tenant_id).into_result()
     }
 
     pub(crate) fn open_tenant_store(&self, path: &Path) -> Result<TenantPersistence> {

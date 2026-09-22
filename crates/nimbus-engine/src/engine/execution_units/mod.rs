@@ -21,7 +21,7 @@ mod tests;
 use self::state::MutationExecutionUnitState;
 pub(crate) use pause::CommitFaultClient;
 #[cfg(any(test, feature = "test-hooks"))]
-pub use pause::{CommitFaultHandle, Fault, Label, labels};
+pub use pause::{CommitFaultHandle, CommitFaults, Fault, FaultScope, Label, labels};
 #[cfg(not(any(test, feature = "test-hooks")))]
 pub(crate) use pause::{Label, labels};
 
@@ -62,8 +62,8 @@ impl Engine {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn commit_fault_handle_for_testing(&self) -> CommitFaultHandle {
-        self.commit_faults.handle()
+    pub fn commit_faults_for_testing(&self) -> CommitFaults {
+        self.commit_faults.faults()
     }
 }
 
