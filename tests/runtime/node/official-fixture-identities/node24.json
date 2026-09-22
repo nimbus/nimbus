@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
   "manifest_kind": "node_official_fixture_identity",
-  "generated_at": "2026-09-01T05:09:04.438565+00:00",
+  "generated_at": "2026-09-22T18:24:31.006979+00:00",
   "lane": "node24",
   "upstream": {
     "repo": "nodejs/node",
-    "tag": "v24.20.0",
-    "commit": "71b8b174857e25106d39b61a9e6f30d927da8b01",
-    "tag_object": "8392e555cbdef2145d2cd2a2a7d29204d88d4e15",
+    "tag": "v24.21.0",
+    "commit": "955266bfdd854cd280dffd47548673914484e4c0",
+    "tag_object": "f37d7da830134b5314a14ced553273786a2bb4cd",
     "fixture_subtree": "test",
     "source_kind": "vendored_official_fixture_corpus"
   },
   "vendored_fixture_root": "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/node24/test",
-  "identity_source": "nodejs/node@v24.20.0 via sparse fetch",
-  "entry_count": 10846,
-  "test_file_count": 5671,
+  "identity_source": "nodejs/node@v24.21.0 via /Users/jack/src/github.com/nodejs/node",
+  "entry_count": 10942,
+  "test_file_count": 5729,
   "entries": [
     {
       "path": "README.md",
@@ -90,6 +90,21 @@
       "path": "addons/.gitignore",
       "mode": "100644",
       "oid": "b7bca943e587176a870f466fb1b620f10d022c82"
+    },
+    {
+      "path": "addons/abort-handler/binding.cc",
+      "mode": "100644",
+      "oid": "13ceb011e57b28a9fd3f54ccb4822f1e36d7bc32"
+    },
+    {
+      "path": "addons/abort-handler/binding.gyp",
+      "mode": "100644",
+      "oid": "55fbe7050f18e4455c16bf75569578acd15c3797"
+    },
+    {
+      "path": "addons/abort-handler/test.js",
+      "mode": "100644",
+      "oid": "4c05046c92b16c3469d87ec8e83263416aeab3be"
     },
     {
       "path": "addons/addons.status",
@@ -345,6 +360,21 @@
       "path": "addons/force-context-aware/test.js",
       "mode": "100644",
       "oid": "d4a0ab3e614204a94d2bf22e4be4b5ee1adbc20b"
+    },
+    {
+      "path": "addons/fs-windows-handle/binding.cc",
+      "mode": "100644",
+      "oid": "72194df15e5f9bebcb90e309d6f68b241e8c5104"
+    },
+    {
+      "path": "addons/fs-windows-handle/binding.gyp",
+      "mode": "100644",
+      "oid": "7e0f38c27d570ac1c342c5c201b5f540be74e952"
+    },
+    {
+      "path": "addons/fs-windows-handle/test.js",
+      "mode": "100644",
+      "oid": "122440ee4677bb73c877e1c19104c1bf39c1a2fc"
     },
     {
       "path": "addons/heap-profiler/binding.cc",
@@ -1552,6 +1582,11 @@
       "oid": "53de4897dd75d2e17105a89dd60dd9fd469ff75e"
     },
     {
+      "path": "benchmark/test-benchmark-fetch.js",
+      "mode": "100644",
+      "oid": "e9c686003a016f00bc09398ce84b16e1324b230b"
+    },
+    {
       "path": "benchmark/test-benchmark-fs.js",
       "mode": "100644",
       "oid": "3ef6be2b7ebaedcbda9f1e5cc98066b08245aa64"
@@ -1615,6 +1650,11 @@
       "path": "benchmark/test-benchmark-readline.js",
       "mode": "100644",
       "oid": "eaa9fd08ed487ef15f3aae54ad5d6735f48b9ca9"
+    },
+    {
+      "path": "benchmark/test-benchmark-repl.js",
+      "mode": "100644",
+      "oid": "045813039589bcf23e671ad3045097a0446b694a"
     },
     {
       "path": "benchmark/test-benchmark-source-map.js",
@@ -1744,12 +1784,12 @@
     {
       "path": "cctest/test_diagnostics_channel.cc",
       "mode": "100644",
-      "oid": "30a004b59070b592629a3dbd1e2e0a92d343d217"
+      "oid": "d4d1fd1c9fac3f0059ce5bba611cf017fd2a14ae"
     },
     {
       "path": "cctest/test_environment.cc",
       "mode": "100644",
-      "oid": "3e8e4a65a81bdd6c9181764c541a2e9b42fb5e57"
+      "oid": "a219d512570136a9b1e940942b8426bf19d0d1f1"
     },
     {
       "path": "cctest/test_inspector_socket.cc",
@@ -1809,7 +1849,7 @@
     {
       "path": "cctest/test_path.cc",
       "mode": "100644",
-      "oid": "9e860d02cf77bd8a33e2ffe99c22cbc7ac36be41"
+      "oid": "1fd99134045243a674b8d28da83ed32615af8ff6"
     },
     {
       "path": "cctest/test_per_process.cc",
@@ -1859,7 +1899,7 @@
     {
       "path": "cctest/test_sockaddr.cc",
       "mode": "100644",
-      "oid": "727a5ec021dd3a992f7bb0ef7e860904c9155668"
+      "oid": "42ffed08edc4524bf040ce92dfe1819a24cec541"
     },
     {
       "path": "cctest/test_string_bytes.cc",
@@ -2134,7 +2174,7 @@
     {
       "path": "client-proxy/test-https-proxy-request-invalid-char-in-url.mjs",
       "mode": "100644",
-      "oid": "80c7be4931cd574c949a13ed26f318d7d16de14e"
+      "oid": "888137b9a5a6a0e7e03ed9680796a582e5888519"
     },
     {
       "path": "client-proxy/test-https-proxy-request-invalid-credentials.mjs",
@@ -2259,7 +2299,7 @@
     {
       "path": "common/boringssl.js",
       "mode": "100644",
-      "oid": "e6e91387c304c7bddff92bf9d911201a6f320b00"
+      "oid": "ab7f0505b0ce34f93eebfdddaed08d0a8cf0eb4d"
     },
     {
       "path": "common/child_process.js",
@@ -2384,7 +2424,7 @@
     {
       "path": "common/proxy-server.js",
       "mode": "100644",
-      "oid": "a2f8bd12e6257ec01d7874162a82f9063430b132"
+      "oid": "723fe0ea5c6bea9b357d073f497dcc42158636a9"
     },
     {
       "path": "common/quic.mjs",
@@ -2419,7 +2459,7 @@
     {
       "path": "common/sea.js",
       "mode": "100644",
-      "oid": "5f3741e0117cc53a30a137b73dd5b9ae16d5a029"
+      "oid": "f0dfc8479888fabd295b5482cd98214049ddb372"
     },
     {
       "path": "common/shared-lib-util.js",
@@ -3062,6 +3102,11 @@
       "oid": "8502375b31aa5a5019e4a6a7289e91ef5e4d9f97"
     },
     {
+      "path": "es-module/test-esm-loader-text-format.mjs",
+      "mode": "100644",
+      "oid": "2a35992dbcf40b9c2921c1c6f2ef513a157496a5"
+    },
+    {
       "path": "es-module/test-esm-loader-thenable.mjs",
       "mode": "100644",
       "oid": "d26ba7d476a5430fc5058d755033b65db525f694"
@@ -3084,7 +3129,7 @@
     {
       "path": "es-module/test-esm-long-path-win.js",
       "mode": "100644",
-      "oid": "d125d341f09202cf3793612318cd957607a0b227"
+      "oid": "d8aaabcca85742e4257e34d27c5e4905f4cbb84d"
     },
     {
       "path": "es-module/test-esm-main-lookup.mjs",
@@ -11984,12 +12029,12 @@
     {
       "path": "fixtures/sea/assets/sea-config.json",
       "mode": "100644",
-      "oid": "78a64534b44e9d41cad2c80b2aa70d0dd628aaa9"
+      "oid": "979bda0dca13c4054186d3315f3a1687596bce81"
     },
     {
       "path": "fixtures/sea/assets/sea.js",
       "mode": "100644",
-      "oid": "e1a2189aa4da26fcca15ed9bd29bd64199ae9136"
+      "oid": "b6b775fdd15944b54706e1dc7a247bb693119b8a"
     },
     {
       "path": "fixtures/sea/assets/utf8_test_text.txt",
@@ -12034,12 +12079,12 @@
     {
       "path": "fixtures/sea/exec-argv-extension-cli/sea-config.json",
       "mode": "100644",
-      "oid": "0ec0d706b384abb85449070334e8740675543fab"
+      "oid": "cb4606558c7fb42f9d18050a61563d7c4f47fb04"
     },
     {
       "path": "fixtures/sea/exec-argv-extension-cli/sea.js",
       "mode": "100644",
-      "oid": "e9585483fcc21d64402c3e5a2db48c1cac768939"
+      "oid": "11bc7fa36560dc078888ddf66e448161f052c939"
     },
     {
       "path": "fixtures/sea/exec-argv-extension-env/sea-config.json",
@@ -12445,6 +12490,16 @@
       "path": "fixtures/source-map/extract-url/esm-url-in-string.mjs",
       "mode": "100644",
       "oid": "fcbe35e8788383311099595d333056627fa94144"
+    },
+    {
+      "path": "fixtures/source-map/get-call-sites-function-name-mapped.js",
+      "mode": "100644",
+      "oid": "d400af7f2fb8c907453497559e8e9ff4e0e530d5"
+    },
+    {
+      "path": "fixtures/source-map/get-call-sites-function-name-mapped.map",
+      "mode": "100644",
+      "oid": "de70e4512ffab88dbfdf6ab01748625366eee34e"
     },
     {
       "path": "fixtures/source-map/get-call-sites-mapped.js",
@@ -12917,6 +12972,11 @@
       "oid": "c2cd118b23b1330d8d585c2006efddf5c9c6517a"
     },
     {
+      "path": "fixtures/syntax/bad_syntax_esm_ambiguous.js",
+      "mode": "100644",
+      "oid": "511f42994f90f35ad822231fe284677712a4c18e"
+    },
+    {
       "path": "fixtures/syntax/bad_syntax_shebang.js",
       "mode": "100644",
       "oid": "1de5d2adc47f4b7c4990eaa02f6fdd1f0efe92b7"
@@ -13120,6 +13180,11 @@
       "path": "fixtures/test-runner/coverage-default-exclusion/test.cjs",
       "mode": "100644",
       "oid": "641bad44ed4f3399c6bc6fca68738128473f655f"
+    },
+    {
+      "path": "fixtures/test-runner/coverage-default-exclusion/test/.dotfile.cjs",
+      "mode": "100644",
+      "oid": "ec0a4c24fffb3a649d1d5317fb15048237b55c94"
     },
     {
       "path": "fixtures/test-runner/coverage-default-exclusion/test/not-matching-test-name.js",
@@ -13552,6 +13617,11 @@
       "oid": "1ba6866ffcdb56c8734243227a77a668d80b5caf"
     },
     {
+      "path": "fixtures/test-runner/mock-nm-dual-pkg.js",
+      "mode": "100644",
+      "oid": "3686373c60325d25e0723b45834b1538cea98d00"
+    },
+    {
       "path": "fixtures/test-runner/mock-nm.js",
       "mode": "100644",
       "oid": "a57ee46f356fe1c91d181fb0299977811f5cad6a"
@@ -13595,6 +13665,21 @@
       "path": "fixtures/test-runner/no-isolation/two.test.js",
       "mode": "100644",
       "oid": "4fbc7dfc840e160ae39dbf295b9e9d1042d10b16"
+    },
+    {
+      "path": "fixtures/test-runner/node_modules/dual-pkg-with-exports/index.cjs",
+      "mode": "100644",
+      "oid": "a8085de75d6013c09fa9e7a8dca8e0703b1d19ef"
+    },
+    {
+      "path": "fixtures/test-runner/node_modules/dual-pkg-with-exports/index.js",
+      "mode": "100644",
+      "oid": "f9e72d7f62fb7c5f876e87233aa11b818973c7a2"
+    },
+    {
+      "path": "fixtures/test-runner/node_modules/dual-pkg-with-exports/package.json",
+      "mode": "100644",
+      "oid": "e225302a770ea4e0c1b3538a19a89a39cff2ab57"
     },
     {
       "path": "fixtures/test-runner/node_modules/reporter-cjs/index.js",
@@ -13932,6 +14017,16 @@
       "oid": "f3335117acf8845ee335138e9a24ca28b4a2e3e9"
     },
     {
+      "path": "fixtures/test-runner/output/dot_reporter_coverage_threshold.js",
+      "mode": "100644",
+      "oid": "b49dd14881512cb34ca9d304e7ba008c046227f9"
+    },
+    {
+      "path": "fixtures/test-runner/output/dot_reporter_coverage_threshold.snapshot",
+      "mode": "100644",
+      "oid": "0645329f1a8407e8f7442516d0b1e69e4d85309e"
+    },
+    {
       "path": "fixtures/test-runner/output/eval_dot.js",
       "mode": "100644",
       "oid": "b50ea9bb836e65281a6048bee403af9ed9495bb2"
@@ -14052,6 +14147,26 @@
       "oid": "e2ad150bb5f7a2df17612cf1d02db2fd54c81397"
     },
     {
+      "path": "fixtures/test-runner/output/junit_classname_hierarchy.js",
+      "mode": "100644",
+      "oid": "8b634be39380e704af7aa6268f944105b0325702"
+    },
+    {
+      "path": "fixtures/test-runner/output/junit_classname_hierarchy.snapshot",
+      "mode": "100644",
+      "oid": "fd3806f531e0bf2500793e9d48d07e362e7c0518"
+    },
+    {
+      "path": "fixtures/test-runner/output/junit_empty_diagnostic.js",
+      "mode": "100644",
+      "oid": "491c2f230d986265953cdd5f291481cdac46b524"
+    },
+    {
+      "path": "fixtures/test-runner/output/junit_empty_diagnostic.snapshot",
+      "mode": "100644",
+      "oid": "666c5c3523a7e62b9b3bdaf2e4044b566a7b265d"
+    },
+    {
       "path": "fixtures/test-runner/output/junit_reporter.js",
       "mode": "100644",
       "oid": "eee3d0f86eaf2d60be96b28694b161531f65a430"
@@ -14059,7 +14174,7 @@
     {
       "path": "fixtures/test-runner/output/junit_reporter.snapshot",
       "mode": "100644",
-      "oid": "cef5f0b52da18691338255cb01f7030bd709a45c"
+      "oid": "5130996dd2fdddc237f09491c40660b4c852879c"
     },
     {
       "path": "fixtures/test-runner/output/lcov_reporter.js",
@@ -14680,6 +14795,11 @@
       "path": "fixtures/test-runner/test-runner-global-hooks.mjs",
       "mode": "100644",
       "oid": "fb22b289604c6ed5347cf1e2233326c86a37ee4d"
+    },
+    {
+      "path": "fixtures/test-runner/test-runner-isolation-none.mjs",
+      "mode": "100644",
+      "oid": "03a32fd6ad5701b8ec09c628b8875b3326259058"
     },
     {
       "path": "fixtures/test-runner/test_only.js",
@@ -17664,7 +17784,7 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/WEB_FEATURES.yml",
       "mode": "100644",
-      "oid": "6f47b86ed48fd52c46e5b4b7715e9e9f42fe3b41"
+      "oid": "036774d5563e4c965ae7252d214b1384cd8da934"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/algorithm-discards-context.https.window.js",
@@ -17692,19 +17812,24 @@
       "oid": "93d26b5eb969808caee163eec76b4ac93d10bf41"
     },
     {
+      "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves.js",
+      "mode": "100644",
+      "oid": "25113bfe04a140961c1be8ef4c871fc8a1179bfb"
+    },
+    {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves_bits.js",
       "mode": "100644",
-      "oid": "1406e8bf0a19289a47aa9d80b8a147fa67cc5e4e"
+      "oid": "c3826a295e622cb74b0d0e3148ab736384182044"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves_bits_curve25519.https.any.js",
       "mode": "100644",
-      "oid": "5684d7624076c70a769099d39a1ad68886cb4fa8"
+      "oid": "b425652088742bdb03d3ddac247577393da40581"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves_bits_curve448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "5e482ef0b9d8041f0200301ff215bfa111a964df"
+      "oid": "cda5ba87fba056d098c3441eb1f1626ed639d738"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves_bits_fixtures.js",
@@ -17714,17 +17839,22 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves_keys.js",
       "mode": "100644",
-      "oid": "cefc45ac6929033beae7c9c6edaefb98d4babf38"
+      "oid": "1989c55c903fe59edb82779c2f69970a12671a04"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves_keys_curve25519.https.any.js",
       "mode": "100644",
-      "oid": "8bcc201d4e95ec15bcf6218ac37c5b2dd966a4f1"
+      "oid": "683ae21bac9f98297cc2cdad1681cccc1107bb2c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/cfrg_curves_keys_curve448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "0ed3954ac200b53464ca1213c96341e0877dca8d"
+      "oid": "38a5ce1db5b24e76518ca242cd47735f32f02bc6"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/derive.js",
+      "mode": "100644",
+      "oid": "16c9ec6407bbacd665d304e2385fedd780a7c26c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/derive_key_and_encrypt.https.any.js",
@@ -17757,34 +17887,44 @@
       "oid": "391f81d1871d7683d800b4df83b7bfa41a782874"
     },
     {
+      "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/ecdh.js",
+      "mode": "100644",
+      "oid": "99039f250c2c59295703e62314f9fc5441bb2ea2"
+    },
+    {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/ecdh_bits.https.any.js",
       "mode": "100644",
-      "oid": "58a0cecd5efed686be5d0792e8c16f4eb6acb51d"
+      "oid": "38058d6ce7231b709d66646a866dc46426c76a9c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/ecdh_bits.js",
       "mode": "100644",
-      "oid": "8e79909020d398c6c04c2f4497c59e5f2e60180b"
+      "oid": "bbe48b5e2859b555aa844a5f8bf4cccfb9fbd761"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/ecdh_fixtures.js",
+      "mode": "100644",
+      "oid": "46539d548da74f1de30c693d2d02ff14b4ff91bb"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/ecdh_keys.https.any.js",
       "mode": "100644",
-      "oid": "6464dacfe3aa81463f3fa623460bd09179969efa"
+      "oid": "f9d0da921d52b1547521a958ff792b5e687b5a2a"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/ecdh_keys.js",
       "mode": "100644",
-      "oid": "8c3d2aeb5a497680a81f7b242531cedfdec88613"
+      "oid": "c4ee495aa6ffe707216758353efec7ec3d070737"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/hkdf.https.any.js",
       "mode": "100644",
-      "oid": "3879ddb14b903aa7ef95416de3f8f4c3bc940f6e"
+      "oid": "b283f2ba7920e64d253baded9a84e06207067a5a"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/hkdf.js",
       "mode": "100644",
-      "oid": "08e8c0c8974617ffa03ac33f8c3bed73806b632f"
+      "oid": "a090169836e573e0f8281d8398d85e964d6b5889"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/hkdf_vectors.js",
@@ -17792,14 +17932,19 @@
       "oid": "ef448ec5f2a6543cd7324443ae3691e909aeb821"
     },
     {
+      "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/kdf.js",
+      "mode": "100644",
+      "oid": "ecbb3b4148f4a0152fcc98abccbf89be81468437"
+    },
+    {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.js",
       "mode": "100644",
-      "oid": "cc2ed9b9cef8721dd7523387c29c899981fce049"
+      "oid": "8d1299358575a2fb66f79ef884c60803e876c9c7"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/pbkdf2.js",
       "mode": "100644",
-      "oid": "4d5b0137a387c856cbcb3786ea59b43a62d2cfe8"
+      "oid": "57c19ae3f014809dc014fa35ce344ba223c58fa7"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/derive_bits_keys/pbkdf2_vectors.js",
@@ -17809,37 +17954,52 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/digest/cshake.tentative.https.any.js",
       "mode": "100644",
-      "oid": "81793666294c2320cf5e1861cfa5e6fbe637960e"
+      "oid": "1bf78f581154101a0197606e59c63672a4e0cf51"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/digest/digest.https.any.js",
       "mode": "100644",
-      "oid": "38ce85ec06cfc3231821802bc27c620d8005d617"
+      "oid": "26711b2880d94755f4fce4b4cda3869568ee24d2"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/digest/digest.js",
+      "mode": "100644",
+      "oid": "9ef9c69a180b883b2239598d7412b8c857b20ed0"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/digest/digest_test_data.js",
+      "mode": "100644",
+      "oid": "f088e02a087021f30fc7cbf946ed38c313209b85"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/digest/kangarootwelve.tentative.https.any.js",
       "mode": "100644",
-      "oid": "9f800b7937876aee8dcff02c051be0159b247c4b"
+      "oid": "0e38eb0542ad5f513cf5adb874c3d7e71845b327"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/digest/sha3.tentative.https.any.js",
       "mode": "100644",
-      "oid": "f9f38eadc2c39a04f01ad90176e5fc34ff78777b"
+      "oid": "a6cafbb639f860c40704ad8fb1b3a25ac54c4476"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/digest/turboshake.tentative.https.any.js",
       "mode": "100644",
-      "oid": "243931cd119802e5ec0afdabb6e47a1af7cd6bb3"
+      "oid": "356e6987956cb7eb891621327681a557679f2839"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/digest/xof_digest.js",
+      "mode": "100644",
+      "oid": "f5ef5846b7960959e26e6fcaa4f9dd9169b63b17"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encap_decap/encap_decap_bits.tentative.https.any.js",
       "mode": "100644",
-      "oid": "5a669753cd2701bdc355eb2dfa2ce557c0ffd774"
+      "oid": "ffb78f7e534860c1aaeba69cf1d1b62f8744e15e"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encap_decap/encap_decap_keys.tentative.https.any.js",
       "mode": "100644",
-      "oid": "0a45c1fc4e9f6fd1582577db152af9a094d30cba"
+      "oid": "a482eafbb6102100f8f730e5dfe42cfb0053dcc3"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encap_decap/ml_kem_vectors.js",
@@ -17849,47 +18009,52 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes.js",
       "mode": "100644",
-      "oid": "879a6efe257e496acb3f1c4af3ffda925a382e16"
+      "oid": "9caecf695cf7e7f20d13228c2939df9693e0d370"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_cbc.https.any.js",
       "mode": "100644",
-      "oid": "ec09aae5a954a730aff9c0f80f983834de04c81e"
+      "oid": "9dcbfbdeccbf8f1ad181d524afb5f70da30205e9"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_cbc_vectors.js",
       "mode": "100644",
-      "oid": "96445a96325a557e53438b8f9dfd280d9c694bb6"
+      "oid": "28ef75fece62a4be482ce487b752273cb0447fe5"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_common_fixtures.js",
+      "mode": "100644",
+      "oid": "d8c6d1666ccaeb24460ef4a3a5618ca1515a931a"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_ctr.https.any.js",
       "mode": "100644",
-      "oid": "f9d85bb6c93b7763e8726473814652fafbff1aa7"
+      "oid": "cbda32f354321f015d13d7b231ae138bc36d7e12"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_ctr_vectors.js",
       "mode": "100644",
-      "oid": "201dff83ce9cacbd3f61f6a0b16eeb3105fa9ab2"
+      "oid": "89a19fa5fcbe5e1336e2ac8fff983f898efda35c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_gcm.https.any.js",
       "mode": "100644",
-      "oid": "b3e6b5f0d2c1ff1b643319b1beaf1ea6b7aeafea"
+      "oid": "295351fc319d656440377606f9d2a8c1783f1a4b"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_gcm_256_iv.https.any.js",
       "mode": "100644",
-      "oid": "196a8ea94fb1c4ffcf6073902d741c617a3834ff"
+      "oid": "a46f4c79b891a527f71ad27e91428056e5b70fd5"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_gcm_256_iv_fixtures.js",
       "mode": "100644",
-      "oid": "9cdbbbb79075c0a90d4a55caf18157fe485a5609"
+      "oid": "a081b8e864831c2ff3f9b1255873e7faf88686a5"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_gcm_96_iv_fixtures.js",
       "mode": "100644",
-      "oid": "bb00e2d7dd92cbd780d48273e065e95d5c38e181"
+      "oid": "e120b58d8dc493fc49a198db3d7b77c5b87e053a"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_gcm_vectors.js",
@@ -17899,12 +18064,12 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_ocb.tentative.https.any.js",
       "mode": "100644",
-      "oid": "cca34e9e54e70af21de2be9a567b5b2250a8d28a"
+      "oid": "e6a6246074c186d0abb6cac285382c37a4c6460d"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_ocb_fixtures.js",
       "mode": "100644",
-      "oid": "a5795195f163ce4c759700374b0991751bd70559"
+      "oid": "3e0c014c3e1c07edb30ddd2d18c4791bd36f249f"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/aes_ocb_vectors.js",
@@ -17919,217 +18084,227 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/rsa.js",
       "mode": "100644",
-      "oid": "071c086b3c4dfaeb1af21cd07e7831f2253324ab"
+      "oid": "951ffd56e58165abdda370027b056b6ab3953841"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/rsa_oaep.https.any.js",
       "mode": "100644",
-      "oid": "3550f5eec287934dac9ef69bc175f11345d914b2"
+      "oid": "42511415f157251a03d9ae8a312237348b3fb679"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/encrypt_decrypt/rsa_vectors.js",
       "mode": "100644",
-      "oid": "fcc732eddc1d63d90cdb95c457c8b6e81d8cb464"
+      "oid": "ca99953524e4ff6afbd5a22932eb62aaf5c74f27"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/generateKey/algorithm_registry.js",
+      "mode": "100644",
+      "oid": "2c7493dfffd674bc6270db591752ce82928e645a"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures.js",
       "mode": "100644",
-      "oid": "a3258ae0dd7788241a971d746e0ffa2c843e4954"
+      "oid": "e4a75c0651520c998e5589c6cde19471f4eb5ecd"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_AES-CBC.https.any.js",
       "mode": "100644",
-      "oid": "38bed1cc702819852e3a7185f66c18b671eb91da"
+      "oid": "5febdbb94926f782a64dd85f819bd38258027b2d"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_AES-CTR.https.any.js",
       "mode": "100644",
-      "oid": "0e7940775fe0f51ede2264c5c96d6e4cb7033387"
+      "oid": "0eb6664f5d00d8b7e0be2b8865aac2a91a93f38b"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_AES-GCM.https.any.js",
       "mode": "100644",
-      "oid": "a394c8b629c57906f2c5ba0a1fcb8b9199f3b4bf"
+      "oid": "3d13b78903fdf98ac119771099238374f3b079a1"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_AES-KW.https.any.js",
       "mode": "100644",
-      "oid": "40c199b29a5c6eb8198aa1ae82968858a3ef79e0"
+      "oid": "138565e59ac190bc1c0abd204ef85ab01a0240d5"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_AES-OCB.tentative.https.any.js",
       "mode": "100644",
-      "oid": "d4a2cd868ff51a6f8d94bbabd2c997652fe84cd7"
+      "oid": "ef7c8c38e537f9e20ccb8c6521d944ae74ff2a5d"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_ECDH.https.any.js",
       "mode": "100644",
-      "oid": "e522254d743aa469507be0919832fc74a120ce8e"
+      "oid": "f61d27e995c46724a4a1d7823f439df64da71de1"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_ECDSA.https.any.js",
       "mode": "100644",
-      "oid": "e19974ff488cc05b20e04008751685bf34da2a1c"
+      "oid": "e49b5e675b3f9bcf30ce36ac2e2e9f9e68519799"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_Ed25519.https.any.js",
       "mode": "100644",
-      "oid": "8f18fb1efe09500697c976a62afef1ca219948a3"
+      "oid": "7505e97bf2e1e6e2f74f20695b870c283243bbb6"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_Ed448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "b25dcd14909410125fe147a883e98f41ab281b96"
+      "oid": "6ee388e40f761aefbafea3d84bb9e086cc66fb88"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_HMAC.https.any.js",
       "mode": "100644",
-      "oid": "43ce1c026fc74e618bdff87a242858519b2dfb86"
+      "oid": "e3097cd46cdc596e9367eef4ff0ff256d8da90dc"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_ML-DSA.tentative.https.any.js",
       "mode": "100644",
-      "oid": "91e20bc6148fa32d01736b7412210088d48ce70a"
+      "oid": "d41636dea797464fb5f2d992ca46d411854111b6"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_ML-KEM.tentative.https.any.js",
       "mode": "100644",
-      "oid": "9cd347d00f815c105f83c58c37b7c254ba305e06"
+      "oid": "0ece96944e7ba8a16fd0d2aeda2958e74e418983"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_RSA-OAEP.https.any.js",
       "mode": "100644",
-      "oid": "1d2bca96b18c7e37e3c87ddc11a4935057ba43ea"
+      "oid": "a4eb4e6cbc825e334ad3f1e956f9b16a13107be4"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_RSA-PSS.https.any.js",
       "mode": "100644",
-      "oid": "562f66697c9f63d052d3154cddd43ec18564d7ae"
+      "oid": "62ac442ebe2b116613cdb2c68bd22314a8d9f52f"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_RSASSA-PKCS1-v1_5.https.any.js",
       "mode": "100644",
-      "oid": "fb19308de6f7a2940bed164a8d7e693237aa5b6e"
+      "oid": "f06e3402799a5993dfb28dc13b1dea79fe0b6154"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_X25519.https.any.js",
       "mode": "100644",
-      "oid": "2662d8697a9a6f41809386f83b9af2fc2460109a"
+      "oid": "6735e85151e65cdbf0bfd639ca6f3fb6b03ba9ea"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_X448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "455e260d1fe920b9d7982f1a91abd56bf842ecee"
+      "oid": "26e12b9725900f5ee7e8153a4711f26a932a4194"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_bad_algorithm.https.any.js",
+      "mode": "100644",
+      "oid": "5fe0b15784e3b7c411dcd24a320798528ed83a71"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_chacha20_poly1305.tentative.https.any.js",
       "mode": "100644",
-      "oid": "c9a278cdfc2b18bf1e2dc9595c9bcc03f459f5f1"
+      "oid": "6ec0593a14b97e5b6400bad315dd3f8e42a789a7"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/failures_kmac.tentative.https.any.js",
       "mode": "100644",
-      "oid": "f906038c7d3f4aad489e5c1ec8328c6419a921a9"
+      "oid": "889c17e9c23b638e41d07618675f5450be017a27"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes.js",
       "mode": "100644",
-      "oid": "c72384b7b93bf466a911ec1363192ab108db1353"
+      "oid": "c70ecb331873e99f30cb0e9e8bc48ae42820912c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_AES-CBC.https.any.js",
       "mode": "100644",
-      "oid": "80f92c2cb7d7a6bf5e47649ce9b13042f53fd54d"
+      "oid": "b2e1b2971a917407d360b17f000a97587478e308"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_AES-CTR.https.any.js",
       "mode": "100644",
-      "oid": "243a104b606dc8f165a59b9fe356a2ed29ed6eb2"
+      "oid": "bec9e22f3205d8c54b0bbfa49a8f03a72804610f"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_AES-GCM.https.any.js",
       "mode": "100644",
-      "oid": "f0f947c8160f90a704970c1835953fa8688fc7a2"
+      "oid": "df6e694c1e12b77aed5ff63c73133a2837dfd72b"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_AES-KW.https.any.js",
       "mode": "100644",
-      "oid": "dbc040fdc5cb4f671bbc9633cb0f8b9e5d51b6a4"
+      "oid": "e55b24745c260d47fef401557b29f5f70a3eb7df"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_AES-OCB.tentative.https.any.js",
       "mode": "100644",
-      "oid": "b43abc4edb41c45b7989761538b6ccd801d85861"
+      "oid": "c87f875f4b1e07ceb7cca76f85973c7ee025c865"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_ECDH.https.any.js",
       "mode": "100644",
-      "oid": "e9dee526149da6ca9cef49a8a9d65bbb50d77cef"
+      "oid": "9ec44a350605e4140388c57c559346f287271562"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_ECDSA.https.any.js",
       "mode": "100644",
-      "oid": "a022f31fe9d119bb763b71622b93b001bce33313"
+      "oid": "9b0f40aa9a9b3a55da6bccb8ebe222111f96434a"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_Ed25519.https.any.js",
       "mode": "100644",
-      "oid": "6b3bc460f60f2f7e9ce2b3070b10d825a69b4268"
+      "oid": "8ecbbd23553c3c3b83392d7493156ca87ab590da"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_Ed448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "8e37f57b244b582149261003109e0c2c199d6936"
+      "oid": "d017170ca1ad1f64ba2705a49e6cdf23f36328bf"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_HMAC.https.any.js",
       "mode": "100644",
-      "oid": "18e0b271226ff64969ce6986845774fdf896a6fc"
+      "oid": "59fab83b08b84ceb9d1a2275b23b48a1bcc26d30"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_ML-DSA.tentative.https.any.js",
       "mode": "100644",
-      "oid": "15d52f2a5059f545ba29960eae701cc6d5ca4ce8"
+      "oid": "6c81b193167c325ba3827f2cad538156d0ace99c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_ML-KEM.tentative.https.any.js",
       "mode": "100644",
-      "oid": "68a0d97b97553762fd78800b4d28383ccfd8db59"
+      "oid": "f41b5c34cdb535e19bc0488f6d0bad42268ac681"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_RSA-OAEP.https.any.js",
       "mode": "100644",
-      "oid": "d933fd981d4a33ba82fb2b000234859bdda1494e"
+      "oid": "f7c550df22224cbf39454b5e6a3221290fd4ccee"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_RSA-PSS.https.any.js",
       "mode": "100644",
-      "oid": "cb43e3de3de36438b80c882c86c61bb2f1a04893"
+      "oid": "d1a9ec33ac231fc02d6fd50b8becfbe6304141fd"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_RSASSA-PKCS1-v1_5.https.any.js",
       "mode": "100644",
-      "oid": "b8db5972284d1ac6bbda0da81621d9bca5d04ee7"
+      "oid": "6db5a3703fe7d58fddc7d9adb5fe9452c32b2425"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_X25519.https.any.js",
       "mode": "100644",
-      "oid": "0e87cf50108e69608c2ec76cfb424b093316a0e8"
+      "oid": "5acd5b5a1c2bcd8b0821322ece83f186d1dd6372"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_X448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "e7dbe32696d8fe4dc47445f6f0fa10f756f958aa"
+      "oid": "f1475c16bbd2beb16d31b28d28cda3bb7b624fe3"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_chacha20_poly1305.tentative.https.any.js",
       "mode": "100644",
-      "oid": "a1cef25c2f24fba7582b883e1d01e7986d53794a"
+      "oid": "2f3efebb6bc2ed2d643ea1dd01d8a33e5f53eebe"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/generateKey/successes_kmac.tentative.https.any.js",
       "mode": "100644",
-      "oid": "9f881f92bc17ccd859dfe73922b3c2fabec52e07"
+      "oid": "8276fa9058c478b9ce40d65c5e46a7faaea371d4"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/getPublicKey.tentative.https.any.js",
@@ -18139,7 +18314,7 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/getRandomValues.any.js",
       "mode": "100644",
-      "oid": "aecd38efd60bac63a28673241039d2743e5b911f"
+      "oid": "8fd18a81deff398f10e3f84ea6aa806f38debf81"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/historical.any.js",
@@ -18177,29 +18352,19 @@
       "oid": "83995bca37acb60013d9fd455c2bd439d641e672"
     },
     {
-      "path": "fixtures/wpt/WebCryptoAPI/import_export/ML-DSA_importKey.js",
-      "mode": "100644",
-      "oid": "d9257ac698250529a0475800ffac9045e3d84c82"
-    },
-    {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ML-DSA_importKey.tentative.https.any.js",
       "mode": "100644",
-      "oid": "5ce13d858d6fff4ce72f743d9c0334bb80361ce5"
+      "oid": "02f745d71c2862bd32f7b3de6639eedc5ba45a10"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ML-DSA_importKey_fixtures.js",
       "mode": "100644",
-      "oid": "ef1f5a1f51a9446c93d027dbbb66fd18a158e1eb"
-    },
-    {
-      "path": "fixtures/wpt/WebCryptoAPI/import_export/ML-KEM_importKey.js",
-      "mode": "100644",
-      "oid": "d9257ac698250529a0475800ffac9045e3d84c82"
+      "oid": "abccc10c63fb076a750539c7e0f36099ee697ff8"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ML-KEM_importKey.tentative.https.any.js",
       "mode": "100644",
-      "oid": "8b459c17e2d329d66e9af4ca5efe7892972db8bf"
+      "oid": "11d80c76bc552eee6407e926ba1b6e1640b33ba2"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ML-KEM_importKey_fixtures.js",
@@ -18214,27 +18379,32 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ec_importKey.https.any.js",
       "mode": "100644",
-      "oid": "3b78bab4e74132580fed81f7acebd245dc29bac1"
+      "oid": "473fab2887e78c5f3f8e1f01e3b74690d7e05c00"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ec_importKey_failures_ECDH.https.any.js",
       "mode": "100644",
-      "oid": "423d399f19def4cb2bb21696636fa839968b94d2"
+      "oid": "260e49791a51ea4c8ad85b6c0b77832099c59c07"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ec_importKey_failures_ECDSA.https.any.js",
       "mode": "100644",
-      "oid": "527940798a42a56d831a188691ce8aade1aacb66"
+      "oid": "96116d5462df7c43fb18b30677c254728266a436"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/ec_importKey_failures_fixtures.js",
       "mode": "100644",
-      "oid": "dc0e11d551a92271e31dc9f000b18601deb9d53e"
+      "oid": "a37a72cb28d5426b4b800f79db8877ae3366c120"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/importKey_failures.js",
       "mode": "100644",
-      "oid": "f45da96cf6b01ca6a01e13459619b0cc2880e007"
+      "oid": "7581614f0dcb43635b23082d5919fcc37c508158"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/import_export/ml_importKey.js",
+      "mode": "100644",
+      "oid": "a33c3a85b912e4dfac9d29273aa2297518fb3a80"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey.js",
@@ -18244,52 +18414,52 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_Ed25519.https.any.js",
       "mode": "100644",
-      "oid": "49656489d425dd4c54ec854756edfc6dacdf4765"
+      "oid": "b6b3786519512eeebcd61c56659518a9bdfc99ef"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_Ed448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "5bb7460c1fbc9333435925790cf8eacad7648611"
+      "oid": "8498ce4ef8f3505e9db88804a00417e46c56862c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_X25519.https.any.js",
       "mode": "100644",
-      "oid": "de1431d6cc24675e6ac7864c1e93d36b70a79765"
+      "oid": "5d629c082730ee8621d65f433ad8ab1fa37bf449"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_X448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "f8552be3c826dcf1f3511a5ad8cba295c62c1923"
+      "oid": "09361ed9b8d6ff508fa61b0ad6b889073ef20c3c"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_failures_Ed25519.https.any.js",
       "mode": "100644",
-      "oid": "e07b796df83d19bc78f17c035dcf02299c90e1fe"
+      "oid": "0b541d77016f2041017fde035425791860c55f16"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_failures_Ed448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "8ff3de5c79d3ab8f59f17051d5560b3e61371b11"
+      "oid": "726d5c1e3772346b1ef13f45d5a219395d894ab3"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_failures_X25519.https.any.js",
       "mode": "100644",
-      "oid": "a0116bee8885129924cde1cd62e65b640b076595"
+      "oid": "d4c9c105bc3ba4ef43d47147a52459c8b48ea2e6"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_failures_X448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "eccce68fac731cd751f7b8819fe24401055fe3a9"
+      "oid": "2b575d7ab4d7408020f5b0072371342014583b1b"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_failures_fixtures.js",
       "mode": "100644",
-      "oid": "6a7f583e0165c5661baaad12afed7fbd5fe013f7"
+      "oid": "01c65d60d44d57f0f799ee82fa3f9602cb91adff"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/okp_importKey_fixtures.js",
       "mode": "100644",
-      "oid": "58b41d52601eb9b7175d546a87027639887f9a75"
+      "oid": "5fe0f05c42b42ff2708eac88f6ef5e9178277d20"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/import_export/raw_format_aliases.tentative.https.any.js",
@@ -18429,12 +18599,12 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/ecdsa.https.any.js",
       "mode": "100644",
-      "oid": "3f1e2e5ea9d8a7ae6954c993a08ea927ea13c4fb"
+      "oid": "2af5e05048e4445bd29aaf1cf2b2e78d3b598683"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/ecdsa.js",
       "mode": "100644",
-      "oid": "cc13b1bd9c3cae79afb1b170726ea541752e44ba"
+      "oid": "a1a744aaa8244b16c80756d30be152c5ed75df06"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/ecdsa_vectors.js",
@@ -18444,17 +18614,17 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/eddsa.js",
       "mode": "100644",
-      "oid": "77961566d9a60202cadbd66b1d5e21973cedfdc6"
+      "oid": "a60ceda96a6c7e8b67e0ad7341a351012434adfe"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/eddsa_curve25519.https.any.js",
       "mode": "100644",
-      "oid": "b012b64733ef9d9319a1158cd2cbf99586ef4367"
+      "oid": "a4f32cbaeb7eb2a699e40e65922c34bb87c048e3"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/eddsa_curve448.tentative.https.any.js",
       "mode": "100644",
-      "oid": "281bb63ad659f7eaa489e8db37c9e1ca0c923988"
+      "oid": "8dd43dfeb1727852a4de9c5f0566c57c7a07608f"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/eddsa_small_order_points.https.any.js",
@@ -18474,12 +18644,12 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/hmac.https.any.js",
       "mode": "100644",
-      "oid": "a6c88f80ed99ee20495bdd3dcf0189ef002ffa38"
+      "oid": "070611181e58271599757fb499f3bd43519eaee3"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/hmac.js",
       "mode": "100644",
-      "oid": "929d9464e171cbaa37f24fa8ccefa0a0d79d7920"
+      "oid": "05b9cedfb94ca47420e63379b95d59f7d2bdd6de"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/hmac_vectors.js",
@@ -18489,12 +18659,12 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/kmac.js",
       "mode": "100644",
-      "oid": "d9d82d150b39335c5f1428549c652626176a6e4c"
+      "oid": "ac30a5559d8c003a4e5d79e02ff17c6268a69834"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/kmac.tentative.https.any.js",
       "mode": "100644",
-      "oid": "3d34c5752137a8c910e178d298f8038aeb0508f0"
+      "oid": "0a57ba7a3f805498df2ad281b064051b81dc313d"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/kmac_vectors.js",
@@ -18502,59 +18672,94 @@
       "oid": "6b35cab168c9c674dbdaf3155c4dfb828c82e758"
     },
     {
+      "path": "fixtures/wpt/WebCryptoAPI/sign_verify/mac.js",
+      "mode": "100644",
+      "oid": "27787c91d8a2b5c4f7e5253a9702ad459fcfa7ca"
+    },
+    {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/mldsa.js",
       "mode": "100644",
-      "oid": "10879273c1c3f4e16faa576686f55ff8717ae9a4"
+      "oid": "a2a4ef276043c45faa5fd2694dd56b53876c01d6"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/mldsa.tentative.https.any.js",
       "mode": "100644",
-      "oid": "be336b3498462c66daf2b66646394d94440351ac"
+      "oid": "253cc85e258f67d4ec65d7065a10813c80db0043"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/mldsa_vectors.js",
       "mode": "100644",
-      "oid": "a035821b7e35931f24069c5b7a326f98b2e27ac0"
+      "oid": "021060a1f35bfe07acc3d53191710211401eafb9"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/rsa.js",
       "mode": "100644",
-      "oid": "667f5d2793e48c07fa423113fa4f49ef6ae8fc61"
+      "oid": "8a87ba88cb4b958cde93d41d34db07dc1e6e7a94"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/rsa_pkcs.https.any.js",
       "mode": "100644",
-      "oid": "3e3a8c23bf53cf87608b5a7299c013e9e4a78457"
+      "oid": "43b87658d21f56d107a648bc009f28b959e15082"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/rsa_pkcs_vectors.js",
       "mode": "100644",
-      "oid": "71e5d8571bc8ef96ca9b23fb9887a76d9f7812c6"
+      "oid": "f1eca448a988e1b7cdd598423801bdcc92ba94a4"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/rsa_pss.https.any.js",
       "mode": "100644",
-      "oid": "399baba784687d921aeccf4e22cbd15122a72aee"
+      "oid": "c3ed8355f3f85f8185c0c113ba792af7f8541d82"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/sign_verify/rsa_pss_vectors.js",
       "mode": "100644",
-      "oid": "c3ce77960629b211836dd201dc6b318eab3a97ac"
+      "oid": "224bacc3d1bb8ba132cbd8db15ffdd70ec29ae42"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/sign_verify/signature.js",
+      "mode": "100644",
+      "oid": "2d734e1d973e715a247e736233ee488cdde0d254"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/supports-modern.tentative.https.any.js",
       "mode": "100644",
-      "oid": "ca23b782317762d14243a9d58c721c41cd1aa8c9"
+      "oid": "97cf9dff48aee2d737f2b47228401cf589c155e6"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/supports.tentative.https.any.js",
       "mode": "100644",
-      "oid": "ac3a32c741000cda53e2e2550f594df137d93acc"
+      "oid": "fcccbecd6916b9b5097b180d450d119adf2fc217"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/util/ec_key_fixtures.js",
+      "mode": "100644",
+      "oid": "e298fa8f9ebef2b35e5be16cb2ba775adac16a1a"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/util/helpers.js",
       "mode": "100644",
-      "oid": "3d44b7a7550e86eff62155406b62114d1c60b3ca"
+      "oid": "cc44dd16b1c9ab74d7fc1790fb8c79f9a13c8eec"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/util/mldsa_key_fixtures.js",
+      "mode": "100644",
+      "oid": "7b5170cdfeac83c5c951cb5ab3146d9d549e08f0"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/util/okp_key_fixtures.js",
+      "mode": "100644",
+      "oid": "569e7c7215a7c2006cbda38dc07f1588f25c7fb7"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/util/rsa_key_fixtures.js",
+      "mode": "100644",
+      "oid": "13adb1a133e6b44f8b5df057b98c7a3aec4161e1"
+    },
+    {
+      "path": "fixtures/wpt/WebCryptoAPI/util/supports.js",
+      "mode": "100644",
+      "oid": "18442424f4a2826920df8008834d55876975fd98"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/util/worker-report-crypto-subtle-presence.js",
@@ -18564,12 +18769,12 @@
     {
       "path": "fixtures/wpt/WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.any.js",
       "mode": "100644",
-      "oid": "9fa3bb775d4243b75779f8a8be663567dddc79a6"
+      "oid": "d7a044030826b2bdbf9519ed82d0ea3caa162567"
     },
     {
       "path": "fixtures/wpt/WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey_vectors.js",
       "mode": "100644",
-      "oid": "cf799a8a8ce3ea48abc50d1eb4e7b5465fe2c0d4"
+      "oid": "36500e4f27bad59e657b524393b84c67944a7c4e"
     },
     {
       "path": "fixtures/wpt/common/META.yml",
@@ -24374,7 +24579,7 @@
     {
       "path": "fixtures/wpt/urlpattern/WEB_FEATURES.yml",
       "mode": "100644",
-      "oid": "cb82ba5cda2918be080e10ab8bbd4c145e05b790"
+      "oid": "f6d02d253e414fd266e28a9d0eaac54a217ddd55"
     },
     {
       "path": "fixtures/wpt/urlpattern/resources/urlpattern-compare-test-data.json",
@@ -24669,7 +24874,7 @@
     {
       "path": "fixtures/wpt/versions.json",
       "mode": "100644",
-      "oid": "32b9537ffca9038b1dc7c203e573da820cad8eaf"
+      "oid": "b659c868d498697bd8ddc7599f4fa1ce64e94459"
     },
     {
       "path": "fixtures/wpt/wasm/jsapi/META.yml",
@@ -28759,7 +28964,7 @@
     {
       "path": "parallel/parallel.status",
       "mode": "100644",
-      "oid": "e4c82da4d61711b66138f6477cdcb1e334559892"
+      "oid": "d13efc8ac172c7d698e62f846c7c431225a7b002"
     },
     {
       "path": "parallel/test-abort-controller-any-timeout.js",
@@ -28814,7 +29019,7 @@
     {
       "path": "parallel/test-arm-math-illegal-instruction.js",
       "mode": "100644",
-      "oid": "c4a6ec01ba8828994071a3f22cd4f3bff54400a5"
+      "oid": "0e53a22c5244344ee1b64b66e525fa99c09a8311"
     },
     {
       "path": "parallel/test-assert-async.js",
@@ -29094,7 +29299,7 @@
     {
       "path": "parallel/test-async-local-storage-bind.js",
       "mode": "100644",
-      "oid": "d8d4c4599826f95319fad598ed357fca80532e80"
+      "oid": "01aa449c1d467e576257d30f9425df168089cce6"
     },
     {
       "path": "parallel/test-async-local-storage-contexts.js",
@@ -29247,9 +29452,14 @@
       "oid": "ea6471c7df8742b61077f3be4543f4cb590d3e64"
     },
     {
+      "path": "parallel/test-blocklist-fast-api.js",
+      "mode": "100644",
+      "oid": "3c59ad361d1a43bff8527692ea99b31298827c9c"
+    },
+    {
       "path": "parallel/test-blocklist.js",
       "mode": "100644",
-      "oid": "6895efcc1c00a25fbe87edd17b57ed3b747f5a5e"
+      "oid": "08a293bb6a81b109d1207a8637dcfbe3e371a3b9"
     },
     {
       "path": "parallel/test-bootstrap-modules.js",
@@ -29264,7 +29474,7 @@
     {
       "path": "parallel/test-btoa-atob.js",
       "mode": "100644",
-      "oid": "a2c8d9e3134c995f0a7562d14f937c3292b04076"
+      "oid": "3fde039f395ee758441095cde7f4665d076e1217"
     },
     {
       "path": "parallel/test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js",
@@ -29409,7 +29619,7 @@
     {
       "path": "parallel/test-buffer-isascii.js",
       "mode": "100644",
-      "oid": "b9468ca13359e6440a9a3739225e13110b1f36fa"
+      "oid": "48cc96a17d61d7dd658b8bdf651c61189e23a261"
     },
     {
       "path": "parallel/test-buffer-isencoding.js",
@@ -29424,7 +29634,7 @@
     {
       "path": "parallel/test-buffer-isutf8.js",
       "mode": "100644",
-      "oid": "204db3e6a5fe256c207c07b623bff7258e02832f"
+      "oid": "151fc0baf4aefc9b5e86c707db20fa03eff3001f"
     },
     {
       "path": "parallel/test-buffer-iterator.js",
@@ -29574,7 +29784,7 @@
     {
       "path": "parallel/test-buffer-write.js",
       "mode": "100644",
-      "oid": "4c797059b5925b670300c312fa7700110462581f"
+      "oid": "11cfb32ab19a6e7eb5f424edf230a150b764d5a2"
     },
     {
       "path": "parallel/test-buffer-writedouble.js",
@@ -29879,7 +30089,7 @@
     {
       "path": "parallel/test-child-process-fork-stdio-string-variant.js",
       "mode": "100644",
-      "oid": "6a396b51d9bd2ce458a0c6e9b2c80648452d4b5f"
+      "oid": "91691b353a15fdda4fba351e0d2e5e3b39d303da"
     },
     {
       "path": "parallel/test-child-process-fork-stdio.js",
@@ -29919,12 +30129,17 @@
     {
       "path": "parallel/test-child-process-ipc-next-tick.js",
       "mode": "100644",
-      "oid": "b23aefc85d11d814ecfb8b8db9f0ab7933dbd757"
+      "oid": "849a927e251e83adb51211e27211119f781bc06e"
     },
     {
       "path": "parallel/test-child-process-ipc.js",
       "mode": "100644",
       "oid": "d776f9594bb40b931caac8b108131b969d8922d0"
+    },
+    {
+      "path": "parallel/test-child-process-kill-sigwinch.js",
+      "mode": "100644",
+      "oid": "e474eefa40b4b3c99e5a5f720fca53399df32a0f"
     },
     {
       "path": "parallel/test-child-process-kill.js",
@@ -30174,7 +30389,7 @@
     {
       "path": "parallel/test-child-process-windows-hide.js",
       "mode": "100644",
-      "oid": "c218c901a7f2eaaff745b97a83c7344bddd48082"
+      "oid": "324b342a7c7bb0316072a151286f66b70c81c715"
     },
     {
       "path": "parallel/test-cli-bad-options.js",
@@ -30974,7 +31189,7 @@
     {
       "path": "parallel/test-constants.js",
       "mode": "100644",
-      "oid": "51023b56d4dca1ca2435330698970268aede597c"
+      "oid": "6ae205ca24bbb3bf5cb7c1fab98e2d75053ccfce"
     },
     {
       "path": "parallel/test-corepack-version.js",
@@ -31024,7 +31239,7 @@
     {
       "path": "parallel/test-crypto-authenticated.js",
       "mode": "100644",
-      "oid": "2a4e2a1520a3539962cfe4c6f9ec93ff82afd229"
+      "oid": "082e86a669b0e4329e2fdffc604cd2774a4113d9"
     },
     {
       "path": "parallel/test-crypto-boringssl-evp-list.js",
@@ -31069,7 +31284,7 @@
     {
       "path": "parallel/test-crypto-dh-curves.js",
       "mode": "100644",
-      "oid": "f14c58e7c200c16a79b6801788d3798864a7d407"
+      "oid": "c0d9f1b5c425b0ef73445527ca0261c4b783cfda"
     },
     {
       "path": "parallel/test-crypto-dh-errors.js",
@@ -31124,7 +31339,7 @@
     {
       "path": "parallel/test-crypto-dh.js",
       "mode": "100644",
-      "oid": "8a3dee5b0756d1d5151d2c8461b8686ad6e74063"
+      "oid": "01a7f0f3ddd88b6681bbc2ca32a65e0c37040517"
     },
     {
       "path": "parallel/test-crypto-domain.js",
@@ -31164,7 +31379,7 @@
     {
       "path": "parallel/test-crypto-fips.js",
       "mode": "100644",
-      "oid": "04a95fa5fd37c986bcf370d903012568a3f5fc19"
+      "oid": "8b2e1c9a364911594bc343596a1bed4d8704462e"
     },
     {
       "path": "parallel/test-crypto-from-binary.js",
@@ -31230,6 +31445,16 @@
       "path": "parallel/test-crypto-key-objects.js",
       "mode": "100644",
       "oid": "cfcd50f12a3e5c0e19034b8bd35574829ee2400b"
+    },
+    {
+      "path": "parallel/test-crypto-key-store-pkcs11.js",
+      "mode": "100644",
+      "oid": "8c344686a4269ee9c97b62be0b86c93e2dc7fa64"
+    },
+    {
+      "path": "parallel/test-crypto-key-store.js",
+      "mode": "100644",
+      "oid": "b6f0124166738e9ad0b927061bcbe59bf5648d9c"
     },
     {
       "path": "parallel/test-crypto-keygen-async-dsa-key-object.js",
@@ -31404,7 +31629,7 @@
     {
       "path": "parallel/test-crypto-keygen.js",
       "mode": "100644",
-      "oid": "206d6f7a84b5a53c59fc199c1f90fa0eb6be506f"
+      "oid": "111d3dcbfd4828c7db018e8b61e2ac3c61d7ddfb"
     },
     {
       "path": "parallel/test-crypto-keyobject-brand-check.js",
@@ -31439,7 +31664,7 @@
     {
       "path": "parallel/test-crypto-no-algorithm.js",
       "mode": "100644",
-      "oid": "76063a04227e01e316b879c006f9070453224f00"
+      "oid": "db781c66a6d68d42c70f9b1d4589e372049ccd3c"
     },
     {
       "path": "parallel/test-crypto-oaep-zero-length.js",
@@ -31539,7 +31764,7 @@
     {
       "path": "parallel/test-crypto-random.js",
       "mode": "100644",
-      "oid": "ceaa859a0e03168c57e7b51d070c0d7977151526"
+      "oid": "88b6fcba84d74d3ee9d59e318711e56164393b34"
     },
     {
       "path": "parallel/test-crypto-randomfillsync-regression.js",
@@ -31574,7 +31799,7 @@
     {
       "path": "parallel/test-crypto-sec-level.js",
       "mode": "100644",
-      "oid": "d7d2252be6c35d6e9c01500a737ccd55b8f9f11d"
+      "oid": "f2c0e3900624751ff8ad4a83def695666cde952a"
     },
     {
       "path": "parallel/test-crypto-secret-keygen.js",
@@ -31589,7 +31814,7 @@
     {
       "path": "parallel/test-crypto-sign-verify.js",
       "mode": "100644",
-      "oid": "3dd5e8e8325274c5012fd4a4238f3f8c9f93546f"
+      "oid": "808c8d076a28095a4de3ded293c508df19c4b4ae"
     },
     {
       "path": "parallel/test-crypto-stream.js",
@@ -31762,6 +31987,11 @@
       "oid": "93c8e1b625591dc7c5237c2c939e8f88cdee01cf"
     },
     {
+      "path": "parallel/test-debugger-no-inspect-brk.js",
+      "mode": "100644",
+      "oid": "611d28fd9f3e9b5076c9dbe835c2d01ea244c25c"
+    },
+    {
       "path": "parallel/test-debugger-object-type-remote-object.js",
       "mode": "100644",
       "oid": "7404eae396344705a52d121f6ce9e4d62fafa657"
@@ -31769,7 +31999,7 @@
     {
       "path": "parallel/test-debugger-pid.js",
       "mode": "100644",
-      "oid": "157939c05c73fe31e6c3eda8973233c947829f3e"
+      "oid": "6fcdac4d9d1df5dc81d4392fe461d5881f8ac777"
     },
     {
       "path": "parallel/test-debugger-preserve-breaks.js",
@@ -31829,7 +32059,7 @@
     {
       "path": "parallel/test-debugger-probe-failure-hang-during-evaluate.js",
       "mode": "100644",
-      "oid": "82ff78ca6f78adaab2adcc7386a96b012f405f1f"
+      "oid": "705557285c6c53a4c4d0549688abf01527b3fcf4"
     },
     {
       "path": "parallel/test-debugger-probe-failure-process-exit.js",
@@ -31937,6 +32167,11 @@
       "oid": "f0ed99542a4d2faacd16e3549f3c152bc10151cc"
     },
     {
+      "path": "parallel/test-debugger-probe-startup-disconnect.js",
+      "mode": "100644",
+      "oid": "68c8432dc552321e1977c491a4e239ce70b5fcdd"
+    },
+    {
       "path": "parallel/test-debugger-probe-startup-pause.js",
       "mode": "100644",
       "oid": "917026bf13fe0f7018c09cc5263edc7c1f2e0b5a"
@@ -32004,7 +32239,7 @@
     {
       "path": "parallel/test-debugger-run-restart-init.js",
       "mode": "100644",
-      "oid": "78f237353baf8c839f56905a148aff33b143a593"
+      "oid": "b57939135f801fba8247aac784f9dc09e6edb559"
     },
     {
       "path": "parallel/test-debugger-sb-before-load.js",
@@ -32030,6 +32265,11 @@
       "path": "parallel/test-debugger-use-strict.js",
       "mode": "100644",
       "oid": "ae82a9fc82352b419468ca035539ff50eb31ae41"
+    },
+    {
+      "path": "parallel/test-debugger-wait-for-debugger.js",
+      "mode": "100644",
+      "oid": "b438147ea8322dd8fb3a4c0f5054de022963dbbf"
     },
     {
       "path": "parallel/test-debugger-watch-validation.js",
@@ -32075,6 +32315,11 @@
       "path": "parallel/test-dgram-bind-default-address.js",
       "mode": "100644",
       "oid": "130d614c5812b55271a87faa3b179ad07306c0a4"
+    },
+    {
+      "path": "parallel/test-dgram-bind-error-callback.js",
+      "mode": "100644",
+      "oid": "d5009f948228b25cad697cd47738fb5708cb74c7"
     },
     {
       "path": "parallel/test-dgram-bind-error-repeat.js",
@@ -32439,7 +32684,7 @@
     {
       "path": "parallel/test-dgram-udp6-link-local-address.js",
       "mode": "100644",
-      "oid": "5c090acc6b9e11019cee83e3b318231e97346d6e"
+      "oid": "2320d665cfddcc2b3b9de4ece0e1efad85e43b99"
     },
     {
       "path": "parallel/test-dgram-udp6-send-default-host.js",
@@ -32634,7 +32879,7 @@
     {
       "path": "parallel/test-diagnostics-channel-object-channel-pub-sub.js",
       "mode": "100644",
-      "oid": "9498419b806ca8589e96b9626935ab686b1dfff0"
+      "oid": "f02544936559a9766a7c138a36d456fcd22c0d59"
     },
     {
       "path": "parallel/test-diagnostics-channel-process.js",
@@ -32644,7 +32889,7 @@
     {
       "path": "parallel/test-diagnostics-channel-pub-sub.js",
       "mode": "100644",
-      "oid": "a7232ab58ce8a545ef7063d9c0916ca0ca431dd4"
+      "oid": "e3a868b7ce0c41756dcc89765039834df52b4767"
     },
     {
       "path": "parallel/test-diagnostics-channel-safe-subscriber-errors.js",
@@ -32929,7 +33174,7 @@
     {
       "path": "parallel/test-dns.js",
       "mode": "100644",
-      "oid": "0977e657f0ca95156f0e4bbe83ea7e4ab39d4678"
+      "oid": "d8182a8ccf58651f37d2cd67d08eeca969465a38"
     },
     {
       "path": "parallel/test-domain-abort-on-uncaught.js",
@@ -33239,7 +33484,7 @@
     {
       "path": "parallel/test-env-newprotomethod-remove-unnecessary-prototypes.js",
       "mode": "100644",
-      "oid": "22c0c8665d148b5d29e1a8bebfd45a8346ffee1d"
+      "oid": "638c2c3c8722eb351b4e48be5990ea17753d207a"
     },
     {
       "path": "parallel/test-env-var-no-warnings.js",
@@ -33684,7 +33929,7 @@
     {
       "path": "parallel/test-events-uncaught-exception-stack.js",
       "mode": "100644",
-      "oid": "25fe9d6585f180bde3982692400f2b578b12d25f"
+      "oid": "c11fcbabcb3523fd4c4e1188a1a0c660d06448a4"
     },
     {
       "path": "parallel/test-eventsource-disabled.js",
@@ -33734,7 +33979,7 @@
     {
       "path": "parallel/test-experimental-shared-value-conveyor.js",
       "mode": "100644",
-      "oid": "17eb32c66b11033e21558f4b715ea084222a1ea3"
+      "oid": "123e212bd1da1c0cf87a7d926e80915a5c92a889"
     },
     {
       "path": "parallel/test-fastutf8stream-destroy.js",
@@ -33954,7 +34199,7 @@
     {
       "path": "parallel/test-fs-buffertype-writesync.js",
       "mode": "100644",
-      "oid": "5649a00569a2faef6f465585d8feca3e06c420dd"
+      "oid": "d1738dd3cc35581896b1de7eb6ce468e2e10af88"
     },
     {
       "path": "parallel/test-fs-chmod-mask.js",
@@ -33989,7 +34234,7 @@
     {
       "path": "parallel/test-fs-constants.js",
       "mode": "100644",
-      "oid": "740fa026e6c5831b839be82621fadd71c431f174"
+      "oid": "518cb39ee00e111813795306c2c891d241cefd7b"
     },
     {
       "path": "parallel/test-fs-copyfile-respect-permissions.js",
@@ -34145,6 +34390,11 @@
       "path": "parallel/test-fs-cp-async-symlink-points-to-dest.mjs",
       "mode": "100644",
       "oid": "f8e60fe1fa2b2e055dbd6538c3dd0788539fcbeb"
+    },
+    {
+      "path": "parallel/test-fs-cp-async-verbatim-dir-symlinks-with-filter.mjs",
+      "mode": "100644",
+      "oid": "8e773bc6065c57557f74e9e111070fdad742a708"
     },
     {
       "path": "parallel/test-fs-cp-async-with-mode-flags.mjs",
@@ -34377,9 +34627,14 @@
       "oid": "6393aeb2c158595b4681965ff8283dc730b78ff4"
     },
     {
+      "path": "parallel/test-fs-cp-sync-verbatim-dir-symlinks-with-filter.mjs",
+      "mode": "100644",
+      "oid": "7aa0d90ff2a4c2e74d1ebd9dc64c68b734886624"
+    },
+    {
       "path": "parallel/test-fs-cp-sync-verbatim-symlinks-invalid.mjs",
       "mode": "100644",
-      "oid": "3db176487f715d24b47701a90898aab9f42b0caf"
+      "oid": "c9ec4e82f414d57f853c3ba6519fe36a67457a22"
     },
     {
       "path": "parallel/test-fs-cp-sync-verbatim-symlinks-true.mjs",
@@ -34454,7 +34709,7 @@
     {
       "path": "parallel/test-fs-glob.mjs",
       "mode": "100644",
-      "oid": "bd95bce7d0e38aec8e11962176f2c713664d2740"
+      "oid": "9226e491358d362fceb14d407430a12c49ec6aae"
     },
     {
       "path": "parallel/test-fs-internal-assertencoding.js",
@@ -35027,9 +35282,14 @@
       "oid": "60c7dccd1acaf24dd826fd075ef8a5219127c5f2"
     },
     {
+      "path": "parallel/test-fs-readfilesync-utf8-sizes.js",
+      "mode": "100644",
+      "oid": "ac8670836d446c503094310ef9a1fdb130aa99fb"
+    },
+    {
       "path": "parallel/test-fs-readlink-type-check.js",
       "mode": "100644",
-      "oid": "58d431308c76b1d3444465483d4077724b43ba6b"
+      "oid": "adf2c96126e7d467667f080852843898a1296945"
     },
     {
       "path": "parallel/test-fs-readv-promises.js",
@@ -35057,9 +35317,19 @@
       "oid": "bf1ca0795a634c37f71da5383478705fedc2989a"
     },
     {
+      "path": "parallel/test-fs-realpath-async-stale-stat-values.js",
+      "mode": "100644",
+      "oid": "83e8af7b3eaf27275fc9f2dbd85d58578e8a271d"
+    },
+    {
       "path": "parallel/test-fs-realpath-buffer-encoding.js",
       "mode": "100644",
       "oid": "dbf2bda2c77d238fe1a6fbd2db11ba35871198a9"
+    },
+    {
+      "path": "parallel/test-fs-realpath-namespaced-drive-win.js",
+      "mode": "100644",
+      "oid": "eac72eb8dfa2568cccc9022f36f62e2169f2f696"
     },
     {
       "path": "parallel/test-fs-realpath-native.js",
@@ -35077,6 +35347,11 @@
       "oid": "f637642ca21d6796a8d006bed93e84b0264d27ed"
     },
     {
+      "path": "parallel/test-fs-realpath-stale-stat-values.js",
+      "mode": "100644",
+      "oid": "2a5dfdad7a4584b255911829801ae0f5cec4e6e7"
+    },
+    {
       "path": "parallel/test-fs-realpath.js",
       "mode": "100644",
       "oid": "6ad074397eb3645bc984f2ab97bfcdc217ebc43c"
@@ -35090,6 +35365,11 @@
       "path": "parallel/test-fs-rm.js",
       "mode": "100644",
       "oid": "e92bf8c079715fc97f491f83be09a606769eba18"
+    },
+    {
+      "path": "parallel/test-fs-rmSync-eperm-retries.js",
+      "mode": "100644",
+      "oid": "55f1d9b307089868ab08009c9a710d531deaf8f4"
     },
     {
       "path": "parallel/test-fs-rmSync-special-char.js",
@@ -35134,7 +35414,7 @@
     {
       "path": "parallel/test-fs-rmdir-type-check.js",
       "mode": "100644",
-      "oid": "7014ce27f8e345b0ee63b1c3f92ed84274711afb"
+      "oid": "321386b0d7d146ef499687328eb18e46e1adca60"
     },
     {
       "path": "parallel/test-fs-sir-writes-alot.js",
@@ -35207,6 +35487,11 @@
       "oid": "aa76cf51ada430f8e0587e017006544194812aa5"
     },
     {
+      "path": "parallel/test-fs-stream-windows-handle.js",
+      "mode": "100644",
+      "oid": "299a618802cfb13c4f8f49c56ea6a588c56ff708"
+    },
+    {
       "path": "parallel/test-fs-symlink-buffer-path.js",
       "mode": "100644",
       "oid": "ecad001d5ef1521b161cdfe5727a2b28e496edcd"
@@ -35269,7 +35554,7 @@
     {
       "path": "parallel/test-fs-unlink-type-check.js",
       "mode": "100644",
-      "oid": "006e9ad73485437ebc77b3938f97a4c3563de5cd"
+      "oid": "62c1cf3da71b82545471b0683f5d345522cb6195"
     },
     {
       "path": "parallel/test-fs-util-validateoffsetlength.js",
@@ -35752,9 +36037,14 @@
       "oid": "adaad400540a76d042288c6e5765476dc1aa2628"
     },
     {
+      "path": "parallel/test-heap-embedder-graph.js",
+      "mode": "100644",
+      "oid": "1873fd1a49ca328ba3630c2b60d887487b853722"
+    },
+    {
       "path": "parallel/test-heap-prof-basic.js",
       "mode": "100644",
-      "oid": "34d8af9a78407330096d3b1f4702a19294fe2161"
+      "oid": "4ddc313ff0484ba9f085b58d980b05a02d831af5"
     },
     {
       "path": "parallel/test-heap-prof-dir-absolute.js",
@@ -35774,7 +36064,7 @@
     {
       "path": "parallel/test-heap-prof-exec-argv.js",
       "mode": "100644",
-      "oid": "02ad4430dba769404ce11a79c9d6eb876fcc1b4a"
+      "oid": "186b4d5d631b7d086c447d822a8e960d4461e508"
     },
     {
       "path": "parallel/test-heap-prof-exit.js",
@@ -35794,7 +36084,7 @@
     {
       "path": "parallel/test-heap-prof-loop-drained.js",
       "mode": "100644",
-      "oid": "d0fc4c98784917d0ce06d5d05342e64fce024039"
+      "oid": "d8e07b33cb46c28d480fb739555751c82f9e721a"
     },
     {
       "path": "parallel/test-heap-prof-name.js",
@@ -35907,6 +36197,11 @@
       "oid": "7153899ac58dbb53c961c218cd8dbe6d2524e723"
     },
     {
+      "path": "parallel/test-http-agent-highwatermark-reuse.js",
+      "mode": "100644",
+      "oid": "b78b475ef6f18bd0099bbd458483c34683481e6d"
+    },
+    {
       "path": "parallel/test-http-agent-keep-alive-timeout-buffer.js",
       "mode": "100644",
       "oid": "d7ec5df9b86c31339f71ca4d9dda4623df1eafcc"
@@ -35920,6 +36215,11 @@
       "path": "parallel/test-http-agent-keepalive.js",
       "mode": "100644",
       "oid": "1cf5a597d0af0ba415facdcc799cc0478dc1f0bc"
+    },
+    {
+      "path": "parallel/test-http-agent-keylog-existing-sockets.js",
+      "mode": "100644",
+      "oid": "1a391c09b8be1f90e87358785a40d9216489d0f3"
     },
     {
       "path": "parallel/test-http-agent-maxsockets-respected.js",
@@ -36439,7 +36739,7 @@
     {
       "path": "parallel/test-http-correct-hostname.js",
       "mode": "100644",
-      "oid": "c67a6d49f2e75cdc039b191c3ca3c9f56ec888a1"
+      "oid": "ea4b3cb25a094755db4fa61f3fc6e0e67135d12e"
     },
     {
       "path": "parallel/test-http-createConnection.js",
@@ -36669,7 +36969,7 @@
     {
       "path": "parallel/test-http-hostname-typechecking.js",
       "mode": "100644",
-      "oid": "368766e087014bed5def60a38b241309d6e34d99"
+      "oid": "c143106b115ea982e280e0d73a475d6892a4d8c5"
     },
     {
       "path": "parallel/test-http-import-websocket.js",
@@ -36977,6 +37277,11 @@
       "oid": "7249230cfadbb79d89e6fb8cb6527e262f0451ae"
     },
     {
+      "path": "parallel/test-http-outgoing-flush-drain.js",
+      "mode": "100644",
+      "oid": "12b5a5036cce2543aa9554097f140bc4dbff9b4b"
+    },
+    {
       "path": "parallel/test-http-outgoing-message-capture-rejection.js",
       "mode": "100644",
       "oid": "31cc047ea2e319813478d2815c79ec1aae3f796d"
@@ -37050,6 +37355,11 @@
       "path": "parallel/test-http-parser-lazy-loaded.js",
       "mode": "100644",
       "oid": "44bb59f052e6ce2ca389e13360e29b25fb050653"
+    },
+    {
+      "path": "parallel/test-http-parser-max-header-pairs-cache.js",
+      "mode": "100644",
+      "oid": "dc8a60f36b0fa06f4a5675f5390f012afeb1cd34"
     },
     {
       "path": "parallel/test-http-parser-memory-retention.js",
@@ -37149,7 +37459,7 @@
     {
       "path": "parallel/test-http-req-close-robust-from-tampering.js",
       "mode": "100644",
-      "oid": "edfdb309a7e488ec7e58d251eda1df3f28b86b5f"
+      "oid": "75f57ad54133f1334ec88bb0c885b64e05c842ea"
     },
     {
       "path": "parallel/test-http-req-res-close.js",
@@ -37534,12 +37844,12 @@
     {
       "path": "parallel/test-http-server-response-standalone.js",
       "mode": "100644",
-      "oid": "bc7ca56f894bdef5110da12ec9a7d3619f66dc62"
+      "oid": "00ca7c0a96d68282fc6557bd67492c0b0326cf7a"
     },
     {
       "path": "parallel/test-http-server-stale-close.js",
       "mode": "100644",
-      "oid": "60112f7086283ec40e5b6cb8ac2a9af12a932a25"
+      "oid": "909d02c920ebb4077a7397edbd73119a2fea695f"
     },
     {
       "path": "parallel/test-http-server-timeouts-validation.js",
@@ -37554,7 +37864,7 @@
     {
       "path": "parallel/test-http-server-unconsume.js",
       "mode": "100644",
-      "oid": "0a0b5913812a08b107ab9695390c52064e3cb571"
+      "oid": "e92d7c127504642e1e1ebaed88de064aa5d4c5c2"
     },
     {
       "path": "parallel/test-http-server-write-after-end.js",
@@ -38944,7 +39254,7 @@
     {
       "path": "parallel/test-http2-server-settimeout-no-callback.js",
       "mode": "100644",
-      "oid": "d0352067b7bd02d5821dbc4c7df58519640f0d31"
+      "oid": "a5cb080609f56328074923796c660aed7cca194c"
     },
     {
       "path": "parallel/test-http2-server-shutdown-before-respond.js",
@@ -38990,6 +39300,11 @@
       "path": "parallel/test-http2-session-cleanup-on-nghttp2-goaway.js",
       "mode": "100644",
       "oid": "f3576f9f59bcbf61b75c1753709ea77778610d4e"
+    },
+    {
+      "path": "parallel/test-http2-session-destroy-during-receive.js",
+      "mode": "100644",
+      "oid": "238d511fd83c6446e46a63c9ab4bc90513578ab6"
     },
     {
       "path": "parallel/test-http2-session-gc-while-write-scheduled.js",
@@ -39069,7 +39384,7 @@
     {
       "path": "parallel/test-http2-status-code-invalid.js",
       "mode": "100644",
-      "oid": "a906c706d7d7e56caff3b6cfd30313688439c9f8"
+      "oid": "a8b92aad63699bd82a4a2ef6e2c6e52351d6403b"
     },
     {
       "path": "parallel/test-http2-status-code.js",
@@ -39559,12 +39874,12 @@
     {
       "path": "parallel/test-icu-transcode.js",
       "mode": "100644",
-      "oid": "e9aced128eec21e2a289043b21cf613627588aad"
+      "oid": "87b45e8649ce9d9abcfdfd98350cc4e2ee4fc4fa"
     },
     {
       "path": "parallel/test-inspect-address-in-use.js",
       "mode": "100644",
-      "oid": "d900fdfb6795302f7423078e32760ca7e32547d9"
+      "oid": "bd954e4a7bc8b24d68919d4a1e5b408f1f3c7ea1"
     },
     {
       "path": "parallel/test-inspect-async-hook-setup-at-inspect.js",
@@ -39604,7 +39919,7 @@
     {
       "path": "parallel/test-inspector-async-hook-after-done.js",
       "mode": "100644",
-      "oid": "f9cd7b4913604277d20f00d932d3129a7a8e7688"
+      "oid": "b4eff0467ecdeec6c59808405b5e90048eba0a0b"
     },
     {
       "path": "parallel/test-inspector-async-hook-setup-at-inspect-brk.js",
@@ -40189,7 +40504,7 @@
     {
       "path": "parallel/test-messageevent-brandcheck.js",
       "mode": "100644",
-      "oid": "17f2b708cc56736ba133c96fa81feb054810aefa"
+      "oid": "a78affb785afc1df992ba5db408d3f86d5eee096"
     },
     {
       "path": "parallel/test-messageport-hasref.js",
@@ -40219,7 +40534,7 @@
     {
       "path": "parallel/test-mime-api.js",
       "mode": "100644",
-      "oid": "dffead31850b470694d336fb1a85297f3d2c6e47"
+      "oid": "5cab3f9cf2af872ba91ba30da4c66af238b635d1"
     },
     {
       "path": "parallel/test-mime-whatwg.js",
@@ -40312,6 +40627,11 @@
       "oid": "205a030c57e8aa5f7cb1cbbcfa627d017a6cec72"
     },
     {
+      "path": "parallel/test-module-nearest-parent-package-json-cache.js",
+      "mode": "100644",
+      "oid": "3d818c9fe1d95ab12c31df95c5a1a6ff232b95a0"
+    },
+    {
       "path": "parallel/test-module-nodemodulepaths.js",
       "mode": "100644",
       "oid": "1e355882e0f3d76537573b54391c16af9fb02ec3"
@@ -40375,6 +40695,11 @@
       "path": "parallel/test-module-symlinked-peer-modules.js",
       "mode": "100644",
       "oid": "fb02a8a94d5d66e95fbcea80b2417938b4b2ebc0"
+    },
+    {
+      "path": "parallel/test-module-unreadable-package-json.js",
+      "mode": "100644",
+      "oid": "4261dad8558019ea79bcca37b27b1cb6628a6dba"
     },
     {
       "path": "parallel/test-module-version.js",
@@ -40767,11 +41092,6 @@
       "oid": "220ca2ba30b065982c42148192099e40a662cdd2"
     },
     {
-      "path": "parallel/test-net-listen-ipv6only.js",
-      "mode": "100644",
-      "oid": "a329011bcc8a2398d34e1f1e4ac951cbadbca9e2"
-    },
-    {
       "path": "parallel/test-net-listen-twice.js",
       "mode": "100644",
       "oid": "281868da5a9eb7cd97b1465c3c08ea0e36b61b90"
@@ -41107,6 +41427,11 @@
       "oid": "32a07471fc616204e41f8c00f4e6a431b0cabeda"
     },
     {
+      "path": "parallel/test-net-socket-unref-timer-parent-chain.js",
+      "mode": "100644",
+      "oid": "36a88f1c158e59d55d9f41e17895546125ac0f10"
+    },
+    {
       "path": "parallel/test-net-socket-write-after-close.js",
       "mode": "100644",
       "oid": "3c6537937d28e587933384bceebe68d5f3fe96bd"
@@ -41140,6 +41465,11 @@
       "path": "parallel/test-net-transfer-guards.js",
       "mode": "100644",
       "oid": "0879ec9da81a8e01f863682b248aae0a66b4df32"
+    },
+    {
+      "path": "parallel/test-net-unref-timer-parent-undefined.js",
+      "mode": "100644",
+      "oid": "01e45e82f908e0362b1bbb08ca37486b265305d2"
     },
     {
       "path": "parallel/test-net-writable.js",
@@ -41269,7 +41599,7 @@
     {
       "path": "parallel/test-node-run.js",
       "mode": "100644",
-      "oid": "e24117f6b1658bc2742e2db78970c6bef39c05d4"
+      "oid": "ef9cd5a0f805e7c28fc72b7953c57d8e0eab8465"
     },
     {
       "path": "parallel/test-nodeeventtarget.js",
@@ -41290,6 +41620,11 @@
       "path": "parallel/test-openssl-ca-options.js",
       "mode": "100644",
       "oid": "d05884cf5ba3c5ee62c74b878f41e10eb5aee65d"
+    },
+    {
+      "path": "parallel/test-openssl-unreadable-config.js",
+      "mode": "100644",
+      "oid": "99681e0ecba0706c899928908723bae2e41ad34a"
     },
     {
       "path": "parallel/test-options-binding.js",
@@ -41319,7 +41654,7 @@
     {
       "path": "parallel/test-os-homedir-no-envvar.js",
       "mode": "100644",
-      "oid": "2f9b1b47a704777d698f721f598d5d7eabe20c20"
+      "oid": "3a47d6d72c4d3f9a6d1a2ccc7cad96617d2397c8"
     },
     {
       "path": "parallel/test-os-process-priority.js",
@@ -41467,9 +41802,19 @@
       "oid": "680139d6bb8444827fcb3907dd3ca0f8d6122fdb"
     },
     {
+      "path": "parallel/test-perf-hooks-histogram-analysis.js",
+      "mode": "100644",
+      "oid": "acc2b5a7eb2da8afd778e674968536d9ae128b68"
+    },
+    {
       "path": "parallel/test-perf-hooks-histogram-fast-calls.js",
       "mode": "100644",
       "oid": "2017bf49ee35edf769b89499c1b5c216196a29fd"
+    },
+    {
+      "path": "parallel/test-perf-hooks-histogram-stats.js",
+      "mode": "100644",
+      "oid": "9b05a10616820e6568eea656183be744e8d1bb07"
     },
     {
       "path": "parallel/test-perf-hooks-histogram.js",
@@ -41819,7 +42164,7 @@
     {
       "path": "parallel/test-permission-has.js",
       "mode": "100644",
-      "oid": "36a02aeba4f1c4d84c0d52ae5476561e328c7283"
+      "oid": "2a24800aaa33370fb0b3aaebfcc9d4ed538a339f"
     },
     {
       "path": "parallel/test-permission-inspector-brk.js",
@@ -41832,9 +42177,24 @@
       "oid": "51994c218eb5bb073aad3e406d8a4c86e93f3c54"
     },
     {
+      "path": "parallel/test-permission-linked-binding-drop.js",
+      "mode": "100644",
+      "oid": "865761a2bd7e057bfb7523517bb2d8eeb931af30"
+    },
+    {
+      "path": "parallel/test-permission-linked-binding.js",
+      "mode": "100644",
+      "oid": "b30ea9aaa24bbd1edff68e05628c6fbd28891256"
+    },
+    {
       "path": "parallel/test-permission-no-addons.js",
       "mode": "100644",
       "oid": "df08c4aa9f9db56262546b6a6b12a7d5fd92a9b1"
+    },
+    {
+      "path": "parallel/test-permission-openssl-store.js",
+      "mode": "100644",
+      "oid": "ca2f240a95206ecb3092dc098033888a567e6504"
     },
     {
       "path": "parallel/test-permission-processbinding.js",
@@ -41849,7 +42209,7 @@
     {
       "path": "parallel/test-permission-warning-flags.js",
       "mode": "100644",
-      "oid": "eeb00ecd35170614494be320cf14963f4592e2e3"
+      "oid": "2e987d79c77d9c5537ac81ac356d504469390a60"
     },
     {
       "path": "parallel/test-permission-wasi.js",
@@ -42139,7 +42499,7 @@
     {
       "path": "parallel/test-process-execpath.js",
       "mode": "100644",
-      "oid": "0fce35e2645e5b0a686514528fc790fb6e87b3c5"
+      "oid": "53d8f39fbf7e6ecf02702c3ad475c7c5b9afb5da"
     },
     {
       "path": "parallel/test-process-execve-abort.js",
@@ -42984,27 +43344,27 @@
     {
       "path": "parallel/test-quic-h3-callback-errors.mjs",
       "mode": "100644",
-      "oid": "f4a9477ca873bd029b6c3b248ae38c3a260f2226"
+      "oid": "be8ed391b8d5d7101954b4cfb62b1d071134c2f4"
     },
     {
       "path": "parallel/test-quic-h3-close-behavior.mjs",
       "mode": "100644",
-      "oid": "d25cd50e4ef572035168f46e2df6c15a36ed8c00"
+      "oid": "e3b73ce9b0b9cae8ffec57e3f75b58c9b7256b6f"
     },
     {
       "path": "parallel/test-quic-h3-concurrent-requests.mjs",
       "mode": "100644",
-      "oid": "c81403bf13625ef998f8aaa8542f741f952ba11e"
+      "oid": "5bd5635008cabb2ab01d703fed33ba684552445b"
     },
     {
       "path": "parallel/test-quic-h3-datagram.mjs",
       "mode": "100644",
-      "oid": "4d081a9f1bceb1693366aa2b18ccfeffd1d6c6fd"
+      "oid": "38aeb971c8fede2185c8e4d39b7f9cffc15e1f9d"
     },
     {
       "path": "parallel/test-quic-h3-error-codes.mjs",
       "mode": "100644",
-      "oid": "cd5c9ff0a25adbcfa754c5d757b9a7f4c15c209f"
+      "oid": "3a91a2e8f056d7a283b887f268b88c8b2f60f7c6"
     },
     {
       "path": "parallel/test-quic-h3-goaway-non-h3.mjs",
@@ -43014,7 +43374,7 @@
     {
       "path": "parallel/test-quic-h3-goaway.mjs",
       "mode": "100644",
-      "oid": "c3b6e3ae246aa162fa6ab215da94c9f37f298587"
+      "oid": "bb0bf8e966c17356dfe9d67d1cfc2fc82330511f"
     },
     {
       "path": "parallel/test-quic-h3-handshake-failure.mjs",
@@ -43024,7 +43384,7 @@
     {
       "path": "parallel/test-quic-h3-header-validation.mjs",
       "mode": "100644",
-      "oid": "873991a8986449df2a617fc9e91434af2f5c2357"
+      "oid": "a75a884c39b93c7b7c4176f8e47e7429170e2f3e"
     },
     {
       "path": "parallel/test-quic-h3-headers-support.mjs",
@@ -43034,47 +43394,62 @@
     {
       "path": "parallel/test-quic-h3-informational-headers.mjs",
       "mode": "100644",
-      "oid": "1bab5b26d4366f4ee22e35ae55cb6091e8f429b1"
+      "oid": "357b507ae0dbd1d33f85276759528f5c74bb8862"
+    },
+    {
+      "path": "parallel/test-quic-h3-maxstreamdata-external-buffer-failure.mjs",
+      "mode": "100644",
+      "oid": "df74e4db408b06a4487fa6603589165345932e4e"
     },
     {
       "path": "parallel/test-quic-h3-origin.mjs",
       "mode": "100644",
-      "oid": "05e7d166585ed5d1cf9da92d1d092ea54f712c40"
+      "oid": "9f80449b6b6562821939d2ecf60ef27d7994a6a7"
     },
     {
       "path": "parallel/test-quic-h3-pending-stream.mjs",
       "mode": "100644",
-      "oid": "836c032e2b99833b8b50bde9ea12e8340b3050e6"
+      "oid": "a6e9c8cfd9126642ddcfd1d2e020f60c76c3f574"
     },
     {
       "path": "parallel/test-quic-h3-post-filehandle.mjs",
       "mode": "100644",
-      "oid": "ce6bec75c57a576d2f1e6ccaded2554f30bc3e09"
+      "oid": "a4c583463d2428335c3bc5bc3f1af9740d67eda9"
     },
     {
       "path": "parallel/test-quic-h3-post-request.mjs",
       "mode": "100644",
-      "oid": "adf874a0e8aa9762776669991b39dc138fd1299e"
+      "oid": "c5d9635a640c25272f6f57f2175d99aae7bddf8f"
     },
     {
       "path": "parallel/test-quic-h3-priority.mjs",
       "mode": "100644",
-      "oid": "fcf7210b703c3fc0796ef5a9392c61d1542a487f"
+      "oid": "10be3d6f216e7bdba2235961915c207afb4bb6fc"
     },
     {
       "path": "parallel/test-quic-h3-qpack-settings.mjs",
       "mode": "100644",
-      "oid": "e56730531c0fd5ba4c6f84c9d14d989cb56269da"
+      "oid": "f30b7163cf6bf6e6d19fa9d9eb79321f9e00f26e"
+    },
+    {
+      "path": "parallel/test-quic-h3-request-rejected.mjs",
+      "mode": "100644",
+      "oid": "6ed987b395afaea5d96012e2d741b3b9d2aca0a6"
     },
     {
       "path": "parallel/test-quic-h3-request-response.mjs",
       "mode": "100644",
-      "oid": "e359e492f7533a9aa6238b657c1086b0fabea5ff"
+      "oid": "cde16684d7e9be7840ea5fc85b5d362b4b3cfa42"
     },
     {
       "path": "parallel/test-quic-h3-settings.mjs",
       "mode": "100644",
-      "oid": "3a2bd9387f570f2497e005a58095607ceb240ae9"
+      "oid": "733d3865e8721b6bf799a4a242604c3854f8291f"
+    },
+    {
+      "path": "parallel/test-quic-h3-status-code-type.mjs",
+      "mode": "100644",
+      "oid": "a1bc7178e17a251c0ffca8faa4c51eb162423bad"
     },
     {
       "path": "parallel/test-quic-h3-stream-destroy-with-headers.mjs",
@@ -43087,9 +43462,14 @@
       "oid": "f3e83a8397ca51bc39a2d0e9353f55934904e84a"
     },
     {
+      "path": "parallel/test-quic-h3-stream-without-onstream.mjs",
+      "mode": "100644",
+      "oid": "fcd5bbe019ba21f3b623a31005db3a31294f8bc6"
+    },
+    {
       "path": "parallel/test-quic-h3-trailing-headers.mjs",
       "mode": "100644",
-      "oid": "e19886fa5bade2e99c883085aac05c2643f17f81"
+      "oid": "f4ffc223d4d5747ef9883089f4972a7c0322ec4a"
     },
     {
       "path": "parallel/test-quic-h3-zero-rtt-bogus-ticket.mjs",
@@ -43099,12 +43479,12 @@
     {
       "path": "parallel/test-quic-h3-zero-rtt-rejected-settings.mjs",
       "mode": "100644",
-      "oid": "c17f2ad3994caa9e7d038566c5690b143c9afc43"
+      "oid": "755bde188e0bfe0c6ade47aeeec527937ed25647"
     },
     {
       "path": "parallel/test-quic-h3-zero-rtt.mjs",
       "mode": "100644",
-      "oid": "ef51c63ee8aa7dd946fded8ebf6a2bf9eb8c271d"
+      "oid": "f836caa1ec4f5edd34362c664febfdca84f8fb82"
     },
     {
       "path": "parallel/test-quic-handshake-ipv6-only.mjs",
@@ -43170,6 +43550,11 @@
       "path": "parallel/test-quic-max-window.mjs",
       "mode": "100644",
       "oid": "b0ee67afa96426a40c5edce1ff2acea5742f4e57"
+    },
+    {
+      "path": "parallel/test-quic-maxstreamdata-external-buffer-failure.mjs",
+      "mode": "100644",
+      "oid": "79d11e05794a0b3f07ecb345a5169450ce6a6ed6"
     },
     {
       "path": "parallel/test-quic-module-exports.mjs",
@@ -43647,6 +44032,11 @@
       "oid": "1911e1493f4f62522e798afe130e199a31ea782c"
     },
     {
+      "path": "parallel/test-quic-stream-stop-sending-buffered.mjs",
+      "mode": "100644",
+      "oid": "1d41635b4575d3b5f68da34ec87ef6ed06bf21a6"
+    },
+    {
       "path": "parallel/test-quic-stream-stop-sending-callback.mjs",
       "mode": "100644",
       "oid": "e2eef4b38e03821f579beb747ac9624432f653b7"
@@ -43685,6 +44075,11 @@
       "path": "parallel/test-quic-stream-writer-dispose.mjs",
       "mode": "100644",
       "oid": "577294aa99ebf2b41bc6e5a16bf44f6444676f18"
+    },
+    {
+      "path": "parallel/test-quic-stream-writer-drain-unhandled-rejection.mjs",
+      "mode": "100644",
+      "oid": "6420de02ba95f7352eea46d7b0823db165c0e50f"
     },
     {
       "path": "parallel/test-quic-stream-writer-fail-error-code.mjs",
@@ -44090,6 +44485,11 @@
       "path": "parallel/test-repl-history-dedup-multiline.js",
       "mode": "100644",
       "oid": "03dc089fa6144dcc5c0ccc2880d46fd50dbedc81"
+    },
+    {
+      "path": "parallel/test-repl-history-load-preserves-pending-entries.js",
+      "mode": "100644",
+      "oid": "01e025f4267e128fad915282e7d0cab73a2088e1"
     },
     {
       "path": "parallel/test-repl-history-navigation.js",
@@ -44659,7 +45059,7 @@
     {
       "path": "parallel/test-runner-coverage-default-exclusion.mjs",
       "mode": "100644",
-      "oid": "44e5f7600d3270f459bd5f6f54836faf8feb86e1"
+      "oid": "f6080612a37caaab4d2c2729aa4040ed8028dd3f"
     },
     {
       "path": "parallel/test-runner-coverage-isolation-none-api.mjs",
@@ -44674,7 +45074,7 @@
     {
       "path": "parallel/test-runner-coverage-thresholds.js",
       "mode": "100644",
-      "oid": "e45e1191299ca735e4bd8bfd8ec19dada41ee661"
+      "oid": "2742464adf643748ff0bf19fd75e69631213deb0"
     },
     {
       "path": "parallel/test-runner-coverage.js",
@@ -44797,6 +45197,11 @@
       "oid": "435118c2cbbcde59c61dc95a04a6a6307415fd12"
     },
     {
+      "path": "parallel/test-runner-mock-dual-package.js",
+      "mode": "100644",
+      "oid": "f96837d2cebf689b18540fa029d76553476f936b"
+    },
+    {
       "path": "parallel/test-runner-mock-timers-date.js",
       "mode": "100644",
       "oid": "06ae8817b102d4b659f65ae789b22a800b5af9a3"
@@ -44809,7 +45214,7 @@
     {
       "path": "parallel/test-runner-mock-timers-with-timeout.js",
       "mode": "100644",
-      "oid": "67f266851fe1edd345f78efe2ebd64d4e677c965"
+      "oid": "6d98e6e9479a7b7ac6001911b53abf03af38f4cc"
     },
     {
       "path": "parallel/test-runner-mock-timers.js",
@@ -44869,7 +45274,7 @@
     {
       "path": "parallel/test-runner-reporters.js",
       "mode": "100644",
-      "oid": "7fed79d45b48fd76040bd45464cf9b9630f3a829"
+      "oid": "a2f6316a84fe6dc2e355d2fc0240aec7febefbef"
     },
     {
       "path": "parallel/test-runner-root-after-with-refed-handles.js",
@@ -44899,7 +45304,7 @@
     {
       "path": "parallel/test-runner-run.mjs",
       "mode": "100644",
-      "oid": "3e68c13a4c96bb1467515072bd126ac42fee89b4"
+      "oid": "947da4a77d8be77ada381b6c35c95b7c9eca2b28"
     },
     {
       "path": "parallel/test-runner-seeded-generator.js",
@@ -44939,7 +45344,7 @@
     {
       "path": "parallel/test-runner-tags-events.mjs",
       "mode": "100644",
-      "oid": "51d578a41dddc1c979991f84e61fc41e813d3167"
+      "oid": "9bf5ebf3e617e38b9374860494d9fd01676320b7"
     },
     {
       "path": "parallel/test-runner-tags-experimental-warning.mjs",
@@ -45339,7 +45744,7 @@
     {
       "path": "parallel/test-sqlite-backup.mjs",
       "mode": "100644",
-      "oid": "80061ee6601d7201e7a656f541ea12fb67e40a9d"
+      "oid": "d1e09569e1ca652f277c5798e1384795723e8817"
     },
     {
       "path": "parallel/test-sqlite-config.js",
@@ -45354,12 +45759,12 @@
     {
       "path": "parallel/test-sqlite-data-types.js",
       "mode": "100644",
-      "oid": "26af15a777d234894459ccb28d5384a579d31a07"
+      "oid": "bc4cd1ab51833d95191439533ca1284b8aaf3a70"
     },
     {
       "path": "parallel/test-sqlite-database-sync.js",
       "mode": "100644",
-      "oid": "af7677a3cfc0375d5fffefabc7985561af0953a0"
+      "oid": "08a636c9cbdc9608a8bf4354ff680a7ab0ad2c10"
     },
     {
       "path": "parallel/test-sqlite-limits.js",
@@ -45379,7 +45784,7 @@
     {
       "path": "parallel/test-sqlite-session.js",
       "mode": "100644",
-      "oid": "c36b4352a3416f7b86cd5a980d4e9a5d46d29cb8"
+      "oid": "5faea802ccd5ad6c1007e976f59e59e32d76581f"
     },
     {
       "path": "parallel/test-sqlite-statement-sync-columns.js",
@@ -45394,7 +45799,7 @@
     {
       "path": "parallel/test-sqlite-template-tag.js",
       "mode": "100644",
-      "oid": "1a55148cb7b45fc1e1aea5de8e9b54b159a443ec"
+      "oid": "20376e199d1b421e6a6d7ecef2a328c3978edb66"
     },
     {
       "path": "parallel/test-sqlite-timeout.js",
@@ -45409,7 +45814,7 @@
     {
       "path": "parallel/test-sqlite-typed-array-and-data-view.js",
       "mode": "100644",
-      "oid": "71d7b181a3d75e0f3f3a240af784d2138dfd96cf"
+      "oid": "3e2b62d2d573bbd0a7a09192bacf0fcebd859a30"
     },
     {
       "path": "parallel/test-sqlite.js",
@@ -45744,12 +46149,12 @@
     {
       "path": "parallel/test-stream-iter-broadcast-backpressure.js",
       "mode": "100644",
-      "oid": "35a0cf0e238c60aa53805573d07a0ec95463555f"
+      "oid": "698f1821aeeaa13a5419609dd0242ea298384e8b"
     },
     {
       "path": "parallel/test-stream-iter-broadcast-basic.js",
       "mode": "100644",
-      "oid": "0644a28a462d23b4a0284481cb89f1cbc3e9891c"
+      "oid": "3dbd3ce97512d80ce107ccdc5ff06c5e1af04cb7"
     },
     {
       "path": "parallel/test-stream-iter-broadcast-coverage.js",
@@ -45844,7 +46249,7 @@
     {
       "path": "parallel/test-stream-iter-pull-async.js",
       "mode": "100644",
-      "oid": "6fa3192e5855d0e829b5c3aee0cbddeec221b380"
+      "oid": "3159b718f27e77b5af31e0c6daf98af35ad5ac52"
     },
     {
       "path": "parallel/test-stream-iter-pull-sync.js",
@@ -45879,7 +46284,7 @@
     {
       "path": "parallel/test-stream-iter-share-async.js",
       "mode": "100644",
-      "oid": "f55ca35f69778c6a17125821ebb877f301571e7d"
+      "oid": "c96a0cb0f3c3771690ef56159af2d3941f586c72"
     },
     {
       "path": "parallel/test-stream-iter-share-coverage.js",
@@ -45889,12 +46294,12 @@
     {
       "path": "parallel/test-stream-iter-share-from.js",
       "mode": "100644",
-      "oid": "0b7e22ee5ceed670a367459b78e7f741b70ff009"
+      "oid": "806e308763023d0828d1aa6f3b2b59bd373e6eb5"
     },
     {
       "path": "parallel/test-stream-iter-share-sync.js",
       "mode": "100644",
-      "oid": "2b0b1944a7ff806e9b5ad5cc16558817e4e97f6c"
+      "oid": "20c98d13420638e445d34acebf1eb466c8ff384d"
     },
     {
       "path": "parallel/test-stream-iter-sharedarraybuffer.js",
@@ -45924,7 +46329,12 @@
     {
       "path": "parallel/test-stream-iter-transform-output.js",
       "mode": "100644",
-      "oid": "d66a20f6e16488afeff9c31ab76e8f9dd471931d"
+      "oid": "90261a33785a02b2ba007852f15179c32a13c75c"
+    },
+    {
+      "path": "parallel/test-stream-iter-transform-params.js",
+      "mode": "100644",
+      "oid": "aa029f9713c9c515296ad280e10d605ab028fd15"
     },
     {
       "path": "parallel/test-stream-iter-transform-roundtrip.js",
@@ -45939,7 +46349,7 @@
     {
       "path": "parallel/test-stream-iter-validation.js",
       "mode": "100644",
-      "oid": "9f77fe3304786e4e2aebab3bdfa0f1f07524215f"
+      "oid": "8dcfb46f173f8279f2b684189777ac94bf38c5d7"
     },
     {
       "path": "parallel/test-stream-iter-writable-from.js",
@@ -46084,7 +46494,7 @@
     {
       "path": "parallel/test-stream-pipeline-http2.js",
       "mode": "100644",
-      "oid": "c35cd696bd1e5503815014a75e93ea212d438115"
+      "oid": "8ffee77868380aa3edd449b7cbbeb1c471597a3f"
     },
     {
       "path": "parallel/test-stream-pipeline-listeners.js",
@@ -46949,7 +47359,7 @@
     {
       "path": "parallel/test-timers-immediate-queue.js",
       "mode": "100644",
-      "oid": "8b433ddedbf416dab54e814ef0bcb81c417e20c3"
+      "oid": "517bb280d49d77d4d778ee04cb8d1db28901ea90"
     },
     {
       "path": "parallel/test-timers-immediate-unref-nested-once.js",
@@ -46974,7 +47384,7 @@
     {
       "path": "parallel/test-timers-interval-promisified.js",
       "mode": "100644",
-      "oid": "8ee8015986d740f425b15ff86c94380098d1574e"
+      "oid": "b2f94b8368072c32332a97944ece23c6ccf1351a"
     },
     {
       "path": "parallel/test-timers-interval-throw.js",
@@ -47202,6 +47612,11 @@
       "oid": "64b7080e39ba259467115f34860ecd25fed0f3b9"
     },
     {
+      "path": "parallel/test-tls-alpn-protocols-validation.js",
+      "mode": "100644",
+      "oid": "2a93cca891cee865f404a683f1c9531602e01ce6"
+    },
+    {
       "path": "parallel/test-tls-alpn-server-client.js",
       "mode": "100644",
       "oid": "92dfd4938510560709ca127ea222041e374996e6"
@@ -47214,7 +47629,7 @@
     {
       "path": "parallel/test-tls-basic-validations.js",
       "mode": "100644",
-      "oid": "0446b6aef219fde980689e2cb607c4de127574ea"
+      "oid": "d2bbc26b003a9da954dce84af549bae2d5bacfc7"
     },
     {
       "path": "parallel/test-tls-buffersize.js",
@@ -47322,6 +47737,11 @@
       "oid": "517054c6e290dc56d6ffcfdef35f5ebbff00503d"
     },
     {
+      "path": "parallel/test-tls-client-cert-resumption.js",
+      "mode": "100644",
+      "oid": "790809678d664fc06e73a0b6a3bb98f3e915b15f"
+    },
+    {
       "path": "parallel/test-tls-client-default-ciphers.js",
       "mode": "100644",
       "oid": "1596c8e981fbff575f85f934e72dc75f6ca6dc4d"
@@ -47334,7 +47754,7 @@
     {
       "path": "parallel/test-tls-client-getephemeralkeyinfo.js",
       "mode": "100644",
-      "oid": "ea6dec7bdc46297b7a39d8e46af8fc321b62dad0"
+      "oid": "82572c4e497546a748405a10eefc4597c2ea5369"
     },
     {
       "path": "parallel/test-tls-client-mindhsize.js",
@@ -48649,7 +49069,7 @@
     {
       "path": "parallel/test-util-getcallsites-sourcemap.js",
       "mode": "100644",
-      "oid": "4499ea106fdd8195712f832b3ef87649113bb29d"
+      "oid": "9259832261eeae8f52d8b463c23b263ada3c9d4e"
     },
     {
       "path": "parallel/test-util-getcallsites.js",
@@ -48684,7 +49104,7 @@
     {
       "path": "parallel/test-util-inspect.js",
       "mode": "100644",
-      "oid": "c8b37f2a264bc7f4d5a508d79ef735ff849ea7e0"
+      "oid": "1278e4eed4710e8768dce7f944f577caa28eabd3"
     },
     {
       "path": "parallel/test-util-internal.js",
@@ -48729,7 +49149,7 @@
     {
       "path": "parallel/test-util-stripvtcontrolcharacters.js",
       "mode": "100644",
-      "oid": "a33d18d26dbc5166deadf00a00c063b5d7197d3f"
+      "oid": "efda16687821431d95a57579ca9a455485b55f83"
     },
     {
       "path": "parallel/test-util-styletext-hex.js",
@@ -48874,7 +49294,7 @@
     {
       "path": "parallel/test-v8-stop-coverage.js",
       "mode": "100644",
-      "oid": "e9764d60477b0891ffdf144a26ef7655a9069419"
+      "oid": "b37f8320abb4a6729b0259d7d5122dcf22f29bfb"
     },
     {
       "path": "parallel/test-v8-string-is-one-byte-representation.js",
@@ -48884,12 +49304,12 @@
     {
       "path": "parallel/test-v8-take-coverage-noop.js",
       "mode": "100644",
-      "oid": "8d49b0f23296d7626f658e121ca1512ede196a41"
+      "oid": "14bb8a2c3a9160eebbc462f50c83a7926d5e1150"
     },
     {
       "path": "parallel/test-v8-take-coverage.js",
       "mode": "100644",
-      "oid": "6b1fe149e9923ba9d32a511af055dcda33e5334a"
+      "oid": "2119a30d6ad95a05fd380109c234b98d75e55b15"
     },
     {
       "path": "parallel/test-v8-version-tag.js",
@@ -49587,6 +50007,11 @@
       "oid": "c4ca52862fe0947b16ba003e52cfc03f26e1db58"
     },
     {
+      "path": "parallel/test-webcrypto-enforce-range.js",
+      "mode": "100644",
+      "oid": "f3b3ec74ffc52686fa6f6fcf8782677252d5dc80"
+    },
+    {
       "path": "parallel/test-webcrypto-export-import-cfrg.js",
       "mode": "100644",
       "oid": "60d99319691bc47b6d40be579769b3bf9a70faed"
@@ -49604,7 +50029,7 @@
     {
       "path": "parallel/test-webcrypto-export-import-ml-kem.js",
       "mode": "100644",
-      "oid": "31ba739a1e55e0f9ae4472d7850a4a8892db9dce"
+      "oid": "32f072e555b102bfc956330e28235053917dd48c"
     },
     {
       "path": "parallel/test-webcrypto-export-import-rsa.js",
@@ -49650,6 +50075,11 @@
       "path": "parallel/test-webcrypto-promise-prototype-pollution.mjs",
       "mode": "100644",
       "oid": "5c13561dc260639ff62601ff8248d8fae48d5134"
+    },
+    {
+      "path": "parallel/test-webcrypto-prototype-pollution.mjs",
+      "mode": "100644",
+      "oid": "a7104c2b7ae4c520addc2d166b7fc61d4e5a254d"
     },
     {
       "path": "parallel/test-webcrypto-random.js",
@@ -49709,7 +50139,7 @@
     {
       "path": "parallel/test-webcrypto-webidl.js",
       "mode": "100644",
-      "oid": "493d0093996b6d78386d34c204db21ac2f68ed62"
+      "oid": "d91099aed2bf85ced0a43272c1703fd7badf6a02"
     },
     {
       "path": "parallel/test-webcrypto-wrap-unwrap.js",
@@ -49912,6 +50342,11 @@
       "oid": "16ee14feabe9be329ecb3564f58e8c3d76806898"
     },
     {
+      "path": "parallel/test-whatwg-headers.js",
+      "mode": "100644",
+      "oid": "94610128ce115512bedc0f890b5a8d99cce520e5"
+    },
+    {
       "path": "parallel/test-whatwg-readablebytestream-bad-buffers-and-views.js",
       "mode": "100644",
       "oid": "a8f6ffc7535e96af1359f132e8ef3b2aaea8f5fc"
@@ -49925,6 +50360,11 @@
       "path": "parallel/test-whatwg-readablebytestreambyob.js",
       "mode": "100644",
       "oid": "5dbe4813dbc4f649d8ccbe65e32bcef35e4e108a"
+    },
+    {
+      "path": "parallel/test-whatwg-readablestream-byob-read-min.js",
+      "mode": "100644",
+      "oid": "c428caa834783855e657c74bacda98bb78552048"
     },
     {
       "path": "parallel/test-whatwg-readablestream.js",
@@ -50059,7 +50499,7 @@
     {
       "path": "parallel/test-whatwg-url-custom-setters.js",
       "mode": "100644",
-      "oid": "b98bf5d8d3b3939d54a489e884f9b01b62acb10d"
+      "oid": "061ccf6f4480f0eedc0eb0d04c2f55053cbe9cbb"
     },
     {
       "path": "parallel/test-whatwg-url-custom-tostringtag.js",
@@ -50077,9 +50517,19 @@
       "oid": "61e3412c6b7b53c662297431a491621650043677"
     },
     {
+      "path": "parallel/test-whatwg-url-parse-fast-path.js",
+      "mode": "100644",
+      "oid": "e6c295f039a3338042f0566898e301c4afaf1bd7"
+    },
+    {
       "path": "parallel/test-whatwg-url-properties.js",
       "mode": "100644",
       "oid": "b76832a7d30912ecdadbe6f69776f976acf490cc"
+    },
+    {
+      "path": "parallel/test-whatwg-url-searchparams-fast-path.js",
+      "mode": "100644",
+      "oid": "2dbb38f88aa5ce8d7ffb573441ef9fc7aefa8d20"
     },
     {
       "path": "parallel/test-whatwg-webstreams-adapters-streambase.js",
@@ -51219,7 +51669,7 @@
     {
       "path": "parallel/test-zlib-zstd-pledged-src-size.js",
       "mode": "100644",
-      "oid": "4a5f27394c66097f3c55cfc7a6d37c78ec68cbc5"
+      "oid": "a0b1babd3f7350e0d7815a6f849975ef662956e3"
     },
     {
       "path": "parallel/test-zlib-zstd.js",
@@ -51400,6 +51850,16 @@
       "path": "pseudo-tty/test-repl-external-module.out",
       "mode": "100644",
       "oid": "d81cc0710eb6cf9efd5b920a8453e1e07157b6cd"
+    },
+    {
+      "path": "pseudo-tty/test-set-raw-mode-modes.js",
+      "mode": "100644",
+      "oid": "8280aacb0a857761aa7d2a1d9082958af02292e8"
+    },
+    {
+      "path": "pseudo-tty/test-set-raw-mode-modes.out",
+      "mode": "100644",
+      "oid": "e449081d60cb3c208672093668814d4f602307cc"
     },
     {
       "path": "pseudo-tty/test-set-raw-mode-reset-process-exit.js",
@@ -51759,7 +52219,7 @@
     {
       "path": "pummel/test-heapdump-fs-promise.js",
       "mode": "100644",
-      "oid": "429359e1a6be72eb630671ad29f78255ed44b3a7"
+      "oid": "5b259ea2dd32747fbc8054669fb809663c31f139"
     },
     {
       "path": "pummel/test-heapdump-http2.js",
@@ -52139,7 +52599,7 @@
     {
       "path": "sea/test-single-executable-application-exec-argv-extension-cli.js",
       "mode": "100644",
-      "oid": "738a2bc98b6c305de6c4a1f103116b71a83a310e"
+      "oid": "6457579034c9ba6af1a812289830a5babff3726d"
     },
     {
       "path": "sea/test-single-executable-application-exec-argv-extension-env.js",
@@ -52194,7 +52654,7 @@
     {
       "path": "sea/test-single-executable-blob-config-errors.js",
       "mode": "100644",
-      "oid": "322f430aad81d651bd7dc3ec4ec35316b22e12ca"
+      "oid": "9562faad6b79d7cc86b5153d80037372bfe76eb6"
     },
     {
       "path": "sea/test-single-executable-blob-config.js",
@@ -52244,7 +52704,7 @@
     {
       "path": "sequential/test-cli-syntax-bad.js",
       "mode": "100644",
-      "oid": "e967ff36ac28d8a5db691dccfdc15679b88645e9"
+      "oid": "0cf9d020b30f5d5c03ed11a2270d330e5085c060"
     },
     {
       "path": "sequential/test-cli-syntax-file-not-found.js",
@@ -52597,6 +53057,11 @@
       "oid": "c18903001dd6e62bdb6d9efdb8efc423204b1657"
     },
     {
+      "path": "sequential/test-net-listen-ipv6only.js",
+      "mode": "100644",
+      "oid": "c85f813bc08b3b26a76b16fee7f68d2555d2c35c"
+    },
+    {
       "path": "sequential/test-net-listen-shared-ports.js",
       "mode": "100644",
       "oid": "34091cba15cac6da24db4659a8132212352885b8"
@@ -52644,7 +53109,7 @@
     {
       "path": "sequential/test-performance-eventloopdelay.js",
       "mode": "100644",
-      "oid": "ddd33372ec5e8eb98d6eb1f89ebe88084d2657c7"
+      "oid": "ede7295149378335b84cfa0b931074d03a21acb4"
     },
     {
       "path": "sequential/test-pipe.js",
@@ -53057,6 +53522,11 @@
       "oid": "c8061e6ba27e85f295963e1adaa064df137152c9"
     },
     {
+      "path": "test-runner/test-output-dot-reporter-coverage-threshold.mjs",
+      "mode": "100644",
+      "oid": "e764863a6b0bd2cb6e296887c91aec4fd321c6f0"
+    },
+    {
       "path": "test-runner/test-output-dot-reporter.mjs",
       "mode": "100644",
       "oid": "46312203bb46d7f56faa1aee83b45003c8d299d0"
@@ -53120,6 +53590,16 @@
       "path": "test-runner/test-output-hooks.mjs",
       "mode": "100644",
       "oid": "b1e1d655df6db8a012b3bf97a671fc7bcab15f76"
+    },
+    {
+      "path": "test-runner/test-output-junit-classname-hierarchy.mjs",
+      "mode": "100644",
+      "oid": "737cefd89ecae2e63d8eebbd99c286da99fd1cff"
+    },
+    {
+      "path": "test-runner/test-output-junit-empty-diagnostic.mjs",
+      "mode": "100644",
+      "oid": "5c1cf4a2b3820eec6b2075cc088d4c5a742bde85"
     },
     {
       "path": "test-runner/test-output-junit-reporter.mjs",
@@ -54084,7 +54564,7 @@
     {
       "path": "wpt/status/streams.json",
       "mode": "100644",
-      "oid": "2268ffcc87ac917e239a75f013e1e982facec23c"
+      "oid": "968b33597651897c28d2ed68e434d83bb1c4c2d1"
     },
     {
       "path": "wpt/status/url.cjs",

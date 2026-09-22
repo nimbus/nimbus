@@ -13,8 +13,6 @@ const [ECDH, X25519] = await Promise.all([
   subtle.generateKey('X25519', false, ['deriveBits', 'deriveKey']),
 ]);
 
-const boringSSL = process.features.openssl_is_boringssl;
-
 export const vectors = {
   'encrypt': [
     [false, 'Invalid'],
@@ -125,6 +123,9 @@ export const vectors = {
      { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 1 },
      { name: 'HMAC', hash: 'SHA-256' }],
     [false,
+     { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 2 ** 31 },
+     { name: 'AES-CBC', length: 128 }],
+    [false,
      { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 1 },
      'HKDF'],
     [true,
@@ -183,6 +184,7 @@ export const vectors = {
     [true, { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 1 }, 8],
     [true, { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 1 }, 0],
     [false, { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 0 }, 8],
+    [false, { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 2 ** 31 }, 8],
     [false, { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 1 }, null],
     [false, { name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.alloc(0), iterations: 1 }, 7],
     [false, { name: 'PBKDF2', hash: 'Invalid', salt: Buffer.alloc(0), iterations: 1 }, 8],

@@ -17,8 +17,8 @@ claim, and the headline numbers.
 | --- | --- | --- | --- | --- | --- |
 | Node20 | Supported for local development only | EOL legacy | no | no | `v20.20.2` |
 | Node22 | Supported in process | Maintenance LTS | no | yes | `v22.23.2` |
-| Node24 | Supported in process | Active LTS | yes | yes | `v24.20.0` |
-| Node26 | Supported in process | Current non-LTS | no | no | `v26.8.1` |
+| Node24 | Supported in process | Active LTS | yes | yes | `v24.21.0` |
+| Node26 | Supported in process | Current non-LTS | no | no | `v26.10.0` |
 
 - Node24 is the default compatibility target. The default is a routing
   default, not an evidence priority.
@@ -57,7 +57,7 @@ claim, and the headline numbers.
 
 ## Evidence summary
 
-As of 2026-09-01, from the checked-in evidence snapshots. Fixtures are
+As of 2026-09-22, from the checked-in evidence snapshots. Fixtures are
 official upstream Node test files executed against the Nimbus runtime;
 canaries are real packages and application scenarios exercised end-to-end.
 
@@ -65,10 +65,10 @@ canaries are real packages and application scenarios exercised end-to-end.
 
 | Target | Upstream | Fixtures | Passed | Expected failure / known gap | Skipped / excluded | Pass rate | Classified coverage |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Node20 | `v20.20.2` | 4248 | 919 | 3316 | 13 | 21.6% | 100.0% |
-| Node22 | `v22.23.2` | 4762 | 2362 | 2380 | 20 | 49.6% | 100.0% |
-| Node24 | `v24.20.0` | 5671 | 2397 | 3226 | 48 | 42.3% | 100.0% |
-| Node26 | `v26.8.1` | 5940 | 2090 | 3795 | 55 | 35.2% | 100.0% |
+| Node20 | `v20.20.2` | 4248 | 938 | 3297 | 13 | 22.1% | 100.0% |
+| Node22 | `v22.23.2` | 4762 | 2364 | 2378 | 20 | 49.6% | 100.0% |
+| Node24 | `v24.21.0` | 5729 | 2399 | 3281 | 49 | 41.9% | 100.0% |
+| Node26 | `v26.10.0` | 6201 | 2093 | 4041 | 67 | 33.8% | 100.0% |
 
 How to read these numbers:
 

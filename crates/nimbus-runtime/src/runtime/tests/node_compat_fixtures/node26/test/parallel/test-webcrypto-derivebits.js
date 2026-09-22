@@ -7,7 +7,7 @@ if (!common.hasCrypto)
   common.skip('missing crypto');
 
 const assert = require('assert');
-const { hasFIPS } = require('../common/crypto');
+const { hasFIPS, isBoringSSL } = require('../common/crypto');
 const { subtle } = globalThis.crypto;
 const requiresLongHkdfInputs = hasFIPS(3) && !hasFIPS(3, 5);
 const rejectsWeakPbkdf2Inputs = hasFIPS(4);
@@ -120,6 +120,28 @@ const rejectsXCurves = hasFIPS(3, 5);
   }
 }
 
+// Test PBKDF2 rejects iteration counts beyond the native signed int range
+{
+  async function test() {
+    const key = await subtle.importKey(
+      'raw',
+      new Uint8Array([1]),
+      'PBKDF2',
+      false,
+      ['deriveBits']);
+    await assert.rejects(
+      subtle.deriveBits({
+        name: 'PBKDF2',
+        hash: 'SHA-256',
+        salt: new Uint8Array([2]),
+        iterations: 2 ** 31,
+      }, key, 8),
+      { name: 'NotSupportedError' });
+  }
+
+  test().then(common.mustCall());
+}
+
 // Test X25519 and X448 bit derivation
 {
   async function test(name) {
@@ -152,7 +174,7 @@ const rejectsXCurves = hasFIPS(3, 5);
     }
   } else {
     test('X25519').then(common.mustCall());
-    if (!process.features.openssl_is_boringssl) {
+    if (!isBoringSSL) {
       test('X448').then(common.mustCall());
     } else {
       common.printSkipMessage('Skipping unsupported X448 test case');

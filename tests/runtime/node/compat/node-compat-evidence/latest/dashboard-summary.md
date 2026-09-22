@@ -5,28 +5,28 @@
 - Package/framework canary checks: 101
 - Canary artifact bundles: 2
 - Oracle reports: 4
-- Inventory reports: 3
+- Inventory reports: 2
 
 ## Suite Status
 - source: `target/node-compat/status/status-summary.json`
-- rust ignored tests: `150`
+- rust ignored tests: `129`
 
 | Lane | Upstream | Role | Passed | Expected failure / known gap | Skipped / excluded | Classified total | Classified coverage count | Vendored | Unclassified | Pass rate |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node20` | `v20.20.2` | `legacy` | 919 | 3316 | 13 | 3329 | 4248 | 4248 | 0 | 21.6% |
-| `node22` | `v22.23.2` | `supported` | 2362 | 2380 | 20 | 2400 | 4762 | 4762 | 0 | 49.6% |
-| `node24` | `v24.20.0` | `default` | 2397 | 3226 | 48 | 3274 | 5671 | 5671 | 0 | 42.3% |
-| `node26` | `v26.8.1` | `current` | 2090 | 3795 | 55 | 3850 | 5940 | 5940 | 0 | 35.2% |
+| `node20` | `v20.20.2` | `legacy` | 938 | 3297 | 13 | 3310 | 4248 | 4248 | 0 | 22.1% |
+| `node22` | `v22.23.2` | `supported` | 2364 | 2378 | 20 | 2398 | 4762 | 4762 | 0 | 49.6% |
+| `node24` | `v24.21.0` | `default` | 2399 | 3281 | 49 | 3330 | 5729 | 5729 | 0 | 41.9% |
+| `node26` | `v26.10.0` | `current` | 2093 | 4041 | 67 | 4108 | 6201 | 6201 | 0 | 33.8% |
 
 ### Evidence Tiers
 
 | Tier | Source | Primary count | Passed | Claims | Official denominator? |
 | --- | --- | ---: | ---: | ---: | --- |
-| `official` | `vendored_official_fixture_corpus` | 20621 fixture_count | 7768 | - | yes |
+| `official` | `vendored_official_fixture_corpus` | 20940 fixture_count | 7794 | - | yes |
 | `supplementary` | `node_compat_manifest_test_tier` | 7 fixture_count | - | - | no |
-| `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 26 fixture_count | - | - | no |
+| `regression` | `crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/regression` | 30 fixture_count | - | - | no |
 | `canary` | `tests/runtime/node/canary-registry.json` | 37 active_canary_count | - | 79 | no |
-| `watchpoint` | `tests/runtime/node/expectations/rust-watchpoints.json` | 150 catalog_entry_count | - | - | no |
+| `watchpoint` | `tests/runtime/node/expectations/rust-watchpoints.json` | 129 catalog_entry_count | - | - | no |
 | `diagnostic` | `tests/runtime/node/expectations/rust-watchpoints.json + tests/runtime/node/canary-registry.json` | 11 diagnostic_count | - | 11 | no |
 
 ### Suite Warnings
@@ -36,17 +36,16 @@
 
 | Lane | Upstream | Vendored | Passed | Expected failure / known gap / skipped total | Classified coverage count | Unclassified | Path-owned passed | Rust-referenced passed | Rust-unreferenced expected / skipped | Rust-unreferenced unclassified | Passed reconstructability gap | Warnings |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `node22` | `v22.23.2` | 4762 | 2362 | 2400 | 4762 | 0 | 2362 | 2362 | 2400 | 0 | 0 | 0 |
-| `node24` | `v24.20.0` | 5671 | 2397 | 3274 | 5671 | 0 | 2397 | 2398 | 3273 | 0 | 0 | 0 |
-| `node26` | `v26.8.1` | 5940 | 2090 | 3850 | 5940 | 0 | 2090 | 2094 | 3846 | 0 | 0 | 0 |
+| `node24` | `v24.21.0` | 5729 | 2399 | 3330 | 5729 | 0 | 2399 | 2400 | 3329 | 0 | 0 | 0 |
+| `node26` | `v26.10.0` | 6201 | 2093 | 4108 | 6201 | 0 | 2093 | 2097 | 4104 | 0 | 0 | 0 |
 
 ## Representative Node Test Checks
 
 | API family | Check | Execution | Passed | Skipped | Failed | Missing | Lanes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `core-semantics` | `assert-and-buffer-foundation` | Sequential | 26 | 0 | 2 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `loader-context` | `module-and-async-foundation` | Sequential | 30 | 0 | 0 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
-| `networking` | `dns-net-foundation` | Sequential | 26 | 0 | 3 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `loader-context` | `module-and-async-foundation` | Sequential | 27 | 0 | 3 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
+| `networking` | `dns-net-foundation` | Sequential | 28 | 0 | 1 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `process-and-timing` | `process-foundation` | Sequential | 17 | 0 | 12 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 | `streams-and-local-io` | `os-tty-readline-foundation` | Sequential | 30 | 0 | 0 | 0 | node20:Node20/legacy/legacy_contract, node22:Node22/supported/supported_contract, node24:Node24/default/default_contract |
 
@@ -142,6 +141,6 @@
 | Lane | Fixture | Runtime | Oracle | Drift | Node | Role |
 | --- | --- | --- | --- | --- | --- | --- |
 | `node20` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v20.20.2` | `legacy/legacy_contract` |
-| `node22` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v22.23.1` | `supported/supported_contract` |
-| `node24` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v24.16.0` | `default/default_contract` |
-| `node26` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v26.8.1` | `current/current_contract` |
+| `node22` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v22.23.2` | `supported/supported_contract` |
+| `node24` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v24.21.0` | `default/default_contract` |
+| `node26` | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement pass | `v26.10.0` | `current/current_contract` |

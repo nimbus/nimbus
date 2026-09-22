@@ -75,6 +75,10 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             "v20.20.2",
             "3626fea570e44896ad99aaf3bf6e59def5adede5",
             "35e07843146797923006aa01c6daabf4f53a4fb9",
+            "17a6bf48e3d69a5c153ffc89300629cc798346a5",
+            "2026-05-11T19:29:29-05:00",
+            "2026-05-28",
+            "git rev-list -n 1",
         ),
         (
             "node22",
@@ -87,6 +91,10 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             "v22.23.2",
             "aa4c77582be995286fc6e00aaf530dc7ade102a9",
             "490a9fef8f8adcda5a95bd6f96035b05cb43fe5b",
+            "af5bf1455bb9fddaa8bc05bb22fd8e89f08e859b",
+            "2026-09-01T05:15:00Z",
+            "2026-09-01",
+            "git ls-remote",
         ),
         (
             "node24",
@@ -96,9 +104,13 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             NodeCompatPublicContractRole::Default,
             "Node24",
             "application_node24",
-            "v24.20.0",
-            "71b8b174857e25106d39b61a9e6f30d927da8b01",
-            "8392e555cbdef2145d2cd2a2a7d29204d88d4e15",
+            "v24.21.0",
+            "955266bfdd854cd280dffd47548673914484e4c0",
+            "f37d7da830134b5314a14ced553273786a2bb4cd",
+            "cd3cef4fd0acceb5e34d933815f1bc43e8eeaec9",
+            "2026-09-22T18:23:15Z",
+            "2026-09-22",
+            "git rev-parse",
         ),
         (
             "node26",
@@ -108,9 +120,13 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
             NodeCompatPublicContractRole::Current,
             "Node26",
             "application_node26",
-            "v26.8.1",
-            "7be6d3af31a65adea57c94c41e50c2b071ed0b3a",
-            "03c764c3c9fc07333d5fa4fc58c56ee946f56b2f",
+            "v26.10.0",
+            "151845ab90d3926ceb36eedf1eade09619c3adc9",
+            "59da6b44a953cf9b45f2591ae80f569ce1ec9da5",
+            "cd3cef4fd0acceb5e34d933815f1bc43e8eeaec9",
+            "2026-09-22T18:23:15Z",
+            "2026-09-22",
+            "git rev-parse",
         ),
     ];
 
@@ -125,6 +141,10 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
         expected_tag,
         expected_commit,
         expected_tag_object,
+        expected_sync_commit,
+        expected_synced_at,
+        expected_recorded_at,
+        expected_identity_command,
     ) in cases
     {
         let metadata: NodeCompatLaneMetadata =
@@ -162,33 +182,13 @@ fn node_compat_lane_metadata_files_parse_and_point_at_real_roots() {
         );
         assert_eq!(
             metadata.fixture_provenance.nimbus_sync_commit,
-            if expected_lane == "node20" {
-                "17a6bf48e3d69a5c153ffc89300629cc798346a5"
-            } else {
-                "af5bf1455bb9fddaa8bc05bb22fd8e89f08e859b"
-            }
+            expected_sync_commit
         );
-        assert_eq!(
-            metadata.fixture_provenance.synced_at,
-            if expected_lane == "node20" {
-                "2026-05-11T19:29:29-05:00"
-            } else {
-                "2026-09-01T05:15:00Z"
-            }
-        );
+        assert_eq!(metadata.fixture_provenance.synced_at, expected_synced_at);
         assert_eq!(
             metadata.fixture_provenance.recorded_at,
-            if expected_lane == "node20" {
-                "2026-05-28"
-            } else {
-                "2026-09-01"
-            }
+            expected_recorded_at
         );
-        let expected_identity_command = if expected_lane == "node20" {
-            "git rev-list -n 1"
-        } else {
-            "git ls-remote"
-        };
         assert!(
             metadata
                 .fixture_provenance

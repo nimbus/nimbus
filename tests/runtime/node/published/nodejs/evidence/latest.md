@@ -5,7 +5,7 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 ## Snapshot
 
-- generated at: `2026-09-04T20:01:27.628894+00:00`
+- generated at: `2026-09-22T18:30:20.746144+00:00`
 - status source: `tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json`
 - dashboard source: `tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json`
 - trend source: `tests/runtime/node/compat/node-compat-evidence/latest/trend-summary.json`
@@ -14,10 +14,10 @@ It is a support summary, not a blanket Node.js compatibility claim.
 
 | Target | Role | Upstream | Vendored official fixtures | Passed | Expected failure / known gap | Skipped / excluded | Unclassified | Official fixture pass rate | Classified coverage |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Node20 | Legacy grace; EOL | `v20.20.2` | 4248 | 919 | 3316 | 13 | 0 | 21.6% | 100.0% |
-| Node22 | Supported; Maintenance LTS | `v22.23.2` | 4762 | 2362 | 2380 | 20 | 0 | 49.6% | 100.0% |
-| Node24 | Product default; Active LTS | `v24.20.0` | 5671 | 2397 | 3226 | 48 | 0 | 42.3% | 100.0% |
-| Node26 | Current | `v26.8.1` | 5940 | 2090 | 3795 | 55 | 0 | 35.2% | 100.0% |
+| Node20 | Legacy grace; EOL | `v20.20.2` | 4248 | 938 | 3297 | 13 | 0 | 22.1% | 100.0% |
+| Node22 | Supported; Maintenance LTS | `v22.23.2` | 4762 | 2364 | 2378 | 20 | 0 | 49.6% | 100.0% |
+| Node24 | Product default; Active LTS | `v24.21.0` | 5729 | 2399 | 3281 | 49 | 0 | 41.9% | 100.0% |
+| Node26 | Current | `v26.10.0` | 6201 | 2093 | 4041 | 67 | 0 | 33.8% | 100.0% |
 
 ## Package/Framework Canaries
 
@@ -130,9 +130,9 @@ It is a support summary, not a blanket Node.js compatibility claim.
 | Lane | Fixture | Runtime | Oracle | Drift | Node oracle |
 | --- | --- | --- | --- | --- | --- |
 | Node20 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v20.20.2` |
-| Node22 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v22.23.1` |
-| Node24 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v24.16.0` |
-| Node26 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v26.8.1` |
+| Node22 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v22.23.2` |
+| Node24 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v24.21.0` |
+| Node26 | `test/parallel/test-buffer-alloc.js` | Passed | Passed | Agreement Pass | `v26.10.0` |
 
 ## Notes
 

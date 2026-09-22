@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-09-01",
+  "as_of": "2026-09-22",
   "dashboard_summary": {
     "canary_check_count": 101,
     "canary_claim_count": 79,
@@ -52,30 +52,30 @@
     {
       "dashboard_lane_role": "default",
       "evidence_policy": "supported_lts_lane_local_evidence",
-      "fixture_corpus_current_tag": "v24.20.0",
+      "fixture_corpus_current_tag": "v24.21.0",
       "fixture_sync_required": false,
       "lane": "node24",
-      "latest_official_tag": "v24.20.0",
+      "latest_official_tag": "v24.21.0",
       "major": 24,
       "product_default": true,
       "release_train_role": "product_default",
       "runtime_compatibility_target": "Node24",
       "support_phase": "active_lts",
-      "upstream_tag": "v24.20.0"
+      "upstream_tag": "v24.21.0"
     },
     {
       "dashboard_lane_role": "current",
       "evidence_policy": "current_non_lts_lane_local_evidence_until_lts_promotion",
-      "fixture_corpus_current_tag": "v26.8.1",
+      "fixture_corpus_current_tag": "v26.10.0",
       "fixture_sync_required": false,
       "lane": "node26",
-      "latest_official_tag": "v26.8.1",
+      "latest_official_tag": "v26.10.0",
       "major": 26,
       "product_default": false,
       "release_train_role": "current_non_lts",
       "runtime_compatibility_target": "Node26",
       "support_phase": "current_non_lts",
-      "upstream_tag": "v26.8.1"
+      "upstream_tag": "v26.10.0"
     }
   ],
   "live_probe": {
@@ -89,8 +89,8 @@
     "proof_readme": "tests/runtime/node/compat/provenance/README.md",
     "proof_readme_lists_artifact": true,
     "required_digest_markers": [
-      "tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: 41a895a2ccfac6f974d94fee0a217dada792df9a038134a7f5f3ebb2cf116beb",
-      "tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: bf47d0f1c5c53d02efdb9e251e7c7f9af19ff91ae474875fe51c385ae7ef6bc8"
+      "tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json sha256: 74d6e560865153183b2b46ffed8396ed4722e75531c12b6bdfd2e190194610dd",
+      "tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json sha256: 243a9686bfc38a26e673286f9f7cad4165171de87645148a24470165783675ee"
     ]
   },
   "report_kind": "nimbus_node_release_train",
@@ -98,19 +98,19 @@
   "source_digests": [
     {
       "path": "tests/runtime/node/compat/node-lts-compat/node-lts-lanes.json",
-      "sha256": "41a895a2ccfac6f974d94fee0a217dada792df9a038134a7f5f3ebb2cf116beb"
+      "sha256": "74d6e560865153183b2b46ffed8396ed4722e75531c12b6bdfd2e190194610dd"
     },
     {
       "path": "tests/runtime/node/compat/node-lts-compat/node-latest-suite-tags.json",
-      "sha256": "bf47d0f1c5c53d02efdb9e251e7c7f9af19ff91ae474875fe51c385ae7ef6bc8"
+      "sha256": "243a9686bfc38a26e673286f9f7cad4165171de87645148a24470165783675ee"
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
-      "sha256": "0f5718e1dc442ed3b531b5e17feeb14d4991c2b3cb9c8b97a86a4ecf41666fe8"
+      "sha256": "989f86e032860d1ed7db9f738f9ab255dc853f5fff2858f268b538b4c7bcbb6f"
     },
     {
       "path": "tests/runtime/node/compat/node-compat-evidence/latest/dashboard-summary.json",
-      "sha256": "1392913ac1900bd4b0d16d75f49c2bdd81a180d43ea6514e161b877bedf4eb23"
+      "sha256": "7761c45d2c72f629de21478afb5926e4258dd430644564b92591d89c2264c7cd"
     }
   ],
   "source_urls": [

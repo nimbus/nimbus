@@ -2,7 +2,7 @@
 
 This directory is the checked-in latest snapshot of the generated Node.js runtime support evidence outputs.
 
-- evidence_generated_at: `2026-09-04T20:01:27.628894+00:00`
+- evidence_generated_at: `2026-09-22T18:30:20.746144+00:00`
 - publish_root: `tests/runtime/node/compat/node-compat-evidence/latest`
 - status source: `target/node-compat/status/status-summary.json`
 - dashboard source: `target/node-compat/dashboard/dashboard-summary.json`
@@ -11,15 +11,15 @@ This directory is the checked-in latest snapshot of the generated Node.js runtim
 
 | Lane | Upstream | Vendored test files | Documented passed | Unclassified | Pass rate |
 | --- | --- | ---: | ---: | ---: | ---: |
-| `node20` | `v20.20.2` | 4248 | 919 | 0 | 21.6% |
-| `node22` | `v22.23.2` | 4762 | 2362 | 0 | 49.6% |
-| `node24` | `v24.20.0` | 5671 | 2397 | 0 | 42.3% |
-| `node26` | `v26.8.1` | 5940 | 2090 | 0 | 35.2% |
+| `node20` | `v20.20.2` | 4248 | 938 | 0 | 22.1% |
+| `node22` | `v22.23.2` | 4762 | 2364 | 0 | 49.6% |
+| `node24` | `v24.21.0` | 5729 | 2399 | 0 | 41.9% |
+| `node26` | `v26.10.0` | 6201 | 2093 | 0 | 33.8% |
 
 ## Expectation Coverage
 
-- Rust ignored tests: 150
-- catalog entries: 150
+- Rust ignored tests: 129
+- catalog entries: 129
 - catalog path: `tests/runtime/node/expectations/rust-watchpoints.json`
 - unexpected passes: 0
 
