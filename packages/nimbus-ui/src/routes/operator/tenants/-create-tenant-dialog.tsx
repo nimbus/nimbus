@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
 // CreateTenantDialog is the one way the console creates a tenant. The
@@ -96,10 +97,8 @@ function CreateTenantForm({
         </DialogDescription>
       </DialogHeader>
       <DialogBody>
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={inputId} className="text-xs font-medium text-text-3">
-            Tenant id
-          </label>
+        <Field>
+          <FieldLabel htmlFor={inputId}>Tenant id</FieldLabel>
           <Input
             ref={inputRef}
             id={inputId}
@@ -114,13 +113,13 @@ function CreateTenantForm({
             className="font-mono"
             data-testid="tenants-create-input"
           />
-          <p id={hintId} className="text-xs text-text-3">
+          <FieldDescription id={hintId}>
             ASCII letters, digits, <code className="text-text-2">_</code> and{" "}
             <code className="text-text-2">-</code>, up to 128 characters. A
             leading <code className="text-text-2">_</code> is reserved for the
             system tenant.
-          </p>
-        </div>
+          </FieldDescription>
+        </Field>
       </DialogBody>
       <DialogError>{error}</DialogError>
       <DialogFooter>

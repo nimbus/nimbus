@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
 // ConfirmDialog is the one shape for a write the operator cannot take back.
@@ -89,17 +90,16 @@ export function ConfirmDialog({
           <DialogBody>
             {children}
             {typedConfirmation && (
-              <label
-                htmlFor={typedId}
-                className="flex flex-col gap-1 text-xs text-text-3"
-              >
-                <span>
-                  Type{" "}
-                  <code className="text-text-1">
-                    {typedConfirmation.phrase}
-                  </code>{" "}
-                  to confirm
-                </span>
+              <Field>
+                <FieldLabel htmlFor={typedId}>
+                  <span>
+                    Type{" "}
+                    <code className="text-text-1">
+                      {typedConfirmation.phrase}
+                    </code>{" "}
+                    to confirm
+                  </span>
+                </FieldLabel>
                 <Input
                   id={typedId}
                   value={typed}
@@ -116,7 +116,7 @@ export function ConfirmDialog({
                   data-testid={`${testid}-typed`}
                   className="font-mono"
                 />
-              </label>
+              </Field>
             )}
             {danger && <p className="text-xs text-text-3">There is no undo.</p>}
           </DialogBody>

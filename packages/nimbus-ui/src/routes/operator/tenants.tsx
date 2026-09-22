@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { Ellipsis, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
@@ -175,7 +175,7 @@ function TenantsPage() {
   const copyTenantId = useCallback(async (tenantId: string) => {
     try {
       await navigator.clipboard.writeText(tenantId);
-      toast("Copied tenant id", { description: tenantId });
+      toast.message("Copied tenant id", { description: tenantId });
     } catch {
       toast.error("Clipboard is unavailable in this browser context.");
     }
@@ -272,6 +272,7 @@ function TenantsPage() {
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
         size: 48,
+        enableResizing: false,
         enableSorting: false,
         cell: (ctx) => {
           const row = ctx.row.original;

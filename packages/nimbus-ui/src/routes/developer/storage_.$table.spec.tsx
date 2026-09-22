@@ -57,9 +57,8 @@ vi.mock("../../lib/api-mutations", () => ({
 const { toastMock, refreshMock, pageRef } = vi.hoisted(() => {
   const error = vi.fn();
   const success = vi.fn();
-  const base = Object.assign(vi.fn(), { error, success });
   return {
-    toastMock: base,
+    toastMock: { message: vi.fn(), error, success },
     refreshMock: vi.fn(),
     pageRef: {
       current: { data: [], next_cursor: null, has_more: false } as {
@@ -71,7 +70,7 @@ const { toastMock, refreshMock, pageRef } = vi.hoisted(() => {
   };
 });
 
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 vi.mock("../../components/storage/tables-sub-panel", () => ({
   useTablesSubPanel: () => undefined,
@@ -132,7 +131,7 @@ beforeEach(() => {
   useQueryMock.mockReset();
   useQueryMock.mockReturnValue(undefined);
   removeMock.mockReset();
-  toastMock.mockClear();
+  toastMock.message.mockClear();
   toastMock.error.mockClear();
   toastMock.success.mockClear();
   refreshMock.mockClear();
@@ -179,12 +178,12 @@ describe("bulk document delete partial failure", () => {
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
     const [message, options] = toastMock.error.mock.calls.at(-1) as [
       string,
-      { description: ReactElement; duration: number },
+      { description: ReactElement; timeout: number },
     ];
     expect(message).toBe("Deleted 1/2 documents");
-    // The reason is only ever shown here, so the toast has to outlive sonner's
-    // four-second default.
-    expect(options.duration).toBeGreaterThanOrEqual(10_000);
+    // The reason is only ever shown here, so the toast has to outlive the
+    // four-second transient lifetime.
+    expect(options.timeout).toBeGreaterThanOrEqual(10_000);
 
     const { container } = render(options.description);
     expect(container.textContent).toContain(
@@ -317,10 +316,10 @@ describe("bulk document delete outliving its route", () => {
 
     const [message, options] = toastMock.error.mock.calls.at(-1) as [
       string,
-      { description: ReactElement; duration: number },
+      { description: ReactElement; timeout: number },
     ];
     expect(message).toBe("Stopped after deleting 1 of 3 documents");
-    expect(options.duration).toBeGreaterThanOrEqual(10_000);
+    expect(options.timeout).toBeGreaterThanOrEqual(10_000);
 
     const { container } = render(options.description);
     // Not "Deleted 1/3", which reads as two failures that never happened.

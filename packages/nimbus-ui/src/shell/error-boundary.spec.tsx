@@ -14,10 +14,10 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const { toastMock } = vi.hoisted(() => ({
-  toastMock: Object.assign(vi.fn(), { error: vi.fn() }),
+  toastMock: { message: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 import { AppErrorBoundary } from "./error-boundary";
 
@@ -45,7 +45,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  toastMock.mockClear();
+  toastMock.message.mockClear();
+  toastMock.error.mockClear();
   toastMock.error.mockClear();
   vi.restoreAllMocks();
 });

@@ -881,9 +881,11 @@ the two tiers are intentionally distinct.
 The product palette has one axis: **mode**, `light` / `dark` / `system`.
 There is one palette: neutral grounds and one amber accent. Mode is user
 controlled from Settings → Appearance and from the appearance menu in the
-shell, and persists to `localStorage` (`nimbus-ui:theme`). The shell sets
-`data-theme` on `<html>`. Dark is the default token set on `:root`; light is
-the override under `[data-theme="light"]`.
+shell, and persists to `localStorage` (`nimbus-ui:theme`). The first load
+is `system`: the console follows `prefers-color-scheme` until the operator
+picks a mode. The shell sets `data-theme` on `<html>`. The `:root` token set
+is the dark one, and light is the override under `[data-theme="light"]`;
+that is a CSS detail, not a default mode.
 
 Tokens live in `packages/nimbus-ui/src/styles/tokens.css` as hex and rgba
 literals. `@theme inline` bridges them to Tailwind utilities (`bg-bg-panel`,
@@ -1338,11 +1340,13 @@ Tables are the default shape for resources:
 - Use inputs/sliders/steppers for numeric values.
 - Use JSON/code editors for document, argument, and config values.
 - Validate on blur and before submit. Show field-specific errors.
-- Build new forms from the shadcn `Field` family (`Field`, `FieldGroup`,
-  `FieldLabel`, `FieldDescription`, `FieldError`) and put adorned inputs in
-  `InputGroup` with `InputGroupInput`. `field` is not installed yet; add it
-  with `npx shadcn@latest add field` in the first change that needs a form,
-  and do not hand-roll label, hint, and error markup.
+- Build every form from the shadcn `Field` family (`Field`, `FieldGroup`,
+  `FieldLabel`, `FieldContent`, `FieldDescription`, `FieldError`) and put
+  adorned inputs in `InputGroup` with `InputGroupInput`. Do not hand-roll
+  label, hint, and error markup. `Field` carries two Nimbus orientations
+  beside the upstream three: `inline` for a label-prefixed filter control in
+  a toolbar, and `columns` for a fixed label column beside a growing control
+  (the function runner argument rows).
 
 ### Badges
 
@@ -1523,17 +1527,27 @@ the resource header), the chip is permanent rather than hover-only.
 
 ### Toast / Notification Queue
 
-Use `sonner` for transient feedback. Anchor: bottom-right, with the
-default offset; nothing fixed sits under the toast stack. shadcn now ships
-a Base UI `toast` component for `base-nova` projects and reserves `sonner`
-for the Radix styles. The console stays on `sonner` (23 call sites) until
-a migration plan owns the switch; do not mix the two. Rules:
+Toasts are the registry Base UI `toast` (`src/components/ui/toast.tsx`)
+behind the console's policy module `src/components/toast.ts`. The shell
+mounts one `Toaster` (`src/components/toaster.tsx`); nothing else renders a
+toast stack. Anchor: bottom-right, with the default offset; nothing fixed
+sits under the toast stack. Rules:
 
+- Call `toast.success`, `toast.error`, or `toast.message` from
+  `@/components/toast`; never the registry manager directly. `success` for
+  a mutation that landed, `error` for a refusal or failure, `message` for a
+  neutral note (a copy, a request accepted). Only `message` has no icon.
 - Mutations confirm via toast (`Started machine-01`), not via modal.
-- Errors show until dismissed; never auto-disappear.
-- Toasts include a correlation ID and an action button when a follow-up is
-  meaningful (`View run`, `Retry`, `Undo`).
-- Never stack more than three; collapse the rest into "+N more."
+- A confirmation expires after 4 seconds. Errors show until dismissed;
+  never auto-disappear. The policy module owns that split; a call site
+  names a `timeout` only when its content needs a different lifetime
+  (`0` keeps a toast up until the operator closes it).
+- The stack pauses every clock while the operator hovers or focuses it and
+  while the window is in the background.
+- Toasts include a correlation ID and one `action` when a follow-up is
+  meaningful (`View run`, `Retry`, `Undo`). Taking the action closes the
+  toast; closing the toast without taking it runs `onDismiss`.
+- Never stack more than three; the shell collapses the rest into "+N more."
 - Toasts do not block keyboard input or steal focus.
 
 ### Empty States
@@ -1813,7 +1827,7 @@ Tone:
 - Prefer shadcn `base-nova` registry components on Base UI primitives,
   Tailwind v4 with the hex role tokens in `tokens.css` bridged through
   `@theme inline`, the `cn` package for class merging, `cmdk` for the
-  command palette, `sonner` for toasts, `shiki` for syntax highlighting,
+  command palette, the registry Base UI `toast`, `shiki` for syntax highlighting,
   Geist and Geist Mono self-hosted for type, Lucide for icons, TanStack
   Router, Table, Virtual and Charts, Zustand, Vitest, React Testing Library,
   and Playwright as described in

@@ -33,7 +33,7 @@ vi.mock("../../shell/sub-panel", () => ({
 const { toastMock } = vi.hoisted(() => ({
   toastMock: { success: vi.fn(), error: vi.fn() },
 }));
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 import type { DeployActivation, DeployHistory } from "../../lib/types/deploy";
 import { routeComponent } from "../../test/route-internals";
@@ -173,6 +173,21 @@ describe("developer/deploys", () => {
     const state = await screen.findByTestId("deploys-error");
     expect(state).toHaveTextContent("Deploy history did not load");
     expect(state).toHaveTextContent("local server access denied");
+  });
+
+  it("opens the function diff when a row is clicked", async () => {
+    serveHistory(HISTORY);
+    render(<Page />);
+    await screen.findByTestId("deploys-table");
+    expect(screen.queryByTestId("deploys-diff")).toBeNull();
+
+    // DESIGN.md: "Row click opens detail." The row itself, not the hash chip
+    // or the kebab, is the target: those are controls the row skips.
+    fireEvent.click(screen.getByTestId("deploys-row-2"));
+
+    expect(screen.getByTestId("deploys-diff")).toHaveTextContent(
+      "Generation 2",
+    );
   });
 
   it("compares a selected bundle's function paths with the active one", async () => {

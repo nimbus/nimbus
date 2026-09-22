@@ -54,14 +54,14 @@ const { objectsApiMock, toastMock } = vi.hoisted(() => ({
     upload: vi.fn(),
     remove: vi.fn(),
   },
-  toastMock: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
+  toastMock: { message: vi.fn(), success: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("../../lib/api-mutations", () => ({ objects: objectsApiMock }));
 vi.mock("@nimbus/nimbus/react", () => ({
   useNimbus: () => ({ url: "http://nimbus.example:9000/convex/_nimbus" }),
 }));
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 import { useUiStore } from "../../store/ui-store";
 import { routeComponent } from "../../test/route-internals";
@@ -150,7 +150,9 @@ beforeEach(() => {
   subPanelMock.mockReset();
   useSearchMock.mockReset();
   for (const fn of Object.values(objectsApiMock)) fn.mockReset();
-  toastMock.mockReset();
+  toastMock.message.mockReset();
+  toastMock.success.mockReset();
+  toastMock.error.mockReset();
   toastMock.success.mockReset();
   toastMock.error.mockReset();
   objectsApiMock.buckets.mockResolvedValue({
@@ -526,7 +528,7 @@ describe("FilesPage sheet", () => {
         `${window.location.origin}/api/tenants/acme/objects/assets/notes.txt`,
       ),
     );
-    expect(toastMock).toHaveBeenCalled();
+    expect(toastMock.message).toHaveBeenCalled();
   });
 
   it("says when the address names a key the listing does not hold", async () => {

@@ -13,7 +13,9 @@ import {
 
 import { SchemaTab } from "./schema-tab";
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 const server = setupServer();
 

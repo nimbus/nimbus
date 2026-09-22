@@ -64,9 +64,11 @@ tokens too.
   a wrapper under `src/components/`, or extend the variant in the registry
   file only when upstream has no equivalent and the commit says why.
 - Base UI, not Radix: compose with the `render` prop, never `asChild`.
-  Dialog and Sheet need a Title. Prefer the Base UI `toast` for new
-  projects; this console keeps `sonner` until a migration plan owns the
-  switch (see `DESIGN.md` → Toast).
+  Dialog and Sheet need a Title.
+- Toasts: call `toast.success`, `toast.error`, or `toast.message` from
+  `@/components/toast`, never the registry manager or a second stack. The
+  shell mounts the one `Toaster`. Errors have no clock; a confirmation
+  expires on its own (see `DESIGN.md` → Toast).
 
 ## Styling contract (the lint gate)
 

@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CopyButton } from "./copy-button";
 
 const toastError = vi.fn();
-vi.mock("sonner", () => ({
+vi.mock("@/components/toast", () => ({
   toast: { error: (...args: unknown[]) => toastError(...args) },
 }));
 

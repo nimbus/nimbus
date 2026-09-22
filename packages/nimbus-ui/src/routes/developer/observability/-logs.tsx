@@ -10,7 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { api } from "../../../../convex/_generated/api";
 import { EmptyState } from "../../../components/empty-state";
@@ -613,7 +613,9 @@ function LogStream({
           onSelect: () => {
             void navigator.clipboard
               .writeText(menu.runId)
-              .then(() => toast("Copied run id", { description: menu.runId }))
+              .then(() =>
+                toast.message("Copied run id", { description: menu.runId }),
+              )
               .catch(() => toast.error("Failed to copy run id"));
           },
         },

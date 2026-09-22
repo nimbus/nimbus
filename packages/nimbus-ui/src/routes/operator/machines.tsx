@@ -1,7 +1,7 @@
 import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
@@ -50,7 +50,7 @@ async function copyMachineInitCommand() {
     toast.error("Copy failed. The clipboard is not available.");
     return;
   }
-  toast(`Copied ${MACHINE_INIT_COMMAND}`);
+  toast.message(`Copied ${MACHINE_INIT_COMMAND}`);
 }
 
 function MachinesPage() {

@@ -59,7 +59,7 @@ const { scheduleApiMock, toastMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/api-mutations", () => ({ schedules: scheduleApiMock }));
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 import { useUiStore } from "../../store/ui-store";
 import { routeComponent } from "../../test/route-internals";

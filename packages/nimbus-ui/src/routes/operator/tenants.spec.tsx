@@ -90,10 +90,10 @@ vi.mock("../../shell/sub-panel", () => ({
 }));
 
 const { toastMock } = vi.hoisted(() => ({
-  toastMock: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
+  toastMock: { message: vi.fn(), success: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("sonner", () => ({ toast: toastMock }));
+vi.mock("@/components/toast", () => ({ toast: toastMock }));
 
 import { routeComponent, routeLoader } from "../../test/route-internals";
 import { Route, tenantRows } from "./tenants";
@@ -131,7 +131,9 @@ beforeEach(() => {
   nimbusQueryMock.mockReset();
   createMock.mockReset();
   removeMock.mockReset();
-  toastMock.mockReset();
+  toastMock.message.mockReset();
+  toastMock.success.mockReset();
+  toastMock.error.mockReset();
   toastMock.success.mockReset();
   toastMock.error.mockReset();
 });

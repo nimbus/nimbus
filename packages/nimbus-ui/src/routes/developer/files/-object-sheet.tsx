@@ -1,6 +1,6 @@
 import { Download, Link2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { CopyChip } from "../../../components/copy-chip";
 import { RelativeTime } from "../../../components/time";
@@ -93,7 +93,7 @@ function ObjectBody({
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(link);
-      toast("Copied link", { description: link });
+      toast.message("Copied link", { description: link });
     } catch {
       toast.error("Failed to copy link");
     }

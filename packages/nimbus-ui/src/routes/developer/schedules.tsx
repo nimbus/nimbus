@@ -357,6 +357,7 @@ function ScheduledTable({
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
         size: 40,
+        enableResizing: false,
         enableSorting: false,
         cell: (ctx) => (
           <ActionsCell
@@ -461,6 +462,7 @@ function CronTable({
         id: "actions",
         header: () => <span className="sr-only">Actions</span>,
         size: 40,
+        enableResizing: false,
         enableSorting: false,
         cell: (ctx) => (
           <ActionsCell

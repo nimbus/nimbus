@@ -1,6 +1,7 @@
 import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { EmptyState } from "../../components/empty-state";
@@ -172,9 +173,10 @@ function RoutesSection() {
         className="flex flex-wrap items-center gap-2 rounded-md border border-border-2 bg-bg-raised px-3 py-2"
         data-testid="network-filters"
       >
-        <label className="flex items-center gap-2">
-          <span className="text-xs font-medium text-text-3">filter</span>
+        <Field orientation="inline">
+          <FieldLabel htmlFor="network-filter-input">filter</FieldLabel>
           <input
+            id="network-filter-input"
             type="search"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -183,7 +185,7 @@ function RoutesSection() {
             data-testid="network-filter-input"
             className="w-72 rounded-xs border border-border-2 bg-bg-panel px-2 py-1 font-mono text-xs text-text-1 placeholder:text-text-3/70"
           />
-        </label>
+        </Field>
         {/* Toggle buttons, not tabs: they filter the table in place and do not
             own a tabpanel, so a labelled group of `aria-pressed` buttons is the
             honest contract, and native Tab/Space/Enter is its complete keyboard

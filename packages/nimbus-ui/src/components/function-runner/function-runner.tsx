@@ -3,6 +3,13 @@ import { type KeyboardEvent, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Field,
+  FieldContent,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
@@ -240,13 +247,13 @@ export function FunctionRunner({
                 onChange={setField}
               />
             ) : (
-              <div
-                className="flex flex-col gap-1"
-                data-testid="function-runner-args"
-              >
-                <label htmlFor="function-runner-args-input" className="sr-only">
+              <Field data-testid="function-runner-args">
+                <FieldLabel
+                  htmlFor="function-runner-args-input"
+                  className="sr-only"
+                >
                   Arguments as a JSON object
-                </label>
+                </FieldLabel>
                 <Textarea
                   id="function-runner-args-input"
                   value={argsText}
@@ -262,11 +269,11 @@ export function FunctionRunner({
                   placeholder='{ "key": "value" }'
                 />
                 {(parseError ?? (!parsedJson.ok && argsText.trim() !== "")) ? (
-                  <span className="text-xs text-error">
+                  <FieldError>
                     {parseError ?? (parsedJson.ok ? null : parsedJson.error)}
-                  </span>
+                  </FieldError>
                 ) : null}
-              </div>
+              </Field>
             )}
             <div className="flex items-center gap-3">
               <Button
@@ -325,24 +332,22 @@ function ArgsForm({
     );
   }
   return (
-    <div className="flex flex-col gap-2" data-testid="function-runner-form">
+    <FieldGroup data-testid="function-runner-form">
       {fields.map((field) => {
         const id = `function-runner-field-${field.name}`;
         const error = errors[field.name];
         const value = values[field.name];
         return (
-          <div
-            key={field.name}
-            className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-x-3 gap-y-1"
-          >
-            <label
-              htmlFor={id}
-              className="flex min-w-0 items-baseline gap-1.5 pt-1.5 font-mono text-xs"
-            >
-              <span className="truncate text-text-1">{field.name}</span>
-              <span className="shrink-0 text-text-3">{field.type}</span>
-            </label>
-            <div className="flex min-w-0 flex-col gap-1">
+          <Field key={field.name} orientation="columns">
+            {/* An argument name is an identifier, so it keeps the mono the
+                rest of the label rule reserves for data. */}
+            <FieldLabel htmlFor={id}>
+              <span className="truncate font-mono text-text-1">
+                {field.name}
+              </span>
+              <span className="shrink-0 font-mono">{field.type}</span>
+            </FieldLabel>
+            <FieldContent>
               {field.input === "boolean" ? (
                 <div className="flex h-8 items-center">
                   <Checkbox
@@ -384,18 +389,13 @@ function ArgsForm({
                 />
               )}
               {error ? (
-                <span
-                  className="text-xs text-error"
-                  data-testid={`${id}-error`}
-                >
-                  {error}
-                </span>
+                <FieldError data-testid={`${id}-error`}>{error}</FieldError>
               ) : null}
-            </div>
-          </div>
+            </FieldContent>
+          </Field>
         );
       })}
-    </div>
+    </FieldGroup>
   );
 }
 

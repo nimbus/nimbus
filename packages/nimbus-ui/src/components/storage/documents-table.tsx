@@ -4,7 +4,7 @@ import type {
   SortingState,
 } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/toast";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -336,7 +336,7 @@ function SortLabel({
 async function copyText(value: string, label: string) {
   try {
     await navigator.clipboard.writeText(value);
-    toast(`Copied ${label}`);
+    toast.message(`Copied ${label}`);
   } catch {
     toast.error(`Failed to copy ${label}`);
   }
