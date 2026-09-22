@@ -16,6 +16,7 @@ extension!(
     ],
     esm_entry_point = "ext:nimbus_web/runtime_bootstrap.js",
     esm = [
+        "ext:runtime/01_errors.js" = "src/runtime/bootstrap/js/01_errors.js",
         "ext:runtime/98_global_scope_shared.js" =
             "src/runtime/bootstrap/js/98_global_scope_shared.js",
         "ext:nimbus_web/runtime_bootstrap.js" = "src/runtime/bootstrap/js/web_runtime_bootstrap.js"
@@ -23,6 +24,10 @@ extension!(
 );
 
 const WEB_STANDARD_RUNTIME_BOOTSTRAP_ESM: &[ExtensionFileSource] = &[
+    ExtensionFileSource::new(
+        "ext:runtime/01_errors.js",
+        ascii_str_include!("js/01_errors.js"),
+    ),
     ExtensionFileSource::new(
         "ext:runtime/98_global_scope_shared.js",
         ascii_str_include!("js/98_global_scope_shared.js"),

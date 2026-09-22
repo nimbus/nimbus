@@ -1,4 +1,5 @@
 import { core } from "ext:core/mod.js";
+import { errors } from "ext:runtime/01_errors.js";
 
 core.loadExtScript("ext:deno_telemetry/telemetry.ts");
 core.loadExtScript("ext:deno_telemetry/util.ts");
@@ -116,6 +117,51 @@ core.registerErrorBuilder(
     return new DOMException(msg, "InvalidAccessError");
   },
 );
+
+// Register the io error classes that Rust ops raise by class name.
+//
+// deno_error maps a `std::io::Error` (and every `#[class(inherit)]` wrapper
+// around one, which is what the fs, net, and node ops return) to a class name
+// such as `NotFound`, `AlreadyExists`, or `ConnectionRefused`. deno_core's
+// `to_v8_error` then rehydrates it in JS through `buildCustomError`, which
+// looks the name up in the class map that `core.registerErrorClass` fills.
+// deno_core itself registers only the ECMAScript builtins plus `BadResource`,
+// `Interrupted`, and `NotCapable`. The Deno CLI registers the rest in
+// `runtime/js/99_main.js`, which Nimbus never loads.
+//
+// Without this block every such op error rehydrates as `undefined`. The op
+// stubs then call `Error.captureStackTrace(undefined)`, so the caller sees a
+// bare `TypeError: invalid_argument` with no `code`, `errno`, `path`, or
+// `syscall`, and the Node polyfills' `denoErrorToNodeError` can no longer
+// build the `ENOENT`/`EEXIST`/... exception. Whether that surfaced as a
+// synchronous throw or as a promise rejection depended on whether the op
+// resolved on its first poll, which made the failure timing-dependent.
+//
+// Mirror the full set Deno registers, keyed by the class name deno_error
+// emits. `Deno.errors` exposes the same constructors, so `instanceof` checks
+// in the polyfills see the same classes.
+core.registerErrorClass("NotFound", errors.NotFound);
+core.registerErrorClass("ConnectionRefused", errors.ConnectionRefused);
+core.registerErrorClass("ConnectionReset", errors.ConnectionReset);
+core.registerErrorClass("ConnectionAborted", errors.ConnectionAborted);
+core.registerErrorClass("NotConnected", errors.NotConnected);
+core.registerErrorClass("AddrInUse", errors.AddrInUse);
+core.registerErrorClass("AddrNotAvailable", errors.AddrNotAvailable);
+core.registerErrorClass("BrokenPipe", errors.BrokenPipe);
+core.registerErrorClass("PermissionDenied", errors.PermissionDenied);
+core.registerErrorClass("AlreadyExists", errors.AlreadyExists);
+core.registerErrorClass("InvalidData", errors.InvalidData);
+core.registerErrorClass("TimedOut", errors.TimedOut);
+core.registerErrorClass("WouldBlock", errors.WouldBlock);
+core.registerErrorClass("WriteZero", errors.WriteZero);
+core.registerErrorClass("UnexpectedEof", errors.UnexpectedEof);
+core.registerErrorClass("Http", errors.Http);
+core.registerErrorClass("Busy", errors.Busy);
+core.registerErrorClass("NotSupported", errors.NotSupported);
+core.registerErrorClass("FilesystemLoop", errors.FilesystemLoop);
+core.registerErrorClass("IsADirectory", errors.IsADirectory);
+core.registerErrorClass("NetworkUnreachable", errors.NetworkUnreachable);
+core.registerErrorClass("NotADirectory", errors.NotADirectory);
 
 function hasNodeExecArgvFlag(flag) {
   const execArgv = globalThis.process?.execArgv;
