@@ -10,6 +10,13 @@ if (globalThis[__nimbusRuntimeEnvOverlaySymbol] === undefined) {
   });
 }
 
+const __nimbusForwardedProcessWarningFlags = Object.freeze([
+  "noDeprecation",
+  "throwDeprecation",
+  "traceDeprecation",
+  "traceProcessWarnings",
+]);
+
 const __nimbusRuntimeEnvOverlay = function __nimbusRuntimeEnvOverlay() {
   return globalThis[__nimbusRuntimeEnvOverlaySymbol];
 };
@@ -414,6 +421,31 @@ const __nimbusInstallRuntimeContractGlobals = function __nimbusInstallRuntimeCon
         configurable: true,
         enumerable: false,
       });
+    }
+    // The Node polyfill reads `process.noDeprecation`, `process.throwDeprecation`,
+    // `process.traceDeprecation`, and `process.traceProcessWarnings` from its own
+    // module-scoped process object when it emits a warning. They are plain data
+    // properties there, so a write through the prototype chain would create an
+    // own property on this view that the polyfill never sees. Forward reads and
+    // writes to the base object, and reject a write that the base refuses, as a
+    // strict-mode assignment to a read-only `--throw-deprecation` alias would.
+    if (processBase && typeof processBase === "object" && "emitWarning" in processBase) {
+      for (const name of __nimbusForwardedProcessWarningFlags) {
+        Object.defineProperty(processValue, name, {
+          get() {
+            return processBase[name];
+          },
+          set(value) {
+            if (!Reflect.set(processBase, name, value)) {
+              throw new TypeError(
+                `Cannot assign to read only property '${name}' of object '[object process]'`,
+              );
+            }
+          },
+          configurable: true,
+          enumerable: Object.prototype.hasOwnProperty.call(processBase, name),
+        });
+      }
     }
     Object.defineProperty(processValue, "cwd", {
       value() {

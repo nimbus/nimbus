@@ -409,6 +409,91 @@ export {};
 }
 
 #[tokio::test]
+async fn node22_target_process_warning_policy_flags_reach_the_polyfill() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let tempdir = tempdir().expect("tempdir should build");
+    let bundle_path = tempdir.path().join("bundle.mjs");
+    std::fs::write(
+        &bundle_path,
+        r#"
+import nodeProcess from "node:process";
+
+globalThis.__nimbusInvoke = async function () {
+  const warnings = [];
+  process.on("warning", (warning) => warnings.push(warning.name));
+  const nextTick = () => new Promise((resolve) => process.nextTick(resolve));
+
+  process.noDeprecation = true;
+  const polyfillSawNoDeprecation = nodeProcess.noDeprecation === true;
+  process.emitWarning("suppressed", "DeprecationWarning");
+  await nextTick();
+  const suppressedCount = warnings.length;
+
+  process.noDeprecation = false;
+  process.emitWarning("delivered", "DeprecationWarning");
+  await nextTick();
+  const deliveredCount = warnings.length;
+
+  process.throwDeprecation = true;
+  const polyfillSawThrowDeprecation = nodeProcess.throwDeprecation === true;
+  process.throwDeprecation = false;
+  process.traceDeprecation = true;
+  const polyfillSawTraceDeprecation = nodeProcess.traceDeprecation === true;
+  process.traceDeprecation = false;
+
+  return {
+    polyfillSawNoDeprecation,
+    suppressedCount,
+    deliveredCount,
+    polyfillSawThrowDeprecation,
+    polyfillSawTraceDeprecation,
+    ownNoDeprecation: Object.hasOwn(process, "noDeprecation"),
+    ownNoDeprecationOnPolyfill: Object.hasOwn(nodeProcess, "noDeprecation"),
+  };
+};
+
+export {};
+"#,
+    )
+    .expect("bundle should write");
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        Arc::new(RuntimePolicy::new(RuntimeLimits::application_node22())),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant_for_test(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("bundle should execute");
+
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "polyfillSawNoDeprecation": true,
+            "suppressedCount": 0,
+            "deliveredCount": 1,
+            "polyfillSawThrowDeprecation": true,
+            "polyfillSawTraceDeprecation": true,
+            "ownNoDeprecation": true,
+            "ownNoDeprecationOnPolyfill": true,
+        })
+    );
+}
+
+#[tokio::test]
 async fn node22_target_load_env_file_missing_file_surfaces_node_not_found_error() {
     let _guard = acquire_basic_invocation_suite_lock().await;
     let tempdir = tempdir().expect("tempdir should build");

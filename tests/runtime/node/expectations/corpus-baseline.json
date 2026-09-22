@@ -335,19 +335,9 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
-        "test_relative_path": "test/parallel/test-process-no-deprecation.js",
-        "fixture_source_relative_path": "node20/test/parallel/test-process-no-deprecation.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: received unexpected warning"
-      },
-      {
         "test_relative_path": "test/parallel/test-process-prototype.js",
         "fixture_source_relative_path": "node20/test/parallel/test-process-prototype.js",
         "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'value')"
-      },
-      {
-        "test_relative_path": "test/parallel/test-process-warning.js",
-        "fixture_source_relative_path": "node20/test/parallel/test-process-warning.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: stderr.write must not be called"
       },
       {
         "test_relative_path": "test/parallel/test-readline-promises-interface.js",
@@ -1802,11 +1792,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
-        "test_relative_path": "test/parallel/test-process-no-deprecation.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-process-no-deprecation.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: received unexpected warning"
-      },
-      {
         "test_relative_path": "test/parallel/test-process-prototype.js",
         "fixture_source_relative_path": "node22/test/parallel/test-process-prototype.js",
         "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'value')"
@@ -1825,11 +1810,6 @@
         "test_relative_path": "test/parallel/test-process-umask.js",
         "fixture_source_relative_path": "node22/test/parallel/test-process-umask.js",
         "reason": "runtime JavaScript error: NotCapable: Requires sys access to \"umask\", run again with the --allow-sys flag"
-      },
-      {
-        "test_relative_path": "test/parallel/test-process-warning.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-process-warning.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: stderr.write must not be called"
       },
       {
         "test_relative_path": "test/parallel/test-promise-hook-create-hook.js",
@@ -3809,11 +3789,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
-        "test_relative_path": "test/parallel/test-process-no-deprecation.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-process-no-deprecation.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: received unexpected warning"
-      },
-      {
         "test_relative_path": "test/parallel/test-process-prototype.js",
         "fixture_source_relative_path": "node24/test/parallel/test-process-prototype.js",
         "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'value')"
@@ -3832,11 +3807,6 @@
         "test_relative_path": "test/parallel/test-process-umask.js",
         "fixture_source_relative_path": "node24/test/parallel/test-process-umask.js",
         "reason": "runtime JavaScript error: NotCapable: Requires sys access to \"umask\", run again with the --allow-sys flag"
-      },
-      {
-        "test_relative_path": "test/parallel/test-process-warning.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-process-warning.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: stderr.write must not be called"
       },
       {
         "test_relative_path": "test/parallel/test-promise-hook-create-hook.js",
@@ -5781,11 +5751,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
-        "test_relative_path": "test/parallel/test-process-no-deprecation.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-process-no-deprecation.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: received unexpected warning"
-      },
-      {
         "test_relative_path": "test/parallel/test-process-prototype.js",
         "fixture_source_relative_path": "node26/test/parallel/test-process-prototype.js",
         "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'value')"
@@ -5804,11 +5769,6 @@
         "test_relative_path": "test/parallel/test-process-umask.js",
         "fixture_source_relative_path": "node26/test/parallel/test-process-umask.js",
         "reason": "runtime JavaScript error: NotCapable: Requires sys access to \"umask\", run again with the --allow-sys flag"
-      },
-      {
-        "test_relative_path": "test/parallel/test-process-warning.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-process-warning.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: stderr.write must not be called"
       },
       {
         "test_relative_path": "test/parallel/test-promise-hook-create-hook.js",
