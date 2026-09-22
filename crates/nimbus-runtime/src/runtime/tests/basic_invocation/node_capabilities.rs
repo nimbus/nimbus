@@ -1883,3 +1883,136 @@ export {};
         "writeFile should not materialize missing parent directories"
     );
 }
+
+/// Regression: a Rust op error whose deno_error class is one of Deno's io
+/// classes (`NotFound`, `AlreadyExists`, ...) must rehydrate in JS as an
+/// instance of the registered class, and the Node fs polyfills must turn it
+/// into the libuv-style exception with `code`, `syscall`, and `path`.
+///
+/// Before the shared bootstrap registered those classes, `buildCustomError`
+/// returned `undefined` for them, the op stub threw `TypeError:
+/// invalid_argument` from `Error.captureStackTrace(undefined)`, and the
+/// callback form of `fs.truncate` delivered that bare TypeError to its
+/// callback. Whether the error took the synchronous or the asynchronous route
+/// depended on the blocking-pool timing of the underlying open, which made
+/// `test/parallel/test-fs-truncate.js` flaky across hosts.
+#[tokio::test]
+async fn application_node22_maps_rust_io_error_classes_to_node_fs_exceptions() {
+    let _guard = acquire_basic_invocation_suite_lock().await;
+    let (_tempdir, bundle_path) = write_app_style_bundle(
+        r#"
+import { truncate } from "node:fs";
+import { open } from "node:fs/promises";
+
+function describe(error) {
+  if (error === null || error === undefined) {
+    return null;
+  }
+  return {
+    name: error.name ?? null,
+    code: error.code ?? null,
+    syscall: error.syscall ?? null,
+    path: error.path ?? null,
+    errnoType: typeof error.errno,
+    message: error.message ?? String(error),
+  };
+}
+
+globalThis.__nimbusInvoke = async function () {
+  const missingPath = "./does-not-exist.txt";
+  const truncateError = await new Promise((resolve) => {
+    truncate(missingPath, 0, (error) => resolve(error));
+  });
+  let promiseOpenError = null;
+  try {
+    const handle = await open(missingPath, "r");
+    await handle.close();
+  } catch (error) {
+    promiseOpenError = error;
+  }
+  const rehydrated = Deno.core.buildCustomError("NotFound", "boom (os error 2)");
+  const rehydratedExists = Deno.core.buildCustomError("AlreadyExists", "boom (os error 17)");
+  return {
+    truncate: describe(truncateError),
+    promiseOpen: describe(promiseOpenError),
+    rehydratedIsNotFound: rehydrated instanceof Deno.errors.NotFound,
+    rehydratedName: rehydrated?.name ?? null,
+    rehydratedExistsIsAlreadyExists: rehydratedExists instanceof Deno.errors.AlreadyExists,
+  };
+};
+
+export {};
+"#,
+    );
+
+    let runtime = NimbusRuntime::with_policy(
+        Arc::new(RecordingHost::default()),
+        runtime_test_policy_with_real_fs(RuntimeLimits::application_node22()),
+        crate::RuntimeEgressPosture::CoarsePermissions,
+    );
+    let result = runtime
+        .invoke_bundle_for_tenant_for_test(
+            &RuntimeBundle::new(&bundle_path),
+            &InvocationRequest {
+                kind: InvocationKind::Query,
+                function_name: "messages:list".to_string(),
+                args: Value::Null,
+                page_size: None,
+                cursor: None,
+                auth: None,
+                services: Default::default(),
+            },
+            "tenant-a",
+        )
+        .await
+        .expect("bundle should execute");
+
+    for probe in ["truncate", "promiseOpen"] {
+        let error = &result[probe];
+        assert_eq!(
+            error["name"],
+            serde_json::json!("Error"),
+            "{probe}: unexpected error: {result}"
+        );
+        assert_eq!(
+            error["code"],
+            serde_json::json!("ENOENT"),
+            "{probe}: unexpected error: {result}"
+        );
+        assert_eq!(
+            error["syscall"],
+            serde_json::json!("open"),
+            "{probe}: unexpected error: {result}"
+        );
+        assert_eq!(
+            error["path"],
+            serde_json::json!("./does-not-exist.txt"),
+            "{probe}: unexpected error: {result}"
+        );
+        assert_eq!(
+            error["errnoType"],
+            serde_json::json!("number"),
+            "{probe}: unexpected error: {result}"
+        );
+        assert_eq!(
+            error["message"],
+            serde_json::json!("ENOENT: no such file or directory, open './does-not-exist.txt'"),
+            "{probe}: unexpected error: {result}"
+        );
+    }
+    assert_eq!(
+        result["rehydratedIsNotFound"],
+        serde_json::json!(true),
+        "unexpected rehydration result: {result}"
+    );
+    assert_eq!(
+        result["rehydratedName"],
+        serde_json::json!("NotFound"),
+        "unexpected rehydration result: {result}"
+    );
+    assert_eq!(
+        result["rehydratedExistsIsAlreadyExists"],
+        serde_json::json!(true),
+        "unexpected rehydration result: {result}"
+    );
+}
