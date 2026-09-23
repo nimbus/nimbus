@@ -455,7 +455,7 @@ pub(super) fn canonicalize_preserving_missing_suffix(path: &Path) -> std::io::Re
     canonicalize_preserving_missing_suffix_from_base(path, &std::env::current_dir()?)
 }
 
-fn normalize_absolute_path_lexically(path: &Path) -> PathBuf {
+pub(crate) fn normalize_absolute_path_lexically(path: &Path) -> PathBuf {
     let mut prefix = None::<OsString>;
     let mut has_root = false;
     let mut parts = Vec::<OsString>::new();

@@ -31,7 +31,9 @@ use url::Url;
 
 use crate::backends::v8::embedder::{JsErrorBox, ModuleSpecifier};
 use crate::limits::RuntimeCompatibilityTarget;
-use crate::runtime_capabilities::{RuntimePathPolicy, build_module_read_permissions_container};
+use crate::runtime_capabilities::{
+    RuntimePathPolicy, build_module_read_permissions_container, normalize_absolute_path_lexically,
+};
 
 #[derive(Debug, thiserror::Error, deno_error::JsError)]
 #[error(
@@ -101,7 +103,7 @@ impl NpmPackageFolderResolver for ScopedNodeModulesResolver {
             .path()
             .ok()
             .and_then(|path| path.parent().map(Path::to_path_buf))
-            .and_then(canonicalize_existing_path)
+            .map(|directory| package_search_start_dir(directory, &self.roots))
             .unwrap_or_else(|| self.cwd.clone());
         for search_dir in resolution_search_directories(&start_dir, &self.roots) {
             let package_root = search_dir.join("node_modules").join(package_name);
@@ -551,7 +553,7 @@ fn try_resolve_package_subpath_without_exports(
         .to_file_path()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf))
-        .and_then(canonicalize_existing_path)
+        .map(|directory| package_search_start_dir(directory, path_policy.resolution_roots()))
     else {
         return Ok(None);
     };
@@ -693,8 +695,19 @@ fn package_json_applies_to_path(path: &Path, package_json_path: &Path) -> bool {
     package_json_dir.starts_with(package_root)
 }
 
-fn canonicalize_existing_path(path: PathBuf) -> Option<PathBuf> {
-    std::fs::canonicalize(&path).ok().or(Some(path))
+/// Node starts a bare-specifier search in the referrer directory exactly as the
+/// module system identified it: the real path by default, or the link path under
+/// `--preserve-symlinks`. Keep that identity whenever it already lies inside a
+/// resolution root, so a symlinked package finds the peers installed next to its
+/// link. Canonicalize only when the referrer arrives through an aliased prefix
+/// (for example macOS `/tmp`), because the roots are canonical and the
+/// confinement check needs comparable paths.
+fn package_search_start_dir(referrer_dir: PathBuf, roots: &[PathBuf]) -> PathBuf {
+    let referrer_dir = normalize_absolute_path_lexically(&referrer_dir);
+    if roots.iter().any(|root| referrer_dir.starts_with(root)) {
+        return referrer_dir;
+    }
+    std::fs::canonicalize(&referrer_dir).unwrap_or(referrer_dir)
 }
 
 fn split_package_specifier(specifier: &str) -> Option<(&str, &str)> {
@@ -1014,6 +1027,121 @@ mod tests {
             .map(|root| root.join("node_modules").to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(outside_search_paths, expected_root_paths);
+    }
+
+    fn symlinked_peer_layout(root: &Path) -> (PathBuf, PathBuf) {
+        // {root}/moduleA (real package) and {root}/app/node_modules/moduleB,
+        // with {root}/app/node_modules/moduleA -> {root}/moduleA, mirroring
+        // upstream test/parallel/test-module-symlinked-peer-modules.js.
+        let module_a = root.join("moduleA");
+        let app_node_modules = root.join("app/node_modules");
+        let module_b = app_node_modules.join("moduleB");
+        std::fs::create_dir_all(&module_a).expect("moduleA should build");
+        std::fs::create_dir_all(&module_b).expect("moduleB should build");
+        std::fs::write(
+            module_a.join("package.json"),
+            r#"{"name":"moduleA","main":"index.js"}"#,
+        )
+        .expect("moduleA manifest should write");
+        std::fs::write(
+            module_a.join("index.js"),
+            "module.exports = require('moduleB');\n",
+        )
+        .expect("moduleA entry should write");
+        std::fs::write(
+            module_b.join("package.json"),
+            r#"{"name":"moduleB","main":"index.js"}"#,
+        )
+        .expect("moduleB manifest should write");
+        std::fs::write(module_b.join("index.js"), "module.exports = 1;\n")
+            .expect("moduleB entry should write");
+        std::os::unix::fs::symlink(&module_a, app_node_modules.join("moduleA"))
+            .expect("moduleA link should build");
+        (module_a, module_b)
+    }
+
+    fn symlinked_peer_policy(tempdir: &Path) -> RuntimePathPolicy {
+        let bundle_root = tempdir.join("app/.nimbus/convex");
+        std::fs::create_dir_all(&bundle_root).expect("bundle root should build");
+        let bundle_path = bundle_root.join("bundle.cjs");
+        std::fs::write(&bundle_path, "module.exports = 1;\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::application_node22())
+            .expect("policy should build")
+    }
+
+    #[test]
+    fn package_folder_search_keeps_symlinked_referrer_identity() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let policy = symlinked_peer_policy(tempdir.path());
+        let root = policy.resolution_roots()[0].clone();
+        let (module_a, module_b) = symlinked_peer_layout(&root);
+        let resolver = ScopedNodeModulesResolver::new(&policy);
+
+        // `--preserve-symlinks`: the referrer keeps the link path, so the peer
+        // installed next to the link resolves.
+        let link_referrer = root.join("app/node_modules/moduleA/index.js");
+        let resolved = resolver
+            .resolve_package_folder_from_package(
+                "moduleB",
+                &UrlOrPathRef::from_path(&link_referrer),
+            )
+            .expect("peer next to the symlinked package should resolve");
+        assert_eq!(resolved, module_b);
+
+        // Default mode: the referrer is already the real path, so the peer next
+        // to the link stays invisible exactly as in Node.
+        let real_referrer = module_a.join("index.js");
+        let error = resolver
+            .resolve_package_folder_from_package(
+                "moduleB",
+                &UrlOrPathRef::from_path(&real_referrer),
+            )
+            .expect_err("real-path referrer must not see peers of the link");
+        assert!(
+            matches!(
+                error.as_kind(),
+                PackageFolderResolveErrorKind::PackageNotFound(_)
+            ),
+            "unexpected package folder error: {error}"
+        );
+    }
+
+    #[test]
+    fn package_folder_search_canonicalizes_aliased_referrer_prefix() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let policy = symlinked_peer_policy(tempdir.path());
+        let root = policy.resolution_roots()[0].clone();
+        let (_module_a, module_b) = symlinked_peer_layout(&root);
+        let alias = tempdir.path().join("alias");
+        std::os::unix::fs::symlink(&root, &alias).expect("alias link should build");
+        let resolver = ScopedNodeModulesResolver::new(&policy);
+
+        // The alias lies outside the canonical roots lexically, so the search
+        // canonicalizes it and still stays confined to the runtime roots.
+        let alias_referrer = alias.join("app/index.js");
+        let resolved = resolver
+            .resolve_package_folder_from_package(
+                "moduleB",
+                &UrlOrPathRef::from_path(&alias_referrer),
+            )
+            .expect("aliased referrer should resolve through the canonical root");
+        assert_eq!(resolved, module_b);
+
+        let escaped_referrer = root.join("app/node_modules/moduleA/../../../../outside/index.js");
+        let error = resolver
+            .resolve_package_folder_from_package(
+                "moduleB",
+                &UrlOrPathRef::from_path(&escaped_referrer),
+            )
+            .expect_err("a referrer that escapes the roots must not resolve peers");
+        assert!(
+            matches!(
+                error.as_kind(),
+                PackageFolderResolveErrorKind::PackageNotFound(_)
+            ),
+            "unexpected package folder error: {error}"
+        );
     }
 
     #[test]
