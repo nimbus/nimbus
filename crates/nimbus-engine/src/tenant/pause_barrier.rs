@@ -160,6 +160,10 @@ impl<S: Clone> PauseBarrierHandle<S> {
     /// the worker re-arms the barrier itself as it leaves this cycle. A test
     /// that calls `arm` after `release` cannot get this guarantee, because
     /// the worker resets the barrier as it wakes and races the new arm.
+    ///
+    /// Only the test-only trigger-candidate pause handle uses this; the
+    /// other handles built on this barrier are live in the non-test build.
+    #[cfg(test)]
     pub(crate) fn release_and_rearm(&self) {
         let mut control = self
             .state
