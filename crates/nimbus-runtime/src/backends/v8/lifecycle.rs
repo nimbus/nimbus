@@ -41,7 +41,7 @@ pub(crate) struct WarmRuntimeBoundaryMaintenance {
     pub(crate) cleanliness: WarmRuntimeCleanlinessReport,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WarmRuntimeCondemnationReason {
     MaxWarmReusesExceeded {
         reuse_count: usize,
@@ -59,6 +59,7 @@ pub(crate) enum WarmRuntimeCondemnationReason {
     },
     RequestStateResetFailed {
         report: WarmRuntimeCleanlinessReport,
+        error: String,
     },
     DetachedContextsPresent {
         report: WarmRuntimeCleanlinessReport,
@@ -66,7 +67,7 @@ pub(crate) enum WarmRuntimeCondemnationReason {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WarmRuntimeRetentionDecision {
     Retain(WarmRuntimeBoundaryMaintenance),
     Condemn(WarmRuntimeCondemnationReason),
@@ -177,12 +178,15 @@ pub(crate) fn prepare_warm_runtime_for_retention(
         );
     }
 
-    if runtime.runtime.reset_request_state().is_err() {
+    if let Err(error) = runtime.runtime.reset_request_state() {
         let report =
             WarmRuntimeCleanlinessReport::current(&mut runtime.runtime, limits, true, false);
         release_lock_if_held(&mut runtime.runtime);
         return WarmRuntimeRetentionDecision::Condemn(
-            WarmRuntimeCondemnationReason::RequestStateResetFailed { report },
+            WarmRuntimeCondemnationReason::RequestStateResetFailed {
+                report,
+                error: error.to_string(),
+            },
         );
     }
 
