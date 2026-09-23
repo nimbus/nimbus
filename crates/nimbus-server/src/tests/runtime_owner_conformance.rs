@@ -134,6 +134,48 @@ async fn assert_runtime_owner_lifecycle_conformance(
     );
 }
 
+/// A warm runtime must survive an invocation that leaves V8 incremental
+/// marking in progress. Marking steps are V8 foreground tasks that reschedule
+/// themselves until marking finishes; the retention path drains them before
+/// it resets request state, and a runtime that fails that reset is discarded
+/// and replaced by a cold one that has no guest state.
+async fn assert_warm_runtime_survives_gc_pressure(
+    server: &ServerFixture,
+    driver: &impl RuntimeOwnerConformanceDriver,
+) {
+    let api = HttpApiFixture::new(server);
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let first = driver.invoke(Some("gc-pressure-sentinel")).await;
+    assert_eq!(
+        first["observedBeforeWrite"],
+        Value::Null,
+        "{} first invocation must start without guest state",
+        driver.name()
+    );
+    for round in 1..=3 {
+        let warm = driver.invoke(None).await;
+        assert_eq!(
+            warm["observedBeforeWrite"],
+            json!("gc-pressure-sentinel"),
+            "{} must retain the warm runtime after an invocation that left \
+             incremental marking in progress (warm round {round})",
+            driver.name()
+        );
+    }
+}
+
+#[tokio::test]
+async fn convex_retains_warm_runtime_under_gc_pressure() {
+    run_conformance_subprocess(
+        "tests::runtime_owner_conformance::convex_retains_warm_runtime_under_gc_pressure_subprocess",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn convex_passes_runtime_owner_lifecycle_conformance() {
     run_conformance_subprocess(
@@ -196,6 +238,27 @@ async fn convex_passes_runtime_owner_lifecycle_conformance_subprocess() {
 
 #[tokio::test]
 #[ignore = "runs in a subprocess to isolate V8 anchor state"]
+async fn convex_retains_warm_runtime_under_gc_pressure_subprocess() {
+    let registry = convex_registry_with_routes_and_bundle(
+        json!([{
+            "name": "owner:sentinel",
+            "kind": "query",
+            "visibility": "public",
+            "plan": null,
+            "runtime_handler": "async () => null"
+        }]),
+        json!([]),
+        Some(CONVEX_GC_PRESSURE_SENTINEL_BUNDLE),
+    )
+    .with_runtime_limits(nimbus_testing::cooperative_warm_pool_runtime_test_limits());
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+
+    assert_warm_runtime_survives_gc_pressure(&server, &ConvexDriver { server: &server }).await;
+}
+
+#[tokio::test]
+#[ignore = "runs in a subprocess to isolate V8 anchor state"]
 async fn cloud_functions_passes_runtime_owner_lifecycle_conformance_subprocess() {
     let app_dir = tempdir().expect("Cloud Functions conformance app should build");
     write_cloud_functions_sentinel_artifact(app_dir.path());
@@ -225,6 +288,27 @@ globalThis.__nimbusInvoke = async function (request) {
   const observedBeforeWrite = globalThis.__runtimeOwnerSentinel ?? null;
   if (request.args?.sentinel != null) {
     globalThis.__runtimeOwnerSentinel = request.args.sentinel;
+  }
+  return { status: "ok", value: { observedBeforeWrite } };
+};
+
+export {};
+"#;
+
+/// The sentinel bundle plus enough short-lived allocation to start V8
+/// incremental marking before the invocation returns. With the 8 MiB initial
+/// heap of the default runtime limits this leaves marking steps queued at the
+/// retention boundary on every invocation.
+const CONVEX_GC_PRESSURE_SENTINEL_BUNDLE: &str = r#"
+globalThis.__nimbusInvoke = async function (request) {
+  const observedBeforeWrite = globalThis.__runtimeOwnerSentinel ?? null;
+  if (request.args?.sentinel != null) {
+    globalThis.__runtimeOwnerSentinel = request.args.sentinel;
+  }
+  let junk = [];
+  for (let i = 0; i < 3000; i++) {
+    junk.push(new Array(4096).fill(i));
+    if (junk.length > 200) junk = [];
   }
   return { status: "ok", value: { observedBeforeWrite } };
 };

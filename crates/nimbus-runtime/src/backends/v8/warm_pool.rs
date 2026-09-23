@@ -337,7 +337,7 @@ impl V8WorkerRuntimePool {
                         boundary_maintenance
                     }
                     WarmRuntimeRetentionDecision::Condemn(reason) => {
-                        if warm_runtime_condemnation_is_dirty_discard(reason) {
+                        if warm_runtime_condemnation_is_dirty_discard(&reason) {
                             runtime.lifecycle.mark_dirty_discard();
                         } else {
                             runtime.lifecycle.mark_condemned();
@@ -502,6 +502,7 @@ fn record_warm_runtime_condemnation(
     runtime_instance: &NimbusRuntime,
     reason: WarmRuntimeCondemnationReason,
 ) {
+    trace_warm_runtime_condemnation(&reason);
     if matches!(
         reason,
         WarmRuntimeCondemnationReason::EventLoopNotQuiescent { .. }
@@ -537,7 +538,53 @@ fn record_profiled_runtime_pool_miss(runtime_instance: &NimbusRuntime) {
     metrics.record_profile_runtime_pool_miss(policy.runtime_profile());
 }
 
-fn warm_runtime_condemnation_is_dirty_discard(reason: WarmRuntimeCondemnationReason) -> bool {
+/// A condemnation discards a warm runtime that the next invocation for the
+/// same owner would otherwise reuse. Retirements follow configured policy, so
+/// they log at debug. A runtime that failed its cleanliness contract logs at
+/// warn with the reason, because that is a runtime or embedder defect and the
+/// metrics alone do not say why the runtime was lost.
+fn trace_warm_runtime_condemnation(reason: &WarmRuntimeCondemnationReason) {
+    match reason {
+        WarmRuntimeCondemnationReason::MaxWarmReusesExceeded {
+            reuse_count,
+            max_warm_reuses,
+        } => tracing::debug!(
+            reuse_count,
+            max_warm_reuses,
+            "warm runtime retired after reaching its reuse limit"
+        ),
+        WarmRuntimeCondemnationReason::HeapCarryoverExceeded {
+            retained_memory_bytes,
+            carryover_limit_bytes,
+            ..
+        } => tracing::debug!(
+            retained_memory_bytes,
+            carryover_limit_bytes,
+            "warm runtime retired because retained heap exceeded the carryover limit"
+        ),
+        WarmRuntimeCondemnationReason::EventLoopNotQuiescent { report } => tracing::warn!(
+            ?report,
+            "warm runtime discarded because its event loop was not quiescent at return"
+        ),
+        WarmRuntimeCondemnationReason::RequestStateResetFailed { report, error } => {
+            tracing::warn!(
+                ?report,
+                error = %error,
+                "warm runtime discarded because its request state could not be reset"
+            )
+        }
+        WarmRuntimeCondemnationReason::DetachedContextsPresent {
+            report,
+            detached_context_count,
+        } => tracing::warn!(
+            ?report,
+            detached_context_count,
+            "warm runtime discarded because detached contexts remained after maintenance"
+        ),
+    }
+}
+
+fn warm_runtime_condemnation_is_dirty_discard(reason: &WarmRuntimeCondemnationReason) -> bool {
     !matches!(
         reason,
         WarmRuntimeCondemnationReason::MaxWarmReusesExceeded { .. }
