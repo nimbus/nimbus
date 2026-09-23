@@ -1692,11 +1692,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_INVALID_ARG_TYPE/. Input:"
       },
       {
-        "test_relative_path": "test/parallel/test-module-symlinked-peer-modules.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-module-symlinked-peer-modules.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'moduleB'"
-      },
-      {
         "test_relative_path": "test/parallel/test-net-listen-twice.js",
         "fixture_source_relative_path": "node22/test/parallel/test-net-listen-twice.js",
         "reason": "runtime system wall time timed out after 30s; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node22__test_parallel_test_net_listen_twice_js.json"
@@ -3684,11 +3679,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_INVALID_ARG_TYPE/. Input:"
       },
       {
-        "test_relative_path": "test/parallel/test-module-symlinked-peer-modules.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-module-symlinked-peer-modules.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'moduleB'"
-      },
-      {
         "test_relative_path": "test/parallel/test-net-listen-twice.js",
         "fixture_source_relative_path": "node24/test/parallel/test-net-listen-twice.js",
         "reason": "runtime system wall time timed out after 30s; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node24__test_parallel_test_net_listen_twice_js.json"
@@ -5639,11 +5629,6 @@
         "test_relative_path": "test/parallel/test-module-setsourcemapssupport.js",
         "fixture_source_relative_path": "node26/test/parallel/test-module-setsourcemapssupport.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_INVALID_ARG_TYPE/. Input:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-module-symlinked-peer-modules.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-module-symlinked-peer-modules.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'moduleB'"
       },
       {
         "test_relative_path": "test/parallel/test-perf-hooks-eventlooputilization.js",
