@@ -23,7 +23,9 @@ export type Chapter = {
   planned?: boolean;
   copy: string;
   proof: string;
-  snippet: Snippet;
+  // The code beside the copy. The last chapter carries the install tabs
+  // instead, so it has none.
+  snippet?: Snippet;
   start: number;
   end: number;
   align: Align;
@@ -342,7 +344,7 @@ export const chapters: Chapter[] = [
         '    command: ["python", "agent.py"]',
         '    volumes: ["scratch:/work"]              # the volume from chapter 08',
         '    deploy: { resources: { limits: { cpus: "1", memory: 512M } } }',
-        '    x-nimbus: { backend: krun, egress: { allow: [] } }   # microVM · chapter 10',
+        '    x-nimbus: { backend: krun, egress: { allow: [] } }   # chapter 10',
       ],
       compact: [
         'services:',
@@ -634,10 +636,6 @@ export const chapters: Chapter[] = [
     title: 'Start local with three commands.',
     copy: 'Install the binary and point the app at localhost:3210. Nimbus is in beta. APIs can break between releases. Do not use it in production yet.',
     proof: 'BREW INSTALL · NIMBUS INIT · NIMBUS DEV · LOCALHOST:3210',
-    snippet: {
-      file: 'shell',
-      lines: ['$ brew install nimbus/tap/nimbus', '$ nimbus init convex my-app', '$ cd my-app', '$ nimbus dev', '  Local:  http://localhost:3210'],
-    },
     start: 0.9606,
     end: 1,
     align: 'left',
