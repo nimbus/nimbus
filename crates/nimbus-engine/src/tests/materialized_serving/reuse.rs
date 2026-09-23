@@ -285,7 +285,11 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
     // below dispatches with), but `MaterializedServingBackend` now carries
     // every loaded table's coverage frontier through it the moment it lands
     // (TI7), so it can race the insert and the query below freely -- no
-    // pause needed -- without ever forcing a spurious reload.
+    // pause needed -- without ever forcing a spurious reload. That holds
+    // even when the worker lags behind the seed inserts and its cursor
+    // advances land after this insert; the deterministic sibling
+    // `lagging_cursor_advance_does_not_force_a_reload_when_its_gap_holds_folded_commits`
+    // pins that interleaving.
     engine
         .insert_document(
             &tenant_id,
@@ -315,6 +319,154 @@ fn warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots() {
     assert_eq!(stats.loaded_table_count, 2);
     assert_eq!(stats.table_load_count, 2);
     assert_eq!(stats.evaluation_count, 3);
+    assert_eq!(stats.retained_version_count, 0);
+    assert_eq!(stats.retained_estimated_bytes, 0);
+    assert_eq!(
+        stats.latest_covered_sequence,
+        Some(beta_publication.covered_sequence)
+    );
+}
+
+#[test]
+fn lagging_cursor_advance_does_not_force_a_reload_when_its_gap_holds_folded_commits() {
+    // The trigger-candidate worker advances its delivery cursor one commit
+    // at a time, so on a loaded machine it lags: by the time it appends the
+    // cursor-advance commit for the first seed insert, later document
+    // commits already sit between that cursor floor and the durable head.
+    // Every loaded table has folded those commits (they are applied before
+    // the head is published), so the cursor advance must still carry each
+    // table's coverage to the head. Before the fix the worker treated the
+    // whole gap as unsafe and skipped the widening, and the next query
+    // paid a spurious reload. This test pins the lagging interleaving with
+    // the pause barrier instead of relying on scheduler luck.
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let alpha = messages_table("messages_materialized_lagging_alpha");
+    let beta = messages_table("messages_materialized_lagging_beta");
+    let trigger_pause = engine
+        .trigger_candidate_pause_handle_for_testing(&tenant_id)
+        .expect("trigger pause handle should exist for a live tenant");
+
+    // Park the worker right before it materializes the first seed insert's
+    // cursor advance, then let two more document commits land behind it.
+    trigger_pause.arm();
+    let insert = |table: TableName, body: &str| {
+        engine
+            .insert_document(
+                &tenant_id,
+                table,
+                serde_json::Map::from_iter([
+                    ("status".to_string(), json!("keep")),
+                    ("body".to_string(), json!(body)),
+                ]),
+            )
+            .expect("seed insert should succeed")
+    };
+    insert(alpha.clone(), "Alpha");
+    assert!(
+        trigger_pause.wait_until_entered(ci_or_local_duration(
+            Duration::from_millis(500),
+            Duration::from_secs(5),
+        )),
+        "trigger-candidate worker should park before the alpha cursor advance"
+    );
+    insert(beta.clone(), "Beta");
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("Elsewhere"))]),
+        )
+        .expect("unrelated insert should succeed");
+
+    let query_for = |table: TableName| Query {
+        table,
+        filters: vec![filter("status", FilterOp::Eq, json!("keep"))],
+        order: Some(OrderBy {
+            field: "body".to_string(),
+            direction: OrderDirection::Asc,
+        }),
+        limit: None,
+    };
+
+    // Warm both tables while the worker is parked: each load covers every
+    // document commit so far, so both tables have folded the whole gap the
+    // lagging cursor advance is about to re-read.
+    assert_eq!(
+        document_bodies(
+            &engine
+                .query_documents(&tenant_id, &query_for(alpha.clone()))
+                .expect("alpha warm query should succeed"),
+        ),
+        vec!["Alpha"]
+    );
+    assert_eq!(
+        document_bodies(
+            &engine
+                .query_documents(&tenant_id, &query_for(beta.clone()))
+                .expect("beta warm query should succeed"),
+        ),
+        vec!["Beta"]
+    );
+    let head_before_cursor_advance = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .durable_head;
+
+    // Let the worker append the alpha cursor advance (floor = the alpha
+    // insert, with the beta and tasks inserts inside its gap), then park it
+    // again before the beta cursor advance so the queries below observe a
+    // durable head that only this lagging cursor advance raised.
+    trigger_pause.release_and_rearm();
+    assert!(
+        trigger_pause.wait_until_entered(ci_or_local_duration(
+            Duration::from_millis(500),
+            Duration::from_secs(5),
+        )),
+        "trigger-candidate worker should park again before the beta cursor advance"
+    );
+    let head_after_cursor_advance = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("journal stats should load")
+        .durable_head;
+    assert!(
+        head_after_cursor_advance > head_before_cursor_advance,
+        "the lagging cursor advance should have raised the durable head"
+    );
+
+    assert_eq!(
+        document_bodies(
+            &engine
+                .query_documents(&tenant_id, &query_for(beta.clone()))
+                .expect("beta query should reuse the warmed serving snapshot"),
+        ),
+        vec!["Beta"]
+    );
+    assert_eq!(
+        document_bodies(
+            &engine
+                .query_documents(&tenant_id, &query_for(alpha.clone()))
+                .expect("alpha query should reuse the warmed serving snapshot"),
+        ),
+        vec!["Alpha"]
+    );
+
+    trigger_pause.release();
+    crate::tests::settle_trigger_cursor_blocking(&engine, &tenant_id);
+    let beta_publication = engine
+        .materialized_table_publication_stats_for_testing(&tenant_id, &beta)
+        .expect("beta publication stats should load")
+        .expect("beta table should stay published");
+    let stats = engine
+        .materialized_read_surface_stats_for_testing(&tenant_id)
+        .expect("materialized surface stats should load");
+    assert_eq!(stats.loaded_table_count, 2);
+    assert_eq!(
+        stats.table_load_count, 2,
+        "a lagging cursor advance must not force either warmed table to reload"
+    );
+    assert_eq!(stats.evaluation_count, 4);
     assert_eq!(stats.retained_version_count, 0);
     assert_eq!(stats.retained_estimated_bytes, 0);
     assert_eq!(

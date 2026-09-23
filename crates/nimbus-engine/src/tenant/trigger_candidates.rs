@@ -385,6 +385,13 @@ impl TriggerCandidatePauseHandle {
     pub(crate) fn release(&self) {
         self.inner.release();
     }
+
+    /// Releases the parked worker and parks it again right before it
+    /// materializes the next commit's cursor advance, with no unpaused
+    /// window in between. See `PauseBarrierHandle::release_and_rearm`.
+    pub(crate) fn release_and_rearm(&self) {
+        self.inner.release_and_rearm();
+    }
 }
 
 fn run_trigger_candidate_worker(
@@ -398,10 +405,6 @@ fn run_trigger_candidate_worker(
         let Some(first_batch) = queue.pop_next(&shutdown) else {
             return;
         };
-        #[cfg(test)]
-        if let Some(pause) = pause.as_ref() {
-            pause.wait_if_armed(());
-        }
         let Some(mut ready_batches) = queue.drain_ready_batches(&shutdown) else {
             return;
         };
@@ -419,6 +422,14 @@ fn run_trigger_candidate_worker(
         let mut processed_count = 0usize;
         let result: nimbus_core::Result<()> = (|| {
             for commit in &commits {
+                // Tests park the worker immediately before it materializes
+                // a commit's cursor advance. The check sits per commit, not
+                // per batch, so `release_and_rearm` can walk the worker from
+                // one commit's cursor advance to the next.
+                #[cfg(test)]
+                if let Some(pause) = pause.as_ref() {
+                    pause.wait_if_armed(());
+                }
                 let commit_candidates = build_trigger_commit_candidates(commit, |locator| {
                     runtime.store.resource_path_binding(locator)
                 })?;
@@ -563,14 +574,13 @@ fn materialize_trigger_invocations_and_sync_in_actor(
         runtime.advance_write_log_zero_write_coverage(progress.durable_head);
     }
     if progress.durable_head.0 > floor.0 {
-        let gap_is_inert = runtime
+        let widening_floor = runtime
             .store
             .read_durable_journal_from(nimbus_core::SequenceNumber(floor.0.saturating_add(1)))
-            .map(|gap_records| gap_is_provably_inert(&gap_records))
-            .unwrap_or(false);
-        if gap_is_inert {
+            .map(|gap_records| inert_widening_floor(&gap_records, floor, progress.durable_head));
+        if let Ok(Some(widening_floor)) = widening_floor {
             runtime.advance_materialized_read_coverage_for_zero_write_commit(
-                floor,
+                widening_floor,
                 progress.durable_head,
             );
         }
@@ -579,17 +589,47 @@ fn materialize_trigger_invocations_and_sync_in_actor(
     Ok(TriggerInvocationCommitOutcome::Persisted)
 }
 
-/// True when every record in a re-read journal gap is provably inert, i.e.
-/// safe for `materialize_trigger_invocations_and_sync` to assume that
-/// widening a loaded table's coverage across it changes nothing it serves.
-/// See `TenantEventRecord::is_provably_inert_trigger_delivery_only` for what
-/// "inert" means. An empty gap is vacuously inert; in practice this is only
-/// called when the gap is non-empty (it always contains at least the
-/// cursor-advance commit this call just appended).
-fn gap_is_provably_inert(records: &[nimbus_core::TenantEventRecord]) -> bool {
-    records
+/// The floor above which every record of the re-read journal gap
+/// `(floor, head]` is provably inert, i.e. the sequence from which
+/// `materialize_trigger_invocations_and_sync` may widen a loaded table's
+/// coverage to `head` without changing anything it serves. See
+/// `TenantEventRecord::is_provably_inert_trigger_delivery_only` for what
+/// "inert" means.
+///
+/// The worker's delivery cursor can lag the durable head: it materializes
+/// commits one at a time, so by the time it advances the cursor for the
+/// commit at `floor`, later document commits can already sit in
+/// `(floor, head]`. Those commits do not make widening unsound, they only
+/// raise the floor. The materialized-read pipeline folds every applied
+/// commit into every loaded table before it publishes the applied head, so
+/// a table whose `covered_sequence` reaches the last non-inert record of
+/// the gap has folded every real write in it, and the records past that
+/// point are cursor-advance noise. A table still behind that record is
+/// left alone by the floor guard in `advance_coverage_for_zero_write_commit`,
+/// exactly as before. Skipping the widening for the whole gap instead would
+/// make every loaded table reload on its next query whenever the worker
+/// lags, which is the spurious reload TI7 removed. Records past `head`
+/// cannot affect a widening that stops at `head`, so they are ignored.
+///
+/// Returns `None` when no widening is safe: the last non-inert record is
+/// `head` itself, which means a foreign engine process assigned the
+/// sequence this call attributed to its own cursor record, and a record
+/// this process has not folded would otherwise be marked covered. That is
+/// the fail-closed case this guard exists for.
+fn inert_widening_floor(
+    records: &[nimbus_core::TenantEventRecord],
+    floor: nimbus_core::SequenceNumber,
+    head: nimbus_core::SequenceNumber,
+) -> Option<nimbus_core::SequenceNumber> {
+    let widening_floor = records
         .iter()
-        .all(nimbus_core::TenantEventRecord::is_provably_inert_trigger_delivery_only)
+        .filter(|record| record.sequence.0 <= head.0)
+        .filter(|record| !record.is_provably_inert_trigger_delivery_only())
+        .map(|record| record.sequence)
+        .fold(floor, |floor, sequence| {
+            nimbus_core::SequenceNumber(floor.0.max(sequence.0))
+        });
+    (widening_floor.0 < head.0).then_some(widening_floor)
 }
 
 impl Drop for TriggerCandidateFeed {
@@ -605,7 +645,7 @@ mod gap_inertness_tests {
         Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
     };
 
-    use super::gap_is_provably_inert;
+    use super::inert_widening_floor;
 
     fn trigger_delivery_record(sequence: u64) -> TenantEventRecord {
         TenantEventRecord::from_events(
@@ -648,36 +688,90 @@ mod gap_inertness_tests {
     }
 
     #[test]
-    fn gap_containing_only_the_own_cursor_advance_is_inert() {
+    fn gap_containing_only_the_own_cursor_advance_widens_from_the_cursor_floor() {
         // This is the common case: the gap re-read after
         // `materialize_trigger_invocations` sees exactly the zero-write
         // TriggerDelivery record this call just appended, and nothing else
         // landed concurrently.
-        assert!(gap_is_provably_inert(&[trigger_delivery_record(2)]));
+        assert_eq!(
+            inert_widening_floor(
+                &[trigger_delivery_record(2)],
+                SequenceNumber(1),
+                SequenceNumber(2)
+            ),
+            Some(SequenceNumber(1))
+        );
     }
 
     #[test]
-    fn gap_containing_a_foreign_document_write_is_not_inert() {
+    fn gap_with_document_commits_the_worker_lagged_behind_widens_from_the_last_one() {
+        // The worker advances the cursor for commit 1 only after commits 2
+        // and 3 (real document writes) have landed and been folded into every
+        // loaded table. Its cursor record lands at 4. Widening is sound from
+        // 3: a table covered through 3 has folded both writes, and only the
+        // cursor record sits above it. Widening from 1 would carry a table
+        // covered at 1 or 2 past writes it has not folded, so the floor
+        // rises to 3 instead of blocking the widening outright.
+        assert_eq!(
+            inert_widening_floor(
+                &[
+                    document_write_record(2),
+                    document_write_record(3),
+                    trigger_delivery_record(4),
+                ],
+                SequenceNumber(1),
+                SequenceNumber(4)
+            ),
+            Some(SequenceNumber(3))
+        );
+    }
+
+    #[test]
+    fn gap_whose_head_is_a_foreign_document_write_does_not_widen() {
         // A foreign engine process appended (and applied) a real document
         // commit between our cursor-record write and the journal_progress
-        // read -- this is the exact race this P1 guards against. Widening
-        // coverage across this gap would hide that write from queries.
-        assert!(!gap_is_provably_inert(&[
-            trigger_delivery_record(2),
-            document_write_record(3),
-        ]));
+        // read, and it owns the head this call attributed to its own cursor
+        // record -- this is the exact race this P1 guards against. Nothing
+        // below the head is safe to widen to the head.
+        assert_eq!(
+            inert_widening_floor(
+                &[trigger_delivery_record(2), document_write_record(3)],
+                SequenceNumber(1),
+                SequenceNumber(3)
+            ),
+            None
+        );
     }
 
     #[test]
-    fn gap_containing_a_foreign_non_inert_zero_write_record_is_not_inert() {
+    fn gap_whose_head_is_a_foreign_non_inert_zero_write_record_does_not_widen() {
         // A foreign zero-write record that is NOT a TriggerDelivery advance
         // (e.g. a schema/table-lifecycle change, represented here by a
         // Barrier for minimal construction) is just as unsafe to widen
         // across as a real document write: it is a real state transition
         // this process has not folded in.
-        assert!(!gap_is_provably_inert(&[
-            trigger_delivery_record(2),
-            barrier_record(3),
-        ]));
+        assert_eq!(
+            inert_widening_floor(
+                &[trigger_delivery_record(2), barrier_record(3)],
+                SequenceNumber(1),
+                SequenceNumber(3)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn records_past_the_head_do_not_move_the_widening_floor() {
+        // The gap re-read can run past the head this call widens to. A
+        // foreign write above the head cannot be marked covered by a widening
+        // that stops at the head, so it neither blocks nor raises the floor.
+        assert_eq!(
+            inert_widening_floor(
+                &[trigger_delivery_record(2), document_write_record(3)],
+                SequenceNumber(1),
+                SequenceNumber(2)
+            ),
+            Some(SequenceNumber(1))
+        );
     }
 }
