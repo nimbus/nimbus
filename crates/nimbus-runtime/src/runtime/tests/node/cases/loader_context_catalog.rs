@@ -865,7 +865,10 @@ const LOADER_CONTEXT_BATCH: &[NodeCompatBatchEntry] = &[
     shared_official_batch_case!("test/parallel/test-zlib-sync-no-event.js"),
     shared_official_batch_case!("test/parallel/test-zlib-unused-weak.js"),
     shared_official_batch_case!("test/parallel/test-zlib-write-after-flush.js"),
-    shared_official_batch_case!("test/parallel/test-crypto-hash-stream-pipe.js"),
+    shared_official_batch_case_with_extra!(
+        "test/parallel/test-crypto-hash-stream-pipe.js",
+        COMMON_CRYPTO_HELPER_EXTRA_FILES
+    ),
     shared_official_batch_case!("test/parallel/test-crypto-from-binary.js"),
     shared_official_batch_case!("test/parallel/test-crypto-secret-keygen.js"),
     shared_official_batch_case!("test/parallel/test-crypto-encoding-validation-error.js"),
@@ -1012,7 +1015,7 @@ const LOADER_CONTEXT_BATCH: &[NodeCompatBatchEntry] = &[
         node20_fixture_source_path: None,
         node22_fixture_source_path: None,
         node24_fixture_source_path: Some("node24/test/parallel/test-crypto-oneshot-hash-xof.js"),
-        shared_extra_files: &[],
+        shared_extra_files: COMMON_CRYPTO_HELPER_EXTRA_FILES,
         node20_extra_files: &[],
         node22_extra_files: &[],
         node24_extra_files: &[],

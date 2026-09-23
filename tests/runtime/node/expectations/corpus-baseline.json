@@ -125,11 +125,6 @@
         "reason": "runtime JavaScript error: Error: Nimbus node_compat skip: no scrypt support"
       },
       {
-        "test_relative_path": "test/parallel/test-dgram-bind-error-repeat.js",
-        "fixture_source_relative_path": "node20/test/parallel/test-dgram-bind-error-repeat.js",
-        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'code')"
-      },
-      {
         "test_relative_path": "test/parallel/test-dgram-bind-fd-error.js",
         "fixture_source_relative_path": "node20/test/parallel/test-dgram-bind-fd-error.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
@@ -223,11 +218,6 @@
         "test_relative_path": "test/parallel/test-fs-rmdir-type-check.js",
         "fixture_source_relative_path": "node20/test/parallel/test-fs-rmdir-type-check.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (TypeError)."
-      },
-      {
-        "test_relative_path": "test/parallel/test-fs-truncate.js",
-        "fixture_source_relative_path": "node20/test/parallel/test-fs-truncate.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
         "test_relative_path": "test/parallel/test-fs-watch-encoding.js",
@@ -1022,11 +1012,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
-        "test_relative_path": "test/parallel/test-dgram-bind-error-repeat.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-dgram-bind-error-repeat.js",
-        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'code')"
-      },
-      {
         "test_relative_path": "test/parallel/test-dgram-bind-fd-error.js",
         "fixture_source_relative_path": "node22/test/parallel/test-dgram-bind-fd-error.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
@@ -1485,11 +1470,6 @@
         "test_relative_path": "test/parallel/test-fs-stat.js",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-stat.js",
         "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-vEGtcA/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
-      },
-      {
-        "test_relative_path": "test/parallel/test-fs-truncate.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-fs-truncate.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
         "test_relative_path": "test/parallel/test-fs-watch-encoding.js",
@@ -3019,11 +2999,6 @@
         "reason": "runtime JavaScript error: ReferenceError: SharedArrayBuffer is not defined"
       },
       {
-        "test_relative_path": "test/parallel/test-dgram-bind-error-repeat.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-dgram-bind-error-repeat.js",
-        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'code')"
-      },
-      {
         "test_relative_path": "test/parallel/test-dgram-bind-fd-error.js",
         "fixture_source_relative_path": "node24/test/parallel/test-dgram-bind-fd-error.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
@@ -3497,11 +3472,6 @@
         "test_relative_path": "test/parallel/test-fs-stat.js",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-stat.js",
         "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-40Maki/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
-      },
-      {
-        "test_relative_path": "test/parallel/test-fs-truncate.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-fs-truncate.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
         "test_relative_path": "test/parallel/test-fs-watch-encoding.js",
@@ -4936,11 +4906,6 @@
         "reason": "runtime JavaScript error: ReferenceError: SharedArrayBuffer is not defined"
       },
       {
-        "test_relative_path": "test/parallel/test-dgram-bind-error-repeat.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-dgram-bind-error-repeat.js",
-        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'code')"
-      },
-      {
         "test_relative_path": "test/parallel/test-dgram-bind-fd-error.js",
         "fixture_source_relative_path": "node26/test/parallel/test-dgram-bind-fd-error.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
@@ -5489,11 +5454,6 @@
         "test_relative_path": "test/parallel/test-fs-stat.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-stat.js",
         "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-yJYJYi/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
-      },
-      {
-        "test_relative_path": "test/parallel/test-fs-truncate.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-fs-truncate.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
         "test_relative_path": "test/parallel/test-fs-watch-encoding.js",
