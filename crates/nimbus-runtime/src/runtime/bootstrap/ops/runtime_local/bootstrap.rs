@@ -11,7 +11,7 @@ const SYNTHETIC_RUNTIME_EXEC_PATH: &str = r"C:\nimbus\runtime\node.exe";
 #[cfg(not(windows))]
 const SYNTHETIC_RUNTIME_EXEC_PATH: &str = "/nimbus/runtime/node";
 
-const DENO_COMPAT_VERSION: &str = "2.9.6";
+const DENO_COMPAT_VERSION: &str = "2.9.7";
 const TYPESCRIPT_COMPAT_VERSION: &str = "0.0.0-nimbus";
 
 #[derive(Serialize)]

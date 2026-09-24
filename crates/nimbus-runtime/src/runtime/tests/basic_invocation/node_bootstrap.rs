@@ -108,7 +108,7 @@ export {};
             "releaseName": "node",
             "releaseLts": "Jod",
             "processExecPath": synthetic_runtime_exec_path(),
-            "denoVersion": "2.9.6",
+            "denoVersion": "2.9.7",
             "v8Version": deno_core::v8::VERSION_STRING,
             "typescriptVersion": "0.0.0-nimbus",
             "stdinType": "object",
