@@ -246,6 +246,7 @@ impl NimbusRuntime {
                 self.policy.limits().compatibility_target,
                 self.policy.limits().guest_semantics,
                 self.policy.limits().node_conditions.clone(),
+                self.policy.limits().node_exec_argv.clone(),
                 bundle.module_code_cache(self.policy.limits(), construction_mode),
                 loader_hook_registry,
             ))),

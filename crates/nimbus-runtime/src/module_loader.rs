@@ -13,7 +13,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use crate::backends::v8::embedder::{
     JsErrorBox, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, RequestedModuleType,
-    ResolutionKind, SourceCodeCacheInfo, resolve_import, v8,
+    ResolutionKind, SourceCodeCacheInfo, import_meta_resolve_type_error, resolve_import, v8,
 };
 use crate::limits::{RuntimeCompatibilityTarget, RuntimeGuestSemantics};
 use crate::node_compat::{
@@ -96,6 +96,7 @@ pub struct RestrictedModuleLoader {
     compatibility_target: RuntimeCompatibilityTarget,
     guest_semantics: RuntimeGuestSemantics,
     node_conditions: Vec<String>,
+    node_exec_argv: Vec<String>,
     code_cache: Arc<BundleModuleCodeCache>,
     loader_hook_registry: Option<LoaderHookRegistry>,
 }
@@ -106,6 +107,7 @@ impl RestrictedModuleLoader {
         compatibility_target: RuntimeCompatibilityTarget,
         guest_semantics: RuntimeGuestSemantics,
         node_conditions: Vec<String>,
+        node_exec_argv: Vec<String>,
         code_cache: Arc<BundleModuleCodeCache>,
         loader_hook_registry: Option<LoaderHookRegistry>,
     ) -> Self {
@@ -114,6 +116,7 @@ impl RestrictedModuleLoader {
             compatibility_target,
             guest_semantics,
             node_conditions,
+            node_exec_argv,
             code_cache,
             loader_hook_registry,
         };
@@ -257,6 +260,7 @@ impl RestrictedModuleLoader {
                     module_specifier,
                     &source,
                     self.compatibility_target,
+                    &self.node_exec_argv,
                 )
                 .await?
                 .into_bytes();
@@ -308,6 +312,7 @@ impl RestrictedModuleLoader {
                 referrer,
                 node_resolver::ResolutionMode::Import,
                 Some(conditions),
+                &self.node_exec_argv,
             )?,
             None => resolve_node_target_with_user_conditions(
                 &self.path_policy,
@@ -315,6 +320,7 @@ impl RestrictedModuleLoader {
                 referrer,
                 node_resolver::ResolutionMode::Import,
                 &self.node_conditions,
+                &self.node_exec_argv,
             )?,
         };
         match resolved {
@@ -474,7 +480,14 @@ impl ModuleLoader for RestrictedModuleLoader {
         specifier: &str,
         referrer: &str,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
-        self.resolve_unhooked(specifier, referrer, ResolutionKind::DynamicImport)
+        let resolved = self.resolve_unhooked(specifier, referrer, ResolutionKind::DynamicImport);
+        if self.compatibility_target.is_node() {
+            // Node's `import.meta.resolve()` throws the resolver error as is,
+            // such as `ERR_MODULE_NOT_FOUND` for a missing package.
+            resolved
+        } else {
+            resolved.map_err(import_meta_resolve_type_error)
+        }
     }
 
     fn load(
@@ -1264,5 +1277,66 @@ mod tests {
         assert!(!is_tenant_bundle_operator_only_specifier(
             "@nimbus/nimbus/server"
         ));
+    }
+
+    fn loader_for_missing_package_app(
+        compatibility_target: RuntimeCompatibilityTarget,
+    ) -> (tempfile::TempDir, RestrictedModuleLoader, String) {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        std::fs::create_dir_all(&app_root).expect("app root should build");
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = crate::runtime::RuntimeBundle::new(&bundle_path);
+        let policy =
+            RuntimePathPolicy::for_bundle(&bundle, &crate::limits::RuntimeLimits::tooling_node26())
+                .expect("policy should build");
+        let loader = RestrictedModuleLoader::new(
+            policy,
+            compatibility_target,
+            RuntimeGuestSemantics::Host,
+            Vec::new(),
+            Vec::new(),
+            Arc::new(BundleModuleCodeCache::new()),
+            None,
+        );
+        let referrer_path = app_root.join("main.mjs");
+        let referrer = ModuleSpecifier::from_file_path(&referrer_path)
+            .expect("referrer should convert to a file URL")
+            .to_string();
+        (tempdir, loader, referrer)
+    }
+
+    #[test]
+    fn node_import_meta_resolve_throws_the_node_resolver_error() {
+        let (tempdir, loader, referrer) =
+            loader_for_missing_package_app(RuntimeCompatibilityTarget::Node26);
+
+        let error = loader
+            .import_meta_resolve("missing-package", &referrer)
+            .expect_err("a missing package should not resolve");
+
+        assert_eq!(error.get_class(), "Error");
+        assert_error_code(&error, "ERR_MODULE_NOT_FOUND");
+        let referrer_path = tempdir.path().join("app").join("main.mjs");
+        assert_eq!(
+            error.get_message(),
+            format!(
+                "Cannot find package 'missing-package' imported from {}",
+                referrer_path.display()
+            )
+        );
+    }
+
+    #[test]
+    fn web_import_meta_resolve_throws_type_error() {
+        let (_tempdir, loader, referrer) =
+            loader_for_missing_package_app(RuntimeCompatibilityTarget::WebStandardIsolate);
+
+        let error = loader
+            .import_meta_resolve("missing-package", &referrer)
+            .expect_err("a missing package should not resolve");
+
+        assert_eq!(error.get_class(), "TypeError");
     }
 }

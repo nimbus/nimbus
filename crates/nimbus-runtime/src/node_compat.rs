@@ -18,8 +18,8 @@ use deno_resolver::npm::{CreateInNpmPkgCheckerOptions, DenoInNpmPackageChecker};
 use node_resolver::analyze::{CjsModuleExportAnalyzer, NodeCodeTranslator, NodeCodeTranslatorMode};
 use node_resolver::cache::NodeResolutionSys;
 use node_resolver::errors::{
-    NodeJsErrorCode, NodeResolveError, PackageFolderResolveError, PackageFolderResolveErrorKind,
-    PackageNotFoundError,
+    NodeJsErrorCode, NodeResolveError, NodeResolveErrorKind, PackageFolderResolveError,
+    PackageFolderResolveErrorKind, PackageNotFoundError, PackageResolveErrorKind,
 };
 use node_resolver::{
     DenoIsBuiltInNodeModuleChecker, InNpmPackageChecker, NodeResolution, NodeResolutionKind,
@@ -56,6 +56,17 @@ struct NativeAddonDisabledError {
 struct ModuleReadDeniedError {
     message: String,
     path: PathBuf,
+}
+
+// Node's ESM resolver reports a missing bare package with this message and
+// no `url` property (`ERR_MODULE_NOT_FOUND` without an exact URL).
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error("Cannot find package '{package_name}' imported from {referrer}")]
+#[class(generic)]
+#[property("code" = "ERR_MODULE_NOT_FOUND")]
+struct NodePackageNotFoundError {
+    package_name: String,
+    referrer: String,
 }
 
 fn module_read_denied_error(path: &Path, error: impl std::fmt::Display) -> JsErrorBox {
@@ -314,20 +325,22 @@ fn build_node_resolver_with_user_conditions(
     path_policy: &RuntimePathPolicy,
     package_json_resolver: Arc<LocalPackageJsonResolver>,
     conditions: &[String],
+    node_exec_argv: &[String],
 ) -> LocalNodeResolver {
     let mut options = NodeResolverOptions::default();
     options.conditions.conditions = conditions.iter().cloned().map(Cow::Owned).collect();
-    build_node_resolver_with_options(path_policy, package_json_resolver, options)
+    build_node_resolver_with_options(path_policy, package_json_resolver, options, node_exec_argv)
 }
 
 fn build_node_resolver_with_options(
     path_policy: &RuntimePathPolicy,
     package_json_resolver: Arc<LocalPackageJsonResolver>,
     options: NodeResolverOptions,
+    node_exec_argv: &[String],
 ) -> LocalNodeResolver {
     NodeResolver::new(
         ScopedInNpmPackageChecker,
-        DenoIsBuiltInNodeModuleChecker,
+        DenoIsBuiltInNodeModuleChecker::from_node_args(node_exec_argv),
         ScopedNodeModulesResolver::new(path_policy),
         package_json_resolver,
         NodeResolutionSys::new(RealSys, None),
@@ -340,6 +353,7 @@ fn build_node_resolver_with_condition_override(
     package_json_resolver: Arc<LocalPackageJsonResolver>,
     resolution_mode: NodeResolutionMode,
     conditions: Option<Vec<String>>,
+    node_exec_argv: &[String],
 ) -> LocalNodeResolver {
     let mut options = NodeResolverOptions::default();
     if let Some(conditions) = conditions.filter(|conditions| !conditions.is_empty()) {
@@ -353,18 +367,20 @@ fn build_node_resolver_with_condition_override(
             }
         }
     }
-    build_node_resolver_with_options(path_policy, package_json_resolver, options)
+    build_node_resolver_with_options(path_policy, package_json_resolver, options, node_exec_argv)
 }
 
 pub(crate) fn build_node_init_services(
     path_policy: &RuntimePathPolicy,
     node_conditions: &[String],
+    node_exec_argv: &[String],
 ) -> NodeExtInitServices<ScopedInNpmPackageChecker, ScopedNodeModulesResolver, RealSys> {
     let package_json_resolver = build_package_json_resolver();
     let node_resolver = build_node_resolver_with_user_conditions(
         path_policy,
         package_json_resolver.clone(),
         node_conditions,
+        node_exec_argv,
     );
     NodeExtInitServices {
         node_require_loader: Rc::new(ScopedNodeRequireLoader::new(
@@ -383,12 +399,14 @@ pub(crate) fn resolve_node_target_with_user_conditions(
     referrer: &str,
     resolution_mode: NodeResolutionMode,
     conditions: &[String],
+    node_exec_argv: &[String],
 ) -> Result<ResolvedNodeTarget, JsErrorBox> {
     let package_json_resolver = build_package_json_resolver();
     let node_resolver = build_node_resolver_with_user_conditions(
         path_policy,
         package_json_resolver.clone(),
         conditions,
+        node_exec_argv,
     );
     resolve_node_target_with_resolver(
         path_policy,
@@ -406,6 +424,7 @@ pub(crate) fn resolve_node_target_with_conditions(
     referrer: &str,
     resolution_mode: NodeResolutionMode,
     conditions: Option<Vec<String>>,
+    node_exec_argv: &[String],
 ) -> Result<ResolvedNodeTarget, JsErrorBox> {
     let package_json_resolver = build_package_json_resolver();
     let node_resolver = build_node_resolver_with_condition_override(
@@ -413,6 +432,7 @@ pub(crate) fn resolve_node_target_with_conditions(
         package_json_resolver.clone(),
         resolution_mode,
         conditions,
+        node_exec_argv,
     );
     resolve_node_target_with_resolver(
         path_policy,
@@ -451,7 +471,7 @@ fn resolve_node_target_with_resolver(
             {
                 return Ok(resolved);
             }
-            return Err(JsErrorBox::from_err(error));
+            return Err(node_resolve_error(error, &referrer_url, resolution_mode));
         }
     };
     match resolved {
@@ -468,6 +488,32 @@ fn resolve_node_target_with_resolver(
     }
 }
 
+// node_resolver words a missing package for Deno ("Could not find package
+// ... from referrer ..."). An ESM import in Node reports the package name and
+// the referrer file path instead. CommonJS `require` has its own message,
+// which the deno_node require polyfill owns.
+fn node_resolve_error(
+    error: NodeResolveError,
+    referrer: &Url,
+    resolution_mode: NodeResolutionMode,
+) -> JsErrorBox {
+    if resolution_mode == NodeResolutionMode::Import
+        && let NodeResolveErrorKind::PackageResolve(error) = error.as_kind()
+        && let PackageResolveErrorKind::PackageFolderResolve(error) = error.as_kind()
+        && let PackageFolderResolveErrorKind::PackageNotFound(error) = error.as_kind()
+    {
+        let referrer = referrer
+            .to_file_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|()| referrer.to_string());
+        return JsErrorBox::from_err(NodePackageNotFoundError {
+            package_name: error.package_name.clone(),
+            referrer,
+        });
+    }
+    JsErrorBox::from_err(error)
+}
+
 fn should_try_package_subpath_without_exports(error: &NodeResolveError) -> bool {
     matches!(
         error.as_kind().maybe_code(),
@@ -480,12 +526,13 @@ pub(crate) async fn translate_commonjs_to_esm(
     specifier: &ModuleSpecifier,
     source: &str,
     compatibility_target: RuntimeCompatibilityTarget,
+    node_exec_argv: &[String],
 ) -> Result<String, JsErrorBox> {
     let package_json_resolver = build_package_json_resolver();
     let in_npm_package_checker = DenoInNpmPackageChecker::new(CreateInNpmPkgCheckerOptions::Byonm);
     let node_resolver = Arc::new(NodeResolver::new(
         in_npm_package_checker.clone(),
-        DenoIsBuiltInNodeModuleChecker,
+        DenoIsBuiltInNodeModuleChecker::from_node_args(node_exec_argv),
         ScopedNodeModulesResolver::new(path_policy),
         package_json_resolver.clone(),
         NodeResolutionSys::new(RealSys, None),
@@ -1173,6 +1220,7 @@ mod tests {
             &referrer_dir.join("main.js").display().to_string(),
             node_resolver::ResolutionMode::Require,
             &[],
+            &[],
         )
         .expect("package subpath should resolve");
 
@@ -1233,6 +1281,7 @@ mod tests {
             &referrer,
             node_resolver::ResolutionMode::Import,
             &[],
+            &[],
         )
         .expect("package should resolve with default import conditions");
         assert_eq!(
@@ -1253,6 +1302,7 @@ mod tests {
             &referrer,
             node_resolver::ResolutionMode::Import,
             &custom_conditions,
+            &[],
         )
         .expect("package should resolve with configured user conditions");
         assert_eq!(
@@ -1311,6 +1361,7 @@ mod tests {
             &referrer,
             node_resolver::ResolutionMode::Import,
             Some(Vec::new()),
+            &[],
         )
         .expect("empty override should use default import conditions");
         assert_eq!(
@@ -1330,6 +1381,7 @@ mod tests {
             &referrer,
             node_resolver::ResolutionMode::Import,
             Some(Vec::new()),
+            &[],
         )
         .expect_err("empty override should preserve package exports failures");
         assert_error_code(&error, "ERR_PACKAGE_PATH_NOT_EXPORTED");
@@ -1377,6 +1429,7 @@ mod tests {
             &referrer,
             node_resolver::ResolutionMode::Import,
             None,
+            &[],
         )
         .expect_err("invalid package exports specifier should not use file fallback");
         assert_error_code(&exports_error, "ERR_INVALID_MODULE_SPECIFIER");
@@ -1387,8 +1440,141 @@ mod tests {
             &referrer,
             node_resolver::ResolutionMode::Import,
             None,
+            &[],
         )
         .expect_err("invalid package imports specifier should not use file fallback");
         assert_error_code(&imports_error, "ERR_INVALID_MODULE_SPECIFIER");
+    }
+
+    #[test]
+    fn resolve_node_target_gates_bare_experimental_builtins_on_node_exec_argv() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        std::fs::create_dir_all(&app_root).expect("app root should build");
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node26())
+            .expect("policy should build");
+        let referrer = app_root.join("main.mjs").display().to_string();
+        let flag_on = ["--experimental-stream-iter".to_string()];
+        let flag_off = [
+            "--experimental-stream-iter".to_string(),
+            "--no-experimental-stream-iter".to_string(),
+        ];
+
+        for module_name in ["stream/iter", "zlib/iter"] {
+            for resolution_mode in [
+                node_resolver::ResolutionMode::Import,
+                node_resolver::ResolutionMode::Require,
+            ] {
+                let builtin = ResolvedNodeTarget::BuiltIn {
+                    module_name: module_name.to_string(),
+                };
+                let resolved = resolve_node_target_with_user_conditions(
+                    &policy,
+                    module_name,
+                    &referrer,
+                    resolution_mode,
+                    &[],
+                    &flag_on,
+                )
+                .expect("bare experimental builtin should resolve with its flag");
+                assert_eq!(resolved, builtin);
+
+                for node_exec_argv in [&[][..], &flag_off[..]] {
+                    let error = resolve_node_target_with_user_conditions(
+                        &policy,
+                        module_name,
+                        &referrer,
+                        resolution_mode,
+                        &[],
+                        node_exec_argv,
+                    )
+                    .expect_err("bare experimental builtin should resolve as a package");
+                    assert_error_code(&error, "ERR_MODULE_NOT_FOUND");
+
+                    let resolved = resolve_node_target_with_user_conditions(
+                        &policy,
+                        &format!("node:{module_name}"),
+                        &referrer,
+                        resolution_mode,
+                        &[],
+                        node_exec_argv,
+                    )
+                    .expect("node: scheme should name the builtin without its flag");
+                    assert_eq!(resolved, builtin);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_node_target_reports_missing_esm_packages_like_node() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        std::fs::create_dir_all(&app_root).expect("app root should build");
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node26())
+            .expect("policy should build");
+        let referrer_path = app_root.join("main.mjs");
+        let referrer = referrer_path.display().to_string();
+        let referrer_url = Url::from_file_path(&referrer_path)
+            .expect("referrer should convert to a file URL")
+            .to_string();
+
+        for (referrer, specifier, package_name) in [
+            (&referrer, "missing-package", "missing-package"),
+            (&referrer, "missing-package/sub/path.js", "missing-package"),
+            (
+                &referrer,
+                "@missing-scope/package/sub",
+                "@missing-scope/package",
+            ),
+            (&referrer, "stream/iter", "stream"),
+            (&referrer_url, "missing-package", "missing-package"),
+        ] {
+            let error = resolve_node_target_with_user_conditions(
+                &policy,
+                specifier,
+                referrer,
+                node_resolver::ResolutionMode::Import,
+                &[],
+                &[],
+            )
+            .expect_err("a missing package should not resolve");
+            assert_error_code(&error, "ERR_MODULE_NOT_FOUND");
+            assert_eq!(
+                error.get_message(),
+                format!(
+                    "Cannot find package '{package_name}' imported from {}",
+                    referrer_path.display()
+                )
+            );
+            assert!(
+                !error
+                    .get_additional_properties()
+                    .any(|(key, _)| key == "url"),
+                "a missing package has no exact URL"
+            );
+        }
+
+        let error = resolve_node_target_with_user_conditions(
+            &policy,
+            "missing-package",
+            &referrer,
+            node_resolver::ResolutionMode::Require,
+            &[],
+            &[],
+        )
+        .expect_err("a missing package should not resolve");
+        assert_error_code(&error, "ERR_MODULE_NOT_FOUND");
+        assert!(
+            !error.get_message().starts_with("Cannot find package"),
+            "require keeps the resolver error for the require polyfill: {}",
+            error.get_message()
+        );
     }
 }

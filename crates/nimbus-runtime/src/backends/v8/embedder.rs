@@ -13,6 +13,6 @@ pub(crate) use deno_core::{
     ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions,
     RequestedModuleType, ResolutionKind, RuntimeOptions, SharedArrayBufferStore,
     SourceCodeCacheInfo, SourceMapData, ValidateImportAttributesCb, ascii_str_include, extension,
-    op2, resolve_import, scope, serde_v8, v8,
+    import_meta_resolve_type_error, op2, resolve_import, scope, serde_v8, v8,
 };
 pub(crate) use deno_error::JsErrorBox;

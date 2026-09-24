@@ -283,6 +283,7 @@ impl NodeBootstrapExtensionSlot {
                 Some(build_node_init_services(
                     context.path_policy,
                     &context.limits.node_conditions,
+                    &context.limits.node_exec_argv,
                 )),
                 context.fs.clone(),
                 deno_node::HeapSnapshotNearHeapLimitPolicy::Deny,

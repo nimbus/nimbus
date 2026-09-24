@@ -24,6 +24,10 @@ pub struct RuntimeLimits {
     pub compatibility_target: RuntimeCompatibilityTarget,
     pub guest_semantics: RuntimeGuestSemantics,
     pub node_conditions: Vec<String>,
+    /// Node CLI options the runtime starts with, as in `process.execArgv`.
+    /// They decide which experimental builtins a bare specifier can resolve
+    /// to, e.g. `stream/iter` with `--experimental-stream-iter`.
+    pub node_exec_argv: Vec<String>,
     pub execution_model: RuntimeExecutionModel,
     pub mode: RuntimeMode,
     pub language: RuntimeLanguage,
@@ -359,6 +363,13 @@ impl RuntimeLimits {
             );
         }
 
+        if !self.node_exec_argv.is_empty() && !self.compatibility_target.is_node() {
+            panic!(
+                "runtime Node exec argv requires a Node compatibility target, got {:?}",
+                self.compatibility_target
+            );
+        }
+
         if self
             .grants
             .run
@@ -421,6 +432,7 @@ impl RuntimeLimits {
             compatibility_target: self.compatibility_target,
             guest_semantics: self.guest_semantics,
             node_conditions: self.node_conditions.clone(),
+            node_exec_argv: self.node_exec_argv.clone(),
             execution_model: self.execution_model,
             mode: self.mode,
             language: self.language,
@@ -492,6 +504,7 @@ impl Default for RuntimeLimits {
             compatibility_target: RuntimeCompatibilityTarget::WebStandardIsolate,
             guest_semantics: RuntimeGuestSemantics::default(),
             node_conditions: Vec::new(),
+            node_exec_argv: Vec::new(),
             execution_model: RuntimeExecutionModel::CooperativeLocker,
             mode: RuntimeMode::Standard,
             language: RuntimeLanguage::JavaScript,

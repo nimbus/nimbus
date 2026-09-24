@@ -502,6 +502,36 @@ fn node26_stream_readable_read_size_lane_contract_regression() {
 }
 
 #[test]
+fn node26_stream_iter_bare_specifier_flag_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-iter-bare-specifier-flag.mjs",
+        "regression/stream-iter/test-stream-iter-bare-specifier-flag.mjs",
+        COMMON_INDEX_MJS_EXTRA_FILES,
+        NodeCompatLane::Node26,
+    );
+}
+
+#[test]
+fn node26_stream_iter_bare_specifier_no_flag_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-iter-bare-specifier-no-flag.mjs",
+        "regression/stream-iter/test-stream-iter-bare-specifier-no-flag.mjs",
+        COMMON_INDEX_MJS_EXTRA_FILES,
+        NodeCompatLane::Node26,
+    );
+}
+
+#[test]
+fn node26_stream_iter_bare_specifier_child_exec_argv_regression() {
+    run_node_compat_watchpoint_for_lane(
+        "test/parallel/test-stream-iter-bare-specifier-child-exec-argv.js",
+        "regression/stream-iter/test-stream-iter-bare-specifier-child-exec-argv.js",
+        &[],
+        NodeCompatLane::Node26,
+    );
+}
+
+#[test]
 #[ignore = "Pinned application-preset path-policy divergence: test-fs-open.js expects ENOENT for an absolute missing host path outside the generated bundle root, while Nimbus intentionally denies that path before raw host open"]
 fn node22_fs_open_watchpoint() {
     run_node_compat_watchpoint(

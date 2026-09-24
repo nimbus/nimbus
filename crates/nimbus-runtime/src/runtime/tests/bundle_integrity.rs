@@ -481,6 +481,10 @@ fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
     node_custom_condition_limits
         .node_conditions
         .push("custom".to_string());
+    let mut node_exec_argv_limits = node_limits.clone();
+    node_exec_argv_limits
+        .node_exec_argv
+        .push("--experimental-stream-iter".to_string());
     let mut node_service_limits = node_limits.clone();
     node_service_limits.service_capability_enabled = true;
     node_service_limits.grants.service = vec!["db".to_string()];
@@ -509,6 +513,7 @@ fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
     let node24_cache = bundle.module_code_cache(&node24_limits, startup_snapshot);
     let node_custom_condition_cache =
         bundle.module_code_cache(&node_custom_condition_limits, startup_snapshot);
+    let node_exec_argv_cache = bundle.module_code_cache(&node_exec_argv_limits, startup_snapshot);
     let node_service_cache = bundle.module_code_cache(&node_service_limits, startup_snapshot);
     let node_read_cache = bundle.module_code_cache(&node_read_limits, startup_snapshot);
     let node_env_cache = bundle.module_code_cache(&node_env_limits, startup_snapshot);
@@ -526,6 +531,7 @@ fn runtime_bundle_module_code_cache_is_partitioned_by_engine_config() {
         ("node22-unsnapshotted", &node_unsnapshotted_cache),
         ("node24", &node24_cache),
         ("node22-custom-condition", &node_custom_condition_cache),
+        ("node22-exec-argv", &node_exec_argv_cache),
         ("node22-service-grant", &node_service_cache),
         ("node22-read-grant", &node_read_cache),
         ("node22-env-grant", &node_env_cache),

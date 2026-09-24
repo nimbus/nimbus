@@ -187,7 +187,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-mkdir.js",
         "fixture_source_relative_path": "node20/test/parallel/test-fs-mkdir.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
+        "reason": "runtime JavaScript error: NotADirectory: Not a directory (os error 20)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-null-bytes.js",
@@ -227,7 +227,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-whatwg-url.js",
         "fixture_source_relative_path": "node20/test/parallel/test-fs-whatwg-url.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-t4L6Gm/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-xPljFL/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-write-file-sync.js",
@@ -267,7 +267,7 @@
       {
         "test_relative_path": "test/parallel/test-https-agent-sni.js",
         "fixture_source_relative_path": "node22/test/parallel/test-https-agent-sni.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+        "reason": "runtime JavaScript error: Uncaught null; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node20__test_parallel_test_https_agent_sni_js.json"
       },
       {
         "test_relative_path": "test/parallel/test-https-client-get-url.js",
@@ -292,7 +292,7 @@
       {
         "test_relative_path": "test/parallel/test-https-unix-socket-self-signed.js",
         "fixture_source_relative_path": "node20/test/parallel/test-https-unix-socket-self-signed.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-YzrxQ0/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-F2Hvuc/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-inspector-open.js",
@@ -312,7 +312,7 @@
       {
         "test_relative_path": "test/parallel/test-module-nodemodulepaths.js",
         "fixture_source_relative_path": "node20/test/parallel/test-module-nodemodulepaths.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-Lar4Zi/app/.n"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-IHTu8d/app/.n"
       },
       {
         "test_relative_path": "test/parallel/test-process-default.js",
@@ -604,7 +604,7 @@
       {
         "test_relative_path": "test/es-module/test-esm-exports.mjs",
         "fixture_source_relative_path": "node22/test/es-module/test-esm-exports.mjs",
-        "reason": "runtime JavaScript error: Uncaught (in promise) undefined; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node22__test_es_module_test_esm_exports_mjs.json"
+        "reason": "runtime JavaScript error: NotFound: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-assertion-warning.mjs",
@@ -624,12 +624,12 @@
       {
         "test_relative_path": "test/es-module/test-esm-import-attributes-identity.mjs",
         "fixture_source_relative_path": "node22/test/es-module/test-esm-import-attributes-identity.mjs",
-        "reason": "runtime JavaScript error: TypeError: Module \"file:///tmp/nvx-mdneLv/app/.nimbus/convex/test/fixtures/primitive-42.json\" needs an import attribute of type \"json\""
+        "reason": "runtime JavaScript error: TypeError: Module \"file:///tmp/nvx-vodE6Y/app/.nimbus/convex/test/fixtures/primitive-42.json\" needs an import attribute of type \"json\""
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-meta-resolve-hooks.mjs",
         "fixture_source_relative_path": "node22/test/es-module/test-esm-import-meta-resolve-hooks.mjs",
-        "reason": "runtime JavaScript error: TypeError: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol 'custom:'"
+        "reason": "runtime JavaScript error: Error: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol 'custom:'"
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-meta.mjs",
@@ -754,12 +754,12 @@
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript-override.mjs",
         "fixture_source_relative_path": "node22/test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript-override.mjs",
-        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-B5vZac/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
+        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-40K7mI/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
       },
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript.mjs",
         "fixture_source_relative_path": "node22/test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript.mjs",
-        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-7xk9gX/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
+        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-aUctsw/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
       },
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-require-inline-typescript-override.js",
@@ -1079,7 +1079,7 @@
       {
         "test_relative_path": "test/parallel/test-dgram-reuseport.js",
         "fixture_source_relative_path": "node22/test/parallel/test-dgram-reuseport.js",
-        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'code')"
+        "reason": "runtime system wall time timed out after 30s; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node22__test_parallel_test_dgram_reuseport_js.json"
       },
       {
         "test_relative_path": "test/parallel/test-dgram-send-queue-info.js",
@@ -1154,7 +1154,7 @@
       {
         "test_relative_path": "test/parallel/test-domain-implicit-fs.js",
         "fixture_source_relative_path": "node22/test/parallel/test-domain-implicit-fs.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open '/tmp/nvx-9TGdo1/app/.nimbus/convex/this file does not exist'"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open '/tmp/nvx-VmG7N0/app/.nimbus/convex/this file does not exist'"
       },
       {
         "test_relative_path": "test/parallel/test-domain-promise.js",
@@ -1209,7 +1209,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-dereference-force-false-silent-fail.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-async-dereference-force-false-silent-fail.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-Kffp0r/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-1LpIy0/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-dereference-symlink.mjs",
@@ -1224,7 +1224,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-error-on-exist.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-async-error-on-exist.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-zFTZEi/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-vwlhzY/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-file-url.mjs",
@@ -1259,7 +1259,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-same-dir-twice.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-async-same-dir-twice.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-qTJCZq/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-GVd2AV/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-symlink-over-file.mjs",
@@ -1279,12 +1279,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-async-error.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-promises-async-error.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-ycgFrQ/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-0NbBy2/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-file-url.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-promises-file-url.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-vgMioD/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-7NTqFn/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-mode-flags.mjs",
@@ -1294,12 +1294,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-nested-folder-recursive.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-promises-nested-folder-recursive.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-XjpYxW/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-5BsKom/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-apply-filter-function.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-apply-filter-function.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-lyOaKE/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-SUhcgC/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-directory-without-recursive-error.mjs",
@@ -1309,7 +1309,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-symlink-not-pointing-to-folder.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-copy-symlink-not-pointing-to-folder.mjs",
-        "reason": "runtime JavaScript error: Error: ENOTEMPTY: directory not empty, unlink '/tmp/nvx-5Cjbll/app/.nimbus/convex/test/.tmp.0/copy_%2'"
+        "reason": "runtime JavaScript error: Error: ENOTEMPTY: directory not empty, unlink '/tmp/nvx-vyvfmm/app/.nimbus/convex/test/.tmp.0/copy_%2'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-symlink-over-file-error.mjs",
@@ -1324,22 +1324,22 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-dereference-file.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-dereference-file.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-HK3iLK/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-WbwNIF/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-dereference-twice.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-dereference-twice.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-4OaL0V/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-FKngLD/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-error-on-exist.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-error-on-exist.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-jwlZG2/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-heE1OJ/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-file-url.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-file-url.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-s60sIz/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-iPJtUY/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-mode-flags.mjs",
@@ -1349,17 +1349,17 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-nested-files-folders.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-nested-files-folders.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-20vbzT/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-IvQNHw/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-overwrite-force-true.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-overwrite-force-true.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-fuBOLR/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-JYtg4D/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-preserve-timestamps.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-preserve-timestamps.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-VaJUsJ/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-0ugFWM/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-resolve-relative-symlinks-default.mjs",
@@ -1379,7 +1379,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-unicode-folder-names.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-cp-sync-unicode-folder-names.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-5QFG4f/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-R5NzH3/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-verbatim-symlinks-true.mjs",
@@ -1389,12 +1389,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-glob.mjs",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-glob.mjs",
-        "reason": "runtime JavaScript error: Error: runtime capability denied: runtime capability denied: runtime read capability denied for / (allowed roots: /tmp/nvx-bURmKN/app/.nimbus/convex)"
+        "reason": "runtime JavaScript error: Error: runtime capability denied: runtime capability denied: runtime read capability denied for / (allowed roots: /tmp/nvx-yUnw4f/app/.nimbus/convex)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-mkdir.js",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-mkdir.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
+        "reason": "runtime JavaScript error: NotADirectory: Not a directory (os error 20)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-null-bytes.js",
@@ -1444,12 +1444,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-readdir-recursive.js",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-readdir-recursive.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-vWctFZ/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-PoZDjj/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-realpath.js",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-realpath.js",
-        "reason": "runtime JavaScript error: Uncaught (in promise) undefined; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node22__test_parallel_test_fs_realpath_js.json"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, lstat '/tmp/nvx-MOIHc3/app/.nimbus/convex/test/.tmp.0/symlink'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-rmdir-type-check.js",
@@ -1469,7 +1469,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-stat.js",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-stat.js",
-        "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-vEGtcA/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
+        "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-r1oUUi/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-watch-encoding.js",
@@ -1479,7 +1479,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-whatwg-url.js",
         "fixture_source_relative_path": "node22/test/parallel/test-fs-whatwg-url.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-tN15bU/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-aweVHs/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-write-file-sync.js",
@@ -1514,27 +1514,27 @@
       {
         "test_relative_path": "test/parallel/test-http-client-abort-keep-alive-queued-unix-socket.js",
         "fixture_source_relative_path": "node22/test/parallel/test-http-client-abort-keep-alive-queued-unix-socket.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-1BROqu/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-Xph3Y8/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-abort-unix-socket.js",
         "fixture_source_relative_path": "node22/test/parallel/test-http-client-abort-unix-socket.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-LRSzOv/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-xb8WL1/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-pipe-end.js",
         "fixture_source_relative_path": "node22/test/parallel/test-http-client-pipe-end.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-Ev1D0t/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-l4xzCo/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-response-domain.js",
         "fixture_source_relative_path": "node22/test/parallel/test-http-client-response-domain.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-dMe2rw/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-bsDL1H/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-with-create-connection.js",
         "fixture_source_relative_path": "node22/test/parallel/test-http-client-with-create-connection.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-qNplmO/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-UmSmCu/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-keep-alive-empty-line.mjs",
@@ -1599,7 +1599,7 @@
       {
         "test_relative_path": "test/parallel/test-https-agent-getname.js",
         "fixture_source_relative_path": "node22/test/parallel/test-https-agent-getname.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-xkZM5d/app/.nimbus/convex/test/fixtures/keys/agent1.pfx'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-U1uTzv/app/.nimbus/convex/test/fixtures/keys/agent1.pfx'"
       },
       {
         "test_relative_path": "test/parallel/test-https-agent-keylog.js",
@@ -1609,7 +1609,7 @@
       {
         "test_relative_path": "test/parallel/test-https-agent-sni.js",
         "fixture_source_relative_path": "node22/test/parallel/test-https-agent-sni.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+        "reason": "runtime JavaScript error: Uncaught null; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node22__test_parallel_test_https_agent_sni_js.json"
       },
       {
         "test_relative_path": "test/parallel/test-https-client-get-url.js",
@@ -1644,7 +1644,7 @@
       {
         "test_relative_path": "test/parallel/test-https-unix-socket-self-signed.js",
         "fixture_source_relative_path": "node22/test/parallel/test-https-unix-socket-self-signed.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-66kbp3/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-ET6cSm/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-inspector-open.js",
@@ -1684,7 +1684,7 @@
       {
         "test_relative_path": "test/parallel/test-module-nodemodulepaths.js",
         "fixture_source_relative_path": "node22/test/parallel/test-module-nodemodulepaths.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-wgg2NO/app/.n"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-2rotIE/app/.n"
       },
       {
         "test_relative_path": "test/parallel/test-module-setsourcemapssupport.js",
@@ -1699,7 +1699,7 @@
       {
         "test_relative_path": "test/parallel/test-net-pingpong.js",
         "fixture_source_relative_path": "node22/test/parallel/test-net-pingpong.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-F7Fe9o/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-Aoqlut/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-performance-eventlooputil.js",
@@ -1812,39 +1812,9 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
       },
       {
-        "test_relative_path": "test/parallel/test-promise-unhandled-error-with-reading-file.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-promise-unhandled-error-with-reading-file.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-error.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-promise-unhandled-error.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-silent-no-hook.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-promise-unhandled-silent-no-hook.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: uncaughtException"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-warn-no-hook.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-promise-unhandled-warn-no-hook.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: uncaughtException"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-warn.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-promise-unhandled-warn.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
         "test_relative_path": "test/parallel/test-promises-unhandled-proxy-rejections.js",
         "fixture_source_relative_path": "node22/test/parallel/test-promises-unhandled-proxy-rejections.js",
         "reason": "runtime JavaScript error: Uncaught (in promise) #<Object>; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/event_loop/node22__test_parallel_test_promises_unhandled_"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promises-unhandled-rejections.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-promises-unhandled-rejections.js",
-        "reason": "runtime JavaScript error: TypeError: Deno.exit is not a function"
       },
       {
         "test_relative_path": "test/parallel/test-promises-unhandled-symbol-rejections.js",
@@ -1869,7 +1839,7 @@
       {
         "test_relative_path": "test/parallel/test-require-resolve-opts-paths-relative.js",
         "fixture_source_relative_path": "node22/test/parallel/test-require-resolve-opts-paths-relative.js",
-        "reason": "runtime JavaScript error: NotFound: statSync /tmp/nvx-k6lUDZ/app/.nimbus/convex/test/fixtures/module-require/relative/subdir failed: No such file or directory (os error 2)"
+        "reason": "runtime JavaScript error: NotFound: statSync /tmp/nvx-r5UElc/app/.nimbus/convex/test/fixtures/module-require/relative/subdir failed: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/parallel/test-runner-assert.js",
@@ -2127,11 +2097,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to:"
       },
       {
-        "test_relative_path": "test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
-      },
-      {
         "test_relative_path": "test/parallel/test-vm-global-property-interceptors.js",
         "fixture_source_relative_path": "node22/test/parallel/test-vm-global-property-interceptors.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
@@ -2150,11 +2115,6 @@
         "test_relative_path": "test/parallel/test-vm-module-cached-data.js",
         "fixture_source_relative_path": "node22/test/parallel/test-vm-module-cached-data.js",
         "reason": "runtime JavaScript error: TypeError: m.createCachedData is not a function"
-      },
-      {
-        "test_relative_path": "test/parallel/test-vm-module-dynamic-import.js",
-        "fixture_source_relative_path": "node22/test/parallel/test-vm-module-dynamic-import.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
         "test_relative_path": "test/parallel/test-vm-module-errors.js",
@@ -2616,7 +2576,7 @@
       {
         "test_relative_path": "test/es-module/test-esm-exports.mjs",
         "fixture_source_relative_path": "node24/test/es-module/test-esm-exports.mjs",
-        "reason": "runtime JavaScript error: Uncaught (in promise) undefined; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node24__test_es_module_test_esm_exports_mjs.json"
+        "reason": "runtime JavaScript error: NotFound: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-assertion-warning.mjs",
@@ -2636,12 +2596,12 @@
       {
         "test_relative_path": "test/es-module/test-esm-import-attributes-identity.mjs",
         "fixture_source_relative_path": "node24/test/es-module/test-esm-import-attributes-identity.mjs",
-        "reason": "runtime JavaScript error: TypeError: Module \"file:///tmp/nvx-TVRmjq/app/.nimbus/convex/test/fixtures/primitive-42.json\" needs an import attribute of type \"json\""
+        "reason": "runtime JavaScript error: TypeError: Module \"file:///tmp/nvx-A6yJMV/app/.nimbus/convex/test/fixtures/primitive-42.json\" needs an import attribute of type \"json\""
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-meta-resolve-hooks.mjs",
         "fixture_source_relative_path": "node24/test/es-module/test-esm-import-meta-resolve-hooks.mjs",
-        "reason": "runtime JavaScript error: TypeError: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol 'custom:'"
+        "reason": "runtime JavaScript error: Error: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol 'custom:'"
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-meta.mjs",
@@ -2776,12 +2736,12 @@
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript-override.mjs",
         "fixture_source_relative_path": "node24/test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript-override.mjs",
-        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-6MbjCk/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
+        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-Nfcpy9/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
       },
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript.mjs",
         "fixture_source_relative_path": "node24/test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript.mjs",
-        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-ecgWQR/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
+        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-xRcCVW/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
       },
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-require-inline-typescript-override.js",
@@ -2949,9 +2909,24 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
+        "test_relative_path": "test/parallel/test-buffer-isascii.js",
+        "fixture_source_relative_path": "node24/test/parallel/test-buffer-isascii.js",
+        "reason": "runtime JavaScript error: Error [ERR_INVALID_STATE]: Invalid state: Cannot validate on a detached buffer"
+      },
+      {
+        "test_relative_path": "test/parallel/test-buffer-isutf8.js",
+        "fixture_source_relative_path": "node24/test/parallel/test-buffer-isutf8.js",
+        "reason": "runtime JavaScript error: Error [ERR_INVALID_STATE]: Invalid state: Cannot validate on a detached buffer"
+      },
+      {
         "test_relative_path": "test/parallel/test-buffer-sharedarraybuffer.js",
         "fixture_source_relative_path": "node24/test/parallel/test-buffer-sharedarraybuffer.js",
         "reason": "runtime JavaScript error: ReferenceError: SharedArrayBuffer is not defined"
+      },
+      {
+        "test_relative_path": "test/parallel/test-buffer-write.js",
+        "fixture_source_relative_path": "node24/test/parallel/test-buffer-write.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
       },
       {
         "test_relative_path": "test/parallel/test-constants.js",
@@ -2971,7 +2946,7 @@
       {
         "test_relative_path": "test/parallel/test-crypto-dh.js",
         "fixture_source_relative_path": "node24/test/parallel/test-crypto-dh.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
       },
       {
         "test_relative_path": "test/parallel/test-crypto-encoding-validation-error.js",
@@ -3059,6 +3034,16 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
+        "test_relative_path": "test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+        "fixture_source_relative_path": "node24/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:"
+      },
+      {
+        "test_relative_path": "test/parallel/test-diagnostics-channel-pub-sub.js",
+        "fixture_source_relative_path": "node24/test/parallel/test-diagnostics-channel-pub-sub.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:"
+      },
+      {
         "test_relative_path": "test/parallel/test-diagnostics-channel-symbol-named.js",
         "fixture_source_relative_path": "node24/test/parallel/test-diagnostics-channel-symbol-named.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
@@ -3091,7 +3076,7 @@
       {
         "test_relative_path": "test/parallel/test-domain-implicit-fs.js",
         "fixture_source_relative_path": "node24/test/parallel/test-domain-implicit-fs.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open '/tmp/nvx-ANOosB/app/.nimbus/convex/this file does not exist'"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open '/tmp/nvx-tm56hX/app/.nimbus/convex/this file does not exist'"
       },
       {
         "test_relative_path": "test/parallel/test-domain-promise.js",
@@ -3211,7 +3196,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-dereference-force-false-silent-fail.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-async-dereference-force-false-silent-fail.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-AwiKFF/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-NliF6h/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-dereference-symlink.mjs",
@@ -3226,7 +3211,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-error-on-exist.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-async-error-on-exist.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-VvFGhd/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-B1Yi8A/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-file-url.mjs",
@@ -3261,7 +3246,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-same-dir-twice.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-async-same-dir-twice.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-I2FePl/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-zhJCaV/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-symlink-over-file.mjs",
@@ -3281,12 +3266,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-async-error.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-promises-async-error.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-5gxZ0k/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-dS8oma/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-file-url.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-promises-file-url.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-9y1U7l/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-D9ZZgG/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-mode-flags.mjs",
@@ -3296,12 +3281,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-nested-folder-recursive.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-promises-nested-folder-recursive.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-FLDxNJ/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-zuRIVt/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-apply-filter-function.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-apply-filter-function.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-2vbmjr/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-F0n8GJ/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-directory-without-recursive-error.mjs",
@@ -3311,7 +3296,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-symlink-not-pointing-to-folder.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-copy-symlink-not-pointing-to-folder.mjs",
-        "reason": "runtime JavaScript error: Error: ENOTEMPTY: directory not empty, unlink '/tmp/nvx-aT4Pqu/app/.nimbus/convex/test/.tmp.0/copy_%2'"
+        "reason": "runtime JavaScript error: Error: ENOTEMPTY: directory not empty, unlink '/tmp/nvx-gdps2N/app/.nimbus/convex/test/.tmp.0/copy_%2'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-symlink-over-file-error.mjs",
@@ -3326,22 +3311,22 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-dereference-file.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-dereference-file.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-h7qFN2/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-A6Wes4/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-dereference-twice.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-dereference-twice.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-tTYIk9/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-gHMPde/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-error-on-exist.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-error-on-exist.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-n7dVOP/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-wttGi6/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-file-url.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-file-url.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-06v21Y/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-4jX6bP/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-mode-flags.mjs",
@@ -3351,17 +3336,17 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-nested-files-folders.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-nested-files-folders.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-UxlpyK/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-6BYQrp/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-overwrite-force-true.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-overwrite-force-true.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-J6tIhk/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-xPPg6T/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-preserve-timestamps.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-preserve-timestamps.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-qDxYMn/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-WzhjIe/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-resolve-relative-symlinks-default.mjs",
@@ -3381,7 +3366,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-unicode-folder-names.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-cp-sync-unicode-folder-names.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-Qien5o/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-W5xhTU/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-verbatim-symlinks-true.mjs",
@@ -3391,12 +3376,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-glob.mjs",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-glob.mjs",
-        "reason": "runtime JavaScript error: Error: runtime capability denied: runtime capability denied: runtime read capability denied for / (allowed roots: /tmp/nvx-yuPpWx/app/.nimbus/convex)"
+        "reason": "runtime JavaScript error: Error: runtime capability denied: runtime capability denied: runtime read capability denied for / (allowed roots: /tmp/nvx-6QNZX7/app/.nimbus/convex)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-mkdir.js",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-mkdir.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
+        "reason": "runtime JavaScript error: NotADirectory: Not a directory (os error 20)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-mkdtempDisposableSync.js",
@@ -3441,7 +3426,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-readdir-recursive.js",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-readdir-recursive.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-vmCArd/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-etfzpJ/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-rmdir-type-check.js",
@@ -3466,7 +3451,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-stat.js",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-stat.js",
-        "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-40Maki/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
+        "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-GAkL6M/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-watch-encoding.js",
@@ -3476,12 +3461,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-watch-enoent.js",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-watch-enoent.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, watch '/tmp/nvx-V86NqZ/app/.nimbus/convex/test/.tmp.0/non-existent'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, watch '/tmp/nvx-guQ8LU/app/.nimbus/convex/test/.tmp.0/non-existent'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-whatwg-url.js",
         "fixture_source_relative_path": "node24/test/parallel/test-fs-whatwg-url.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-nPNzgJ/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-lBUmqY/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-write-file-sync.js",
@@ -3511,27 +3496,27 @@
       {
         "test_relative_path": "test/parallel/test-http-client-abort-keep-alive-queued-unix-socket.js",
         "fixture_source_relative_path": "node24/test/parallel/test-http-client-abort-keep-alive-queued-unix-socket.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-ufgOc6/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-Bd1hht/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-abort-unix-socket.js",
         "fixture_source_relative_path": "node24/test/parallel/test-http-client-abort-unix-socket.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-Rq4J2F/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-wO4uYY/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-pipe-end.js",
         "fixture_source_relative_path": "node24/test/parallel/test-http-client-pipe-end.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-dUHtQP/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-VZetjf/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-response-domain.js",
         "fixture_source_relative_path": "node24/test/parallel/test-http-client-response-domain.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-xCqyLx/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-F99ELn/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-client-with-create-connection.js",
         "fixture_source_relative_path": "node24/test/parallel/test-http-client-with-create-connection.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-2cvp3t/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-Wqw974/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-http-keep-alive-empty-line.mjs",
@@ -3547,6 +3532,11 @@
         "test_relative_path": "test/parallel/test-http-response-statuscode.js",
         "fixture_source_relative_path": "node24/test/parallel/test-http-response-statuscode.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+      },
+      {
+        "test_relative_path": "test/parallel/test-http-server-response-standalone.js",
+        "fixture_source_relative_path": "node24/test/parallel/test-http-server-response-standalone.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:"
       },
       {
         "test_relative_path": "test/parallel/test-http2-clean-output.js",
@@ -3591,7 +3581,7 @@
       {
         "test_relative_path": "test/parallel/test-https-agent-getname.js",
         "fixture_source_relative_path": "node24/test/parallel/test-https-agent-getname.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-E9GxzG/app/.nimbus/convex/test/fixtures/keys/agent1.pfx'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-Z0aFrC/app/.nimbus/convex/test/fixtures/keys/agent1.pfx'"
       },
       {
         "test_relative_path": "test/parallel/test-https-agent-keylog.js",
@@ -3601,7 +3591,7 @@
       {
         "test_relative_path": "test/parallel/test-https-agent-sni.js",
         "fixture_source_relative_path": "node24/test/parallel/test-https-agent-sni.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+        "reason": "runtime JavaScript error: Uncaught null; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node24__test_parallel_test_https_agent_sni_js.json"
       },
       {
         "test_relative_path": "test/parallel/test-https-client-get-url.js",
@@ -3626,7 +3616,7 @@
       {
         "test_relative_path": "test/parallel/test-https-unix-socket-self-signed.js",
         "fixture_source_relative_path": "node24/test/parallel/test-https-unix-socket-self-signed.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-gGjBTw/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-iFOe6d/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-inspector-open.js",
@@ -3671,7 +3661,7 @@
       {
         "test_relative_path": "test/parallel/test-module-nodemodulepaths.js",
         "fixture_source_relative_path": "node24/test/parallel/test-module-nodemodulepaths.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-WInvVh/app/.n"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-F6xsvp/app/.n"
       },
       {
         "test_relative_path": "test/parallel/test-module-setsourcemapssupport.js",
@@ -3686,12 +3676,12 @@
       {
         "test_relative_path": "test/parallel/test-net-pingpong.js",
         "fixture_source_relative_path": "node24/test/parallel/test-net-pingpong.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-tJfZUY/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-PSRUhf/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-perf-hooks-eventlooputilization.js",
         "fixture_source_relative_path": "node24/test/parallel/test-perf-hooks-eventlooputilization.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: 50 >= 50"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: 40 <= 40"
       },
       {
         "test_relative_path": "test/parallel/test-perf-hooks-timerify-histogram-sync.mjs",
@@ -3794,39 +3784,9 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
       },
       {
-        "test_relative_path": "test/parallel/test-promise-unhandled-error-with-reading-file.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-promise-unhandled-error-with-reading-file.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-error.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-promise-unhandled-error.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-silent-no-hook.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-promise-unhandled-silent-no-hook.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: uncaughtException"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-warn-no-hook.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-promise-unhandled-warn-no-hook.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: uncaughtException"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-warn.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-promise-unhandled-warn.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
         "test_relative_path": "test/parallel/test-promises-unhandled-proxy-rejections.js",
         "fixture_source_relative_path": "node24/test/parallel/test-promises-unhandled-proxy-rejections.js",
         "reason": "runtime JavaScript error: Uncaught (in promise) #<Object>; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/event_loop/node24__test_parallel_test_promises_unhandled_"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promises-unhandled-rejections.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-promises-unhandled-rejections.js",
-        "reason": "runtime JavaScript error: TypeError: Deno.exit is not a function"
       },
       {
         "test_relative_path": "test/parallel/test-promises-unhandled-symbol-rejections.js",
@@ -3846,7 +3806,7 @@
       {
         "test_relative_path": "test/parallel/test-require-resolve-opts-paths-relative.js",
         "fixture_source_relative_path": "node24/test/parallel/test-require-resolve-opts-paths-relative.js",
-        "reason": "runtime JavaScript error: NotFound: statSync /tmp/nvx-EwPLpi/app/.nimbus/convex/test/fixtures/module-require/relative/subdir failed: No such file or directory (os error 2)"
+        "reason": "runtime JavaScript error: NotFound: statSync /tmp/nvx-aie7XZ/app/.nimbus/convex/test/fixtures/module-require/relative/subdir failed: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/parallel/test-stream-finished.js",
@@ -3921,7 +3881,7 @@
       {
         "test_relative_path": "test/parallel/test-timers-ordering.js",
         "fixture_source_relative_path": "node24/test/parallel/test-timers-ordering.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: current ts 70 < prev ts 70 + 1"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: current ts 80 < prev ts 80 + 1"
       },
       {
         "test_relative_path": "test/parallel/test-timers-reset-process-domain-on-throw.js",
@@ -3994,6 +3954,11 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
+        "test_relative_path": "test/parallel/test-util-stripvtcontrolcharacters.js",
+        "fixture_source_relative_path": "node24/test/parallel/test-util-stripvtcontrolcharacters.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+      },
+      {
         "test_relative_path": "test/parallel/test-util-styletext-hex.js",
         "fixture_source_relative_path": "node24/test/parallel/test-util-styletext-hex.js",
         "reason": "runtime JavaScript error: TypeError: The argument 'format' must be one of: 'reset', 'bold', 'dim', 'italic', 'underline', 'blink', 'inverse', 'hidden', 'strikethrough', 'doubleunderline', 'black', 're"
@@ -4019,11 +3984,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to:"
       },
       {
-        "test_relative_path": "test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
-      },
-      {
         "test_relative_path": "test/parallel/test-vm-global-property-interceptors.js",
         "fixture_source_relative_path": "node24/test/parallel/test-vm-global-property-interceptors.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
@@ -4042,11 +4002,6 @@
         "test_relative_path": "test/parallel/test-vm-module-cached-data.js",
         "fixture_source_relative_path": "node24/test/parallel/test-vm-module-cached-data.js",
         "reason": "runtime JavaScript error: TypeError: m.createCachedData is not a function"
-      },
-      {
-        "test_relative_path": "test/parallel/test-vm-module-dynamic-import.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-vm-module-dynamic-import.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
         "test_relative_path": "test/parallel/test-vm-module-errors.js",
@@ -4086,17 +4041,17 @@
       {
         "test_relative_path": "test/parallel/test-webcrypto-encap-decap-ml-kem.js",
         "fixture_source_relative_path": "node24/test/parallel/test-webcrypto-encap-decap-ml-kem.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-yyNF6D/app/.nimbus/convex/test/fixtures/keys/ml_kem_512_private_seed_only.pem'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-IJTDcW/app/.nimbus/convex/test/fixtures/keys/ml_kem_512_private_seed_only.pem'"
       },
       {
         "test_relative_path": "test/parallel/test-webcrypto-export-import-ml-dsa.js",
         "fixture_source_relative_path": "node24/test/parallel/test-webcrypto-export-import-ml-dsa.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-dQQuBp/app/.nimbus/convex/test/fixtures/keys/ml_dsa_44_private_seed_only.pem'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-Uupky2/app/.nimbus/convex/test/fixtures/keys/ml_dsa_44_private_seed_only.pem'"
       },
       {
         "test_relative_path": "test/parallel/test-webcrypto-export-import-ml-kem.js",
         "fixture_source_relative_path": "node24/test/parallel/test-webcrypto-export-import-ml-kem.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-zjqTFB/app/.nimbus/convex/test/fixtures/keys/ml_kem_512_private_seed_only.pem'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-mMBNrw/app/.nimbus/convex/test/fixtures/keys/ml_kem_512_private_seed_only.pem'"
       },
       {
         "test_relative_path": "test/parallel/test-webcrypto-keygen.js",
@@ -4111,7 +4066,7 @@
       {
         "test_relative_path": "test/parallel/test-webcrypto-sign-verify-ml-dsa.js",
         "fixture_source_relative_path": "node24/test/parallel/test-webcrypto-sign-verify-ml-dsa.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-lxck8X/app/.nimbus/convex/test/fixtures/keys/ml_dsa_44_private_seed_only.pem'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-xR1jFc/app/.nimbus/convex/test/fixtures/keys/ml_dsa_44_private_seed_only.pem'"
       },
       {
         "test_relative_path": "test/parallel/test-webstream-encoding-inspect.js",
@@ -4247,11 +4202,6 @@
         "test_relative_path": "test/parallel/test-zlib-kmaxlength-rangeerror.js",
         "fixture_source_relative_path": "node24/test/parallel/test-zlib-kmaxlength-rangeerror.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-zlib-truncated.js",
-        "fixture_source_relative_path": "node24/test/parallel/test-zlib-truncated.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
       }
     ],
     "node26": [
@@ -4463,7 +4413,7 @@
       {
         "test_relative_path": "test/es-module/test-esm-exports.mjs",
         "fixture_source_relative_path": "node26/test/es-module/test-esm-exports.mjs",
-        "reason": "runtime JavaScript error: Uncaught (in promise) undefined; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node26__test_es_module_test_esm_exports_mjs.json"
+        "reason": "runtime JavaScript error: NotFound: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-attributes-errors.js",
@@ -4478,12 +4428,12 @@
       {
         "test_relative_path": "test/es-module/test-esm-import-attributes-identity.mjs",
         "fixture_source_relative_path": "node26/test/es-module/test-esm-import-attributes-identity.mjs",
-        "reason": "runtime JavaScript error: TypeError: Module \"file:///tmp/nvx-FT5qcn/app/.nimbus/convex/test/fixtures/primitive-42.json\" needs an import attribute of type \"json\""
+        "reason": "runtime JavaScript error: TypeError: Module \"file:///tmp/nvx-kTA7sN/app/.nimbus/convex/test/fixtures/primitive-42.json\" needs an import attribute of type \"json\""
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-meta-resolve-hooks.mjs",
         "fixture_source_relative_path": "node26/test/es-module/test-esm-import-meta-resolve-hooks.mjs",
-        "reason": "runtime JavaScript error: TypeError: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol 'custom:'"
+        "reason": "runtime JavaScript error: Error: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol 'custom:'"
       },
       {
         "test_relative_path": "test/es-module/test-esm-import-meta.mjs",
@@ -4628,17 +4578,17 @@
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-load-import-cjs-custom-source.js",
         "fixture_source_relative_path": "node26/test/module-hooks/test-module-hooks-load-import-cjs-custom-source.js",
-        "reason": "runtime JavaScript error: Error: failed to read runtime CommonJS module /tmp/nvx-rDClro/app/.nimbus/convex/virtual:shared: No such file or directory (os error 2)"
+        "reason": "runtime JavaScript error: Error: failed to read runtime CommonJS module /tmp/nvx-k1nalZ/app/.nimbus/convex/virtual:shared: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript-override.mjs",
         "fixture_source_relative_path": "node26/test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript-override.mjs",
-        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-fxNhAl/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
+        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-nqz1rf/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
       },
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript.mjs",
         "fixture_source_relative_path": "node26/test/module-hooks/test-module-hooks-resolve-load-import-inline-typescript.mjs",
-        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-RkY7Yb/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
+        "reason": "runtime JavaScript error: SyntaxError: Unexpected reserved word at file:///tmp/nvx-PjyAfh/app/.nimbus/convex/test/fixtures/module-hooks/user.ts:42:1"
       },
       {
         "test_relative_path": "test/module-hooks/test-module-hooks-resolve-load-require-inline-typescript-override.js",
@@ -4663,6 +4613,11 @@
       {
         "test_relative_path": "test/parallel/test-abortcontroller.js",
         "fixture_source_relative_path": "node26/test/parallel/test-abortcontroller.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
+      },
+      {
+        "test_relative_path": "test/parallel/test-assert-deep.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-assert-deep.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
@@ -4861,6 +4816,11 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:"
       },
       {
+        "test_relative_path": "test/parallel/test-crypto-cipheriv-decipheriv.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-crypto-cipheriv-decipheriv.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
+      },
+      {
         "test_relative_path": "test/parallel/test-crypto-dh.js",
         "fixture_source_relative_path": "node26/test/parallel/test-crypto-dh.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
@@ -4878,7 +4838,7 @@
       {
         "test_relative_path": "test/parallel/test-crypto-hkdf.js",
         "fixture_source_relative_path": "node26/test/parallel/test-crypto-hkdf.js",
-        "reason": "runtime JavaScript error: ReferenceError: SharedArrayBuffer is not defined"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: function should not have been called"
       },
       {
         "test_relative_path": "test/parallel/test-crypto-hmac.js",
@@ -5053,7 +5013,7 @@
       {
         "test_relative_path": "test/parallel/test-domain-implicit-fs.js",
         "fixture_source_relative_path": "node26/test/parallel/test-domain-implicit-fs.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open '/tmp/nvx-eU7AOH/app/.nimbus/convex/this file does not exist'"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: ifError got unwanted exception: ENOENT: no such file or directory, open '/tmp/nvx-3KnPVZ/app/.nimbus/convex/this file does not exist'"
       },
       {
         "test_relative_path": "test/parallel/test-domain-promise.js",
@@ -5168,7 +5128,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-dereference-force-false-silent-fail.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-async-dereference-force-false-silent-fail.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-BNhcRW/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-Pptftm/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-dereference-symlink.mjs",
@@ -5183,7 +5143,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-error-on-exist.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-async-error-on-exist.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-fNmDIG/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-GgkdOK/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-file-url.mjs",
@@ -5218,7 +5178,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-same-dir-twice.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-async-same-dir-twice.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-UEfkni/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-yBEC6G/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-async-symlink-over-file.mjs",
@@ -5238,12 +5198,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-async-error.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-promises-async-error.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-2cJm5U/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-FD6xkG/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-file-url.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-promises-file-url.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-C8fL50/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-it4yCb/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-mode-flags.mjs",
@@ -5253,12 +5213,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-promises-nested-folder-recursive.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-promises-nested-folder-recursive.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-YS7nYT/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-R38vnN/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-apply-filter-function.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-apply-filter-function.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-Z4VT4i/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-gpqPQD/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-directory-without-recursive-error.mjs",
@@ -5268,7 +5228,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-symlink-not-pointing-to-folder.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-copy-symlink-not-pointing-to-folder.mjs",
-        "reason": "runtime JavaScript error: Error: ENOTEMPTY: directory not empty, unlink '/tmp/nvx-dsAyFt/app/.nimbus/convex/test/.tmp.0/copy_%2'"
+        "reason": "runtime JavaScript error: Error: ENOTEMPTY: directory not empty, unlink '/tmp/nvx-1aTuRN/app/.nimbus/convex/test/.tmp.0/copy_%2'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-copy-symlink-over-file-error.mjs",
@@ -5283,22 +5243,22 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-dereference-file.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-dereference-file.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-2q1Pff/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-EdQ9er/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-dereference-twice.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-dereference-twice.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-GieFvd/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-LytD7r/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-error-on-exist.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-error-on-exist.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-CwnlDd/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-kJNtig/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-file-url.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-file-url.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-D2ibfk/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-2oaMS3/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-mode-flags.mjs",
@@ -5308,17 +5268,17 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-nested-files-folders.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-nested-files-folders.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-58n9FE/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-818upr/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-overwrite-force-true.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-overwrite-force-true.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-BhdCWj/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-ADXyQ8/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-preserve-timestamps.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-preserve-timestamps.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-IYwsXG/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-EClHqg/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-resolve-relative-symlinks-default.mjs",
@@ -5338,7 +5298,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-unicode-folder-names.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-cp-sync-unicode-folder-names.mjs",
-        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-OIvI1s/app/.nimbus\", run again with the --allow-read flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires read access to \"/tmp/nvx-HBvDRH/app/.nimbus\", run again with the --allow-read flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-cp-sync-verbatim-symlinks-true.mjs",
@@ -5348,12 +5308,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-glob.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-glob.mjs",
-        "reason": "runtime JavaScript error: Error: runtime capability denied: runtime capability denied: runtime read capability denied for / (allowed roots: /tmp/nvx-7WKCOv/app/.nimbus/convex)"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
         "test_relative_path": "test/parallel/test-fs-mkdir.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-mkdir.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception (Error)."
+        "reason": "runtime JavaScript error: NotADirectory: Not a directory (os error 20)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-mkdtempDisposableSync.js",
@@ -5368,12 +5328,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-promises-file-handle-pull.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-promises-file-handle-pull.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
+        "reason": "runtime JavaScript error: TypeError: fh.pull is not a function"
       },
       {
         "test_relative_path": "test/parallel/test-fs-promises-file-handle-pullsync.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-promises-file-handle-pullsync.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
+        "reason": "runtime JavaScript error: TypeError: fh.pullSync is not a function"
       },
       {
         "test_relative_path": "test/parallel/test-fs-promises-file-handle-readFile.js",
@@ -5383,7 +5343,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-promises-file-handle-writer.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-promises-file-handle-writer.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
+        "reason": "runtime JavaScript error: TypeError: fh.writer is not a function"
       },
       {
         "test_relative_path": "test/parallel/test-fs-promises-mkdtempDisposable.js",
@@ -5398,7 +5358,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-promises.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-promises.js",
-        "reason": "runtime JavaScript error: Error: stat /tmp/nvx-GWPuQQ/app/.nimbus/convex/meow.js failed: No such file or directory (os error 2)"
+        "reason": "runtime JavaScript error: Error: stat /tmp/nvx-LwBIp8/app/.nimbus/convex/meow.js failed: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-read-file-sync.js",
@@ -5413,7 +5373,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-readdir-recursive.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-readdir-recursive.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-TttxMx/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-4hL3bv/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-fs-rmdir-recursive-error.js",
@@ -5443,7 +5403,7 @@
       {
         "test_relative_path": "test/parallel/test-fs-stat.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-stat.js",
-        "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-yJYJYi/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
+        "reason": "runtime JavaScript error: Error: statSync /tmp/nvx-9cv9Y0/app/.nimbus/convex/wont_exists failed: No such file or directory (os error 2)"
       },
       {
         "test_relative_path": "test/parallel/test-fs-watch-encoding.js",
@@ -5453,12 +5413,12 @@
       {
         "test_relative_path": "test/parallel/test-fs-watch-enoent.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-watch-enoent.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, watch '/tmp/nvx-C58woM/app/.nimbus/convex/test/.tmp.0/non-existent'"
+        "reason": "runtime JavaScript error: Error: Cannot find module 'internal/fs/recursive_watch'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-whatwg-url.js",
         "fixture_source_relative_path": "node26/test/parallel/test-fs-whatwg-url.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-auadHJ/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-nGkJtn/app/.nimbus/convex/test/.tmp.0/file:thisDirectoryWasMadeByFailingNodeJSTestSorry/subdir/file'"
       },
       {
         "test_relative_path": "test/parallel/test-fs-write-file-sync.js",
@@ -5489,6 +5449,11 @@
         "test_relative_path": "test/parallel/test-http-response-statuscode.js",
         "fixture_source_relative_path": "node26/test/parallel/test-http-response-statuscode.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+      },
+      {
+        "test_relative_path": "test/parallel/test-http2-async-local-storage.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-http2-async-local-storage.js",
+        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'id')"
       },
       {
         "test_relative_path": "test/parallel/test-http2-clean-output.js",
@@ -5533,7 +5498,7 @@
       {
         "test_relative_path": "test/parallel/test-https-agent-getname.js",
         "fixture_source_relative_path": "node26/test/parallel/test-https-agent-getname.js",
-        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-WCHiPQ/app/.nimbus/convex/test/fixtures/keys/agent1.pfx'"
+        "reason": "runtime JavaScript error: Error: ENOENT: no such file or directory, open '/tmp/nvx-0775HU/app/.nimbus/convex/test/fixtures/keys/agent1.pfx'"
       },
       {
         "test_relative_path": "test/parallel/test-https-agent-keylog.js",
@@ -5548,7 +5513,7 @@
       {
         "test_relative_path": "test/parallel/test-https-agent-sni.js",
         "fixture_source_relative_path": "node26/test/parallel/test-https-agent-sni.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+        "reason": "runtime JavaScript error: Uncaught null; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/general/node26__test_parallel_test_https_agent_sni_js.json"
       },
       {
         "test_relative_path": "test/parallel/test-https-client-get-url.js",
@@ -5583,7 +5548,7 @@
       {
         "test_relative_path": "test/parallel/test-https-unix-socket-self-signed.js",
         "fixture_source_relative_path": "node26/test/parallel/test-https-unix-socket-self-signed.js",
-        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-rRr0wy/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
+        "reason": "runtime JavaScript error: NotCapable: Requires net access to \"unix:/tmp/nvx-uS8thN/app/.nimbus/convex/test/.tmp.0/n.0.sock\", run again with the --allow-net flag"
       },
       {
         "test_relative_path": "test/parallel/test-inspector-open.js",
@@ -5623,7 +5588,7 @@
       {
         "test_relative_path": "test/parallel/test-module-nodemodulepaths.js",
         "fixture_source_relative_path": "node26/test/parallel/test-module-nodemodulepaths.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-opE8p3/app/.n"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: case /usr/lib/node_modules/npm/node_modules/node-gyp/node_modules/glob/node_modules/minimatch failed, actual paths is [\"/tmp/nvx-WH66zd/app/.n"
       },
       {
         "test_relative_path": "test/parallel/test-module-setsourcemapssupport.js",
@@ -5633,7 +5598,12 @@
       {
         "test_relative_path": "test/parallel/test-perf-hooks-eventlooputilization.js",
         "fixture_source_relative_path": "node26/test/parallel/test-perf-hooks-eventlooputilization.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: 40 <= 40"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: 50 >= 50"
+      },
+      {
+        "test_relative_path": "test/parallel/test-perf-hooks-resourcetiming.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-perf-hooks-resourcetiming.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
         "test_relative_path": "test/parallel/test-perf-hooks-timerify-histogram-sync.mjs",
@@ -5736,39 +5706,9 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
       },
       {
-        "test_relative_path": "test/parallel/test-promise-unhandled-error-with-reading-file.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-promise-unhandled-error-with-reading-file.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-error.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-promise-unhandled-error.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-silent-no-hook.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-promise-unhandled-silent-no-hook.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: uncaughtException"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-warn-no-hook.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-promise-unhandled-warn-no-hook.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: uncaughtException"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promise-unhandled-warn.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-promise-unhandled-warn.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
-      },
-      {
         "test_relative_path": "test/parallel/test-promises-unhandled-proxy-rejections.js",
         "fixture_source_relative_path": "node26/test/parallel/test-promises-unhandled-proxy-rejections.js",
         "reason": "runtime JavaScript error: Uncaught (in promise) #<Object>; diagnostic artifact: /home/runner/work/nimbus/nimbus/target/node-compat/diagnostics/event_loop/node26__test_parallel_test_promises_unhandled_"
-      },
-      {
-        "test_relative_path": "test/parallel/test-promises-unhandled-rejections.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-promises-unhandled-rejections.js",
-        "reason": "runtime JavaScript error: TypeError: Deno.exit is not a function"
       },
       {
         "test_relative_path": "test/parallel/test-promises-unhandled-symbol-rejections.js",
@@ -5901,6 +5841,11 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
       },
       {
+        "test_relative_path": "test/parallel/test-stream-duplex-from.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-stream-duplex-from.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
+      },
+      {
         "test_relative_path": "test/parallel/test-stream-finished-async-local-storage.js",
         "fixture_source_relative_path": "node26/test/parallel/test-stream-finished-async-local-storage.js",
         "reason": "runtime JavaScript error: Error: Cannot find module 'internal/async_context_frame'"
@@ -5921,194 +5866,9 @@
         "reason": "runtime JavaScript error: Error: Cannot find module 'internal/streams/end-of-stream'"
       },
       {
-        "test_relative_path": "test/parallel/test-stream-iter-broadcast-backpressure.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-broadcast-backpressure.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-broadcast-basic.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-broadcast-basic.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-broadcast-coverage.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-broadcast-coverage.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-broadcast-from.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-broadcast-from.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-consumers-bytes.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-consumers-bytes.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-consumers-merge.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-consumers-merge.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-consumers-tap.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-consumers-tap.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-consumers-text.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-consumers-text.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-cross-realm.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-cross-realm.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-disabled.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-disabled.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-duplex.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-duplex.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-from-async.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-from-async.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-from-coverage.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-from-coverage.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-from-sync.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-from-sync.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-from-writable-cache-options.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-from-writable-cache-options.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-namespace.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-namespace.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-pull-async.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-pull-async.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-pull-sync.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-pull-sync.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-push-backpressure.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-push-backpressure.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-push-basic.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-push-basic.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-push-writer.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-push-writer.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-readable-interop-disabled.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-readable-interop-disabled.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ERR_STREAM_ITER_MISSING_FLAG/. Input:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-readable-interop.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-readable-interop.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-share-async.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-share-async.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-share-coverage.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-share-coverage.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-share-from.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-share-from.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-share-sync.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-share-sync.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
         "test_relative_path": "test/parallel/test-stream-iter-sharedarraybuffer.js",
         "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-sharedarraybuffer.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-to-readable.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-to-readable.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-transform-compat.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-transform-compat.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-transform-coverage.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-transform-coverage.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-transform-errors.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-transform-errors.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-transform-output.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-transform-output.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-transform-roundtrip.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-transform-roundtrip.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-transform-sync.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-transform-sync.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-validation.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-validation.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-writable-from.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-writable-from.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
-      },
-      {
-        "test_relative_path": "test/parallel/test-stream-iter-writable-interop.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-stream-iter-writable-interop.js",
-        "reason": "runtime JavaScript error: Error: Cannot find module 'stream/iter'"
+        "reason": "runtime JavaScript error: ReferenceError: SharedArrayBuffer is not defined"
       },
       {
         "test_relative_path": "test/parallel/test-stream-pipeline.js",
@@ -6119,6 +5879,11 @@
         "test_relative_path": "test/parallel/test-stream-readable-compose.js",
         "fixture_source_relative_path": "node26/test/parallel/test-stream-readable-compose.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"
+      },
+      {
+        "test_relative_path": "test/parallel/test-stream-readable-to-web-termination.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-stream-readable-to-web-termination.js",
+        "reason": "runtime JavaScript error: TypeError: The stream controller cannot close or enqueue"
       },
       {
         "test_relative_path": "test/parallel/test-stream-writable-samecb-singletick.js",
@@ -6178,7 +5943,7 @@
       {
         "test_relative_path": "test/parallel/test-timers-ordering.js",
         "fixture_source_relative_path": "node26/test/parallel/test-timers-ordering.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: current ts 60 < prev ts 60 + 1"
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: current ts 50 < prev ts 50 + 1"
       },
       {
         "test_relative_path": "test/parallel/test-timers-reset-process-domain-on-throw.js",
@@ -6211,6 +5976,11 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:"
       },
       {
+        "test_relative_path": "test/parallel/test-trace-events-get-category-enabled-buffer.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-trace-events-get-category-enabled-buffer.js",
+        "reason": "runtime JavaScript error: Error: Cannot find module 'internal/trace_events'"
+      },
+      {
         "test_relative_path": "test/parallel/test-url-parse-deprecation.js",
         "fixture_source_relative_path": "node26/test/parallel/test-url-parse-deprecation.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Mismatched function calls:"
@@ -6238,7 +6008,7 @@
       {
         "test_relative_path": "test/parallel/test-urlpattern.js",
         "fixture_source_relative_path": "node26/test/parallel/test-urlpattern.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
+        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'prototype')"
       },
       {
         "test_relative_path": "test/parallel/test-util-callbackify.js",
@@ -6281,11 +6051,6 @@
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to:"
       },
       {
-        "test_relative_path": "test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-vm-dynamic-import-callback-missing-flag.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
-      },
-      {
         "test_relative_path": "test/parallel/test-vm-global-property-interceptors.js",
         "fixture_source_relative_path": "node26/test/parallel/test-vm-global-property-interceptors.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
@@ -6304,11 +6069,6 @@
         "test_relative_path": "test/parallel/test-vm-module-cached-data.js",
         "fixture_source_relative_path": "node26/test/parallel/test-vm-module-cached-data.js",
         "reason": "runtime JavaScript error: TypeError: m.createCachedData is not a function"
-      },
-      {
-        "test_relative_path": "test/parallel/test-vm-module-dynamic-import.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-vm-module-dynamic-import.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
         "test_relative_path": "test/parallel/test-vm-module-errors.js",
@@ -6346,9 +6106,54 @@
         "reason": "runtime JavaScript error: Error: escaped timeout at 2000 milliseconds!"
       },
       {
+        "test_relative_path": "test/parallel/test-webcrypto-cryptokey-brand-check.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-cryptokey-brand-check.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: CryptoKey.Symbol(Deno.privateCustomInspect) (value)"
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-cryptokey-clone-transfer.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-cryptokey-clone-transfer.js",
+        "reason": "runtime JavaScript error: TypeError: Cannot read properties of undefined (reading 'call')"
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-export-import-cfrg.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-export-import-cfrg.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected rejection (DataError)."
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-export-import-ec.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-export-import-ec.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected rejection (DataError)."
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-export-import-ml-dsa.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-export-import-ml-dsa.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-export-import-ml-kem.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-export-import-ml-kem.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-export-import-rsa.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-export-import-rsa.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected rejection (DataError)."
+      },
+      {
         "test_relative_path": "test/parallel/test-webcrypto-promise-prototype-pollution.mjs",
         "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-promise-prototype-pollution.mjs",
         "reason": "runtime JavaScript error: TypeError: Failed to execute 'call' on 'SubtleCrypto': Argument 1 can not be converted to a CryptoKey"
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-sign-verify-rsa.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-sign-verify-rsa.js",
+        "reason": "runtime JavaScript error: OperationError: The value of \"algorithm.saltLength\" is out of range. It must be >= 0 && <= 94. Received 95"
+      },
+      {
+        "test_relative_path": "test/parallel/test-webcrypto-wrap-unwrap.js",
+        "fixture_source_relative_path": "node26/test/parallel/test-webcrypto-wrap-unwrap.js",
+        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
       },
       {
         "test_relative_path": "test/parallel/test-webstream-encoding-inspect.js",
@@ -6474,11 +6279,6 @@
         "test_relative_path": "test/parallel/test-worker-type-check.js",
         "fixture_source_relative_path": "node26/test/parallel/test-worker-type-check.js",
         "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:"
-      },
-      {
-        "test_relative_path": "test/parallel/test-zlib-truncated.js",
-        "fixture_source_relative_path": "node26/test/parallel/test-zlib-truncated.js",
-        "reason": "runtime JavaScript error: AssertionError [ERR_ASSERTION]: Missing expected exception."
       },
       {
         "test_relative_path": "test/wasi/test-wasi-cant_dotdot.js",

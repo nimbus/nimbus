@@ -199,6 +199,7 @@ pub(super) struct InstalledRuntimeCapabilityPolicy {
     pub(super) env: RuntimeEnvPolicy,
     pub(super) permissions: PermissionsContainer,
     pub(super) node_conditions: Vec<String>,
+    pub(super) node_exec_argv: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -491,6 +492,7 @@ pub(crate) fn reset_runtime_contract(
         paths,
         env,
         node_conditions: limits.node_conditions.clone(),
+        node_exec_argv: limits.node_exec_argv.clone(),
     };
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
