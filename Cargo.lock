@@ -13651,7 +13651,6 @@ dependencies = [
  "icu_locale_core",
  "icu_provider",
  "indexmap 2.14.0",
- "itertools 0.12.1",
  "libc",
  "linux-raw-sys 0.12.1",
  "litemap",
