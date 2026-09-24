@@ -1323,15 +1323,15 @@ fn libsql_connection_settings() -> Option<(String, String, Option<String>, Optio
     match external_provider_fixture_mode(
         "libsql",
         "libSQL projection provider",
-        &["NIMBUS_LIBSQL_URL", "NIMBUS_LIBSQL_ADMIN_URL"],
+        &["NIMBUS_TEST_LIBSQL_URL", "NIMBUS_TEST_LIBSQL_ADMIN_URL"],
     ) {
         ExternalProviderFixtureMode::UseExplicit => Some((
-            std::env::var("NIMBUS_LIBSQL_URL")
+            std::env::var("NIMBUS_TEST_LIBSQL_URL")
                 .expect("fixture policy should require the libSQL primary URL"),
-            std::env::var("NIMBUS_LIBSQL_ADMIN_URL")
+            std::env::var("NIMBUS_TEST_LIBSQL_ADMIN_URL")
                 .expect("fixture policy should require the libSQL admin URL"),
-            std::env::var("NIMBUS_LIBSQL_AUTH_TOKEN").ok(),
-            std::env::var("NIMBUS_LIBSQL_ADMIN_AUTH_HEADER").ok(),
+            std::env::var("NIMBUS_TEST_LIBSQL_AUTH_TOKEN").ok(),
+            std::env::var("NIMBUS_TEST_LIBSQL_ADMIN_AUTH_HEADER").ok(),
         )),
         ExternalProviderFixtureMode::Omit => None,
     }
@@ -1342,10 +1342,11 @@ fn mysql_connection_string() -> Option<String> {
     match external_provider_fixture_mode(
         "mysql",
         "MySQL projection provider",
-        &["NIMBUS_MYSQL_URL"],
+        &["NIMBUS_TEST_MYSQL_URL"],
     ) {
         ExternalProviderFixtureMode::UseExplicit => Some(
-            std::env::var("NIMBUS_MYSQL_URL").expect("fixture policy should require the MySQL URL"),
+            std::env::var("NIMBUS_TEST_MYSQL_URL")
+                .expect("fixture policy should require the MySQL URL"),
         ),
         ExternalProviderFixtureMode::Omit => None,
     }

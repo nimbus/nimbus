@@ -88,7 +88,7 @@ const BENCHMARK_MYSQL_CLEANUP_TIMEOUT_SECS: u64 = 30;
 const MIXED_LOAD_SAMPLE_TIMEOUT_SECS: u64 = 120;
 const BENCHMARK_REOPEN_TIMEOUT_SECS: u64 = 30;
 const BENCH_MYSQL_URL_ENV: &str = "NIMBUS_BENCH_MYSQL_URL";
-const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
+const TEST_MYSQL_URL_ENV: &str = "NIMBUS_TEST_MYSQL_URL";
 
 static BENCH_COUNTER: AtomicU64 = AtomicU64::new(1);
 static MYSQL_CLEANUP_QUEUE: OnceLock<StdMutex<Vec<MySqlProviderConfig>>> = OnceLock::new();
@@ -121,7 +121,7 @@ impl BenchmarkConfig {
     fn from_args() -> BenchResult<Self> {
         let mut markdown_output = None;
         let mut workload_filter = None;
-        let mut mysql_url = env::var(MYSQL_URL_ENV)
+        let mut mysql_url = env::var(TEST_MYSQL_URL_ENV)
             .ok()
             .or_else(|| env::var(BENCH_MYSQL_URL_ENV).ok());
         let mut rtt_delay = Duration::from_millis(read_u64_override(
@@ -170,7 +170,7 @@ impl BenchmarkConfig {
 
         let Some(mysql_url) = mysql_url else {
             return Err(format!(
-                "set {MYSQL_URL_ENV} or pass --mysql-url for the benchmark target"
+                "set {TEST_MYSQL_URL_ENV} or pass --mysql-url for the benchmark target"
             )
             .into());
         };

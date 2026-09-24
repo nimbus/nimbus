@@ -50,13 +50,13 @@ run_postgres() {
 }
 
 run_mysql() {
-  require_env NIMBUS_MYSQL_URL
+  require_env NIMBUS_TEST_MYSQL_URL
   run_provider_filter '((package(nimbus-storage) or package(nimbus-engine)) and (test(/^(tests::)?mysql_/) or test(/^(tests::)?mysql_provider::/))) or (package(nimbus-system) and test(projection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete))'
 }
 
 run_libsql() {
-  require_env NIMBUS_LIBSQL_URL
-  require_env NIMBUS_LIBSQL_ADMIN_URL
+  require_env NIMBUS_TEST_LIBSQL_URL
+  require_env NIMBUS_TEST_LIBSQL_ADMIN_URL
   run_provider_filter '((package(nimbus-storage) or package(nimbus-engine)) and test(/^(tests::)?libsql_/)) or (package(nimbus-system) and test(projection_libsql_two_engine_takeover_rejects_late_old_document_schema_and_delete))'
 }
 

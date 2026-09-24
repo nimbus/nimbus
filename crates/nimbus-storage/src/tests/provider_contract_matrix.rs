@@ -473,7 +473,7 @@ impl Provider {
             }
             Self::MySql => {
                 if cfg!(feature = "mysql") {
-                    fixture_availability(&["NIMBUS_MYSQL_URL"])
+                    fixture_availability(&["NIMBUS_TEST_MYSQL_URL"])
                 } else {
                     Availability::FeatureDisabled("cargo feature `mysql` is off")
                 }
@@ -481,9 +481,9 @@ impl Provider {
             Self::Libsql => {
                 if cfg!(feature = "libsql") {
                     fixture_availability(&[
-                        "NIMBUS_LIBSQL_URL",
-                        "NIMBUS_LIBSQL_ADMIN_URL",
-                        "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER",
+                        "NIMBUS_TEST_LIBSQL_URL",
+                        "NIMBUS_TEST_LIBSQL_ADMIN_URL",
+                        "NIMBUS_TEST_LIBSQL_ADMIN_AUTH_HEADER",
                     ])
                 } else {
                     Availability::FeatureDisabled("cargo feature `libsql` is off")

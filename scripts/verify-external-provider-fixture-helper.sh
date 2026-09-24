@@ -175,9 +175,9 @@ printf 'provider=%s require=%s pg=%s mysql=%s libsql=%s admin=%s\n' \
   "${NIMBUS_PROVIDER_FILTER:-}" \
   "${NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES:-}" \
   "${NIMBUS_TEST_POSTGRES_URL:-}" \
-  "${NIMBUS_MYSQL_URL:-}" \
-  "${NIMBUS_LIBSQL_URL:-}" \
-  "${NIMBUS_LIBSQL_ADMIN_URL:-}" >>"${FAKE_RUNNER_LOG}"
+  "${NIMBUS_TEST_MYSQL_URL:-}" \
+  "${NIMBUS_TEST_LIBSQL_URL:-}" \
+  "${NIMBUS_TEST_LIBSQL_ADMIN_URL:-}" >>"${FAKE_RUNNER_LOG}"
 if [[ "${FAKE_TEST_INTERRUPT:-0}" == "1" ]]; then
   kill -TERM "${PPID}"
   exit 0
@@ -389,7 +389,7 @@ assert_contains "${missing_runtime_output}" "container runtime is not executable
 
 missing_url_output="${tmp_dir}/missing-url.out"
 set +e
-env -u NIMBUS_MYSQL_URL \
+env -u NIMBUS_TEST_MYSQL_URL \
   NIMBUS_PROVIDER_FILTER=mysql \
   NIMBUS_CARGO_NEXTEST_BIN="${fake_nextest}" \
   FAKE_RUNNER_LOG="${runner_log}" \
@@ -397,13 +397,13 @@ env -u NIMBUS_MYSQL_URL \
 missing_url_status=$?
 set -e
 [[ "${missing_url_status}" == "1" ]] || fail "missing URL returned ${missing_url_status}"
-assert_contains "${missing_url_output}" "set NIMBUS_MYSQL_URL"
+assert_contains "${missing_url_output}" "set NIMBUS_TEST_MYSQL_URL"
 
 : >"${runner_log}"
 zero_test_output="${tmp_dir}/zero-test.out"
 set +e
 NIMBUS_PROVIDER_FILTER=mysql \
-  NIMBUS_MYSQL_URL=mysql://fixture.invalid/test \
+  NIMBUS_TEST_MYSQL_URL=mysql://fixture.invalid/test \
   NIMBUS_CARGO_NEXTEST_BIN="${fake_nextest}" \
   FAKE_NEXTEST_EXIT=4 \
   FAKE_RUNNER_LOG="${runner_log}" \
@@ -418,7 +418,7 @@ assert_contains "${runner_log}" "package\\(nimbus-system\\)"
 focused_filter_output="${tmp_dir}/focused-filter.out"
 run_fixture "${focused_filter_output}" 0 \
   NIMBUS_PROVIDER_FILTER=mysql \
-  NIMBUS_MYSQL_URL=mysql://fixture.invalid/test \
+  NIMBUS_TEST_MYSQL_URL=mysql://fixture.invalid/test \
   'NIMBUS_EXTERNAL_PROVIDER_TEST_FILTER=test(mysql_committer_lease_concurrent_acquire_has_exactly_one_winner)' \
   NIMBUS_CARGO_NEXTEST_BIN="${fake_nextest}" \
   FAKE_RUNNER_LOG="${runner_log}" \
