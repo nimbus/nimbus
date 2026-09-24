@@ -18,8 +18,8 @@ use deno_resolver::npm::{CreateInNpmPkgCheckerOptions, DenoInNpmPackageChecker};
 use node_resolver::analyze::{CjsModuleExportAnalyzer, NodeCodeTranslator, NodeCodeTranslatorMode};
 use node_resolver::cache::NodeResolutionSys;
 use node_resolver::errors::{
-    NodeJsErrorCode, NodeResolveError, PackageFolderResolveError, PackageFolderResolveErrorKind,
-    PackageNotFoundError,
+    NodeJsErrorCode, NodeResolveError, NodeResolveErrorKind, PackageFolderResolveError,
+    PackageFolderResolveErrorKind, PackageNotFoundError, PackageResolveErrorKind,
 };
 use node_resolver::{
     DenoIsBuiltInNodeModuleChecker, InNpmPackageChecker, NodeResolution, NodeResolutionKind,
@@ -56,6 +56,17 @@ struct NativeAddonDisabledError {
 struct ModuleReadDeniedError {
     message: String,
     path: PathBuf,
+}
+
+// Node's ESM resolver reports a missing bare package with this message and
+// no `url` property (`ERR_MODULE_NOT_FOUND` without an exact URL).
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+#[error("Cannot find package '{package_name}' imported from {referrer}")]
+#[class(generic)]
+#[property("code" = "ERR_MODULE_NOT_FOUND")]
+struct NodePackageNotFoundError {
+    package_name: String,
+    referrer: String,
 }
 
 fn module_read_denied_error(path: &Path, error: impl std::fmt::Display) -> JsErrorBox {
@@ -460,7 +471,7 @@ fn resolve_node_target_with_resolver(
             {
                 return Ok(resolved);
             }
-            return Err(JsErrorBox::from_err(error));
+            return Err(node_resolve_error(error, &referrer_url, resolution_mode));
         }
     };
     match resolved {
@@ -475,6 +486,32 @@ fn resolve_node_target_with_resolver(
             Ok(ResolvedNodeTarget::Module { path, kind })
         }
     }
+}
+
+// node_resolver words a missing package for Deno ("Could not find package
+// ... from referrer ..."). An ESM import in Node reports the package name and
+// the referrer file path instead. CommonJS `require` has its own message,
+// which the deno_node require polyfill owns.
+fn node_resolve_error(
+    error: NodeResolveError,
+    referrer: &Url,
+    resolution_mode: NodeResolutionMode,
+) -> JsErrorBox {
+    if resolution_mode == NodeResolutionMode::Import
+        && let NodeResolveErrorKind::PackageResolve(error) = error.as_kind()
+        && let PackageResolveErrorKind::PackageFolderResolve(error) = error.as_kind()
+        && let PackageFolderResolveErrorKind::PackageNotFound(error) = error.as_kind()
+    {
+        let referrer = referrer
+            .to_file_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|()| referrer.to_string());
+        return JsErrorBox::from_err(NodePackageNotFoundError {
+            package_name: error.package_name.clone(),
+            referrer,
+        });
+    }
+    JsErrorBox::from_err(error)
 }
 
 fn should_try_package_subpath_without_exports(error: &NodeResolveError) -> bool {
@@ -1470,5 +1507,74 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn resolve_node_target_reports_missing_esm_packages_like_node() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let app_root = tempdir.path().join("app");
+        std::fs::create_dir_all(&app_root).expect("app root should build");
+        let bundle_path = app_root.join(".nimbus-codegen-test.mjs");
+        std::fs::write(&bundle_path, "export {};\n").expect("bundle should write");
+        let bundle = RuntimeBundle::new(&bundle_path);
+        let policy = RuntimePathPolicy::for_bundle(&bundle, &RuntimeLimits::tooling_node26())
+            .expect("policy should build");
+        let referrer_path = app_root.join("main.mjs");
+        let referrer = referrer_path.display().to_string();
+        let referrer_url = Url::from_file_path(&referrer_path)
+            .expect("referrer should convert to a file URL")
+            .to_string();
+
+        for (referrer, specifier, package_name) in [
+            (&referrer, "missing-package", "missing-package"),
+            (&referrer, "missing-package/sub/path.js", "missing-package"),
+            (
+                &referrer,
+                "@missing-scope/package/sub",
+                "@missing-scope/package",
+            ),
+            (&referrer, "stream/iter", "stream"),
+            (&referrer_url, "missing-package", "missing-package"),
+        ] {
+            let error = resolve_node_target_with_user_conditions(
+                &policy,
+                specifier,
+                referrer,
+                node_resolver::ResolutionMode::Import,
+                &[],
+                &[],
+            )
+            .expect_err("a missing package should not resolve");
+            assert_error_code(&error, "ERR_MODULE_NOT_FOUND");
+            assert_eq!(
+                error.get_message(),
+                format!(
+                    "Cannot find package '{package_name}' imported from {}",
+                    referrer_path.display()
+                )
+            );
+            assert!(
+                !error
+                    .get_additional_properties()
+                    .any(|(key, _)| key == "url"),
+                "a missing package has no exact URL"
+            );
+        }
+
+        let error = resolve_node_target_with_user_conditions(
+            &policy,
+            "missing-package",
+            &referrer,
+            node_resolver::ResolutionMode::Require,
+            &[],
+            &[],
+        )
+        .expect_err("a missing package should not resolve");
+        assert_error_code(&error, "ERR_MODULE_NOT_FOUND");
+        assert!(
+            !error.get_message().starts_with("Cannot find package"),
+            "require keeps the resolver error for the require polyfill: {}",
+            error.get_message()
+        );
     }
 }
