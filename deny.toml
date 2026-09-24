@@ -139,7 +139,7 @@ skip-tree = [
     { crate = "mysql_async@0.36.2", reason = "The MySQL provider stack carries distinct protocol and crypto support crates." },
     { crate = "tokio-postgres@0.7.18", reason = "The Postgres provider stack carries a distinct protocol and crypto support lane." },
     { crate = "bson@3.1.0", reason = "The MongoDB adapter stack currently carries its own BSON/rand support lane." },
-    { crate = "deno_core@0.411.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
+    { crate = "deno_core@0.412.0", reason = "The embedded V8 runtime stack carries its own support-ecosystem crates." },
 ]
 
 [sources]
