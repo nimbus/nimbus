@@ -17,7 +17,7 @@ pub(super) use nimbus_core::{
     TableState, TenantEventKind, TenantId, Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 
-pub(super) const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
+pub(super) const TEST_MYSQL_URL_ENV: &str = "NIMBUS_TEST_MYSQL_URL";
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_test_provider<F, Fut>(test: F)
@@ -66,9 +66,9 @@ pub(super) async fn with_test_provider_and_fault_injector<F, Fut>(
 }
 
 pub(super) async fn test_connection() -> Option<String> {
-    match external_provider_fixture_mode("mysql", "MySQL storage provider", &[MYSQL_URL_ENV]) {
+    match external_provider_fixture_mode("mysql", "MySQL storage provider", &[TEST_MYSQL_URL_ENV]) {
         ExternalProviderFixtureMode::UseExplicit => {
-            Some(env::var(MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
+            Some(env::var(TEST_MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
         }
         ExternalProviderFixtureMode::Omit => None,
     }

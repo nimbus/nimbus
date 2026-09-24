@@ -17,10 +17,10 @@ impl BenchmarkConfig {
         let mut markdown_output = None;
         let mut workload_filters = Vec::new();
         let mut local_cache_encryption = LocalCacheEncryptionMode::Disabled;
-        let mut primary_url = env::var(LIBSQL_URL_ENV).ok();
-        let mut auth_token = env::var(LIBSQL_AUTH_TOKEN_ENV).ok();
-        let mut admin_api_url = env::var(LIBSQL_ADMIN_URL_ENV).ok();
-        let mut admin_auth_header = env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok();
+        let mut primary_url = env::var(TEST_LIBSQL_URL_ENV).ok();
+        let mut auth_token = env::var(TEST_LIBSQL_AUTH_TOKEN_ENV).ok();
+        let mut admin_api_url = env::var(TEST_LIBSQL_ADMIN_URL_ENV).ok();
+        let mut admin_auth_header = env::var(TEST_LIBSQL_ADMIN_AUTH_HEADER_ENV).ok();
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -83,13 +83,13 @@ impl BenchmarkConfig {
 
         let Some(primary_url) = primary_url else {
             return Err(format!(
-                "set {LIBSQL_URL_ENV} or pass --libsql-url for the benchmark target"
+                "set {TEST_LIBSQL_URL_ENV} or pass --libsql-url for the benchmark target"
             )
             .into());
         };
         let Some(admin_api_url) = admin_api_url else {
             return Err(format!(
-                "set {LIBSQL_ADMIN_URL_ENV} or pass --libsql-admin-url for the benchmark target"
+                "set {TEST_LIBSQL_ADMIN_URL_ENV} or pass --libsql-admin-url for the benchmark target"
             )
             .into());
         };

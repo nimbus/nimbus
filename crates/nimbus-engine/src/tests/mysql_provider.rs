@@ -19,7 +19,7 @@ use crate::{
     ProviderCredentials, TenantProviderConfig, TenantRoutingConfig,
 };
 
-const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
+const TEST_MYSQL_URL_ENV: &str = "NIMBUS_TEST_MYSQL_URL";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test(flavor = "multi_thread")]
@@ -783,9 +783,9 @@ where
 }
 
 async fn test_connection() -> Option<String> {
-    match external_provider_fixture_mode("mysql", "MySQL engine provider", &[MYSQL_URL_ENV]) {
+    match external_provider_fixture_mode("mysql", "MySQL engine provider", &[TEST_MYSQL_URL_ENV]) {
         ExternalProviderFixtureMode::UseExplicit => {
-            Some(env::var(MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
+            Some(env::var(TEST_MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
         }
         ExternalProviderFixtureMode::Omit => None,
     }

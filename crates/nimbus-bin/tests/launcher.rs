@@ -8,13 +8,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 ///
 /// `nimbus start` reads its configuration from `NIMBUS_*` variables as well
 /// as from flags, so any such variable in the parent environment silently
-/// changes what the child does. The coverage workflow sets provider fixture
-/// URLs at job level for the suites that need a live provider, and its
-/// `rest` shard carries `nimbus-bin`. Inherited by this launcher child,
-/// `NIMBUS_MYSQL_URL` and the libSQL pair made it refuse to start at all:
-/// "External provider config requires --tenant-provider". These tests assert
-/// the launcher's own process contract, so the child gets the flags they
-/// pass and nothing else.
+/// changes what the child does. An operator setting such as
+/// `NIMBUS_MYSQL_URL` in the parent makes the child refuse to start:
+/// "External provider config requires --tenant-provider". Provider fixtures
+/// use the separate `NIMBUS_TEST_*` names for this reason, but a developer
+/// shell can still carry operator settings. These tests assert the
+/// launcher's own process contract, so the child gets the flags they pass
+/// and nothing else.
 fn nimbus_command() -> Command {
     let mut command = Command::new(nimbus_bin());
     for key in nimbus_config_vars(std::env::vars_os().map(|(key, _)| key)) {

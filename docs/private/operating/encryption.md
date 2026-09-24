@@ -196,8 +196,8 @@ make bench-embedded-providers \
 Replica-connected SQLite with encrypted local cache:
 
 ```bash
-NIMBUS_LIBSQL_URL='http://127.0.0.1:18080' \
-NIMBUS_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \
+NIMBUS_TEST_LIBSQL_URL='http://127.0.0.1:18080' \
+NIMBUS_TEST_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \
 make bench-libsql-replica-provider \
   WORKLOADS='point-read indexed-query composite-indexed-query barrier-refresh peer-catch-up' \
   ENCRYPTION=temp-master-key-file \

@@ -67,6 +67,14 @@ nextest so a stale filter cannot report green with zero selected tests. Each
 provider lane includes storage, engine, and the corresponding `nimbus-system`
 two-engine projection contract.
 
+Fixture variables use the `NIMBUS_TEST_*` names: `NIMBUS_TEST_POSTGRES_URL`,
+`NIMBUS_TEST_MYSQL_URL`, `NIMBUS_TEST_LIBSQL_URL`,
+`NIMBUS_TEST_LIBSQL_ADMIN_URL`, and the optional
+`NIMBUS_TEST_LIBSQL_AUTH_TOKEN` and `NIMBUS_TEST_LIBSQL_ADMIN_AUTH_HEADER`.
+Never export a fixture under an operator name such as `NIMBUS_MYSQL_URL`.
+`nimbus start` reads those names as configuration, so every in-process start
+test in the same job would see an external provider and fail.
+
 Rust provider tests never start Testcontainers implicitly. With all required
 provider URLs present they use the shared fixture and isolate each test by a
 unique PostgreSQL schema, MySQL database prefix, or libSQL namespace. With

@@ -10,7 +10,7 @@ Runs the reproducible encryption-at-rest benchmark capture flow:
   2. embedded providers with manifest-backed local encryption
   3. libsql replica provider local-cache reopen and refresh drills with
      encrypted local cache, when
-     NIMBUS_LIBSQL_URL and NIMBUS_LIBSQL_ADMIN_URL are set
+     NIMBUS_TEST_LIBSQL_URL and NIMBUS_TEST_LIBSQL_ADMIN_URL are set
 
 Outputs:
   - system-info.log
@@ -130,8 +130,8 @@ run_logged \
   "$embedded_encrypted_log" \
   make bench-embedded-providers REPORT="$embedded_encrypted_report" ENCRYPTION=temp-master-key-file
 
-libsql_status="skipped: set NIMBUS_LIBSQL_URL and NIMBUS_LIBSQL_ADMIN_URL to capture encrypted libsql replica evidence"
-if [[ -n "${NIMBUS_LIBSQL_URL:-}" && -n "${NIMBUS_LIBSQL_ADMIN_URL:-}" ]]; then
+libsql_status="skipped: set NIMBUS_TEST_LIBSQL_URL and NIMBUS_TEST_LIBSQL_ADMIN_URL to capture encrypted libsql replica evidence"
+if [[ -n "${NIMBUS_TEST_LIBSQL_URL:-}" && -n "${NIMBUS_TEST_LIBSQL_ADMIN_URL:-}" ]]; then
   run_logged \
     "libsql replica benchmark with encrypted local cache" \
     "$libsql_log" \

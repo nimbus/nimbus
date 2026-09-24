@@ -28,10 +28,10 @@ pub(super) use nimbus_core::{
 };
 pub(super) use serial_test::serial;
 
-pub(super) const LIBSQL_URL_ENV: &str = "NIMBUS_LIBSQL_URL";
-pub(super) const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
-pub(super) const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
-pub(super) const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
+pub(super) const TEST_LIBSQL_URL_ENV: &str = "NIMBUS_TEST_LIBSQL_URL";
+pub(super) const TEST_LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_TEST_LIBSQL_AUTH_TOKEN";
+pub(super) const TEST_LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_TEST_LIBSQL_ADMIN_URL";
+pub(super) const TEST_LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_TEST_LIBSQL_ADMIN_AUTH_HEADER";
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_test_provider<F, Fut>(test: F)
@@ -111,15 +111,15 @@ pub(super) async fn test_connection() -> Option<TestConnection> {
     match external_provider_fixture_mode(
         "libsql",
         "libSQL storage provider",
-        &[LIBSQL_URL_ENV, LIBSQL_ADMIN_URL_ENV],
+        &[TEST_LIBSQL_URL_ENV, TEST_LIBSQL_ADMIN_URL_ENV],
     ) {
         ExternalProviderFixtureMode::UseExplicit => Some(TestConnection {
-            primary_url: env::var(LIBSQL_URL_ENV)
+            primary_url: env::var(TEST_LIBSQL_URL_ENV)
                 .expect("fixture policy should require the libSQL primary URL"),
-            auth_token: env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
-            admin_api_url: env::var(LIBSQL_ADMIN_URL_ENV)
+            auth_token: env::var(TEST_LIBSQL_AUTH_TOKEN_ENV).ok(),
+            admin_api_url: env::var(TEST_LIBSQL_ADMIN_URL_ENV)
                 .expect("fixture policy should require the libSQL admin URL"),
-            admin_auth_header: env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
+            admin_auth_header: env::var(TEST_LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
         }),
         ExternalProviderFixtureMode::Omit => None,
     }

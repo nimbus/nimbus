@@ -27,7 +27,7 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
     markdown.push_str("Generated with:\n\n");
     markdown.push_str("```bash\n");
     markdown.push_str(
-        "NIMBUS_MYSQL_URL='<connection-string>' make bench-mysql-provider REPORT=docs/research/mysql-provider-benchmark-report.md\n",
+        "NIMBUS_TEST_MYSQL_URL='<connection-string>' make bench-mysql-provider REPORT=docs/research/mysql-provider-benchmark-report.md\n",
     );
     markdown.push_str("```\n\n");
     markdown.push_str("## Methodology\n\n");

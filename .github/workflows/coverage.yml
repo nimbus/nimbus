@@ -183,15 +183,15 @@ jobs:
     env:
       NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES: "1"
       NIMBUS_TEST_POSTGRES_URL: host=127.0.0.1 port=5432 user=postgres password=postgres dbname=postgres
-      NIMBUS_MYSQL_URL: mysql://root@127.0.0.1:3306/test
+      NIMBUS_TEST_MYSQL_URL: mysql://root@127.0.0.1:3306/test
       # PW5: localhost (not 127.0.0.1) defensively avoids sqld's
       # subdomain-from-Host-header namespace routing. v0.24.26 had a bug
       # where with --enable-namespaces the server extracted the first
       # dotted label ("127" from "127.0.0.1") as the namespace and
       # ignored the x-namespace header. v0.24.33 fixed it, but a
       # single-label host (`localhost`) never triggers that codepath.
-      NIMBUS_LIBSQL_URL: http://localhost:18080
-      NIMBUS_LIBSQL_ADMIN_URL: http://localhost:18081
+      NIMBUS_TEST_LIBSQL_URL: http://localhost:18080
+      NIMBUS_TEST_LIBSQL_ADMIN_URL: http://localhost:18081
       # The reducer downloads every shard artifact concurrently into one
       # directory (`merge-multiple: true`), so a filename produced by two
       # shards is two writers racing on one path. cargo-llvm-cov's default

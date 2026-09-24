@@ -311,11 +311,11 @@ export_provider_environment() {
       export NIMBUS_TEST_POSTGRES_URL="host=127.0.0.1 port=${ports} user=postgres password=fixture-postgres dbname=postgres"
       ;;
     mysql)
-      export NIMBUS_MYSQL_URL="mysql://root:fixture-mysql-root@127.0.0.1:${ports}/test"
+      export NIMBUS_TEST_MYSQL_URL="mysql://root:fixture-mysql-root@127.0.0.1:${ports}/test"
       ;;
     libsql)
-      export NIMBUS_LIBSQL_URL="http://localhost:${ports%% *}"
-      export NIMBUS_LIBSQL_ADMIN_URL="http://localhost:${ports##* }"
+      export NIMBUS_TEST_LIBSQL_URL="http://localhost:${ports%% *}"
+      export NIMBUS_TEST_LIBSQL_ADMIN_URL="http://localhost:${ports##* }"
       ;;
   esac
 }

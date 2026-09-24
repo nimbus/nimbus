@@ -595,12 +595,16 @@ mod tests {
             _ = wait_for_rewire => {}
         }
 
-        // ...and then installs it, exactly like boot.
-        let installed_marker = temp.path().join("node_modules/firebase/package.json");
+        // ...and then installs it, exactly like boot. Wait for the
+        // dependency state, not for a file inside `node_modules`: npm writes
+        // package files mid-install, and the state is persisted only after
+        // `npm install` exits successfully. Returning earlier drops the
+        // adoption future while npm still runs, which orphans the npm process.
+        let dependency_state = temp.path().join(".nimbus/cache/node/dependency-state.json");
         let wait_for_install = async {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
             loop {
-                if installed_marker.is_file() {
+                if dependency_state.is_file() {
                     break;
                 }
                 assert!(
@@ -620,6 +624,12 @@ mod tests {
                 .join(".nimbus/packages/firebase/package.json")
                 .is_file(),
             "the drop-in package payload must be provisioned"
+        );
+        assert!(
+            temp.path()
+                .join("node_modules/firebase/package.json")
+                .is_file(),
+            "npm must install the provisioned firebase package"
         );
         assert!(
             watch_roots_rx.borrow().is_empty(),

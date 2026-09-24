@@ -36,8 +36,8 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
     markdown.push_str("# Replica-Connected SQLite Provider Benchmark Report\n\n");
     markdown.push_str("Generated with:\n\n");
     markdown.push_str("```bash\n");
-    markdown.push_str("NIMBUS_LIBSQL_URL='http://127.0.0.1:18080' \\\n");
-    markdown.push_str("NIMBUS_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \\\n");
+    markdown.push_str("NIMBUS_TEST_LIBSQL_URL='http://127.0.0.1:18080' \\\n");
+    markdown.push_str("NIMBUS_TEST_LIBSQL_ADMIN_URL='http://127.0.0.1:18081' \\\n");
     markdown.push_str("make bench-libsql-replica-provider");
     if !config.workload_filters.is_empty() {
         let workload_values = config
