@@ -1894,6 +1894,7 @@ fn execute_upstream_node_compat_test_with_extra_files_raw(
     });
     let mut limits = runtime_limits_for_node_compat_fixture(test_relative_path, lane);
     limits.node_conditions = fixture_requested_node_conditions(&fixture_node_options);
+    limits.node_exec_argv = fixture_node_options.clone();
     if !fixture_node_options.is_empty() {
         grant_node_options_read_for_fixture_flags(&mut limits);
     }

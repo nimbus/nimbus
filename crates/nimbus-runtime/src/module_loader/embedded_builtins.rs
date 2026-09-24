@@ -127,6 +127,7 @@ pub(super) fn supports_extension_backed_node_builtin(
             | "node:tty"
             | "node:stream"
             | "node:stream/consumers"
+            | "node:stream/iter"
             | "node:stream/promises"
             | "node:stream/web"
             | "node:dns"
@@ -143,5 +144,6 @@ pub(super) fn supports_extension_backed_node_builtin(
             | "node:wasi"
             | "node:worker_threads"
             | "node:zlib"
+            | "node:zlib/iter"
     )
 }

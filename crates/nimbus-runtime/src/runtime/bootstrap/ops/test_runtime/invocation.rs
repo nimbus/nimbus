@@ -70,6 +70,9 @@ pub(super) fn prepare_runtime_test_spawn_invocation(
         Vec::new()
     };
     let mut limits = contract.limits;
+    // The child is a new Node process: its own options decide which
+    // experimental builtins resolve, not the parent's.
+    limits.node_exec_argv = plan.exec_argv.clone();
     if let Some(source_bundle_root) = plan.source_bundle_root.as_ref()
         && !plan.permission_restricted
     {

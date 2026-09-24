@@ -28,6 +28,7 @@ pub(in super::super) fn op_nimbus_runtime_require_resolve(
     let capability_policy = state.borrow::<InstalledRuntimeCapabilityPolicy>();
     let path_policy = capability_policy.paths.clone();
     let node_conditions = capability_policy.node_conditions.clone();
+    let node_exec_argv = capability_policy.node_exec_argv.clone();
     let referrer = payload
         .referrer
         .unwrap_or_else(|| path_policy.cwd().display().to_string());
@@ -37,6 +38,7 @@ pub(in super::super) fn op_nimbus_runtime_require_resolve(
         &referrer,
         node_resolver::ResolutionMode::Require,
         &node_conditions,
+        &node_exec_argv,
     )?;
     let response = match resolved {
         ResolvedNodeTarget::BuiltIn { module_name } => {

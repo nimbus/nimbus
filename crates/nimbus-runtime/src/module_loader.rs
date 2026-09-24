@@ -96,6 +96,7 @@ pub struct RestrictedModuleLoader {
     compatibility_target: RuntimeCompatibilityTarget,
     guest_semantics: RuntimeGuestSemantics,
     node_conditions: Vec<String>,
+    node_exec_argv: Vec<String>,
     code_cache: Arc<BundleModuleCodeCache>,
     loader_hook_registry: Option<LoaderHookRegistry>,
 }
@@ -106,6 +107,7 @@ impl RestrictedModuleLoader {
         compatibility_target: RuntimeCompatibilityTarget,
         guest_semantics: RuntimeGuestSemantics,
         node_conditions: Vec<String>,
+        node_exec_argv: Vec<String>,
         code_cache: Arc<BundleModuleCodeCache>,
         loader_hook_registry: Option<LoaderHookRegistry>,
     ) -> Self {
@@ -114,6 +116,7 @@ impl RestrictedModuleLoader {
             compatibility_target,
             guest_semantics,
             node_conditions,
+            node_exec_argv,
             code_cache,
             loader_hook_registry,
         };
@@ -257,6 +260,7 @@ impl RestrictedModuleLoader {
                     module_specifier,
                     &source,
                     self.compatibility_target,
+                    &self.node_exec_argv,
                 )
                 .await?
                 .into_bytes();
@@ -308,6 +312,7 @@ impl RestrictedModuleLoader {
                 referrer,
                 node_resolver::ResolutionMode::Import,
                 Some(conditions),
+                &self.node_exec_argv,
             )?,
             None => resolve_node_target_with_user_conditions(
                 &self.path_policy,
@@ -315,6 +320,7 @@ impl RestrictedModuleLoader {
                 referrer,
                 node_resolver::ResolutionMode::Import,
                 &self.node_conditions,
+                &self.node_exec_argv,
             )?,
         };
         match resolved {
