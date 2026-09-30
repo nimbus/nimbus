@@ -499,14 +499,11 @@ impl Provider {
 /// because that function panics on a partially configured fixture and this
 /// gate must report rather than abort.
 fn fixture_availability(required_env: &[&str]) -> Availability {
-    if std::env::var_os(crate::provider_test_fixtures::DISABLE_EXTERNAL_PROVIDER_FIXTURES_ENV)
-        .is_some()
-    {
+    let inputs = crate::config::StorageTestHarness::from_env().external_providers;
+    if inputs.implicit_disabled {
         return Availability::FixtureAbsent("external provider fixtures disabled for this run");
     }
-    let missing = required_env
-        .iter()
-        .any(|name| std::env::var_os(name).is_none_or(|value| value.is_empty()));
+    let missing = required_env.iter().any(|name| !inputs.is_nonempty(name));
     if missing {
         Availability::FixtureAbsent("external provider fixture environment is not configured")
     } else {
@@ -589,12 +586,15 @@ fn report() -> String {
     lines.join("\n")
 }
 
+fn manifest_dir() -> std::path::PathBuf {
+    crate::config::StorageTestHarness::from_env()
+        .required_manifest_dir()
+        .to_path_buf()
+}
+
 /// Every `.rs` file under the crate's `src/tests` tree, plus `tests.rs`.
 fn test_tree_sources() -> Vec<String> {
-    let src_dir = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-storage tests")
-        .join("src");
+    let src_dir = manifest_dir().join("src");
 
     let mut sources =
         vec![std::fs::read_to_string(src_dir.join("tests.rs")).expect("tests.rs must be readable")];
@@ -616,19 +616,13 @@ fn test_tree_sources() -> Vec<String> {
 
 /// The production `diagnostics` source that publishes each store's profile.
 fn diagnostics_source() -> String {
-    let path = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-storage tests")
-        .join("src/diagnostics.rs");
+    let path = manifest_dir().join("src/diagnostics.rs");
     std::fs::read_to_string(&path).expect("diagnostics.rs must be readable")
 }
 
 /// The store types one macro in `traits/provider_impls.rs` registers.
 fn registered_store_types(macro_name: &str) -> Vec<String> {
-    let path = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-storage tests")
-        .join("src/traits/provider_impls.rs");
+    let path = manifest_dir().join("src/traits/provider_impls.rs");
     let source = std::fs::read_to_string(&path).expect("provider_impls.rs must be readable");
 
     let needle = format!("{macro_name}!(");

@@ -1,7 +1,5 @@
 use super::*;
 
-const STORAGE_CONFORMANCE_SEED_ENV: &str = "NIMBUS_STORAGE_CONFORMANCE_SEED";
-
 fn next_seeded_u64(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
     *seed
@@ -796,9 +794,8 @@ fn canonical_digest_generated_history_matches_redb_sqlite_pitr_cdc_and_rebuild_p
 
 #[test]
 fn storage_conformance_required_seed_corpus_matches_model() {
-    let seed = std::env::var(STORAGE_CONFORMANCE_SEED_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
+    let seed = crate::config::StorageTestHarness::from_env()
+        .storage_conformance_seed
         .unwrap_or(67);
     let history = GeneratedTaskHistory::seeded("storage-conformance", seed, 18);
     assert_generated_task_history_matches_model_on_storage_surface(

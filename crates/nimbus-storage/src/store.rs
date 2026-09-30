@@ -24,6 +24,7 @@ use redb::{Database, ReadTransaction, TableDefinition};
 use self::scan::ScanMetrics;
 #[cfg(test)]
 pub(crate) use self::scan::ScanStats;
+use crate::config::StorageProfileConfig;
 use crate::simulation::FaultInjector;
 use crate::{
     MaterializedVerificationGeneration, MaterializedVerificationInvalidator, RetentionFloor,
@@ -104,6 +105,7 @@ pub struct TenantStore {
     pub(crate) retention_floor: Arc<RetentionFloor>,
     pub(crate) materialized_verification: MaterializedVerificationInvalidator,
     scan_metrics: Arc<ScanMetrics>,
+    profile: StorageProfileConfig,
 }
 
 impl TenantStore {
@@ -164,6 +166,7 @@ pub struct TenantReadSnapshot {
     pub(crate) retention_floor: Arc<RetentionFloor>,
     pub(crate) fault_injector: Arc<dyn FaultInjector>,
     scan_metrics: Arc<ScanMetrics>,
+    profile: StorageProfileConfig,
 }
 
 /// Result of a write task plus the optional durable mutation commit it produced.

@@ -1,4 +1,3 @@
-pub(super) use std::env;
 pub(super) use std::future::Future;
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,7 +16,7 @@ pub(super) use nimbus_core::{
     TableState, TenantEventKind, TenantId, Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 
-pub(super) const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
+pub(super) use crate::config::MYSQL_URL_ENV;
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_test_provider<F, Fut>(test: F)
@@ -67,9 +66,12 @@ pub(super) async fn with_test_provider_and_fault_injector<F, Fut>(
 
 pub(super) async fn test_connection() -> Option<String> {
     match external_provider_fixture_mode("mysql", "MySQL storage provider", &[MYSQL_URL_ENV]) {
-        ExternalProviderFixtureMode::UseExplicit => {
-            Some(env::var(MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
-        }
+        ExternalProviderFixtureMode::UseExplicit => Some(
+            crate::config::StorageTestHarness::from_env()
+                .external_providers
+                .mysql_url
+                .expect("fixture policy should require the MySQL URL"),
+        ),
         ExternalProviderFixtureMode::Omit => None,
     }
 }

@@ -3,6 +3,7 @@
 pub mod async_storage;
 pub mod changefeed;
 pub mod commit_log;
+pub mod config;
 pub mod diagnostics;
 pub mod document_codec;
 pub mod encrypted_redb;
@@ -53,6 +54,7 @@ pub use async_storage::{
 pub use changefeed::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedEvent, ChangefeedHandle, ChangefeedPage,
 };
+pub use config::{StorageConfig, StorageProfileConfig};
 pub use diagnostics::{
     AdapterSupportDiagnostic, BackendParityDiagnostic, BackendParityState,
     DocumentVersionStorageDiagnostic, HistoricalQueryAdmissionDiagnostic,

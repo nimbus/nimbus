@@ -119,6 +119,7 @@ impl LibsqlReplicaProvider {
             remote_fault_injector,
             replica_fault_injector,
             tenant_read_parallelism: LIBSQL_TENANT_READ_PARALLELISM,
+            storage_profile: StorageProfileConfig::default(),
             metadata_session,
             scheduler_probe_sessions: Arc::new(Mutex::new(BoundedSchedulerProbeSessions::new(
                 LIBSQL_SCHEDULER_PROBE_SESSION_LIMIT,
@@ -128,6 +129,12 @@ impl LibsqlReplicaProvider {
         };
         provider.ensure_metadata_namespace().await?;
         Ok(provider)
+    }
+
+    /// Opens every local replica cache with the profiling from `config`.
+    pub fn with_storage_config(mut self, config: StorageConfig) -> Self {
+        self.storage_profile = config.profile;
+        self
     }
 
     pub fn metadata_namespace(&self) -> &str {
@@ -626,6 +633,7 @@ impl LibsqlReplicaProvider {
         let id_source = self.id_source.clone();
         let path_for_open = replica_path.clone();
         let read_parallelism = self.tenant_read_parallelism;
+        let profile = self.storage_profile;
         let provider = self.encryption_provider.clone();
         let subject = self.replica_cache_subject(&registration.tenant_id);
         let local_store = self
@@ -645,6 +653,7 @@ impl LibsqlReplicaProvider {
                         fault_injector,
                         read_parallelism,
                         id_source,
+                        profile,
                     )
                 } else {
                     SqliteTenantStore::open_with_simulation_and_max_read_connections_and_id_source(
@@ -653,6 +662,7 @@ impl LibsqlReplicaProvider {
                         fault_injector,
                         read_parallelism,
                         id_source,
+                        profile,
                     )
                 }
             })

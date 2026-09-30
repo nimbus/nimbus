@@ -1,22 +1,33 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::future::Future;
 
 use nimbus_core::{Error, Result};
 
+use crate::config::{StorageTestHarness, VERIFICATION_CASE_FILTER_ENV, VERIFICATION_SHARD_ENV};
+
 use super::generated::{GeneratedTaskHistory, GeneratedTaskHistoryStep, GeneratedTaskRecord};
 
-pub const VERIFICATION_CASE_FILTER_ENV: &str = "NIMBUS_VERIFY_CASE";
-pub const VERIFICATION_SHARD_ENV: &str = "NIMBUS_HARNESS_SHARD";
-
-fn parse_shard_env() -> Result<Option<(usize, usize)>> {
-    match std::env::var(VERIFICATION_SHARD_ENV) {
-        Ok(value) if value.is_empty() => Ok(None),
-        Ok(value) => parse_shard_spec(&value).map(Some),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(error) => Err(Error::InvalidInput(format!(
-            "failed to read {VERIFICATION_SHARD_ENV}: {error}"
-        ))),
+fn parse_shard_selector(selector: Option<OsString>) -> Result<Option<(usize, usize)>> {
+    match utf8_harness_input(VERIFICATION_SHARD_ENV, selector)? {
+        Some(value) if value.is_empty() => Ok(None),
+        Some(value) => parse_shard_spec(&value).map(Some),
+        None => Ok(None),
     }
+}
+
+/// Reads a harness selector. A value that is not valid UTF-8 is an error, so
+/// a malformed selector never widens the selected cases.
+fn utf8_harness_input(key: &str, value: Option<OsString>) -> Result<Option<String>> {
+    value
+        .map(|value| {
+            value.into_string().map_err(|value| {
+                Error::InvalidInput(format!(
+                    "failed to read {key}: environment variable was not valid unicode: {value:?}"
+                ))
+            })
+        })
+        .transpose()
 }
 
 fn parse_shard_spec(value: &str) -> Result<(usize, usize)> {
@@ -215,20 +226,17 @@ pub fn filter_generated_task_history_seed_corpus(
 pub fn selected_generated_task_history_seed_corpus(
     mode: VerificationHarnessMode,
 ) -> Result<Vec<GeneratedTaskHistorySeedCase>> {
-    let filter = match std::env::var(VERIFICATION_CASE_FILTER_ENV) {
-        Ok(filter) => Some(filter),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(error) => {
-            return Err(Error::InvalidInput(format!(
-                "failed to read {VERIFICATION_CASE_FILTER_ENV}: {error}"
-            )));
-        }
-    };
+    let StorageTestHarness {
+        verify_case,
+        harness_shard,
+        ..
+    } = StorageTestHarness::from_env();
+    let filter = utf8_harness_input(VERIFICATION_CASE_FILTER_ENV, verify_case)?;
     let cases = filter_generated_task_history_seed_corpus(
         generated_task_history_seed_corpus(mode),
         filter.as_deref(),
     )?;
-    let shard = parse_shard_env()?;
+    let shard = parse_shard_selector(harness_shard)?;
     Ok(apply_shard(cases, shard))
 }
 

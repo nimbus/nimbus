@@ -6,7 +6,7 @@ use nimbus_core::{Error, IdSource, Result, SystemIdSource, TenantId, WallClock};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
 use crate::sqlite::{SqliteTenantStore, SqliteWriteTransaction};
-use crate::{FaultInjector, TenantWriteCommit};
+use crate::{FaultInjector, StorageConfig, TenantWriteCommit};
 use nimbus_crypto::{
     KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
 };
@@ -31,6 +31,7 @@ pub struct EmbeddedSqliteProvider {
     id_source: Arc<dyn IdSource>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
+    storage_config: StorageConfig,
 }
 
 #[derive(Clone)]
@@ -129,7 +130,14 @@ impl EmbeddedSqliteProvider {
             id_source,
             storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
+            storage_config: StorageConfig::default(),
         })
+    }
+
+    /// Opens every tenant store with the profiling from `config`.
+    pub fn with_storage_config(mut self, config: StorageConfig) -> Self {
+        self.storage_config = config;
+        self
     }
 
     /// Returns whether this provider uses encryption for tenant databases.
@@ -247,6 +255,7 @@ impl EmbeddedSqliteProvider {
             .max(crate::sqlite::MIN_SQLITE_READ_CONNECTIONS);
         let provider = self.encryption_provider.clone();
         let id_source = self.id_source.clone();
+        let profile = self.storage_config.profile;
         let store = self
             .storage_handle
             .spawn_blocking(move || {
@@ -269,6 +278,7 @@ impl EmbeddedSqliteProvider {
                         fault_injector,
                         read_parallelism,
                         id_source,
+                        profile,
                     )
                 } else {
                     SqliteTenantStore::open_with_simulation_and_max_read_connections_and_id_source(
@@ -277,6 +287,7 @@ impl EmbeddedSqliteProvider {
                         fault_injector,
                         read_parallelism,
                         id_source,
+                        profile,
                     )
                 }
             })

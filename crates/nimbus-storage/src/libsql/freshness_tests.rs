@@ -74,6 +74,7 @@ async fn test_replica(refresh_override: TestRefreshOverride) -> TestReplica {
             Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
             2,
+            StorageProfileConfig::default(),
         )
         .expect("local replica cache should open"),
     );
@@ -108,6 +109,7 @@ async fn test_replica(refresh_override: TestRefreshOverride) -> TestReplica {
         remote_fault_injector: Arc::new(NoopFaultInjector),
         replica_fault_injector: Arc::new(NoopFaultInjector),
         tenant_read_parallelism: 1,
+        storage_profile: StorageProfileConfig::default(),
         metadata_session,
         scheduler_probe_sessions: Arc::new(Mutex::new(BoundedSchedulerProbeSessions::new(
             LIBSQL_SCHEDULER_PROBE_SESSION_LIMIT,

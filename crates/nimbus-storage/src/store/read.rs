@@ -5,6 +5,7 @@ use nimbus_core::{
 use redb::{ReadableTable, TableError};
 use std::time::{Duration, Instant};
 
+use crate::config::StorageProfileConfig;
 use crate::document_codec::decode_document_msgpack;
 use crate::keys::{document_id_prefix_key, document_key, prefix_end, table_prefix};
 use crate::{TableBackendLayout, TableIdentityDiagnostic};
@@ -24,6 +25,7 @@ impl TenantStore {
             retention_floor: self.retention_floor.clone(),
             fault_injector: self.fault_injector.clone(),
             scan_metrics: self.scan_metrics.clone(),
+            profile: self.profile,
         };
         snapshot
             .retention_floor
@@ -169,12 +171,15 @@ impl TenantReadSnapshot {
         let table_handle = match self.read_txn.open_table(SCHEMAS) {
             Ok(table_handle) => table_handle,
             Err(TableError::TableDoesNotExist(_)) => {
-                maybe_emit_redb_read_profile(format_args!(
-                    "redb-read-profile op=load-schema open_table={:?} iterate={:?} tables=0 total={:?}",
-                    open_table_started.elapsed(),
-                    Duration::ZERO,
-                    total_started.elapsed(),
-                ));
+                maybe_emit_redb_read_profile(
+                    self.profile,
+                    format_args!(
+                        "redb-read-profile op=load-schema open_table={:?} iterate={:?} tables=0 total={:?}",
+                        open_table_started.elapsed(),
+                        Duration::ZERO,
+                        total_started.elapsed(),
+                    ),
+                );
                 return Ok(Schema::default());
             }
             Err(error) => return Err(map_redb_error(error)),
@@ -192,13 +197,16 @@ impl TenantReadSnapshot {
                 .insert(table_schema.table.clone(), table_schema);
         }
         let iterate_elapsed = iterate_started.elapsed();
-        maybe_emit_redb_read_profile(format_args!(
-            "redb-read-profile op=load-schema open_table={:?} iterate={:?} tables={} total={:?}",
-            open_table_elapsed,
-            iterate_elapsed,
-            schema.tables.len(),
-            total_started.elapsed(),
-        ));
+        maybe_emit_redb_read_profile(
+            self.profile,
+            format_args!(
+                "redb-read-profile op=load-schema open_table={:?} iterate={:?} tables={} total={:?}",
+                open_table_elapsed,
+                iterate_elapsed,
+                schema.tables.len(),
+                total_started.elapsed(),
+            ),
+        );
 
         Ok(schema)
     }
@@ -486,12 +494,15 @@ impl TenantReadSnapshot {
         let applied_head_started = Instant::now();
         let applied_head = self.applied_sequence()?;
         let applied_head_elapsed = applied_head_started.elapsed();
-        maybe_emit_redb_read_profile(format_args!(
-            "redb-read-profile op=journal-progress durable_head={:?} applied_head={:?} total={:?}",
-            durable_head_elapsed,
-            applied_head_elapsed,
-            total_started.elapsed(),
-        ));
+        maybe_emit_redb_read_profile(
+            self.profile,
+            format_args!(
+                "redb-read-profile op=journal-progress durable_head={:?} applied_head={:?} total={:?}",
+                durable_head_elapsed,
+                applied_head_elapsed,
+                total_started.elapsed(),
+            ),
+        );
         Ok(JournalProgress {
             durable_head,
             applied_head,
@@ -536,8 +547,8 @@ fn count_documents_for_table_id_in_read_txn(
     Ok(count)
 }
 
-fn maybe_emit_redb_read_profile(args: std::fmt::Arguments<'_>) {
-    if std::env::var_os("NIMBUS_REDB_JOURNAL_PROFILE").is_none() {
+fn maybe_emit_redb_read_profile(profile: StorageProfileConfig, args: std::fmt::Arguments<'_>) {
+    if !profile.redb_journal {
         return;
     }
 

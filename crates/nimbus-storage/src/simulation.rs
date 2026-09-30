@@ -23,8 +23,9 @@ pub use self::generated::{
 };
 pub use self::harness::DeterministicHarness;
 pub use self::verification::{
-    GeneratedTaskHistorySeedCase, VERIFICATION_CASE_FILTER_ENV, VerificationHarnessMode,
+    GeneratedTaskHistorySeedCase, VerificationHarnessMode,
     filter_generated_task_history_seed_corpus, generated_task_history_seed_corpus,
     replay_generated_task_history, replay_generated_task_history_async,
     selected_generated_task_history_seed_corpus,
 };
+pub use crate::config::VERIFICATION_CASE_FILTER_ENV;

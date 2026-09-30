@@ -1,4 +1,3 @@
-pub(super) use std::env;
 pub(super) use std::future::Future;
 pub(super) use std::sync::Arc;
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,10 +27,7 @@ pub(super) use nimbus_core::{
 };
 pub(super) use serial_test::serial;
 
-pub(super) const LIBSQL_URL_ENV: &str = "NIMBUS_LIBSQL_URL";
-pub(super) const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
-pub(super) const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
-pub(super) const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
+pub(super) use crate::config::{LIBSQL_ADMIN_URL_ENV, LIBSQL_URL_ENV};
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_test_provider<F, Fut>(test: F)
@@ -113,14 +109,19 @@ pub(super) async fn test_connection() -> Option<TestConnection> {
         "libSQL storage provider",
         &[LIBSQL_URL_ENV, LIBSQL_ADMIN_URL_ENV],
     ) {
-        ExternalProviderFixtureMode::UseExplicit => Some(TestConnection {
-            primary_url: env::var(LIBSQL_URL_ENV)
-                .expect("fixture policy should require the libSQL primary URL"),
-            auth_token: env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
-            admin_api_url: env::var(LIBSQL_ADMIN_URL_ENV)
-                .expect("fixture policy should require the libSQL admin URL"),
-            admin_auth_header: env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
-        }),
+        ExternalProviderFixtureMode::UseExplicit => {
+            let inputs = crate::config::StorageTestHarness::from_env().external_providers;
+            Some(TestConnection {
+                primary_url: inputs
+                    .libsql_url
+                    .expect("fixture policy should require the libSQL primary URL"),
+                auth_token: inputs.libsql_auth_token,
+                admin_api_url: inputs
+                    .libsql_admin_url
+                    .expect("fixture policy should require the libSQL admin URL"),
+                admin_auth_header: inputs.libsql_admin_auth_header,
+            })
+        }
         ExternalProviderFixtureMode::Omit => None,
     }
 }

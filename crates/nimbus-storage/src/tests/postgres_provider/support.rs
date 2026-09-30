@@ -1,4 +1,3 @@
-pub(super) use std::env;
 pub(super) use std::future::Future;
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,7 +15,7 @@ pub(super) use nimbus_core::{
     TenantEventKind, TenantId, Timestamp, TriggerDeliveryCursor,
 };
 
-pub(super) const TEST_POSTGRES_URL_ENV: &str = "NIMBUS_TEST_POSTGRES_URL";
+pub(super) use crate::config::TEST_POSTGRES_URL_ENV;
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_test_provider<F, Fut>(test: F)
@@ -71,7 +70,9 @@ pub(super) async fn test_connection() -> Option<String> {
         &[TEST_POSTGRES_URL_ENV],
     ) {
         ExternalProviderFixtureMode::UseExplicit => Some(
-            env::var(TEST_POSTGRES_URL_ENV)
+            crate::config::StorageTestHarness::from_env()
+                .external_providers
+                .postgres_url
                 .expect("fixture policy should require the PostgreSQL URL"),
         ),
         ExternalProviderFixtureMode::Omit => None,

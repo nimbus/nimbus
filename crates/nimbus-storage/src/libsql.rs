@@ -43,6 +43,7 @@ use crate::async_storage::{
     map_executor_permit_error,
 };
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
+use crate::config::{StorageConfig, StorageProfileConfig};
 use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
 use crate::simulation::{DurableApplyKind, FaultInjector, NoopFaultInjector};
 use crate::sqlite::replica_cache::rebuild_sqlite_indexes_from_loaded_schema;
@@ -210,6 +211,7 @@ pub struct LibsqlReplicaProvider {
     remote_fault_injector: Arc<dyn FaultInjector>,
     replica_fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,
+    storage_profile: StorageProfileConfig,
     metadata_session: LibsqlRemoteSession,
     scheduler_probe_sessions: Arc<Mutex<BoundedSchedulerProbeSessions<LibsqlRemoteSession>>>,
     #[cfg(test)]
@@ -675,6 +677,7 @@ impl LibsqlReplicaTenantStore {
         let clock = self.provider.clock.clone();
         let fault_injector = self.provider.replica_fault_injector.clone();
         let read_parallelism = self.provider.tenant_read_parallelism;
+        let profile = self.provider.storage_profile;
         let provider = self.provider.encryption_provider.clone();
         let tenant_id = self.tenant_id.clone();
         let next_store = {
@@ -701,6 +704,7 @@ impl LibsqlReplicaTenantStore {
                     clock,
                     fault_injector,
                     read_parallelism,
+                    profile,
                 )?
             } else {
                 SqliteTenantStore::open_with_simulation_and_max_read_connections(
@@ -708,6 +712,7 @@ impl LibsqlReplicaTenantStore {
                     clock,
                     fault_injector,
                     read_parallelism,
+                    profile,
                 )?
             }
         };

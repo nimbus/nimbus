@@ -10,6 +10,7 @@ use nimbus_core::{
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
 
+use crate::config::StorageProfileConfig;
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::keys::document_key;
 use crate::materialized_position::{CanonicalMaterializedState, MaterializedPosition};
@@ -1130,18 +1131,21 @@ impl TenantReadSnapshot {
             Err(TableError::TableDoesNotExist(_)) => TriggerDeliveryCursor::default(),
             Err(error) => return Err(map_redb_error(error)),
         };
-        maybe_emit_redb_journal_profile(format_args!(
-            "redb-journal-profile op=export-snapshot progress={:?} schema={:?} table_identities={:?} documents={:?} scheduled_execution_ids={:?} table_identity_count={} document_count={} scheduled_execution_count={} total={:?}",
-            progress_elapsed,
-            schema_elapsed,
-            table_identity_elapsed,
-            documents_elapsed,
-            scheduled_elapsed,
-            table_identities.len(),
-            documents.len(),
-            scheduled_execution_ids.len(),
-            total_started.elapsed(),
-        ));
+        maybe_emit_redb_journal_profile(
+            self.profile,
+            format_args!(
+                "redb-journal-profile op=export-snapshot progress={:?} schema={:?} table_identities={:?} documents={:?} scheduled_execution_ids={:?} table_identity_count={} document_count={} scheduled_execution_count={} total={:?}",
+                progress_elapsed,
+                schema_elapsed,
+                table_identity_elapsed,
+                documents_elapsed,
+                scheduled_elapsed,
+                table_identities.len(),
+                documents.len(),
+                scheduled_execution_ids.len(),
+                total_started.elapsed(),
+            ),
+        );
         Ok(MaterializedJournalSnapshot {
             version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
             applied_sequence: progress.applied_head,
@@ -1161,12 +1165,15 @@ impl TenantReadSnapshot {
         let table_handle = match self.read_txn.open_table(DOCUMENTS) {
             Ok(table_handle) => table_handle,
             Err(TableError::TableDoesNotExist(_)) => {
-                maybe_emit_redb_journal_profile(format_args!(
-                    "redb-journal-profile op=documents open_table={:?} iterate={:?} documents=0 total={:?}",
-                    open_table_started.elapsed(),
-                    std::time::Duration::ZERO,
-                    total_started.elapsed(),
-                ));
+                maybe_emit_redb_journal_profile(
+                    self.profile,
+                    format_args!(
+                        "redb-journal-profile op=documents open_table={:?} iterate={:?} documents=0 total={:?}",
+                        open_table_started.elapsed(),
+                        std::time::Duration::ZERO,
+                        total_started.elapsed(),
+                    ),
+                );
                 return Ok(Vec::new());
             }
             Err(error) => return Err(map_redb_error(error)),
@@ -1193,15 +1200,18 @@ impl TenantReadSnapshot {
             decode_elapsed += decode_started.elapsed();
         }
         let iterate_elapsed = iterate_started.elapsed();
-        maybe_emit_redb_journal_profile(format_args!(
-            "redb-journal-profile op=documents open_table={:?} iterate={:?} next_item={:?} decode={:?} documents={} total={:?}",
-            open_table_elapsed,
-            iterate_elapsed,
-            next_item_elapsed,
-            decode_elapsed,
-            documents.len(),
-            total_started.elapsed(),
-        ));
+        maybe_emit_redb_journal_profile(
+            self.profile,
+            format_args!(
+                "redb-journal-profile op=documents open_table={:?} iterate={:?} next_item={:?} decode={:?} documents={} total={:?}",
+                open_table_elapsed,
+                iterate_elapsed,
+                next_item_elapsed,
+                decode_elapsed,
+                documents.len(),
+                total_started.elapsed(),
+            ),
+        );
 
         Ok(documents)
     }
@@ -1212,12 +1222,15 @@ impl TenantReadSnapshot {
         let table_handle = match self.read_txn.open_table(SCHEDULED_JOB_EXECUTIONS) {
             Ok(table_handle) => table_handle,
             Err(TableError::TableDoesNotExist(_)) => {
-                maybe_emit_redb_journal_profile(format_args!(
-                    "redb-journal-profile op=scheduled-executions open_table={:?} iterate={:?} scheduled_execution_ids=0 total={:?}",
-                    open_table_started.elapsed(),
-                    std::time::Duration::ZERO,
-                    total_started.elapsed(),
-                ));
+                maybe_emit_redb_journal_profile(
+                    self.profile,
+                    format_args!(
+                        "redb-journal-profile op=scheduled-executions open_table={:?} iterate={:?} scheduled_execution_ids=0 total={:?}",
+                        open_table_started.elapsed(),
+                        std::time::Duration::ZERO,
+                        total_started.elapsed(),
+                    ),
+                );
                 return Ok(Vec::new());
             }
             Err(error) => return Err(map_redb_error(error)),
@@ -1232,19 +1245,22 @@ impl TenantReadSnapshot {
         }
         let iterate_elapsed = iterate_started.elapsed();
         execution_ids.sort_unstable();
-        maybe_emit_redb_journal_profile(format_args!(
-            "redb-journal-profile op=scheduled-executions open_table={:?} iterate={:?} scheduled_execution_ids={} total={:?}",
-            open_table_elapsed,
-            iterate_elapsed,
-            execution_ids.len(),
-            total_started.elapsed(),
-        ));
+        maybe_emit_redb_journal_profile(
+            self.profile,
+            format_args!(
+                "redb-journal-profile op=scheduled-executions open_table={:?} iterate={:?} scheduled_execution_ids={} total={:?}",
+                open_table_elapsed,
+                iterate_elapsed,
+                execution_ids.len(),
+                total_started.elapsed(),
+            ),
+        );
         Ok(execution_ids)
     }
 }
 
-fn maybe_emit_redb_journal_profile(args: std::fmt::Arguments<'_>) {
-    if std::env::var_os("NIMBUS_REDB_JOURNAL_PROFILE").is_none() {
+fn maybe_emit_redb_journal_profile(profile: StorageProfileConfig, args: std::fmt::Arguments<'_>) {
+    if !profile.redb_journal {
         return;
     }
 
