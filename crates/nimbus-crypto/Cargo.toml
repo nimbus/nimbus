@@ -25,7 +25,6 @@ ring.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-fs2.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]

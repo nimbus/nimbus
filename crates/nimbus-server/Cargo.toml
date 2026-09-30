@@ -69,7 +69,6 @@ nimbus-engine = { path = "../nimbus-engine", default-features = false }
 nimbus-firebase = { path = "../nimbus-firebase" }
 nimbus-fs = { path = "../nimbus-fs" }
 futures.workspace = true
-fs2.workspace = true
 hmac.workspace = true
 http.workspace = true
 libc.workspace = true

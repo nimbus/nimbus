@@ -24,7 +24,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::path::Path;
 
-use fs2::FileExt;
 use nimbus_core::{Error, Result, StorageErrorKind};
 
 use crate::disk::{self, SyncObserver};
@@ -200,7 +199,7 @@ fn take_lock(root: &Path) -> Result<RootLock> {
         .write(true)
         .open(&path)
         .map_err(|err| guard_error(err, format!("open root lock {}", path.display())))?;
-    file.try_lock_exclusive().map_err(|_| {
+    fs4::FileExt::try_lock(&file).map_err(|_| {
         Error::storage(
             StorageErrorKind::Busy,
             format!(

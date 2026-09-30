@@ -1,11 +1,9 @@
 use std::fs::{self, OpenOptions};
-use std::io::ErrorKind;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
 use tempfile::tempdir;
 
 use super::*;
@@ -112,20 +110,21 @@ fn teardown_store_serializes_independent_processes() {
         .open(root.path().join(LOCK_FILE))
         .expect("parent lock file should open");
     let contention = parent_lock
-        .try_lock_exclusive()
+        .try_lock()
         .expect_err("a second process must not acquire the store lock while the child holds it");
-    assert_eq!(
-        contention.kind(),
-        ErrorKind::WouldBlock,
+    assert!(
+        matches!(contention, std::fs::TryLockError::WouldBlock),
         "cross-process contention must be reported as a held lock"
     );
     fs::write(&release, b"release").expect("child release signal should write");
     let child_status = child.wait().expect("lock child should reap");
     assert!(child_status.success(), "lock child failed: {child_status}");
     parent_lock
-        .try_lock_exclusive()
+        .try_lock()
         .expect("parent should acquire the store lock after child exit");
-    FileExt::unlock(&parent_lock).expect("parent store lock should release");
+    parent_lock
+        .unlock()
+        .expect("parent store lock should release");
 }
 
 #[test]

@@ -127,7 +127,7 @@ impl KrunSandboxBackend {
             })?;
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            match FileExt::try_lock_shared(&lock) {
+            match lock.try_lock_shared().map_err(std::io::Error::from) {
                 Ok(()) => break,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     #[cfg(test)]
@@ -205,7 +205,7 @@ impl KrunSandboxBackend {
             })?;
         let deadline = std::time::Instant::now() + KRUN_LIFECYCLE_LOCK_TIMEOUT;
         loop {
-            match FileExt::try_lock_exclusive(&lock) {
+            match lock.try_lock().map_err(std::io::Error::from) {
                 Ok(()) => return Ok(KrunLifecycleGuard { _lock: lock }),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     #[cfg(test)]

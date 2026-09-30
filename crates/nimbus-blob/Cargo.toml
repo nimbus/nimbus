@@ -23,10 +23,9 @@ nimbus-core = { path = "../nimbus-core" }
 async-trait.workspace = true
 blake3.workspace = true
 bytes.workspace = true
-# Advisory root lock (flock). fs2 is the workspace's established locking
-# crate (cli, crypto, sandbox, server, operator); a repo-wide fs2->fs4
-# refresh is an enterprise-crate-adoption question, not this crate's.
-fs2.workspace = true
+# Advisory root lock (flock). std::fs::File::try_lock needs Rust 1.89, above this
+# crate's 1.86 floor, so the lock goes through fs4's FileExt.
+fs4.workspace = true
 object_store.workspace = true
 # NBLE1 persists hashes of the exact parity bytes produced by this version.
 # A codec change that alters the golden vector requires an NBLE2 format bump;

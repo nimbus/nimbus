@@ -11,7 +11,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::error::{Result, SandboxError};
-use fs2::FileExt;
 
 pub(in crate::backends::container::runtime) const MANIFEST_PUBLICATION_LOCK_FILE: &str =
     ".nimbus-container-manifest.lock";
@@ -225,7 +224,7 @@ fn lock_publication(container_state_dir: &Path) -> Result<ManifestPublicationGua
 
     let deadline = Instant::now() + MANIFEST_PUBLICATION_LOCK_TIMEOUT;
     loop {
-        match FileExt::try_lock_exclusive(&lock) {
+        match lock.try_lock().map_err(std::io::Error::from) {
             Ok(()) => return Ok(ManifestPublicationGuard { _lock: lock }),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {

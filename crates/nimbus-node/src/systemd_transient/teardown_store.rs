@@ -4,7 +4,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
-use fs2::FileExt;
 use nimbus_core::{Error, Result};
 use nimbus_workloads::WorkloadOwnerEvidenceDigest;
 use serde::{Deserialize, Serialize};
@@ -71,12 +70,11 @@ impl SystemdTeardownStore {
             .write(true)
             .open(lock_path)
             .map_err(|error| store_io("open state lock", error))?;
-        lock.lock_exclusive()
-            .map_err(|error| store_io("lock state", error))?;
+        lock.lock().map_err(|error| store_io("lock state", error))?;
         let state = match self.read_state() {
             Ok(state) => state,
             Err(error) => {
-                let _ = FileExt::unlock(&lock);
+                let _ = lock.unlock();
                 return Err(error);
             }
         };
@@ -99,13 +97,14 @@ impl SystemdTeardownStore {
             .write(true)
             .open(lock_path)
             .map_err(|error| store_io("open state lock", error))?;
-        lock.lock_exclusive()
-            .map_err(|error| store_io("lock state", error))?;
+        lock.lock().map_err(|error| store_io("lock state", error))?;
         let result = (|| {
             let mut state = self.read_state()?;
             operation(&mut state)
         })();
-        let unlock_result = FileExt::unlock(&lock).map_err(|error| store_io("unlock state", error));
+        let unlock_result = lock
+            .unlock()
+            .map_err(|error| store_io("unlock state", error));
         match (result, unlock_result) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(error), _) | (Ok(_), Err(error)) => Err(error),

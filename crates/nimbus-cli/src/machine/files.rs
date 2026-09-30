@@ -2,7 +2,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use fs2::FileExt;
 use nimbus::Error;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -472,7 +471,7 @@ fn lock_machine_records(
                 lock_path.display()
             ))
         })?;
-    file.lock_exclusive().map_err(|error| {
+    file.lock().map_err(|error| {
         Error::Internal(format!(
             "failed to acquire machine lock {}: {error}",
             lock_path.display()

@@ -31,7 +31,6 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
 use nimbus_core::TenantId;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -50,9 +49,8 @@ const PROBE_PREFIX: &str = ".nimbus-network-probe-";
 const OWNER_DIRECTORY_MODE: u32 = 0o700;
 #[cfg(unix)]
 const OWNER_FILE_MODE: u32 = 0o600;
-// fs2 0.4's Windows `try_lock_exclusive` returns the raw Win32
-// `ERROR_LOCK_VIOLATION` from `LockFileEx(..., LOCKFILE_FAIL_IMMEDIATELY)`.
-// Rust does not promise to map that code to `ErrorKind::WouldBlock`.
+// Also treat the raw Win32 `ERROR_LOCK_VIOLATION` from
+// `LockFileEx(..., LOCKFILE_FAIL_IMMEDIATELY)` as lock contention.
 const WINDOWS_ERROR_LOCK_VIOLATION: i32 = 33;
 
 /// A typed partition inside the single node-local network authority.
@@ -390,7 +388,7 @@ impl LocalNetworkStateStore {
         };
         let file = open_owner_file(&self.lock_path, false)?;
         loop {
-            match file.try_lock_exclusive() {
+            match file.try_lock().map_err(std::io::Error::from) {
                 Ok(()) => {
                     return Ok(AuthorityLock {
                         _process_guard: process_guard,
@@ -1317,7 +1315,7 @@ struct AuthorityLock<'a> {
 
 impl Drop for AuthorityLock<'_> {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        let _ = self.file.unlock();
     }
 }
 
@@ -2022,7 +2020,7 @@ mod tests {
         let error = io::Error::from_raw_os_error(WINDOWS_ERROR_LOCK_VIOLATION);
         assert!(
             is_lock_contended(&error),
-            "fs2's Windows ERROR_LOCK_VIOLATION must enter the bounded retry path"
+            "Windows ERROR_LOCK_VIOLATION must enter the bounded retry path"
         );
     }
 

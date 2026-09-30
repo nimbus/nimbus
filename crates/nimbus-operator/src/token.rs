@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use fs2::FileExt;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -140,7 +139,7 @@ pub fn with_token_file_lock<T>(
         .create(true)
         .truncate(false)
         .open(&lock_path)?;
-    file.lock_exclusive()?;
+    file.lock()?;
     let result = operation();
     let unlock_result = file.unlock();
     match (result, unlock_result) {

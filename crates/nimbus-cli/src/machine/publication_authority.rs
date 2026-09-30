@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
 use nimbus::{Error, SandboxId, SandboxPortBinding, TenantId};
 use nimbus_machine::MachineForwarderAuthority;
 use nimbus_network::{
@@ -285,7 +284,7 @@ impl MachinePublicationIntentStore {
         let file = open_owner_file(&self.lock_path, true)?;
         let deadline = Instant::now() + LOCK_TIMEOUT;
         loop {
-            match file.try_lock_exclusive() {
+            match file.try_lock().map_err(std::io::Error::from) {
                 Ok(()) => return Ok(MachinePublicationStoreLock { file }),
                 Err(error) if lock_is_contended(&error) && Instant::now() < deadline => {
                     thread::sleep(LOCK_RETRY);

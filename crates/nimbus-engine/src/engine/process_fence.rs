@@ -10,11 +10,10 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fs2::FileExt as _;
 use nimbus_core::{Error, Result, StorageErrorKind};
 
 const LOCK_FILE: &str = ".nimbus-engine.lock";
-// fs2 0.4 returns the raw Win32 ERROR_LOCK_VIOLATION code on contention.
+// Treat the raw Win32 ERROR_LOCK_VIOLATION code as contention too.
 const WINDOWS_ERROR_LOCK_VIOLATION: i32 = 33;
 
 /// Lifetime guard for all local roots owned by one Engine.
@@ -69,7 +68,7 @@ fn lock_root(root: PathBuf) -> Result<LockedRoot> {
         .write(true)
         .open(&lock_path)
         .map_err(|error| root_io_error("open local Engine lock", &lock_path, error))?;
-    match file.try_lock_exclusive() {
+    match file.try_lock().map_err(std::io::Error::from) {
         Ok(()) => Ok(LockedRoot {
             _root: root,
             _file: file,

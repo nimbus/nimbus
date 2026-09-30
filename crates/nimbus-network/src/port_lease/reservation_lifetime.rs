@@ -8,7 +8,6 @@
 use std::fmt;
 use std::fs::File;
 
-use fs2::FileExt;
 use sha2::{Digest, Sha256};
 
 use super::{LocalPortLeaseAuthority, PortLeaseError};
@@ -72,7 +71,7 @@ impl LocalPortLeaseAuthority {
         create_dir_all_owner_only(&directory).map_err(PortLeaseError::Store)?;
         let path = directory.join(format!("{}.lock", reservation_lifetime_key(claim)));
         let file = open_owner_file(&path, false).map_err(PortLeaseError::Store)?;
-        match file.try_lock_exclusive() {
+        match file.try_lock().map_err(std::io::Error::from) {
             Ok(()) => Ok(NetworkReservationLifetimeAttempt::Acquired(
                 NetworkReservationLifetimeGuard {
                     claim: claim.clone(),
