@@ -52,7 +52,7 @@ impl ErasureConfig {
                 drives.len()
             )));
         }
-        if stripe_width == 0 || stripe_width % (data_shards * 2) != 0 {
+        if stripe_width == 0 || !stripe_width.is_multiple_of(data_shards * 2) {
             return Err(Error::InvalidInput(format!(
                 "erasure stripe width must be non-zero and a multiple of data_shards*2 ({}), got {stripe_width}",
                 data_shards * 2

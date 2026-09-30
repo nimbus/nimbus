@@ -173,7 +173,11 @@ pub(crate) fn decode_stripe(
 
 fn even_shard_len(stripe_len: usize, data_shards: usize) -> usize {
     let ceil = stripe_len.div_ceil(data_shards);
-    if ceil % 2 == 0 { ceil } else { ceil + 1 }
+    if ceil.is_multiple_of(2) {
+        ceil
+    } else {
+        ceil + 1
+    }
 }
 
 fn coding_error(error: reed_solomon_simd::Error) -> Error {

@@ -408,7 +408,7 @@ fn validate_layout(data_shards: usize, parity_shards: usize, stripe_width: usize
             "erasure manifest parity shard count {parity_shards} out of range"
         )));
     }
-    if stripe_width == 0 || stripe_width % (data_shards * 2) != 0 {
+    if stripe_width == 0 || !stripe_width.is_multiple_of(data_shards * 2) {
         return Err(corruption(format!(
             "erasure manifest stripe width {stripe_width} is invalid for {data_shards} data shards"
         )));

@@ -132,10 +132,10 @@ pub(crate) fn create_dir_all_durable(path: &Path, observer: &dyn SyncObserver) -
     // Fsync the parent of each created level (deepest last) so every new
     // directory entry is durable.
     for dir in missing.iter().rev() {
-        if let Some(parent) = dir.parent() {
-            if !parent.as_os_str().is_empty() {
-                fsync_dir(parent, observer)?;
-            }
+        if let Some(parent) = dir.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fsync_dir(parent, observer)?;
         }
     }
     Ok(())
