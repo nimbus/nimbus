@@ -33,12 +33,6 @@ The crates.io archive omits the license file. Nimbus copied `LICENSE.md` from
 upstream source revision `0653c5788d77ef16a97c56ff3e9fdc11717a72d9`. Remove
 this patch after libsql publishes a fixed transport dependency.
 
-## flume
-
-The `flume-0.12.0` patch copies its crates.io release. Nimbus updates only its
-`spin` dependency from version `0.9.8` to `0.12.3`. The flume mutex API stays
-unchanged. Remove this patch after flume publishes a non-yanked dependency.
-
 ## lazy_static
 
 The `lazy_static-1.5.0` patch copies its crates.io release. Nimbus updates its

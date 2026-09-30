@@ -13983,7 +13983,3 @@ dependencies = [
  "syn 2.0.117",
  "winnow 1.0.1",
 ]
-
-[[patch.unused]]
-name = "flume"
-version = "0.12.0"
