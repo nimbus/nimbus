@@ -6,6 +6,7 @@ use nimbus_core::{Error, Result, SequenceNumber, TenantEventRecord, TenantId};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::Engine;
+use crate::config::{EngineConfig, QueueLimits};
 use crate::engine::CommitPhaseDurations;
 use crate::engine::committed_mutations::{
     CommittedMutationObserverDispatch, CommittedMutationObserverMessage, ProjectionToken,
@@ -18,39 +19,16 @@ use super::CommitterArm;
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::tenant::pause_barrier::{PauseBarrier, PauseBarrierHandle};
 
-const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
-const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
-const DEFAULT_OBSERVER_QUEUE_CAPACITY: usize = 4_096;
-const DEFAULT_OBSERVER_QUEUE_HIGH_WATERMARK: usize = 3_072;
 const OBSERVER_DRAIN_BLOCKING_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn publisher_limits_from_env() -> (usize, Duration) {
+/// Requested observer limits plus the largest publisher and serial journal
+/// dispatch, in the order that [`clamp_observer_limits`] takes them.
+fn configured_observer_limits(config: &EngineConfig) -> (usize, usize, usize, usize) {
     (
-        crate::config::env_positive_usize(
-            "NIMBUS_COMMITTER_PUBLISHER_QUEUE_SIZE",
-            DEFAULT_PUBLISHER_QUEUE_CAPACITY,
-        ),
-        Duration::from_millis(crate::config::env_nonnegative_u64(
-            "NIMBUS_COMMITTER_PUBLISHER_SEND_TIMEOUT_MS",
-            DEFAULT_PUBLISHER_SEND_TIMEOUT_MS,
-        )),
-    )
-}
-
-fn observer_limits_from_env() -> (usize, usize, usize, usize) {
-    let requested_capacity = crate::config::env_positive_usize(
-        "NIMBUS_COMMITTED_OBSERVER_QUEUE_CAPACITY",
-        DEFAULT_OBSERVER_QUEUE_CAPACITY,
-    );
-    let requested_high_watermark = crate::config::env_positive_usize(
-        "NIMBUS_COMMITTED_OBSERVER_QUEUE_HIGH_WATERMARK",
-        DEFAULT_OBSERVER_QUEUE_HIGH_WATERMARK,
-    );
-    (
-        requested_capacity,
-        requested_high_watermark,
-        crate::config::committer_publisher_batch_max(),
-        crate::config::mutation_journal_batch_max(),
+        config.observer_queue.capacity,
+        config.observer_queue.high_watermark,
+        config.committer_publisher_batch.max,
+        config.mutation_journal_batch.max,
     )
 }
 
@@ -260,13 +238,13 @@ struct ObserverSender {
 }
 
 impl ObserverHandoff {
-    pub(crate) fn new(tenant_id: &TenantId) -> Self {
+    pub(crate) fn new(tenant_id: &TenantId, config: &EngineConfig) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         #[cfg(test)]
-        let requested_limits =
-            take_observer_limits_for_testing(tenant_id).unwrap_or_else(observer_limits_from_env);
+        let requested_limits = take_observer_limits_for_testing(tenant_id)
+            .unwrap_or_else(|| configured_observer_limits(config));
         #[cfg(not(test))]
-        let requested_limits = observer_limits_from_env();
+        let requested_limits = configured_observer_limits(config);
         #[cfg(test)]
         let drain_blocking_timeout = take_observer_drain_blocking_timeout_for_testing(tenant_id)
             .unwrap_or(OBSERVER_DRAIN_BLOCKING_TIMEOUT);
@@ -998,12 +976,17 @@ impl OrderedPublisherPauseHandle {
 }
 
 impl PublisherHandoff {
-    pub(crate) fn new(committer_arm: CommitterArm, _tenant_id: &TenantId) -> Self {
+    pub(crate) fn new(
+        committer_arm: CommitterArm,
+        _tenant_id: &TenantId,
+        limits: QueueLimits,
+    ) -> Self {
+        let configured = (limits.capacity, limits.send_timeout);
         #[cfg(test)]
         let (capacity, send_timeout) =
-            publisher_limits_for_testing(_tenant_id).unwrap_or_else(publisher_limits_from_env);
+            publisher_limits_for_testing(_tenant_id).unwrap_or(configured);
         #[cfg(not(test))]
-        let (capacity, send_timeout) = publisher_limits_from_env();
+        let (capacity, send_timeout) = configured;
         let (sender, receiver) = mpsc::channel(capacity);
         #[cfg(test)]
         let committer_arm = take_committer_arm_for_testing(_tenant_id).unwrap_or(committer_arm);

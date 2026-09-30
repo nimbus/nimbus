@@ -417,7 +417,11 @@ impl TenantRuntime {
     }
 
     fn maybe_report_overload_error(&self, error: &nimbus_core::Error) {
-        if error.is_overload_class() && self.commit_phases.record_overload_error() {
+        if error.is_overload_class()
+            && self
+                .commit_phases
+                .record_overload_error(self.config.diagnostics.overload_error_report_every)
+        {
             tracing::warn!(
                 tenant = %self.tenant_id,
                 error = %error,

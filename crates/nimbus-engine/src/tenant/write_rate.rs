@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result};
@@ -8,26 +8,34 @@ use serde::Serialize;
 use tracing::warn;
 
 use super::TenantRuntime;
+use crate::config::{EnvLookup, positive_u64};
 
 pub(crate) const DEFAULT_PROPOSED_TENANT_WRITE_BYTES_PER_SEC: u64 = 1 << 20;
 pub(crate) const DEFAULT_TENANT_WRITE_RATE_WINDOW_MS: u64 = 1_000;
 const DEFAULT_TENANT_WRITE_RATE_REPORT_EVERY: u64 = 100;
 
-#[derive(Debug, Clone, Copy)]
-struct TenantWriteRateConfig {
+/// Proposed (shadow) and enforced tenant write-rate limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TenantWriteRateConfig {
     proposed_bytes_per_sec: u64,
     enforced_bytes_per_sec: Option<u64>,
     window_ms: u64,
+    report_every: u64,
 }
 
 impl TenantWriteRateConfig {
-    fn from_env() -> Self {
+    pub(crate) fn from_lookup(lookup: EnvLookup<'_>) -> Self {
         Self {
-            proposed_bytes_per_sec: env_positive_u64("NIMBUS_PROPOSED_TENANT_WRITE_BYTES_PER_SEC")
-                .unwrap_or(DEFAULT_PROPOSED_TENANT_WRITE_BYTES_PER_SEC),
-            enforced_bytes_per_sec: env_positive_u64("NIMBUS_TENANT_WRITE_BYTES_PER_SEC"),
-            window_ms: env_positive_u64("NIMBUS_TENANT_WRITE_RATE_WINDOW_MS")
+            proposed_bytes_per_sec: positive_u64(
+                lookup,
+                "NIMBUS_PROPOSED_TENANT_WRITE_BYTES_PER_SEC",
+            )
+            .unwrap_or(DEFAULT_PROPOSED_TENANT_WRITE_BYTES_PER_SEC),
+            enforced_bytes_per_sec: positive_u64(lookup, "NIMBUS_TENANT_WRITE_BYTES_PER_SEC"),
+            window_ms: positive_u64(lookup, "NIMBUS_TENANT_WRITE_RATE_WINDOW_MS")
                 .unwrap_or(DEFAULT_TENANT_WRITE_RATE_WINDOW_MS),
+            report_every: positive_u64(lookup, "NIMBUS_TENANT_WRITE_RATE_REPORT_EVERY")
+                .unwrap_or(DEFAULT_TENANT_WRITE_RATE_REPORT_EVERY),
         }
     }
 
@@ -41,12 +49,10 @@ impl TenantWriteRateConfig {
             proposed_bytes_per_sec,
             enforced_bytes_per_sec,
             window_ms,
+            report_every: DEFAULT_TENANT_WRITE_RATE_REPORT_EVERY,
         }
     }
 }
-
-static TENANT_WRITE_RATE_CONFIG: LazyLock<TenantWriteRateConfig> =
-    LazyLock::new(TenantWriteRateConfig::from_env);
 
 #[derive(Debug, Clone, Copy)]
 struct WriteEvent {
@@ -179,8 +185,7 @@ impl TenantWriteRateLimiter {
 
         if projected > proposed_limit {
             self.shadow_violations_total.fetch_add(1, Ordering::Relaxed);
-            let every = env_positive_u64("NIMBUS_TENANT_WRITE_RATE_REPORT_EVERY")
-                .unwrap_or(DEFAULT_TENANT_WRITE_RATE_REPORT_EVERY);
+            let every = config.report_every;
             let tick = self.shadow_report_ticks.fetch_add(1, Ordering::Relaxed);
             if every <= 1 || tick.is_multiple_of(every) {
                 self.shadow_logs_total.fetch_add(1, Ordering::Relaxed);
@@ -214,16 +219,9 @@ impl TenantRuntime {
             &self.tenant_id,
             self.monotonic_now(),
             bytes,
-            *TENANT_WRITE_RATE_CONFIG,
+            self.config.tenant_write_rate,
         )
     }
-}
-
-fn env_positive_u64(key: &str) -> Option<u64> {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
 }
 
 #[cfg(test)]

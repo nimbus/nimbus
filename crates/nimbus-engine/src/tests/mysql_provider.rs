@@ -1,4 +1,3 @@
-use std::env;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,7 +18,7 @@ use crate::{
     ProviderCredentials, TenantProviderConfig, TenantRoutingConfig,
 };
 
-const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
+use nimbus_storage::config::MYSQL_URL_ENV;
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test(flavor = "multi_thread")]
@@ -764,12 +763,14 @@ where
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
     let engine_config_b = EnginePersistenceConfig {
         tenant_provider: engine_config_a.tenant_provider.clone(),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
 
     test(engine_config_a, engine_config_b, provider_config.clone()).await;
@@ -784,9 +785,12 @@ where
 
 async fn test_connection() -> Option<String> {
     match external_provider_fixture_mode("mysql", "MySQL engine provider", &[MYSQL_URL_ENV]) {
-        ExternalProviderFixtureMode::UseExplicit => {
-            Some(env::var(MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
-        }
+        ExternalProviderFixtureMode::UseExplicit => Some(
+            nimbus_storage::config::StorageTestHarness::from_env()
+                .external_providers
+                .mysql_url
+                .expect("fixture policy should require the MySQL URL"),
+        ),
         ExternalProviderFixtureMode::Omit => None,
     }
 }

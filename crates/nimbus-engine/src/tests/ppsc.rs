@@ -1457,21 +1457,23 @@ fn logical_ppsc_documents(state: &PpscTenantState) -> BTreeMap<String, serde_jso
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "explicit PPSC replay command supplies one canonical scenario and embedded backend"]
 async fn ppsc_explicit_embedded_scenario_replay() {
-    let json = std::env::var("NIMBUS_PPSC_REPLAY_SCENARIO_JSON")
+    let harness = crate::config::EngineTestHarness::from_env();
+    let json = harness
+        .ppsc_replay_scenario_json
         .expect("NIMBUS_PPSC_REPLAY_SCENARIO_JSON must contain the failure scenario");
     let scenario = PpscScenario::from_canonical_json(&json)
         .unwrap_or_else(|error| panic!("PPSC replay scenario is invalid: {error}"));
-    let backend = match std::env::var("NIMBUS_PPSC_BACKEND").as_deref() {
-        Ok("memory") => PpscBackend::Memory,
-        Ok("redb") => PpscBackend::Redb,
-        Ok("sqlite") => PpscBackend::Sqlite,
-        Ok(provider @ ("libsql" | "postgres" | "mysql")) => {
+    let backend = match harness.ppsc_backend.as_deref() {
+        Some("memory") => PpscBackend::Memory,
+        Some("redb") => PpscBackend::Redb,
+        Some("sqlite") => PpscBackend::Sqlite,
+        Some(provider @ ("libsql" | "postgres" | "mysql")) => {
             panic!(
                 "PPSC embedded replay cannot run provider backend {provider}; use the fixture-backed command emitted with the failure"
             )
         }
-        Ok(unknown) => panic!("unknown PPSC embedded replay backend '{unknown}'"),
-        Err(error) => panic!("NIMBUS_PPSC_BACKEND is required for embedded replay: {error}"),
+        Some(unknown) => panic!("unknown PPSC embedded replay backend '{unknown}'"),
+        None => panic!("NIMBUS_PPSC_BACKEND is required for embedded replay"),
     };
     let history = PpscEngineRunner::new_embedded(backend, &scenario)
         .await

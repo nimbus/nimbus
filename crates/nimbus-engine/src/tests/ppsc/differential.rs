@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
-use std::env;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use std::sync::Arc;
 
@@ -137,8 +136,9 @@ fn provider_replay_scenarios(
     defaults: Vec<PpscScenario>,
     requires_provider_authority: bool,
 ) -> Vec<PpscScenario> {
-    const REPLAY_SCENARIO_ENV: &str = "NIMBUS_PPSC_REPLAY_SCENARIO_JSON";
-    let Ok(json) = env::var(REPLAY_SCENARIO_ENV) else {
+    const REPLAY_SCENARIO_ENV: &str =
+        crate::config::EngineTestHarness::PPSC_REPLAY_SCENARIO_JSON_ENV;
+    let Some(json) = crate::config::EngineTestHarness::from_env().ppsc_replay_scenario_json else {
         return defaults;
     };
     let scenario = PpscScenario::from_canonical_json(&json)

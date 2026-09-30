@@ -4,9 +4,8 @@ use crate::{ControlPlaneConfig, LocalEncryptionConfig, TenantProviderConfig};
 
 #[test]
 fn tenant_lifecycle_caller_inventory_is_complete() {
-    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-engine tests");
+    let harness = crate::config::EngineTestHarness::from_env();
+    let manifest_dir = harness.required_manifest_dir();
     let workspace = manifest_dir
         .parent()
         .and_then(std::path::Path::parent)
@@ -259,6 +258,7 @@ async fn committer_worker_group_rejected_after_quiesce_preserves_all_receivers()
                 None,
                 Arc::new(nimbus_core::SystemIdSource),
                 crate::persistence_config::MetadataRetentionProfile::shipped(),
+                Arc::new(crate::config::EngineConfig::default()),
             ),
         )
         .expect("unstarted runtime should construct"),
@@ -582,6 +582,7 @@ async fn typed_persistence_config_supports_separate_embedded_control_plane_direc
         control_plane: ControlPlaneConfig::embedded_redb(control_dir.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
     let engine = Arc::new(
         Engine::new_with_persistence_config(config.clone())

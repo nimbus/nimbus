@@ -5,15 +5,6 @@ use nimbus_core::{DependencySet, MutationCap, TenantId};
 use serde::Serialize;
 use tracing::warn;
 
-const DEFAULT_COMMIT_TRACE_THRESHOLD_MS: u64 = 500;
-// Ordinary point reads and indexed queries have dependency sets many orders of
-// magnitude smaller than this. One thousand is intentionally generous: it
-// avoids noise while flagging commits whose conflict validation and future
-// in-memory-window footprint deserve investigation.
-const DEFAULT_WIDE_READ_SET_WARN_THRESHOLD: usize = 1_000;
-const DEFAULT_OVERLOAD_ERROR_REPORT_EVERY: usize = 100;
-const DEFAULT_SHADOW_CAP_REPORT_EVERY: usize = 100;
-
 /// Cumulative per-tenant committer observations.
 ///
 /// Phase durations are wall-clock nanoseconds summed once per committer sample.
@@ -254,15 +245,7 @@ impl CommitPhaseMetrics {
 
     /// Records every overload-class error and deterministically selects only
     /// the first and each configured Nth successor for reporting.
-    pub(crate) fn record_overload_error(&self) -> bool {
-        let every = crate::config::env_positive_usize(
-            "NIMBUS_OVERLOAD_ERROR_REPORT_EVERY",
-            DEFAULT_OVERLOAD_ERROR_REPORT_EVERY,
-        );
-        self.record_overload_error_with_sample_rate(every)
-    }
-
-    fn record_overload_error_with_sample_rate(&self, every: usize) -> bool {
+    pub(crate) fn record_overload_error(&self, every: usize) -> bool {
         self.overload_errors_total.fetch_add(1, Ordering::Relaxed);
         let tick = self
             .overload_error_report_ticks
@@ -275,12 +258,10 @@ impl CommitPhaseMetrics {
         sampled
     }
 
-    pub(crate) fn record_shadow_cap_violation(&self, cap: MutationCap) -> bool {
+    /// Counts one shadow cap violation and selects the first and each
+    /// `every`-th successor for logging.
+    pub(crate) fn record_shadow_cap_violation(&self, cap: MutationCap, every: usize) -> bool {
         self.shadow_cap_violations[cap_index(cap)].fetch_add(1, Ordering::Relaxed);
-        let every = crate::config::env_positive_usize(
-            "NIMBUS_SHADOW_CAP_REPORT_EVERY",
-            DEFAULT_SHADOW_CAP_REPORT_EVERY,
-        );
         let tick = self.shadow_cap_report_ticks.fetch_add(1, Ordering::Relaxed);
         let sampled = every <= 1 || tick.is_multiple_of(every as u64);
         if sampled {
@@ -390,8 +371,10 @@ pub(crate) struct CommitTraceSample<'a> {
     pub(crate) total: Duration,
 }
 
-pub(crate) fn maybe_emit_commit_trace(sample: CommitTraceSample<'_>) {
-    let Some(threshold) = commit_trace_threshold() else {
+/// Emits a `commit-trace` line when tracing is on (`threshold` is `Some`)
+/// and the sample exceeds the threshold.
+pub(crate) fn maybe_emit_commit_trace(sample: CommitTraceSample<'_>, threshold: Option<Duration>) {
+    let Some(threshold) = threshold else {
         return;
     };
     if let Some(line) = commit_trace_line(&sample, threshold) {
@@ -402,12 +385,9 @@ pub(crate) fn maybe_emit_commit_trace(sample: CommitTraceSample<'_>) {
 pub(in crate::engine) fn maybe_warn_wide_read_set(
     tenant_id: &TenantId,
     dependencies: &DependencySet,
+    threshold: usize,
 ) {
     let cardinality = dependency_cardinality(dependencies);
-    let threshold = crate::config::env_positive_usize(
-        "NIMBUS_WIDE_READ_SET_WARN_THRESHOLD",
-        DEFAULT_WIDE_READ_SET_WARN_THRESHOLD,
-    );
     if cardinality > threshold {
         warn!(
             tenant = %tenant_id,
@@ -416,15 +396,6 @@ pub(in crate::engine) fn maybe_warn_wide_read_set(
             "wide mutation read set exceeds warning threshold"
         );
     }
-}
-
-fn commit_trace_threshold() -> Option<Duration> {
-    std::env::var_os("NIMBUS_COMMIT_TRACE_THRESHOLD_MS")?;
-    let threshold_ms = std::env::var("NIMBUS_COMMIT_TRACE_THRESHOLD_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_COMMIT_TRACE_THRESHOLD_MS);
-    Some(Duration::from_millis(threshold_ms))
 }
 
 fn commit_trace_line(sample: &CommitTraceSample<'_>, threshold: Duration) -> Option<String> {
@@ -541,7 +512,7 @@ mod tests {
     fn overload_error_reporting_is_first_always_then_one_in_n() {
         let metrics = CommitPhaseMetrics::new();
         let sampled = (0..201)
-            .filter(|_| metrics.record_overload_error_with_sample_rate(100))
+            .filter(|_| metrics.record_overload_error(100))
             .count();
 
         assert_eq!(sampled, 3, "ticks 0, 100, and 200 should be reported");

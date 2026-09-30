@@ -7,8 +7,6 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use super::requests::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 use super::stats::MutationIsolateAdmissionStats;
 
-const DEFAULT_TENANT_MUTATION_ISOLATE_CEILING: usize = 16;
-
 pub(in crate::tenant) struct MutationIsolateAdmission {
     semaphore: Arc<Semaphore>,
     ceiling: usize,
@@ -36,14 +34,10 @@ impl Drop for WaitingRegistration<'_> {
 }
 
 impl MutationIsolateAdmission {
-    pub(in crate::tenant) fn from_env() -> Self {
-        Self::new(
-            crate::config::env_positive_usize(
-                "NIMBUS_TENANT_MUTATION_ISOLATE_CEILING",
-                DEFAULT_TENANT_MUTATION_ISOLATE_CEILING,
-            ),
-            DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY,
-        )
+    /// Admits at most `ceiling` concurrent isolates and queues at most the
+    /// mutation admission capacity behind them.
+    pub(in crate::tenant) fn with_ceiling(ceiling: usize) -> Self {
+        Self::new(ceiling, DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY)
     }
 
     fn new(ceiling: usize, waiting_capacity: usize) -> Self {

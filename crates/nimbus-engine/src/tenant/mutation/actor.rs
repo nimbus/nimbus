@@ -12,25 +12,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::Engine;
+use crate::config::QueueLimits;
 use crate::engine::{TenantEvictionRegistry, begin_definitive_fence_eviction};
 
 use super::super::TenantRuntime;
-
-const DEFAULT_COMMITTER_INBOX_SIZE: usize = 128;
-const DEFAULT_COMMITTER_SEND_TIMEOUT_MS: u64 = 500;
-
-fn committer_limits_from_env() -> (usize, Duration) {
-    (
-        crate::config::env_positive_usize(
-            "NIMBUS_COMMITTER_INBOX_SIZE",
-            DEFAULT_COMMITTER_INBOX_SIZE,
-        ),
-        Duration::from_millis(crate::config::env_nonnegative_u64(
-            "NIMBUS_COMMITTER_SEND_TIMEOUT_MS",
-            DEFAULT_COMMITTER_SEND_TIMEOUT_MS,
-        )),
-    )
-}
 
 #[cfg(test)]
 static COMMITTER_LIMITS_FOR_TESTING: OnceLock<Mutex<HashMap<TenantId, (usize, Duration)>>> =
@@ -190,12 +175,13 @@ pub(crate) struct CommitterActor {
 }
 
 impl CommitterActor {
-    pub(crate) fn new(tenant_id: TenantId) -> Self {
+    pub(crate) fn new(tenant_id: TenantId, limits: QueueLimits) -> Self {
+        let configured = (limits.capacity, limits.send_timeout);
         #[cfg(test)]
         let (inbox_capacity, send_timeout) =
-            take_committer_limits_for_testing(&tenant_id).unwrap_or_else(committer_limits_from_env);
+            take_committer_limits_for_testing(&tenant_id).unwrap_or(configured);
         #[cfg(not(test))]
-        let (inbox_capacity, send_timeout) = committer_limits_from_env();
+        let (inbox_capacity, send_timeout) = configured;
         let (sender, receiver) = mpsc::channel(inbox_capacity);
         Self {
             tenant_id,

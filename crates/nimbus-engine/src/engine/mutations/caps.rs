@@ -1,9 +1,8 @@
-use std::sync::LazyLock;
-
 use nimbus_core::{Error, Mutation, MutationCap, Result};
 use serde::Serialize;
 use tracing::warn;
 
+use crate::config::{EnvLookup, positive_u64};
 use crate::tenant::TenantRuntime;
 
 pub(in crate::engine) const DEFAULT_MUTATION_READ_BYTES: u64 = 1 << 24;
@@ -90,7 +89,7 @@ pub(in crate::engine) fn serialized_len<T: Serialize>(value: &T) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CapSetting {
     proposed: u64,
     enforced: Option<u64>,
@@ -102,46 +101,56 @@ impl CapSetting {
         Self { proposed, enforced }
     }
 
-    fn from_env(name: &'static str, proposed_default: u64) -> Self {
+    fn from_lookup(lookup: EnvLookup<'_>, name: &'static str, proposed_default: u64) -> Self {
         Self {
-            proposed: env_positive_u64(&format!("NIMBUS_PROPOSED_{name}"))
+            proposed: positive_u64(lookup, &format!("NIMBUS_PROPOSED_{name}"))
                 .unwrap_or(proposed_default),
-            enforced: env_positive_u64(&format!("NIMBUS_{name}")),
+            enforced: positive_u64(lookup, &format!("NIMBUS_{name}")),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(in crate::engine) struct MutationCapConfig {
+/// Proposed (shadow) and enforced per-mutation caps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MutationCapConfig {
     user: [CapSetting; 5],
     system_write_bytes: CapSetting,
     system_documents_written: CapSetting,
 }
 
 impl MutationCapConfig {
-    fn from_env() -> Self {
+    pub(crate) fn from_lookup(lookup: EnvLookup<'_>) -> Self {
         Self {
             user: [
-                CapSetting::from_env("MUTATION_READ_BYTES", DEFAULT_MUTATION_READ_BYTES),
-                CapSetting::from_env("MUTATION_WRITE_BYTES", DEFAULT_MUTATION_WRITE_BYTES),
-                CapSetting::from_env(
+                CapSetting::from_lookup(lookup, "MUTATION_READ_BYTES", DEFAULT_MUTATION_READ_BYTES),
+                CapSetting::from_lookup(
+                    lookup,
+                    "MUTATION_WRITE_BYTES",
+                    DEFAULT_MUTATION_WRITE_BYTES,
+                ),
+                CapSetting::from_lookup(
+                    lookup,
                     "MUTATION_DOCUMENTS_SCANNED",
                     DEFAULT_MUTATION_DOCUMENTS_SCANNED,
                 ),
-                CapSetting::from_env(
+                CapSetting::from_lookup(
+                    lookup,
                     "MUTATION_DOCUMENTS_WRITTEN",
                     DEFAULT_MUTATION_DOCUMENTS_WRITTEN,
                 ),
-                CapSetting::from_env(
+                CapSetting::from_lookup(
+                    lookup,
                     "MUTATION_INDEX_RANGE_CALLS",
                     DEFAULT_MUTATION_INDEX_RANGE_CALLS,
                 ),
             ],
-            system_write_bytes: CapSetting::from_env(
+            system_write_bytes: CapSetting::from_lookup(
+                lookup,
                 "SYSTEM_MUTATION_WRITE_BYTES",
                 DEFAULT_SYSTEM_MUTATION_WRITE_BYTES,
             ),
-            system_documents_written: CapSetting::from_env(
+            system_documents_written: CapSetting::from_lookup(
+                lookup,
                 "SYSTEM_MUTATION_DOCUMENTS_WRITTEN",
                 DEFAULT_SYSTEM_MUTATION_DOCUMENTS_WRITTEN,
             ),
@@ -173,14 +182,11 @@ const CAPS: [MutationCap; 5] = [
     MutationCap::IndexRangeCalls,
 ];
 
-static MUTATION_CAP_CONFIG: LazyLock<MutationCapConfig> =
-    LazyLock::new(MutationCapConfig::from_env);
-
 pub(in crate::engine) fn check_mutation_caps(
     runtime: &TenantRuntime,
     usage: MutationUsage,
 ) -> Result<()> {
-    check_mutation_caps_with_config(runtime, usage, &MUTATION_CAP_CONFIG)
+    check_mutation_caps_with_config(runtime, usage, &runtime.config().mutation_caps)
 }
 
 fn check_mutation_caps_with_config(
@@ -215,7 +221,7 @@ fn check_one(
     if observed > setting.proposed
         && runtime
             .commit_phase_metrics()
-            .record_shadow_cap_violation(cap)
+            .record_shadow_cap_violation(cap, runtime.config().diagnostics.shadow_cap_report_every)
     {
         warn!(
             tenant = %runtime.tenant_id(),
@@ -231,13 +237,6 @@ fn check_one(
         return Err(Error::cap_exceeded(cap, observed, limit));
     }
     Ok(())
-}
-
-fn env_positive_u64(key: &str) -> Option<u64> {
-    std::env::var_os(key)
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
 }
 
 #[cfg(test)]

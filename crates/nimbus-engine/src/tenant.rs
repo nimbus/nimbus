@@ -16,9 +16,10 @@ use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+use crate::config::EngineConfig;
 use crate::engine::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitPhaseMetricsSnapshot, CommitTraceSample,
-    WriteLog, WriteLogConfig, maybe_emit_commit_trace,
+    WriteLog, maybe_emit_commit_trace,
 };
 use crate::persistence::{TenantPersistence, TenantPersistenceExecutor};
 use crate::subscriptions::SubscriptionRegistry;
@@ -127,6 +128,7 @@ use self::trigger_candidates::TriggerCandidateFeed;
 #[cfg(test)]
 pub(crate) use self::trigger_candidates::TriggerCandidatePauseHandle;
 use self::trigger_execution::TriggerExecutionQueue;
+pub(crate) use self::write_rate::TenantWriteRateConfig;
 use self::write_rate::TenantWriteRateLimiter;
 pub use self::write_rate::TenantWriteRateStats;
 #[cfg(test)]
@@ -173,6 +175,7 @@ pub struct TenantRuntime {
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
     prepare_permits: Arc<Semaphore>,
+    config: Arc<EngineConfig>,
     #[cfg(test)]
     test_identity: u64,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -276,6 +279,7 @@ pub(crate) struct TenantRuntimeEnvironment {
     committer_owner_id: Option<String>,
     id_source: Arc<dyn IdSource>,
     metadata_retention: crate::persistence_config::MetadataRetentionProfile,
+    config: Arc<EngineConfig>,
 }
 
 impl TenantRuntimeEnvironment {
@@ -285,6 +289,7 @@ impl TenantRuntimeEnvironment {
         committer_owner_id: Option<String>,
         id_source: Arc<dyn IdSource>,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile,
+        config: Arc<EngineConfig>,
     ) -> Self {
         Self {
             monotonic_clock,
@@ -292,24 +297,9 @@ impl TenantRuntimeEnvironment {
             committer_owner_id,
             id_source,
             metadata_retention,
+            config,
         }
     }
-}
-
-fn prepare_concurrency() -> usize {
-    std::env::var_os("NIMBUS_PREPARE_CONCURRENCY")
-        .and_then(|value| value.into_string().ok())
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(std::num::NonZeroUsize::get)
-                .unwrap_or(4)
-                // SQLite's read-snapshot pool is deliberately small. Four
-                // callers overlap CPU and serialization without turning pool
-                // polling into the dominant prepare cost.
-                .min(4)
-        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -354,9 +344,17 @@ impl TenantRuntime {
         // a separate persistence policy owned by
         // `has_process_local_sequence_authority`.
         let committer_arm = CommitterArm::for_persistence(&store);
-        let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
-        let publisher = Arc::new(PublisherHandoff::new(committer_arm, &tenant_id));
-        let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id));
+        let config = environment.config;
+        let committer = Arc::new(CommitterActor::new(
+            tenant_id.clone(),
+            config.committer_inbox,
+        ));
+        let publisher = Arc::new(PublisherHandoff::new(
+            committer_arm,
+            &tenant_id,
+            config.publisher_queue,
+        ));
+        let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id, &config));
         Self {
             tenant_id,
             tenant_incarnation,
@@ -369,7 +367,7 @@ impl TenantRuntime {
             query_planning: QueryPlanningMetrics::new(),
             commit_phases: CommitPhaseMetrics::new(),
             write_log: WriteLog::new(
-                WriteLogConfig::from_env(),
+                config.write_log,
                 progress.applied_head,
                 progress.durable_head,
             ),
@@ -379,7 +377,9 @@ impl TenantRuntime {
             trigger_registry: TriggerRegistry::new(),
             lifecycle: Arc::new(TenantLifecycle::new()),
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
-            mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
+            mutation_isolate_admission: Arc::new(MutationIsolateAdmission::with_ceiling(
+                config.tenant_mutation_isolate_ceiling,
+            )),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
             metadata_retention: crate::engine::metadata_retention::MetadataRetentionController::new(
@@ -401,7 +401,8 @@ impl TenantRuntime {
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
-            prepare_permits: Arc::new(Semaphore::new(prepare_concurrency())),
+            prepare_permits: Arc::new(Semaphore::new(config.resolved_prepare_concurrency())),
+            config,
             #[cfg(test)]
             test_identity: NEXT_TENANT_RUNTIME_TEST_IDENTITY.fetch_add(1, Ordering::Relaxed),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -621,6 +622,11 @@ impl TenantRuntime {
         &self.commit_phases
     }
 
+    /// Returns the engine configuration that this runtime was built with.
+    pub(crate) fn config(&self) -> &EngineConfig {
+        &self.config
+    }
+
     pub(crate) fn record_commit_phase_sample(
         &self,
         path: &'static str,
@@ -630,13 +636,16 @@ impl TenantRuntime {
     ) {
         self.commit_phases
             .record_sample(commit_count, phases, total);
-        maybe_emit_commit_trace(CommitTraceSample {
-            tenant_id: &self.tenant_id,
-            path,
-            commit_count,
-            phases,
-            total,
-        });
+        maybe_emit_commit_trace(
+            CommitTraceSample {
+                tenant_id: &self.tenant_id,
+                path,
+                commit_count,
+                phases,
+                total,
+            },
+            self.config.diagnostics.commit_trace_threshold,
+        );
     }
 
     /// Enters a tenant operation, preventing deletion while the operation is active.
