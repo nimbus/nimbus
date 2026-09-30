@@ -19,18 +19,11 @@ run_nnc61a_compute_node_workload_coordinator_self_tests() {
   temporary="$2"
   nnc61a_fail=0
   nnc61a_mutations=(
-    missing-node-capability
-    missing-compute-coordinator
-    missing-state-coordinator
-    missing-profile-fence
     direct-cli-reconcile
     direct-guest-reconcile
     direct-guest-inspect
     runner-provider-restart
-    missing-restart-fence
     duplicate-restart-accepted
-    coordinator-desired-store
-    coordinator-network-authority
     second-coordinator
     duplicate-saga-coordinator
     duplicate-saga-coordinator-enum

@@ -118,13 +118,9 @@ else
   fail "nimbus-node forbidden imports found" "$(printf '%s' "${NODE_FORBIDDEN}" | head -c 800)"
 fi
 
-step 6 "Host lifecycle reconciler and writer inversion exist"
+step 6 "Status evidence writer inversion exists"
 RECONCILER_DETAIL=()
-for call in validate inspect start stop; do
-  grep -q "self.backend.${call}" "${NODE_CRATE}/src/reconciler.rs" \
-    || RECONCILER_DETAIL+=("NodeWorkloadReconciler missing ${call} call")
-done
-grep -q 'trait StatusEvidenceWriter' "${NODE_CRATE}/src/reconciler.rs" \
+grep -q 'trait StatusEvidenceWriter' "${NODE_CRATE}/src/status_evidence.rs" \
   || RECONCILER_DETAIL+=("StatusEvidenceWriter trait missing from nimbus-node")
 grep -q 'impl StatusEvidenceWriter for SystemTenantStatusEvidenceWriter' "${SERVER_CRATE}/src/system_tenant/records.rs" \
   || RECONCILER_DETAIL+=("server-owned SystemTenantStatusEvidenceWriter impl missing")
@@ -133,9 +129,9 @@ grep -q 'ensure_system_or_operator_authority("_nimbus workload status projection
 grep -q 'projection.ensure_status_matches(status)' "${SERVER_CRATE}/src/system_tenant/records.rs" \
   || RECONCILER_DETAIL+=("_nimbus workload status writer lacks projection/status match check")
 if [ "${#RECONCILER_DETAIL[@]}" -eq 0 ]; then
-  pass "Reconciler calls lifecycle backend and persistence stays inverted"
+  pass "Status evidence persistence stays inverted"
 else
-  fail "Reconciler/writer inversion incomplete" "$(printf '%s; ' "${RECONCILER_DETAIL[@]}")"
+  fail "Status evidence writer inversion incomplete" "$(printf '%s; ' "${RECONCILER_DETAIL[@]}")"
 fi
 
 step 7 "Focused security tests pass"

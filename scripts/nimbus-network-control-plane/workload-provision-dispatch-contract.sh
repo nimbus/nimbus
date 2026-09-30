@@ -67,7 +67,6 @@ MACHINE_PUBLICATION="crates/nimbus-cli/src/machine/publication_authority.rs"
 MACHINE_CAPABILITIES="crates/nimbus-cli/src/machine/api/capabilities.rs"
 MACHINE_PROVISION_ROUTE_TESTS="crates/nimbus-cli/src/machine/api/tests/provision_phase.rs"
 MACHINE_PROVISION_ADAPTER_TESTS="crates/nimbus-cli/src/machine/backend/provision/tests.rs"
-NODE_RECONCILER="crates/nimbus-node/src/reconciler.rs"
 NODE_HOST_LIFECYCLE="crates/nimbus-node/src/host_lifecycle.rs"
 NODE_DIRECT_PROCESS="crates/nimbus-node/src/direct_process.rs"
 NODE_SYSTEMD_TRANSIENT="crates/nimbus-node/src/systemd_transient.rs"
@@ -352,7 +351,6 @@ $(source_without_comments "${REPO_ROOT}/${MACHINE_PUBLICATION}")
 $(source_without_comments "${REPO_ROOT}/${MACHINE_CAPABILITIES}")"
   machine_guest_caller_tests_source="$(source_without_comments "${REPO_ROOT}/${MACHINE_PROVISION_ROUTE_TESTS}")
 $(source_without_comments "${REPO_ROOT}/${MACHINE_PROVISION_ADAPTER_TESTS}")"
-  node_reconciler_source="$(source_without_comments "${REPO_ROOT}/${NODE_RECONCILER}")"
   node_host_lifecycle_source="$(source_without_comments "${REPO_ROOT}/${NODE_HOST_LIFECYCLE}")"
   node_provider_source="$(source_without_comments "${REPO_ROOT}/${NODE_DIRECT_PROCESS}")
 $(source_without_comments "${REPO_ROOT}/${NODE_SYSTEMD_TRANSIENT}")"
@@ -565,7 +563,7 @@ verify_contract() {
     sandbox_provider_command_source \
     sandbox_container_provider_source sandbox_krun_provider_source \
     services_registry_source compose_lifecycle_source \
-    node_reconciler_source cloud_functions_host_source network_manifest_source \
+    cloud_functions_host_source network_manifest_source \
     owner_contract_source; do
     if [ -z "${!required}" ]; then
       add_error "required-inputs-and-tools: missing or empty ${required}"
@@ -1019,7 +1017,6 @@ $(raw_source "${REPO_ROOT}/${MACHINE_BACKEND}")
 $(raw_source "${REPO_ROOT}/${MACHINE_BACKEND_PROVISION}")
 $(raw_source "${REPO_ROOT}/${MACHINE_PUBLICATION}")
 $(raw_source "${REPO_ROOT}/${MACHINE_CAPABILITIES}")
-$(raw_source "${REPO_ROOT}/${NODE_RECONCILER}")
 $(raw_source "${REPO_ROOT}/${NODE_HOST_LIFECYCLE}")
 $(raw_source "${REPO_ROOT}/${NODE_DIRECT_PROCESS}")
 $(raw_source "${REPO_ROOT}/${NODE_SYSTEMD_TRANSIENT}")
