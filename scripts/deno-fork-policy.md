@@ -24,8 +24,10 @@ worktrees.
 | consumed | `nimbus/rusty_v8` | `v150.4.0-nimbus.3` | `5fbb8b4986ba8b55b4ab77100db4304a3b41d9ed` | V8 150.4 line declared by Deno 2.9.6 and 2.9.7, with the Nimbus Locker bridge |
 | published, not consumed | `nimbus/rusty_v8` | `v150.2.0-nimbus.1` | `4786595e29679ee5ad9ba4925cdcd1cc83ab6448` | Forward-maintenance V8 150 line; awaits a compatible Deno V8 roll |
 
-The consumed rows are derived and verified from `Cargo.toml` and `Cargo.lock`;
-do not copy those values into verifier code. The published-but-unconsumed row is
+The consumed rows copy the pins that `packaging/forks.toml` owns. Change them
+with `scripts/repin-fork.sh`, which also rewrites `Cargo.toml`, `Cargo.lock`, and
+the other consumers; do not copy those values into verifier code. The
+published-but-unconsumed row is
 deliberately separate so a new fork release cannot silently change Nimbus's V8
 ABI.
 
@@ -57,8 +59,10 @@ Prefer wrappers around upstream logic over copied implementations.
    pushing branches/tags so unrelated upstream annotated tags do not publish.
 6. Publish a non-draft, non-prerelease release and verify branch/tag workflows,
    release assets, checksums, and the new default branch.
-7. Repin Nimbus to published tags, regenerate Cargo.lock, and run
-   `scripts/verify-deno-fork-provenance.sh` plus
+7. Repin Nimbus to published tags with `scripts/repin-fork.sh deno <tag>` or
+   `scripts/repin-fork.sh rusty_v8 <tag>`, regenerate Cargo.lock, and run
+   `scripts/verify-fork-upstream-standardization.sh`,
+   `scripts/verify-deno-fork-provenance.sh`, and
    `scripts/verify-deno-fork-upstream-policy.sh`.
 8. Run isolate/cage/snapshot/termination/egress/teardown and affected Node
    compatibility evidence before the Nimbus PR is merged.

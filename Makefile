@@ -6,6 +6,7 @@ export
 .PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-provider test-external-providers provider-fixture-up provider-fixture-down verify-external-provider-fixture-helper verify-tenant-lifecycle-callers verify-ppsc-seed-farm verify-ppsc-seed-farm-helper verify-elle-serializability verify-elle-serializability-helper proof-helpers ci-required prove-linux-cgroup-memory-limit verify-bun-jsc-linked-adapter verify-bun-jsc-adapter-package verify-bun-jsc-release-assets verify-bun-jsc-installed-package-proof verify-profile-aware-runtime-crossover verify-runtime-tenant-isolation examples-verify examples-verify-run
 .PHONY: verify-bun-webkit-source
 .PHONY: verify-loom-handoff
+.PHONY: verify-fork-upstream-standardization
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -432,6 +433,13 @@ proof-helpers:
 	bash scripts/verify-release-oci-image-live-helper.sh
 	bash scripts/verify-build-linux-release-packages-helper.sh
 	bash scripts/verify-install-helper.sh
+
+# Verify that every copy of a Nimbus-owned fork pin matches packaging/forks.toml
+verify-fork-upstream-standardization:
+	bash -n scripts/repin-fork.sh
+	bash -n scripts/verify-fork-upstream-standardization.sh
+	python3 -m unittest scripts.test_fork_pins
+	bash scripts/verify-fork-upstream-standardization.sh
 
 # Benchmark retained embedded providers on the storage migration workloads
 bench-embedded-providers:
@@ -916,7 +924,7 @@ convex-demo-stop:
 
 # Required local CI-shaped check. Hosted CI still owns coverage upload and the
 # scheduled/manual Node compatibility evidence workflow.
-ci-required: $(UI_DIST_INDEX) fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js typecheck-js lint-js test-js proof-helpers
+ci-required: $(UI_DIST_INDEX) fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js typecheck-js lint-js test-js proof-helpers verify-fork-upstream-standardization
 
 ci: ci-required
 
