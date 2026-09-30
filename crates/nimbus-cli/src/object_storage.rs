@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
-    ControlPlaneConfig, EmbeddedProviderKind, Engine, EnginePersistenceConfig, ErasureBlobStore,
-    ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport, LocalLeg,
-    LocalPackStore, ObjectPlacement, ObjectStorageConfig, ObjectStorePlacementTarget,
+    ControlPlaneConfig, EmbeddedProviderKind, Engine, EngineConfig, EnginePersistenceConfig,
+    ErasureBlobStore, ErasureConfig, ErasureHealer, Error as NimbusError, HealPacing, HealReport,
+    LocalLeg, LocalPackStore, ObjectPlacement, ObjectStorageConfig, ObjectStorePlacementTarget,
     ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy, TenantId,
     object_blob_root,
 };
@@ -752,7 +752,8 @@ async fn open_engine(
     control_data_dir: Option<&Path>,
     provider: ObjectStorageProvider,
 ) -> Result<Arc<Engine>, Box<dyn Error>> {
-    let mut config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind());
+    let mut config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind())
+        .with_engine_config(EngineConfig::from_env());
     if let Some(control_data_dir) = control_data_dir {
         config.control_plane = ControlPlaneConfig::embedded_redb(control_data_dir);
     }

@@ -464,6 +464,7 @@ pub(super) fn mysql_engine_config(
         control_plane: ControlPlaneConfig::embedded_redb(control_dir),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
+        engine: nimbus_engine::EngineConfig::from_env(),
     }
 }
 
