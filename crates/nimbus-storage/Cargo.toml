@@ -31,7 +31,6 @@ test-hooks = []
 [dependencies]
 aes-gcm-siv.workspace = true
 deadpool-postgres = { workspace = true, optional = true }
-fjall.workspace = true
 futures.workspace = true
 hex.workspace = true
 hyper = { workspace = true, features = [
@@ -72,10 +71,6 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [[bench]]
 name = "read-format-evaluation"
-harness = false
-
-[[bench]]
-name = "kv-engine-write-throughput"
 harness = false
 
 [[bench]]
