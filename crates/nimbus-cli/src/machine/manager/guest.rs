@@ -545,15 +545,14 @@ pub(super) fn resolve_guest_nimbus_binary(paths: &MachinePaths) -> Result<PathBu
         return Ok(binary_path);
     }
 
+    let expected_sha256 = guest_nimbus_archive_sha256(EMBEDDED_GUEST_NIMBUS_ARCHIVE_SHA256)?;
     let archive_path = cache_dir.join(format!("{release_tag}-{archive_name}"));
-    if !archive_path.is_file() {
-        let download_url = guest_nimbus_release_url(&release_tag, archive_name);
-        download_guest_nimbus_archive(
-            &archive_path,
-            &download_url,
-            &format!("Downloading guest nimbus {release_tag}"),
-        )?;
-    }
+    fetch_verified_guest_nimbus_archive(
+        &archive_path,
+        &guest_nimbus_release_url(&release_tag, archive_name),
+        expected_sha256,
+        &format!("Downloading guest nimbus {release_tag}"),
+    )?;
     extract_guest_nimbus_archive(
         &archive_path,
         &binary_path,
@@ -576,6 +575,51 @@ fn guest_nimbus_release_url(release_tag: &str, archive_name: &str) -> String {
     let base = env::var(GUEST_NIMBUS_RELEASE_BASE_URL_ENV)
         .unwrap_or_else(|_| DEFAULT_GUEST_NIMBUS_RELEASE_BASE_URL.to_owned());
     format!("{}/{}", base.trim_end_matches('/'), release_tag).to_owned() + "/" + archive_name
+}
+
+/// SHA-256 of the Linux guest archive for this build's architecture. The
+/// release workflow sets it from the archive that it publishes. Development
+/// builds leave it unset.
+const EMBEDDED_GUEST_NIMBUS_ARCHIVE_SHA256: Option<&str> =
+    option_env!("NIMBUS_MACHINE_GUEST_ARCHIVE_SHA256");
+
+pub(super) fn guest_nimbus_archive_sha256(
+    embedded: Option<&'static str>,
+) -> Result<&'static str, Error> {
+    embedded
+        .filter(|digest| !digest.is_empty())
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "this nimbus build has no embedded guest nimbus archive digest, so it cannot verify a downloaded guest binary. To continue, {LOCAL_GUEST_BINARY_HELP_TEXT}."
+            ))
+        })
+}
+
+/// Downloads the guest archive when it is not cached, then verifies it
+/// against `expected_sha256` before extraction. A mismatched archive is
+/// deleted.
+pub(super) fn fetch_verified_guest_nimbus_archive(
+    archive_path: &Path,
+    download_url: &str,
+    expected_sha256: &str,
+    progress_message: &str,
+) -> Result<(), Error> {
+    if !archive_path.is_file() {
+        download_guest_nimbus_archive(archive_path, download_url, progress_message)?;
+    }
+    let actual_sha256 = compute_sha256(archive_path)?;
+    if actual_sha256 == expected_sha256 {
+        return Ok(());
+    }
+    fs::remove_file(archive_path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to delete guest nimbus archive {} after a digest mismatch: {error}",
+            archive_path.display()
+        ))
+    })?;
+    Err(Error::InvalidInput(format!(
+        "guest nimbus archive digest mismatch for {download_url}: expected sha256 {expected_sha256}, got {actual_sha256}. The archive was deleted."
+    )))
 }
 
 fn download_guest_nimbus_archive(

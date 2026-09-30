@@ -241,7 +241,8 @@ jobs:
 
   build:
     name: Build (${{ matrix.target }})
-    needs: [verify-release-contract, ui-artifacts]
+    # The darwin binary embeds the digest of the Linux arm64 guest archive.
+    needs: [verify-release-contract, ui-artifacts, build-linux-arm64]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -355,6 +356,26 @@ jobs:
         run: |
           git config --global core.longpaths true
 
+      # macOS hosts sync this Linux guest archive into the machine. The CLI
+      # verifies each download against the embedded digest and fails closed.
+      - name: Download Linux arm64 guest archive
+        if: matrix.os == 'darwin'
+        uses: actions/download-artifact@v8
+        with:
+          name: nimbus_linux_arm64
+          path: guest-archive
+
+      - name: Embed guest archive digest
+        if: matrix.os == 'darwin'
+        shell: bash
+        run: |
+          guest_sha256="$(shasum -a 256 guest-archive/nimbus_linux_arm64.tar.gz | awk '{print $1}')"
+          if [[ ! "${guest_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::invalid guest archive digest: ${guest_sha256}"
+            exit 1
+          fi
+          echo "NIMBUS_MACHINE_GUEST_ARCHIVE_SHA256=${guest_sha256}" >> "$GITHUB_ENV"
+
       - name: Build release binary
         shell: bash
         run: |
@@ -374,6 +395,13 @@ jobs:
             make build-node22-anchor-snapshot-on
           fi
           cargo build --release -p nimbus-bin "${cargo_feature_args[@]}"
+
+      # A cached compile can miss the digest env change. Fail closed if the
+      # binary does not carry the digest of this release's guest archive.
+      - name: Verify embedded guest archive digest
+        if: matrix.os == 'darwin'
+        shell: bash
+        run: LC_ALL=C grep -a -q -F "${NIMBUS_MACHINE_GUEST_ARCHIVE_SHA256}" target/release/nimbus
 
       - name: Prove SQLCipher release lane
         shell: bash
@@ -1089,6 +1117,18 @@ jobs:
           done
           sha256sum "${unique_checksum_assets[@]}" > checksums-sha256.txt
           cat checksums-sha256.txt
+
+      - name: Verify darwin guest archive digest against the checksum manifest
+        shell: bash
+        run: |
+          guest_sha256="$(awk '$2 == "nimbus_linux_arm64.tar.gz" {print $1}' artifacts/checksums-sha256.txt)"
+          if [[ ! "${guest_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::checksums-sha256.txt has no nimbus_linux_arm64.tar.gz entry"
+            exit 1
+          fi
+          mkdir -p darwin-binary
+          tar -xzf artifacts/nimbus_darwin_arm64.tar.gz -C darwin-binary nimbus
+          LC_ALL=C grep -a -q -F "${guest_sha256}" darwin-binary/nimbus
 
       - name: Verify optional Bun/JSC adapter checksums
         run: |

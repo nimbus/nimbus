@@ -28,7 +28,7 @@ use super::super::record::{MachineImageFormat, MachineImageSource};
 use super::{
     HTTP_IMAGE_TIMEOUT, MachinePaths, OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY,
     OCI_ANNOTATION_MACHINE_NIMBUS_VERSION, OCI_ANNOTATION_SOURCE, OCI_ANNOTATION_TITLE,
-    OCI_MACHINE_OS, emit_machine_info, emit_machine_warning,
+    OCI_MACHINE_OS, emit_machine_info,
 };
 
 #[derive(Debug, Deserialize)]
@@ -449,7 +449,7 @@ async fn pull_oci_artifact_to_cache(
         &reference,
         &selected_artifact.layer.digest,
         selected_artifact.metadata.attestation_repository.as_deref(),
-    );
+    )?;
     fs::rename(&download_path, &cache_path).map_err(|error| {
         Error::Internal(format!(
             "failed to persist machine guest OCI artifact cache {}: {error}",
@@ -748,58 +748,67 @@ fn log_machine_artifact_metadata(reference: &str, metadata: &MachineArtifactMeta
 
 const NIMBUS_SOURCE_REPO: &str = "nimbus/nimbus";
 
-fn check_build_attestation(
+/// Requires a GitHub build attestation for a ghcr.io machine artifact. Other
+/// registries have no GitHub attestation source. Their blob is still checked
+/// against the manifest digest by `verify_downloaded_oci_blob`.
+pub(super) fn check_build_attestation(
     reference: &str,
     subject_digest: &str,
     explicit_repository: Option<&str>,
-) {
+) -> Result<(), Error> {
     let stripped = strip_docker_reference_prefix(reference);
     let Some(image_repo) = extract_ghcr_repo_path(&stripped) else {
-        return;
+        return Ok(());
     };
 
+    let reference = reference.to_owned();
     let subject_digest = subject_digest.to_owned();
-    let explicit_repository = explicit_repository.map(ToOwned::to_owned);
-    let _ = run_blocking_in_thread("machine build attestation lookup", move || {
-        let repos_to_check = attestation_repositories_for_reference(
-            &image_repo,
-            explicit_repository
-                .as_deref()
-                .filter(|repo| !repo.is_empty()),
-        );
-
-        let client = match BlockingClient::builder()
+    let repos_to_check = attestation_repositories_for_reference(
+        &image_repo,
+        explicit_repository.filter(|repo| !repo.is_empty()),
+    );
+    run_blocking_in_thread("machine build attestation lookup", move || {
+        let client = BlockingClient::builder()
             .timeout(Duration::from_secs(10))
             .build()
-        {
-            Ok(client) => client,
-            Err(error) => {
-                emit_machine_warning(format!("attestation lookup failed: {error}"));
-                return Ok(());
-            }
-        };
-
-        for repo in &repos_to_check {
-            match query_attestations(&client, repo, &subject_digest) {
-                Ok(count) if count > 0 => {
-                    let _ = cli_ux::write_stderr_prefixed_line(
-                        "verified:",
-                        &format!(
-                            "{count} build attestation(s) found for {subject_digest} in {repo}"
-                        ),
-                    );
-                    return Ok(());
-                }
-                Ok(_) => {}
-                Err(msg) => {
-                    emit_machine_warning(format!("attestation lookup for {repo}: {msg}"));
-                }
-            }
-        }
-
-        emit_machine_warning(format!("no build attestations found for {subject_digest}"));
+            .map_err(|error| {
+                Error::Internal(format!(
+                    "failed to build machine attestation HTTP client: {error}"
+                ))
+            })?;
+        let (repo, count) =
+            require_build_attestation(&reference, &subject_digest, &repos_to_check, |repo| {
+                query_attestations(&client, repo, &subject_digest)
+            })?;
+        let _ = cli_ux::write_stderr_prefixed_line(
+            "verified:",
+            &format!("{count} build attestation(s) found for {subject_digest} in {repo}"),
+        );
         Ok(())
-    });
+    })
+}
+
+/// Returns the first repository that holds an attestation for
+/// `subject_digest`. A lookup failure or an empty result in every repository
+/// is an error.
+pub(super) fn require_build_attestation(
+    reference: &str,
+    subject_digest: &str,
+    repos_to_check: &[String],
+    mut lookup: impl FnMut(&str) -> Result<usize, String>,
+) -> Result<(String, usize), Error> {
+    let mut failures = Vec::with_capacity(repos_to_check.len());
+    for repo in repos_to_check {
+        match lookup(repo) {
+            Ok(count) if count > 0 => return Ok((repo.clone(), count)),
+            Ok(_) => failures.push(format!("{repo}: no attestations")),
+            Err(message) => failures.push(format!("{repo}: {message}")),
+        }
+    }
+    Err(Error::InvalidInput(format!(
+        "machine image '{reference}' has no valid build attestation for {subject_digest} ({}). To boot an unpublished image, pass a local disk path with `--image <path>`.",
+        failures.join("; ")
+    )))
 }
 
 pub(super) fn run_blocking_in_thread<F, T>(label: &'static str, work: F) -> Result<T, Error>
