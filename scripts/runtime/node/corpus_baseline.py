@@ -31,7 +31,7 @@ from typing import Any
 
 BASELINE_RELATIVE_PATH = "tests/runtime/node/expectations/corpus-baseline.json"
 POSTURE_RELATIVE_PATH = (
-    "docs/private/architecture/runtime/node-default-support-posture.json"
+    "tests/runtime/node/compat/node-default-support-posture.json"
 )
 FIXTURE_ROOT_RELATIVE_PATH = "crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures"
 

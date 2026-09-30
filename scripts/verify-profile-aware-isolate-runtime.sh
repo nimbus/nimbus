@@ -25,7 +25,7 @@ bash scripts/verify-runtime-tenant-isolation.sh
 bash scripts/verify-tenant-function-autoscaling.sh
 python3 -m unittest scripts.test_verify_profile_aware_isolate_runtime_crossover_trace
 TRACE_RUN_ID="$(python3 scripts/verify_profile_aware_isolate_runtime_crossover_trace.py \
-  --trace docs/private/plans/proof/release-readiness-2026-08/artifacts/rrc8-u3-node22-hostless-crossover.jsonl \
+  --trace scripts/fixtures/profile-aware-isolate-runtime/rrc8-u3-node22-hostless-crossover.jsonl \
   --benchmark-group runtime_pool_modes_pir0_profile_matrix \
   --profile node22 \
   --workload hostless_trivial \
@@ -35,7 +35,7 @@ TRACE_RUN_ID="$(python3 scripts/verify_profile_aware_isolate_runtime_crossover_t
   --print-run-id)"
 printf 'PASS Node crossover trace uses run ID %s\n' "${TRACE_RUN_ID}"
 python3 scripts/verify_profile_aware_isolate_runtime_crossover_trace.py \
-  --trace docs/private/plans/proof/release-readiness-2026-08/artifacts/rrc8-u3-web-standard-hostless-crossover.jsonl \
+  --trace scripts/fixtures/profile-aware-isolate-runtime/rrc8-u3-web-standard-hostless-crossover.jsonl \
   --benchmark-group runtime_pool_modes_web_selected \
   --profile web_standard \
   --workload hostless_trivial \

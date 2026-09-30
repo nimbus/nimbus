@@ -496,7 +496,7 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="validate generated files")
     parser.add_argument(
         "--posture",
-        default="docs/private/architecture/runtime/node-default-support-posture.json",
+        default="tests/runtime/node/compat/node-default-support-posture.json",
         help="source posture JSON path, relative to the repository root by default",
     )
     parser.add_argument(

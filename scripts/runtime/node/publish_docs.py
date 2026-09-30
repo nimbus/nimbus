@@ -47,10 +47,10 @@ def faas_profile_path() -> Path:
 def default_support_posture_path() -> Path:
     return (
         repo_root()
-        / "docs"
-        / "private"
-        / "architecture"
+        / "tests"
         / "runtime"
+        / "node"
+        / "compat"
         / "node-default-support-posture.json"
     )
 
@@ -58,10 +58,10 @@ def default_support_posture_path() -> Path:
 def shim_inventory_path() -> Path:
     return (
         repo_root()
-        / "docs"
-        / "private"
-        / "architecture"
+        / "tests"
         / "runtime"
+        / "node"
+        / "compat"
         / "node-isolate-shim-inventory.json"
     )
 
@@ -321,7 +321,7 @@ def default_support_posture_lines(posture: dict[str, Any]) -> list[str]:
     lines = [
         "## Default-Support Posture",
         "",
-        "Source: `docs/private/architecture/runtime/node-default-support-posture.json`",
+        "Source: `tests/runtime/node/compat/node-default-support-posture.json`",
         "",
         "The default-support posture separates the full official fixture corpus from the V8-isolate-required surface, optional isolate gaps, diagnostic non-isolate behavior, test-harness-only fixtures, and upstream/platform boundaries.",
         "",
@@ -357,7 +357,7 @@ def capability_class_summary_lines(inventory: dict[str, Any], link_path: str) ->
     lines = [
         "## Capability Classes",
         "",
-        "Source: `docs/private/architecture/runtime/node-isolate-shim-inventory.json`",
+        "Source: `tests/runtime/node/compat/node-isolate-shim-inventory.json`",
         "",
         "| Class | Public label | Meaning | Entries |",
         "| --- | --- | --- | ---: |",
@@ -546,7 +546,7 @@ def shim_reference_lines(inventory: dict[str, Any]) -> list[str]:
     lines = [
         "# Node Shim And Boundary Inventory",
         "",
-        *generated_header("docs/private/architecture/runtime/node-isolate-shim-inventory.json"),
+        *generated_header("tests/runtime/node/compat/node-isolate-shim-inventory.json"),
         "This generated reference lists the Node-compatible isolate shims, emulations, test-harness-only helpers, diagnostic stubs, and unsupported surfaces tracked for the Nimbus V8 isolate runtime and the `nimbus/deno` fork.",
         "",
         "## Capability Classes",

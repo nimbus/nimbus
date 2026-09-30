@@ -1537,8 +1537,8 @@ def main() -> int:
     repo = repo_root()
     generated_paths = (
         (
-            repo / "docs/private/architecture/runtime/node-default-support-posture.json",
-            repo / "docs/private/architecture/runtime/node-default-support-posture.md",
+            repo / "tests/runtime/node/compat/node-default-support-posture.json",
+            repo / "tests/runtime/node/compat/node-default-support-posture.md",
         ),
     )
     posture = build_posture(repo)
