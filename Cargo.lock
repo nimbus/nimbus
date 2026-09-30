@@ -7296,18 +7296,15 @@ dependencies = [
 name = "nimbus-services"
 version = "0.1.48"
 dependencies = [
- "futures",
  "nimbus-core",
  "nimbus-egress",
  "nimbus-network",
  "nimbus-runtime",
  "nimbus-sandbox",
- "nimbus-storage",
  "nimbus-tenant",
  "nimbus-workloads",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "tokio",
  "ulid",
  "url",

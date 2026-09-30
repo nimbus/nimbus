@@ -1,13 +1,7 @@
 //! Service registry and service manager primitives.
 
-pub mod appws;
-pub mod broker;
 mod catalog;
-pub mod frame;
-pub mod hibernation;
-pub mod ingress;
 mod manager;
-pub mod meter;
 mod registry;
 mod sandbox_templates;
 
