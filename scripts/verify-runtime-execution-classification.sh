@@ -1,28 +1,13 @@
 #!/usr/bin/env bash
-# Verification gate for the Runtime Execution Classification plan. The
-# completed plan lives under docs/private/plans/archive.
+# Verification gate for the Runtime Execution Classification code contracts.
+# The plan, proof, and benchmark artifacts are private working state, so this
+# gate reads tracked code and CI wiring only.
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PLAN_ACTIVE="docs/private/plans/runtime-execution-classification-plan.md"
-PLAN_ARCHIVE="docs/private/plans/archive/runtime-execution-classification-plan.md"
-if [ -f "${PLAN_ACTIVE}" ]; then
-  PLAN="${PLAN_ACTIVE}"
-else
-  PLAN="${PLAN_ARCHIVE}"
-fi
-PROOF="docs/private/plans/proof/runtime-execution-classification/rec0-baseline.md"
-REC1_PROOF="docs/private/plans/proof/runtime-execution-classification/rec1-execution-plan.md"
-REC2_PROOF="docs/private/plans/proof/runtime-execution-classification/rec2-host-effects.md"
-REC3_PROOF="docs/private/plans/proof/runtime-execution-classification/rec3-scheduler-consumption.md"
-REC4_PROOF="docs/private/plans/proof/runtime-execution-classification/rec4-context-codegen-alignment.md"
-REC5_PROOF="docs/private/plans/proof/runtime-execution-classification/rec5-numeric-closeout.md"
-REC5_PIR0_TRACE="docs/private/plans/proof/runtime-execution-classification/artifacts/rec5-pir0-selected-trace.jsonl"
-REC5_PIR0_WARM_EXCEPTION_TRACE="docs/private/plans/proof/runtime-execution-classification/artifacts/rec5-pir0-current-trace-after-waituntil-phase-gate.jsonl"
-REC5_PIR5_RSS_TRACE="docs/private/plans/proof/runtime-execution-classification/artifacts/rec5-pir5-retained-density-current-rss.jsonl"
 EXECUTION_PLAN="crates/nimbus-runtime/src/execution_plan.rs"
 INVOCATION="crates/nimbus-runtime/src/runtime/invocation.rs"
 COOP_RUN="crates/nimbus-runtime/src/worker_loop/cooperative/run.rs"
@@ -96,71 +81,14 @@ contains_all() {
 printf '\033[1mREC verification gate -- runtime execution classification\033[0m\n'
 printf 'Repo: %s\n' "${REPO_ROOT}"
 
-step 1 "REC ledger records REC0 through REC5 closed"
-if [ ! -f "${PLAN_ACTIVE}" ] &&
-  [ -f "${PLAN_ARCHIVE}" ] &&
-  contains '\*\*Status:\*\* `done`' "${PLAN}" &&
-  contains 'Archive state' "${PLAN}" &&
-  contains '\| REC0 \| `done`' "${PLAN}" &&
-  contains '\| REC1 \| `done`' "${PLAN}" &&
-  contains '\| REC2 \| `done`' "${PLAN}" &&
-  contains '\| REC3 \| `done`' "${PLAN}" &&
-  contains '\| REC4 \| `done`' "${PLAN}" &&
-  contains '\| REC5 \| `done`' "${PLAN}" &&
-  contains 'Current PIR baseline' "${PLAN}" &&
-  contains '90 passed, 0 failed' "${PLAN}" &&
-  contains 'REC0 baseline audit closeout' "${PLAN}" &&
-  contains 'REC1 internal execution-plan vocabulary closeout' "${PLAN}" &&
-  contains 'REC2 host-operation effect closeout' "${PLAN}" &&
-  contains 'REC3 scheduler-consumption closeout' "${PLAN}" &&
-  contains 'REC4 runtime-context and codegen-alignment closeout' "${PLAN}" &&
-  contains 'REC5 numeric validation and closeout' "${PLAN}"; then
-  pass "archived plan ledger closes REC0/REC1/REC2/REC3/REC4/REC5"
-else
-  fail "REC phase ledger is not in the expected closed state" \
-    "expected archived plan, top-level done, REC0/REC1/REC2/REC3/REC4/REC5 done, and PIR 90/0 baseline"
-fi
-
-step 2 "REC0 proof records baseline, diagram, and verifier closeout"
-if [ -f "${PROOF}" ] &&
-  contains_all "${PROOF}" \
-    'REC0 Baseline Audit And Verifier Scaffold' \
-    'Status: `done`' \
-    'bash scripts/verify-profile-aware-isolate-runtime.sh' \
-    'Summary: 90 passed, 0 failed' \
-    'Current-State Diagram' \
-    'RuntimeExecutionPlan' \
-    'Summary: 8 passed, 0 failed' >/tmp/rec0-proof-baseline-missing.txt; then
-  pass "REC0 proof has the baseline and closeout surface"
-else
-  fail "REC0 proof baseline is incomplete" \
-    "$(cat /tmp/rec0-proof-baseline-missing.txt 2>/dev/null)"
-fi
-
-step 3 "REC0 inventory covers required symbols and ownership seams"
-if [ -f "${PROOF}" ] &&
-  [ -f "${TENANT_EFFICIENCY}" ] &&
+step 1 "REC0 inventory seams exist in code"
+if [ -f "${TENANT_EFFICIENCY}" ] &&
   [ -f "${ADMISSION}" ] &&
   [ -f "${AFFINITY}" ] &&
   [ -f "${WARM_POOL}" ] &&
   [ -f "${HOST_STATE}" ] &&
   [ -f "${CONVEX_DISPATCH}" ] &&
   [ -f "${CODEGEN_CONTEXT}" ] &&
-  contains_all "${PROOF}" \
-    'InvocationKind' \
-    'RuntimeWorkerJob' \
-    'RuntimeProfile' \
-    'RuntimeEfficiencyPlan' \
-    'RuntimeTenantBudget' \
-    'RuntimeHostWorkClass' \
-    'RuntimeHostResourceDecision' \
-    'RuntimeAffinityKey' \
-    'RuntimePoolPartitionKey' \
-    'HostCallOperation' \
-    'HostCallPayload::operation' \
-    'HostCallEnvelope' \
-    'RuntimeHostState' \
-    'packages/codegen/src/planner/context_api.mjs' >/tmp/rec0-inventory-missing.txt &&
   contains 'pub struct RuntimeEfficiencyPlan' "${TENANT_EFFICIENCY}" &&
   contains 'fn runtime_host_work_class_for_job' "${ADMISSION}" &&
   contains_all "${AFFINITY}" \
@@ -168,31 +96,26 @@ if [ -f "${PROOF}" ] &&
     'pub\(crate\) enum RuntimeReuseLocalityKey' >/tmp/rec0-current-affinity-missing.txt &&
   contains 'struct V8RetainedAuthorityKey' "${WARM_POOL}" &&
   contains 'pub struct RuntimeHostState' "${HOST_STATE}"; then
-  pass "inventory covers semantic, substrate, effect, budget, affinity, and enforcement seams"
+  pass "code carries the semantic, substrate, effect, budget, affinity, and enforcement seams"
 else
   fail "REC0 current-state inventory is incomplete" \
-    "$(cat /tmp/rec0-inventory-missing.txt 2>/dev/null) $(cat /tmp/rec0-current-affinity-missing.txt 2>/dev/null)"
+    "$(cat /tmp/rec0-current-affinity-missing.txt 2>/dev/null)"
 fi
 
-step 4 "Direct cooperative scheduler consumers were inventoried and are now removed"
+step 2 "Direct cooperative scheduler consumers are removed"
 if [ -f "${INVOCATION}" ] &&
   [ -f "${COOP_RUN}" ] &&
   [ -f "${COOP_EXECUTION}" ] &&
   [ -f "${COOP_BACKEND}" ] &&
   contains 'pub\(crate\) const fn is_convex_read_semantic_candidate' "${INVOCATION}" &&
-  contains_all "${PROOF}" \
-    'crates/nimbus-runtime/src/runtime/invocation.rs' \
-    'crates/nimbus-runtime/src/worker_loop/cooperative/run.rs' \
-    'crates/nimbus-runtime/src/worker_loop/cooperative/execution.rs' \
-    'Current production direct consumers' >/tmp/rec0-scheduler-missing.txt &&
   ! grep -R 'job.request.kind.is_convex_read_semantic_candidate' crates/nimbus-runtime/src/worker_loop >/dev/null 2>&1; then
-  pass "REC0 names the old direct consumers and REC3 removes them from worker scheduling"
+  pass "worker scheduling has no direct InvocationKind consumer"
 else
-  fail "direct scheduler consumer inventory/removal is incomplete" \
-    "$(cat /tmp/rec0-scheduler-missing.txt 2>/dev/null)"
+  fail "direct scheduler consumer removal is incomplete" \
+    "expected is_convex_read_semantic_candidate in invocation.rs and no direct worker_loop consumer"
 fi
 
-step 5 "Host operation inventory is exhaustive enough for REC2"
+step 3 "Host operation enum is exhaustive enough for REC2"
 if [ -f "${HOST}" ] &&
   contains_all "${HOST}" \
     'pub enum HostCallOperation' \
@@ -222,70 +145,14 @@ if [ -f "${HOST}" ] &&
     'CtxSchedulerCancel' \
     'CtxServiceLookup' \
     'CtxRuntimeEnterNestedCall' \
-    'RuntimeExtensionCall' >/tmp/rec0-host-code-missing.txt &&
-  contains_all "${PROOF}" \
-    'Host Operation Inventory' \
-    'pure/local read, observable read, write, scheduler, service or' \
-    'HttpRoute' \
-    'CtxRuntimeEnterNestedCall' \
-    'RuntimeExtensionCall' >/tmp/rec0-host-proof-missing.txt; then
-  pass "host operation enum and proof carry the REC2 exhaustiveness baseline"
+    'RuntimeExtensionCall' >/tmp/rec0-host-code-missing.txt; then
+  pass "host operation enum carries the REC2 exhaustiveness baseline"
 else
   fail "host operation inventory is incomplete" \
-    "$(cat /tmp/rec0-host-code-missing.txt 2>/dev/null) $(cat /tmp/rec0-host-proof-missing.txt 2>/dev/null)"
+    "$(cat /tmp/rec0-host-code-missing.txt 2>/dev/null)"
 fi
 
-step 6 "REC0 answers all open validation questions with fail-closed defaults"
-if [ -f "${PROOF}" ] &&
-  contains_all "${PROOF}" \
-    'OVQ-01' \
-    'OVQ-02' \
-    'OVQ-03' \
-    'OVQ-04' \
-    'OVQ-05' \
-    'OVQ-06' \
-    'OVQ-07' \
-    'OVQ-08' \
-    'OVQ-09' \
-    'OVQ-10' \
-    'OVQ-11' \
-    'OVQ-12' \
-    'OVQ-13' \
-    'OVQ-14' \
-    'OVQ-15' \
-    'OVQ-16' \
-    'unknown posture is ineligible' \
-    'Unknown or unclassified operations are cooperative-ineligible' \
-    'NodeFull starts ineligible for cooperative reuse' >/tmp/rec0-validation-missing.txt; then
-  pass "REC0 records validation answers and conservative defaults"
-else
-  fail "REC0 validation answers are incomplete" \
-    "$(cat /tmp/rec0-validation-missing.txt 2>/dev/null)"
-fi
-
-step 7 "REC0 carries canonical patterns, complexity pockets, and deletion test"
-if [ -f "${PROOF}" ] &&
-  contains_all "${PROOF}" \
-    'Canonical Pattern Carry-Forward' \
-    'Workerd' \
-    'OpenWorkers' \
-    'Wasmtime' \
-    'Kubernetes' \
-    'Deletion test' \
-    'Scheduler predicate spread' \
-    'Job/admission coupling' \
-    'Host-call ABI/adapter dispatch' \
-    'Routing locality versus authority reuse' \
-    'Tenant-admission versus runtime efficiency' \
-    'Context narrowing versus JS ambient authority' \
-    'Verifier drift' >/tmp/rec0-patterns-missing.txt; then
-  pass "REC0 proof preserves the architecture audit findings"
-else
-  fail "REC0 architecture audit carry-forward is incomplete" \
-    "$(cat /tmp/rec0-patterns-missing.txt 2>/dev/null)"
-fi
-
-step 8 "REC verifier is wired into helper syntax gates"
+step 4 "REC verifier is wired into helper syntax gates"
 if [ -f "${MAKEFILE_PATH}" ] &&
   [ -f "${CI_WORKFLOW}" ] &&
   contains 'bash -n scripts/verify-runtime-execution-classification.sh' "${MAKEFILE_PATH}" &&
@@ -296,7 +163,7 @@ else
     "expected Makefile proof-helpers and CI proof-helpers to run bash -n"
 fi
 
-step 9 "REC1 typed execution-plan vocabulary exists"
+step 5 "REC1 typed execution-plan vocabulary exists"
 if [ -f "${EXECUTION_PLAN}" ] &&
   contains_all "${EXECUTION_PLAN}" \
     'enum RuntimeEffectClass' \
@@ -320,7 +187,7 @@ else
     "$(cat /tmp/rec1-execution-plan-missing.txt 2>/dev/null)"
 fi
 
-step 10 "REC1 semantic helper rename is behavior-preserving"
+step 6 "REC1 semantic helper rename is behavior-preserving"
 if [ -f "${INVOCATION}" ] &&
   [ -f "${EXECUTION_PLAN}" ] &&
   contains 'is_convex_read_semantic_candidate' "${INVOCATION}" &&
@@ -334,28 +201,7 @@ else
     "expected helper to remain classifier-only, with no worker-loop use and no allows_cooperative_multiplexing"
 fi
 
-step 11 "REC1 proof records focused tests and REC2 handoff"
-if [ -f "${REC1_PROOF}" ] &&
-  contains_all "${REC1_PROOF}" \
-    'REC1 Internal Runtime Execution Plan Proof' \
-    'Status: `done`' \
-    'RuntimeEffectClass' \
-    'CooperativeEligibility' \
-    'RuntimePoolAuthorityKey' \
-    'RuntimeAdmissionOutcome' \
-    'InvocationKind::is_convex_read_semantic_candidate' \
-    'NodeFull remains ineligible with `NodeFullUnproven`' \
-    'cargo test -p nimbus-runtime runtime_execution_plan --lib -- --nocapture' \
-    '5 passed; 0 failed; 0 ignored; 0 measured; 1050 filtered out' \
-    'Summary: 11 passed, 0 failed' \
-    'REC2 must classify every `HostCallOperation` exhaustively' >/tmp/rec1-proof-missing.txt; then
-  pass "REC1 proof records exact tests and next-band contract"
-else
-  fail "REC1 proof artifact is incomplete" \
-    "$(cat /tmp/rec1-proof-missing.txt 2>/dev/null)"
-fi
-
-step 12 "REC2 host operation effect classifier is enum-owned and exhaustive"
+step 7 "REC2 host operation effect classifier is enum-owned and exhaustive"
 if [ -f "${HOST}" ] &&
   contains_all "${HOST}" \
     'pub\(crate\) const fn runtime_effect_class' \
@@ -373,7 +219,7 @@ else
     "$(cat /tmp/rec2-host-classifier-missing.txt 2>/dev/null)"
 fi
 
-step 13 "REC2 observed host effects are guarded through execution-plan state"
+step 8 "REC2 observed host effects are guarded through execution-plan state"
 if [ -f "${EXECUTION_PLAN}" ] &&
   [ -f "${BOOTSTRAP_STATE}" ] &&
   [ -f "${OPS_SHARED}" ] &&
@@ -400,28 +246,7 @@ else
     "$(cat /tmp/rec2-plan-effect-missing.txt 2>/dev/null) $(cat /tmp/rec2-state-binding-missing.txt 2>/dev/null) $(cat /tmp/rec2-shared-guard-missing.txt 2>/dev/null)"
 fi
 
-step 14 "REC2 proof records focused tests and REC3 handoff"
-if [ -f "${REC2_PROOF}" ] &&
-  contains_all "${REC2_PROOF}" \
-    'REC2 Host Operation Effect Classification Proof' \
-    'Status: `done`' \
-    'HostCallOperation::runtime_effect_class' \
-    'RuntimeObservedEffectViolation' \
-    'RuntimeInvocationExecutionPlanBinding' \
-    'default binding is inactive' \
-    'cargo test -p nimbus-runtime runtime_execution_plan --lib -- --nocapture' \
-    '6 passed; 0 failed; 0 ignored; 0 measured; 1051 filtered out' \
-    'cargo test -p nimbus-runtime host_call_operations_have_exhaustive_runtime_effect_classes --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1056 filtered out' \
-    'Summary: 14 passed, 0 failed' \
-    'REC3 must install `RuntimeExecutionPlan`' >/tmp/rec2-proof-missing.txt; then
-  pass "REC2 proof records exact tests and next-band contract"
-else
-  fail "REC2 proof artifact is incomplete" \
-    "$(cat /tmp/rec2-proof-missing.txt 2>/dev/null)"
-fi
-
-step 15 "REC3 scheduler consumes RuntimeExecutionPlan instead of InvocationKind"
+step 9 "REC3 scheduler consumes RuntimeExecutionPlan instead of InvocationKind"
 if [ -f "${EXECUTION_PLAN}" ] &&
   [ -f "${WORKER_JOB}" ] &&
   [ -f "${EXECUTOR_INVOKE}" ] &&
@@ -457,7 +282,7 @@ else
     "$(cat /tmp/rec3-plan-missing.txt 2>/dev/null) $(cat /tmp/rec3-worker-job-missing.txt 2>/dev/null) $(cat /tmp/rec3-executor-invoke-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-backend-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-run-missing.txt 2>/dev/null) $(cat /tmp/rec3-coop-execution-missing.txt 2>/dev/null) $(cat /tmp/rec3-admission-missing.txt 2>/dev/null)"
 fi
 
-step 16 "REC3 runtime negative and compatibility tests exist"
+step 10 "REC3 runtime negative and compatibility tests exist"
 if [ -f "${COOP_TESTS}" ] &&
   contains_all "${COOP_TESTS}" \
     'REC3_QUERY_WRITE_EFFECT_VIOLATION_CASE' \
@@ -471,31 +296,7 @@ else
     "$(cat /tmp/rec3-tests-missing.txt 2>/dev/null)"
 fi
 
-step 17 "REC3 proof records focused tests and REC4 handoff"
-if [ -f "${REC3_PROOF}" ] &&
-  contains_all "${REC3_PROOF}" \
-    'REC3 Scheduler Consumption Proof' \
-    'Status: `done`' \
-    'RuntimeExecutionPlan::for_invocation' \
-    'RuntimeExecutionPlan::permits_cooperative_scheduler_admission' \
-    'ObservableRead' \
-    'NodeFullUnproven' \
-    'cargo test -p nimbus-runtime runtime_execution_plan --lib -- --nocapture' \
-    '12 passed; 0 failed; 0 ignored; 0 measured; 1051 filtered out' \
-    'cargo test -p nimbus-runtime cooperative_execution_model --lib -- --nocapture' \
-    '4 passed; 0 failed; 0 ignored; 0 measured; 1059 filtered out' \
-    'cargo test -p nimbus-runtime rec3_query_write_effect_violation_rejects_before_host_dispatch --lib -- --nocapture' \
-    '1 passed; 0 failed; 1 ignored; 0 measured; 1063 filtered out' \
-    'cargo test -p nimbus-runtime pir4_mutations_do_not_enter_multiplexed_read_safe_scheduler --lib -- --nocapture' \
-    'Summary: 17 passed, 0 failed' \
-    'REC4 must align runtime context shape' >/tmp/rec3-proof-missing.txt; then
-  pass "REC3 proof records exact tests and next-band contract"
-else
-  fail "REC3 proof artifact is incomplete" \
-    "$(cat /tmp/rec3-proof-missing.txt 2>/dev/null)"
-fi
-
-step 18 "REC4 runtime context shape is request-kind capability aware"
+step 11 "REC4 runtime context shape is request-kind capability aware"
 if [ -f "${BOOTSTRAP_CONTEXT_SOURCE}" ] &&
   [ -f "${CODEGEN_CONTEXT}" ] &&
   contains_all "${BOOTSTRAP_CONTEXT_SOURCE}" \
@@ -519,7 +320,7 @@ else
     "$(cat /tmp/rec4-runtime-context-missing.txt 2>/dev/null) $(cat /tmp/rec4-codegen-context-missing.txt 2>/dev/null)"
 fi
 
-step 19 "REC4 context and raw host-op regression tests exist"
+step 12 "REC4 context and raw host-op regression tests exist"
 if [ -f "${HOST_BRIDGE_TESTS}" ] &&
   [ -f "${COOP_TESTS}" ] &&
   contains_all "${HOST_BRIDGE_TESTS}" \
@@ -537,31 +338,7 @@ else
     "$(cat /tmp/rec4-host-bridge-tests-missing.txt 2>/dev/null) $(cat /tmp/rec4-coop-tests-missing.txt 2>/dev/null)"
 fi
 
-step 20 "REC4 proof records tests and REC5 handoff"
-if [ -f "${REC4_PROOF}" ] &&
-  contains_all "${REC4_PROOF}" \
-    'REC4 Runtime Context And Codegen Alignment Proof' \
-    'Status: `done`' \
-    '__nimbusCreateContext\(\{ request \}\)' \
-    'request-kind capability shape' \
-    'cargo test -p nimbus-runtime runtime_query_context_is_reader_only_when_request_kind_is_present --lib -- --nocapture' \
-    '1 passed; 0 failed; 0 ignored; 0 measured; 1232 filtered out' \
-    'cargo test -p nimbus-runtime runtime_mutation_context_exposes_query_and_mutation_nested_calls --lib -- --nocapture' \
-    'cargo test -p nimbus-runtime runtime_action_context_exposes_nested_calls_without_direct_db --lib -- --nocapture' \
-    'cargo test -p nimbus-runtime rec3_query_write_effect_violation_rejects_before_host_dispatch --lib -- --nocapture' \
-    '1 passed; 0 failed; 1 ignored; 0 measured; 1065 filtered out' \
-    'npm run test --workspace @nimbus/codegen' \
-    'Convex nested-call matrix' \
-    'runtime remap fixtures: ok \(4 cases\)' \
-    'Summary: 20 passed, 0 failed' \
-    'REC5 must run the PIR-aligned numeric validation' >/tmp/rec4-proof-missing.txt; then
-  pass "REC4 proof records exact tests and REC5 closeout contract"
-else
-  fail "REC4 proof artifact is incomplete" \
-    "$(cat /tmp/rec4-proof-missing.txt 2>/dev/null)"
-fi
-
-step 21 "REC5 waitUntil and warm-pool hot-path cleanup is present"
+step 13 "REC5 waitUntil and warm-pool hot-path cleanup is present"
 if [ -f "${BOOTSTRAP_STATE}" ] &&
   [ -f "${OPS_SHARED}" ] &&
   [ -f "${BOOTSTRAP_HOST_CALL_TRANSPORT}" ] &&
@@ -603,52 +380,7 @@ else
     "$(cat /tmp/rec5-wait-state-missing.txt 2>/dev/null) $(cat /tmp/rec5-wait-op-missing.txt 2>/dev/null) $(cat /tmp/rec5-wait-js-missing.txt 2>/dev/null) $(cat /tmp/rec5-invocation-hotpath-missing.txt 2>/dev/null)"
 fi
 
-step 22 "REC5 benchmark artifacts exist with expected row counts"
-if [ -f "${REC5_PIR0_TRACE}" ] &&
-  [ -f "${REC5_PIR0_WARM_EXCEPTION_TRACE}" ] &&
-  [ -f "${REC5_PIR5_RSS_TRACE}" ] &&
-  [ "$(wc -l < "${REC5_PIR0_TRACE}")" -ge 38 ] &&
-  [ "$(wc -l < "${REC5_PIR0_WARM_EXCEPTION_TRACE}")" -ge 10 ] &&
-  [ "$(wc -l < "${REC5_PIR5_RSS_TRACE}")" -eq 1 ] &&
-  contains '"benchmark_id":"web_standard/hostless_trivial/run_to_completion/startup_snapshot_cache"' "${REC5_PIR0_TRACE}" &&
-  contains '"benchmark_id":"node24/hostless_trivial/run_to_completion/startup_snapshot_cache"' "${REC5_PIR0_TRACE}" &&
-  contains '"benchmark_id":"web_standard/compute_bound_jit_hot/cooperative_locker/warm_pool"' "${REC5_PIR0_TRACE}" &&
-  contains '"benchmark_id":"web_standard/await_1ms/cooperative_locker_four_tenants/warm_pool"' "${REC5_PIR0_TRACE}" &&
-  contains '"benchmark_id":"web_standard/hostless_trivial/cooperative_locker/warm_pool"' "${REC5_PIR0_WARM_EXCEPTION_TRACE}" &&
-  contains '"measured_per_runtime_rss_bytes":1245184' "${REC5_PIR5_RSS_TRACE}"; then
-  pass "REC5 PIR0/PIR5 artifacts cover selected lanes and retained RSS"
-else
-  fail "REC5 benchmark artifacts are missing or incomplete" \
-    "expected selected trace >=38 rows, focused warm exception trace >=10 rows, retained RSS trace exactly 1 row"
-fi
-
-step 23 "REC5 proof records numeric exception and optimization plan"
-if [ -f "${REC5_PROOF}" ] &&
-  contains_all "${REC5_PROOF}" \
-    'REC5 Numeric Validation And Closeout Proof' \
-    'Status: `done`' \
-    'RuntimeWaitUntilState' \
-    'prepare_warm_runtime_for_retention' \
-    'rec5-pir0-selected-trace.jsonl' \
-    'rec5-pir0-current-trace-after-waituntil-phase-gate.jsonl' \
-    'rec5-pir5-retained-density-current-rss.jsonl' \
-    'WebStandard hostless run-to-completion' \
-    '\+0.89%' \
-    'WebStandard cooperative warm-pool path remains a measured latency exception' \
-    '890.72-908.86 us' \
-    '29.058 us 29.279 us 29.509 us' \
-    '1,245,184 bytes/runtime' \
-    '4 passed; 0 failed; 0 ignored; 0 measured; 1063 filtered out' \
-    '19 passed; 0 failed; 9 ignored; 0 measured; 1039 filtered out' \
-    'blocks using REC as performance justification for broader cooperative defaults' \
-    'Optimization Plan' >/tmp/rec5-proof-missing.txt; then
-  pass "REC5 proof records exact evidence, measured exception, and follow-up constraint"
-else
-  fail "REC5 proof artifact is incomplete" \
-    "$(cat /tmp/rec5-proof-missing.txt 2>/dev/null)"
-fi
-
-step 24 "REC5 final closeout keeps scheduler and host-admission ownership clean"
+step 14 "REC5 final closeout keeps scheduler and host-admission ownership clean"
 if [ -f "${EXECUTION_PLAN}" ] &&
   [ -f "${COOP_RUN}" ] &&
   [ -f "${COOP_EXECUTION}" ] &&

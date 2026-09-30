@@ -17,16 +17,6 @@ fail() {
   FAIL=$((FAIL + 1))
 }
 
-require_file() {
-  local path="$1"
-  local label="$2"
-  if [[ -f "$path" ]]; then
-    pass "$label"
-  else
-    fail "$label"
-  fi
-}
-
 require_contains() {
   local path="$1"
   local pattern="$2"
@@ -49,15 +39,6 @@ require_absent() {
   fi
 }
 
-PLAN_ACTIVE="docs/private/plans/tenant-function-autoscaling-plan.md"
-PLAN_ARCHIVED="docs/private/plans/archive/tenant-function-autoscaling-plan.md"
-if [[ -f "$PLAN_ACTIVE" ]]; then
-  PLAN="$PLAN_ACTIVE"
-else
-  PLAN="$PLAN_ARCHIVED"
-fi
-PROOF_DIR="docs/private/plans/proof/tenant-function-autoscaling"
-PROOF="$PROOF_DIR/README.md"
 SCALING="crates/nimbus-runtime/src/limits/scaling.rs"
 FUNCTION_SCALING="crates/nimbus-cli/src/function_scaling.rs"
 OPERATOR_POLICY="crates/nimbus-tenant/src/operator_policy.rs"
@@ -68,11 +49,6 @@ ROUTER="crates/nimbus-server/src/router.rs"
 RUNTIME_POLICY="crates/nimbus-runtime/src/limits/policy.rs"
 START_TESTS="crates/nimbus-cli/src/start/tests/cli_surface.rs"
 COMPUTE_RUNTIME_CONFIG="crates/nimbus-compute/src/config/runtime.rs"
-
-require_file "$PLAN" "tenant function autoscaling plan exists"
-require_file "$PROOF" "tenant function autoscaling proof exists"
-require_contains "$PLAN" 'Public v1 function scaling knobs are `preset`, `min_warm`, `max_warm`, and `scale_down_delay`' "plan names the v1 public knobs"
-require_contains "$PLAN" 'Autoscaling is inferred' "plan states autoscaling is inferred"
 
 require_absent "$FUNCTION_SCALING" 'pub\(crate\) activation_warm' "public function scaling config rejects activation_warm"
 require_absent "$FUNCTION_SCALING" 'pub\(crate\) live_scaling' "public function scaling config rejects live_scaling"
@@ -103,9 +79,6 @@ require_contains "$START_TESTS" 'start_function_scaling_admission_uses_explicit_
 require_contains "$EXPLAIN" 'autoscaling: inferred' "explain output shows inferred autoscaling"
 require_contains "$ROUTER" 'with_effective_runtime_scaling_plans' "server router carries selector-aware scaling plan sets"
 require_contains "$COMPUTE_RUNTIME_CONFIG" 'with_effective_scaling_plans' "compute runtime policy receives selector-aware scaling plans"
-
-require_contains "$PROOF" 'TFA0' "proof records TFA0"
-require_contains "$PROOF" 'TFA6' "proof records TFA6 closeout criteria"
 
 printf '\nverify-tenant-function-autoscaling: %d passed, %d failed\n' "$PASS" "$FAIL"
 if ((FAIL > 0)); then
