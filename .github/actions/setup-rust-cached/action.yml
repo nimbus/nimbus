@@ -226,10 +226,15 @@ runs:
         esac
 
         target="$(rustc -vV | sed -n 's/^host: //p')"
-        if [[ "${target}" != "x86_64-unknown-linux-gnu" ]]; then
-          echo "::error::prebuilt rusty_v8 consumption is only published for x86_64-unknown-linux-gnu in this batch (got ${target}). ${runbook}"
-          exit 64
-        fi
+        # The release.yml build targets; .cargo/rusty-v8-digests.toml pins each.
+        case "${target}" in
+          x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu|aarch64-apple-darwin)
+            ;;
+          *)
+            echo "::error::prebuilt rusty_v8 consumption is pinned only for the release.yml build targets (got ${target}). ${runbook}"
+            exit 64
+            ;;
+        esac
 
         if [[ -z "${GH_TOKEN:-}" ]]; then
           echo "::error::github-token input is required when consume-prebuilt-v8=${NIMBUS_PREBUILT_V8_VARIANT}. ${runbook}"
