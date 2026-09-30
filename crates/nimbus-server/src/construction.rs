@@ -18,7 +18,6 @@ use crate::adapters::firebase::FirebaseConfig;
 use crate::adapters::mongodb::MongoDbConfig;
 use crate::adapters::s3::S3Config;
 use crate::adapters::wire::WireProtocolAdapter;
-use crate::license::LicenseState;
 use crate::listener_group::{WireListenerGroup, append_cleanup_error};
 use crate::listener_lease::{
     ActiveServerListenerEvidence, ExternalServerListenerContext, LeasedServerListener,
@@ -27,13 +26,14 @@ use crate::listener_lease::{
     abandon_prepared_after_guard_failure,
 };
 use crate::local_server::LocalServerSecurityState;
-use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
-use crate::tenant::TenantIsolationMode;
 use crate::tls::TlsConfig;
 use crate::workload_boot::ServerWorkloadBootPlan;
 use crate::workload_composition::ServerWorkloadComposition;
+use nimbus_compute::machine_lifecycle::MachineLifecycleManager;
+use nimbus_license::LicenseState;
 use nimbus_services::ServiceInstanceCatalog;
+use nimbus_tenant::TenantIsolationMode;
 use tokio::sync::watch;
 
 /// Cloneable authority for requesting an orderly server shutdown.

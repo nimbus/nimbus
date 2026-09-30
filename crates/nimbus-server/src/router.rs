@@ -27,21 +27,21 @@ use crate::adapters::http_mount::{
     mount_adapters,
 };
 use crate::config::transport::TransportConfig;
-use crate::license::LicenseState;
 use crate::local_server::{
     LocalServerAccessPolicy, LocalServerOriginPolicy, LocalServerSecurityState,
     origin_allowlist_middleware, route_family_gate_middleware, server_access_extract_middleware,
 };
-use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::state::{AppState, AppStateConfig};
-use crate::tenant::TenantIsolationMode;
 use crate::workload_boot::ServerWorkloadBootPlan;
 use crate::workload_composition::{ServerWorkloadComposition, ServerWorkloadProfile};
 use crate::{http, ws};
 use nimbus_auth::ApplicationAuthVerifier;
+use nimbus_compute::machine_lifecycle::MachineLifecycleManager;
+use nimbus_license::LicenseState;
 use nimbus_services::ServiceInstanceCatalog;
 #[cfg(test)]
 use nimbus_services::ServiceManager;
+use nimbus_tenant::TenantIsolationMode;
 
 mod cors;
 
@@ -1058,36 +1058,36 @@ mod network_manager_tests {
     impl MachineLifecycleManager for EffectForbiddenMachineLifecycleManager {
         fn create_machine<'a>(
             &'a self,
-            _request: crate::machine_lifecycle::MachineCreateRequest,
-        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+            _request: nimbus_compute::machine_lifecycle::MachineCreateRequest,
+        ) -> nimbus_compute::machine_lifecycle::MachineLifecycleFuture<'a> {
             panic!("protocol-only refusal must happen before machine effects")
         }
 
         fn start_machine<'a>(
             &'a self,
             _name: &'a str,
-        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+        ) -> nimbus_compute::machine_lifecycle::MachineLifecycleFuture<'a> {
             panic!("protocol-only refusal must happen before machine effects")
         }
 
         fn stop_machine<'a>(
             &'a self,
             _name: &'a str,
-        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+        ) -> nimbus_compute::machine_lifecycle::MachineLifecycleFuture<'a> {
             panic!("protocol-only refusal must happen before machine effects")
         }
 
         fn update_machine<'a>(
             &'a self,
-            _request: crate::machine_lifecycle::MachineUpdateRequest,
-        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+            _request: nimbus_compute::machine_lifecycle::MachineUpdateRequest,
+        ) -> nimbus_compute::machine_lifecycle::MachineLifecycleFuture<'a> {
             panic!("protocol-only refusal must happen before machine effects")
         }
 
         fn delete_machine<'a>(
             &'a self,
             _name: &'a str,
-        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+        ) -> nimbus_compute::machine_lifecycle::MachineLifecycleFuture<'a> {
             panic!("protocol-only refusal must happen before machine effects")
         }
     }

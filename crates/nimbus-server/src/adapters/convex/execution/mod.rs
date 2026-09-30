@@ -7,14 +7,14 @@ mod runtime_backed;
 mod sync_ops;
 mod types;
 
-pub(super) use crate::execution::errors::{
-    check_host_cancellation, ensure_runtime_host_not_cancelled, runtime_error_to_core,
-};
-pub(super) use crate::execution::invocations::next_runtime_server_request_id;
 pub(super) use async_ops::{
     dispatch_convex_mutation_async, execute_convex_action_async, execute_query_result_async,
     execute_schedule_command_async,
 };
+pub(super) use nimbus_compute::execution::errors::{
+    check_host_cancellation, ensure_runtime_host_not_cancelled, runtime_error_to_core,
+};
+pub(super) use nimbus_compute::execution::invocations::next_runtime_server_request_id;
 pub(super) use runtime_backed::{
     RuntimeInvocationContext, bootstrap_runtime_named_subscription_async,
     invoke_named_convex_function_async_cancellable,

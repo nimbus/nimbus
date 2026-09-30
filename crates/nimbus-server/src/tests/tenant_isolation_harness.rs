@@ -566,7 +566,7 @@ fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_system
     ));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    crate::system_tenant::prepare_system_tenant_async(&service, None)
+    nimbus_system::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
     // Anonymous policy metadata remains separate from authenticated admission.

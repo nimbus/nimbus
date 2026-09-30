@@ -183,7 +183,7 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
     )]));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    crate::system_tenant::prepare_system_tenant_async(&service, None)
+    nimbus_system::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
     let server = ServerFixture::start(
@@ -216,7 +216,7 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
         tokio_mpsc::channel(nimbus_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
     let system_subscription = service
         .subscribe_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
+            nimbus_system::system_tenant_id().expect("system id should parse"),
             Query {
                 table: TableName::new("subscriptions").expect("table should parse"),
                 filters: Vec::new(),
@@ -261,7 +261,7 @@ async fn convex_websocket_subscription_projects_live_system_subscription_state()
             async move {
                 service
                     .list_documents_async(
-                        crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                        nimbus_system::system_tenant_id().expect("system id should parse"),
                         TableName::new("subscriptions").expect("table should parse"),
                     )
                     .await

@@ -9,11 +9,11 @@ use crate::adapters::convex::host_bridge::{
     ConvexRuntimeResponseEnvelope,
 };
 use crate::adapters::convex::{ConvexRegistry, RuntimeReadSet};
-use crate::execution::invocations::{
-    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
-};
 use nimbus_auth::normalize_principal_context;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
+use nimbus_compute::execution::invocations::{
+    RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
+};
 use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
 use nimbus_tenant::{

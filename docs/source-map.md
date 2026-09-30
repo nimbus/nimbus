@@ -243,7 +243,7 @@ this tree, and its adapter tabs make the same claims a page here would.
 
 | Doc page | Claim / surface | Source |
 | --- | --- | --- |
-| `concepts/tenant-isolation.md` | Admit-once model; decision envelope; storage namespaces structural per provider | `crates/nimbus-server/src/tenant.rs`, `crates/nimbus-tenant/src/context.rs`, `crates/nimbus-tenant/src/policy_input.rs` |
+| `concepts/tenant-isolation.md` | Admit-once model; decision envelope; storage namespaces structural per provider | `crates/nimbus-tenant/src/context.rs`, `crates/nimbus-tenant/src/policy_input.rs` |
 | `concepts/tenant-isolation.md` | Production tier routing (in-process untrusted default; privileged/microvm/WASM routing) | `crates/nimbus-tenant/src/runtime_admission.rs` |
 | `concepts/tenant-isolation.md` | Egress deny-by-default; host binds denied; digest-pinned image floor | `crates/nimbus-egress/src/lib.rs`, `crates/nimbus-tenant/src/policy_input.rs`, `crates/nimbus-tenant/src/image_admission.rs` |
 | `concepts/tenant-isolation.md` | Application tenant claims must match route tenant; `_nimbus` operator-only | `crates/nimbus-tenant/src/context.rs`, `crates/nimbus-system/src/identity.rs` |

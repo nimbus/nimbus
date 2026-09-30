@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::execution::invocations::next_runtime_server_request_id;
+use nimbus_compute::execution::invocations::next_runtime_server_request_id;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

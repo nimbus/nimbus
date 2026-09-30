@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use nimbus::{Engine, Error};
-use nimbus_machine::MachineRootLayout;
-use nimbus_network::LocalNetworkAuthority;
-use nimbus_server::machine_lifecycle::{
+use nimbus_compute::machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
     MachineLifecycleSnapshot, MachineUpdateRequest,
 };
+use nimbus_machine::MachineRootLayout;
+use nimbus_network::LocalNetworkAuthority;
 
 use super::command::{MachineInitCommand, MachineSetCommand};
 use super::handlers::{

@@ -8,11 +8,11 @@ pub(crate) async fn health() -> Json<HealthResponse> {
 /// Returns the current Nimbus license and entitlement status.
 pub(crate) async fn license_status(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<crate::license::LicenseSnapshot>, AppError> {
+) -> Result<Json<nimbus_license::LicenseSnapshot>, AppError> {
     let service = state.engine.clone();
     let usage = service.current_monthly_active_users_async().await?;
     Ok(Json(state.license_state().snapshot_with_usage(Some(
-        crate::license::LicenseUsageInput {
+        nimbus_license::LicenseUsageInput {
             month: usage.month,
             month_start_unix_ms: usage.month_start_unix_ms,
             monthly_active_users: usage.monthly_active_users,

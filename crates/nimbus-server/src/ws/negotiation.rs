@@ -142,7 +142,9 @@ async fn send_hello(
         },
         features: hello_context.features,
         session: HelloSession {
-            id: crate::execution::invocations::next_runtime_server_request_id("ws-session"),
+            id: nimbus_compute::execution::invocations::next_runtime_server_request_id(
+                "ws-session",
+            ),
             server_now: time::OffsetDateTime::now_utc().unix_timestamp_nanos() as i64 / 1_000_000,
         },
     };

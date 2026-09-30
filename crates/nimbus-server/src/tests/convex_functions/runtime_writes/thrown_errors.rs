@@ -215,7 +215,7 @@ async fn wait_for_run_rows(
     status: &str,
     count: usize,
 ) -> Vec<serde_json::Value> {
-    let system_tenant = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let system_tenant = nimbus_system::system_tenant_id().expect("system id should parse");
     let runs_table = nimbus_core::TableName::new("runs").expect("table should parse");
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
