@@ -39,7 +39,6 @@ use crate::config::deployment::DeploymentConfig;
 use crate::config::node_services::NodeServicesConfig;
 use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
-use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::resource_retirement::ResourceRetirementSupervisor;
 use crate::runtime_manager::RuntimeManager;
 use crate::tenant_retirement::{TenantRetirementDriver, TenantRetirementRuntime};
@@ -424,8 +423,7 @@ impl ComputeState {
     fn require_protocol_only_node_services(node_services: &NodeServicesConfig) {
         assert!(
             node_services.service_manager().is_none()
-                && node_services.machine_lifecycle_manager().is_none()
-                && node_services.node_workload_coordinator().is_none(),
+                && node_services.machine_lifecycle_manager().is_none(),
             "service and machine workload lifecycle requires managed workload composition"
         );
     }
@@ -460,10 +458,6 @@ impl ComputeState {
 
     pub fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
         self.node_services.machine_lifecycle_manager()
-    }
-
-    pub fn node_workload_coordinator(&self) -> Option<Arc<NodeWorkloadCoordinator>> {
-        self.node_services.node_workload_coordinator()
     }
 
     pub fn tenant_isolation_mode(&self) -> TenantIsolationMode {
@@ -765,11 +759,6 @@ pub async fn record_authenticated_usage(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use nimbus_node::{
-        HostLifecycleBackendCapabilities, HostLifecycleBackendKind, HostLifecycleFuture,
-        HostLifecycleStatus, NodeAgentAssignment, NodeAgentReconcileReport,
-        NodeWorkloadReconcileCapability, NodeWorkloadReconcileOutcome,
-    };
     use tempfile::tempdir;
 
     use super::*;
@@ -812,11 +801,6 @@ mod tests {
     fn managed_network_manager_test_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-    }
-
-    #[derive(Default)]
-    struct EffectForbiddenNodeCapability {
-        calls: AtomicUsize,
     }
 
     #[derive(Default)]
@@ -1100,51 +1084,6 @@ mod tests {
         }
     }
 
-    impl NodeWorkloadReconcileCapability for EffectForbiddenNodeCapability {
-        fn backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
-            vec![HostLifecycleBackendCapabilities::new(
-                HostLifecycleBackendKind::DirectProcess,
-                true,
-            )]
-        }
-
-        fn reconcile_assignment<'a>(
-            &'a self,
-            _assignment: NodeAgentAssignment,
-        ) -> HostLifecycleFuture<'a, NodeWorkloadReconcileOutcome> {
-            Box::pin(async move {
-                self.calls.fetch_add(1, Ordering::AcqRel);
-                Err(nimbus_core::Error::Internal(
-                    "node reconcile effect must not run".to_owned(),
-                ))
-            })
-        }
-
-        fn reconcile_assignments<'a>(
-            &'a self,
-            _assignments: Vec<NodeAgentAssignment>,
-        ) -> HostLifecycleFuture<'a, NodeAgentReconcileReport> {
-            Box::pin(async move {
-                self.calls.fetch_add(1, Ordering::AcqRel);
-                Err(nimbus_core::Error::Internal(
-                    "node reconcile effect must not run".to_owned(),
-                ))
-            })
-        }
-
-        fn inspect_assignment<'a>(
-            &'a self,
-            _assignment: &'a NodeAgentAssignment,
-        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-            Box::pin(async move {
-                self.calls.fetch_add(1, Ordering::AcqRel);
-                Err(nimbus_core::Error::Internal(
-                    "node inspect effect must not run".to_owned(),
-                ))
-            })
-        }
-    }
-
     #[test]
     fn active_deployment_keeps_previous_snapshot_arc_alive_after_activation() {
         let deployment = ActiveDeployment::new(DeploymentState {
@@ -1375,8 +1314,6 @@ mod tests {
             !manager.authority_path().exists(),
             "an empty manager should not materialize durable authority"
         );
-        let capability = Arc::new(EffectForbiddenNodeCapability::default());
-        let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
         let saga_store = Arc::new(EffectForbiddenWorkloadSagaStore::default());
         let source_authority = Arc::new(EffectForbiddenSourceAuthority::default());
         let projection_sink = Arc::new(EffectForbiddenProjectionSink::default());
@@ -1411,12 +1348,12 @@ mod tests {
             },
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
-            node_services: NodeServicesConfig::default()
-                .with_service_manager(Arc::new(nimbus_services::ServiceManager::new(
+            node_services: NodeServicesConfig::default().with_service_manager(Arc::new(
+                nimbus_services::ServiceManager::new(
                     Arc::new(nimbus_services::EmptyServiceDefinitionCatalog),
                     nimbus_sandbox::SandboxBackendKind::Krun,
-                )))
-                .with_node_workload_coordinator(Arc::clone(&coordinator)),
+                ),
+            )),
             runtime: RuntimeGovernorConfig::default(),
         });
 
@@ -1430,10 +1367,6 @@ mod tests {
         assert!(Arc::ptr_eq(&second, &manager));
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(first.capability_registry().selections().count(), 1);
-        let injected_coordinator = state
-            .node_workload_coordinator()
-            .expect("managed compute state should expose its node coordinator");
-        assert!(Arc::ptr_eq(&injected_coordinator, &coordinator));
         let first_saga_coordinator = state
             .workload_saga_coordinator()
             .expect("managed compute state should expose its saga coordinator");
@@ -1492,7 +1425,6 @@ mod tests {
         assert_eq!(saga_store.calls.load(Ordering::Acquire), 2);
         assert_eq!(source_authority.calls.load(Ordering::Acquire), 0);
         assert_eq!(projection_sink.calls.load(Ordering::Acquire), 0);
-        assert_eq!(capability.calls.load(Ordering::Acquire), 0);
         assert!(
             !manager.authority_path().exists(),
             "read-only manager access must not materialize durable authority"
@@ -1674,29 +1606,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_only_compute_rejects_a_node_coordinator_before_capability_use() {
-        let temp = tempdir().expect("service tempdir should build");
-        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
-        let capability = Arc::new(EffectForbiddenNodeCapability::default());
-        let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
-
-        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            ComputeState::from_config(ComputeStateConfig {
-                engine,
-                workload_composition: ComputeWorkloadComposition::ProtocolOnly,
-                deployment: DeploymentConfig::default(),
-                control_plane: ControlPlaneConfig::router_options_default(),
-                node_services: empty_node_services().with_node_workload_coordinator(coordinator),
-                runtime: RuntimeGovernorConfig::default(),
-            })
-        }));
-
-        assert!(rejected.is_err());
-        assert_eq!(capability.calls.load(Ordering::Acquire), 0);
-    }
-
-    #[test]
-    fn protocol_only_compute_reports_no_node_workload_coordinator() {
+    fn protocol_only_compute_reports_no_managed_workload_composition() {
         let temp = tempdir().expect("service tempdir should build");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let state = ComputeState::from_config(ComputeStateConfig {
@@ -1708,7 +1618,6 @@ mod tests {
             runtime: RuntimeGovernorConfig::default(),
         });
 
-        assert!(state.node_workload_coordinator().is_none());
         assert!(state.network_manager().is_none());
         assert!(state.workload_saga_coordinator().is_none());
         assert!(state.workload_provisioner().is_none());
