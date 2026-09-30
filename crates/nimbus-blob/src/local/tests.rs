@@ -227,13 +227,15 @@ async fn root_lock_excludes_second_process() {
     let lock_path = dir.path().canonicalize().unwrap().join("lock");
     let probe = OpenOptions::new().write(true).open(&lock_path).unwrap();
     assert!(
-        fs4::FileExt::try_lock(&probe).is_err(),
+        probe.try_lock().is_err(),
         "a live store holds the exclusive root flock"
     );
 
     drop(store);
-    fs4::FileExt::try_lock(&probe).expect("dropping the last handle releases the flock");
-    fs4::FileExt::unlock(&probe).unwrap();
+    probe
+        .try_lock()
+        .expect("dropping the last handle releases the flock");
+    probe.unlock().unwrap();
 }
 
 #[test]

@@ -199,7 +199,7 @@ fn take_lock(root: &Path) -> Result<RootLock> {
         .write(true)
         .open(&path)
         .map_err(|err| guard_error(err, format!("open root lock {}", path.display())))?;
-    fs4::FileExt::try_lock(&file).map_err(|_| {
+    file.try_lock().map_err(|_| {
         Error::storage(
             StorageErrorKind::Busy,
             format!(
