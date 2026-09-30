@@ -6390,19 +6390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nimbus-adapters"
-version = "0.1.48"
-dependencies = [
- "nimbus-cloud-functions",
- "nimbus-convex",
- "nimbus-dynamodb",
- "nimbus-firebase",
- "nimbus-mongodb",
- "nimbus-s3",
- "workspace-hack",
-]
-
-[[package]]
 name = "nimbus-artifacts"
 version = "0.1.48"
 dependencies = [

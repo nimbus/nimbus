@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/nimbus",
-    "crates/nimbus-adapters",
     "crates/nimbus-artifacts",
     "crates/nimbus-assets",
     "crates/nimbus-auth",
