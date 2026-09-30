@@ -156,7 +156,7 @@ serde = { version = "1", features = ["derive"] }
 # dependency wiring. The shipped graph also enables `preserve_order` through
 # `workspace-hack`, so storage codecs must define their own canonical map order.
 serde_json = { version = "1", features = ["raw_value"] }
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 semver = "1"
 s3s = "0.14.0"
 shell-words = "1"

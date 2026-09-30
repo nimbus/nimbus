@@ -26,4 +26,4 @@ sha2.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
-serde_yaml.workspace = true
+serde_yaml_ng.workspace = true

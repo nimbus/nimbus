@@ -208,7 +208,7 @@ mod tests {
     use crate::operator_policy::OperatorPolicyDocument;
 
     fn parse_policy(body: &str) -> OperatorPolicyDocument {
-        serde_yaml::from_str(body).expect("policy should parse")
+        serde_yaml_ng::from_str(body).expect("policy should parse")
     }
 
     fn request(

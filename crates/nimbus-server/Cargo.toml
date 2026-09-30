@@ -128,7 +128,7 @@ nimbus-engine = { path = "../nimbus-engine", default-features = false, features 
 nimbus-network = { path = "../nimbus-network" }
 nimbus-process-harness = { path = "../nimbus-process-harness" }
 nimbus-testing = { path = "../nimbus-testing", default-features = false }
-serde_yaml.workspace = true
+serde_yaml_ng.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
 wiremock = "0.6"

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use serde_yaml::Value;
+use serde_yaml_ng::Value;
 
 pub struct SpecTestFile {
     pub description: String,
@@ -64,7 +64,7 @@ pub fn parse_spec_file(path: &Path) -> Result<SpecTestFile, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
     let yaml: Value =
-        serde_yaml::from_str(&content).map_err(|e| format!("failed to parse YAML: {e}"))?;
+        serde_yaml_ng::from_str(&content).map_err(|e| format!("failed to parse YAML: {e}"))?;
 
     let description = yaml_str(&yaml, "description").unwrap_or_default();
     let schema_version = yaml_str(&yaml, "schemaVersion").unwrap_or_default();

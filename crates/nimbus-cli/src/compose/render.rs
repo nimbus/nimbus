@@ -60,7 +60,7 @@ pub(super) fn render_service_list_view(
         ComposePsOutputFormat::Json => serde_json::to_string_pretty(summaries).map_err(|error| {
             Error::Serialization(format!("failed to render compose ps output: {error}"))
         }),
-        ComposePsOutputFormat::Yaml => serde_yaml::to_string(summaries).map_err(|error| {
+        ComposePsOutputFormat::Yaml => serde_yaml_ng::to_string(summaries).map_err(|error| {
             Error::Serialization(format!("failed to render compose ps output: {error}"))
         }),
         ComposePsOutputFormat::Table => Ok(render_service_list_table(summaries, no_heading)),
@@ -115,7 +115,7 @@ pub(super) fn render_service_inspect_view<T: Serialize>(
                 ))
             })
         }
-        ComposeInspectOutputFormat::Yaml => serde_yaml::to_string(details).map_err(|error| {
+        ComposeInspectOutputFormat::Yaml => serde_yaml_ng::to_string(details).map_err(|error| {
             Error::Serialization(format!(
                 "failed to render sandbox details for service {}: {error}",
                 service_name
@@ -133,7 +133,7 @@ pub(super) fn render_service_sandbox_process_snapshot_view(
         ComposeTopOutputFormat::Json => serde_json::to_string_pretty(snapshot).map_err(|error| {
             Error::Serialization(format!("failed to render compose top output: {error}"))
         }),
-        ComposeTopOutputFormat::Yaml => serde_yaml::to_string(snapshot).map_err(|error| {
+        ComposeTopOutputFormat::Yaml => serde_yaml_ng::to_string(snapshot).map_err(|error| {
             Error::Serialization(format!("failed to render compose top output: {error}"))
         }),
         ComposeTopOutputFormat::Table => Ok(render_service_sandbox_process_snapshot_table(
