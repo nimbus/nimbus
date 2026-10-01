@@ -1,5 +1,6 @@
 use super::*;
 use nimbus_network::NetworkManagementMode;
+use sha2::{Digest, Sha256};
 
 #[test]
 fn krunkit_provider_capabilities_match_podman_aligned_contract() {
@@ -698,5 +699,87 @@ fn resolve_guest_nimbus_binary_reuses_cached_release_asset() {
     assert_eq!(
         resolve_guest_nimbus_binary(&paths).expect("cached guest binary should resolve"),
         cached_binary
+    );
+}
+
+#[test]
+fn guest_download_rejects_digest_mismatch() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let archive_path = temp_dir.path().join("v0.0.0-nimbus_linux_arm64.tar.gz");
+    let expected_sha256 = format!("{:x}", Sha256::digest(b"published guest archive"));
+    let url = serve_single_http_response(
+        b"tampered guest archive".to_vec(),
+        Some("/nimbus_linux_arm64.tar.gz"),
+    );
+
+    let error = fetch_verified_guest_nimbus_archive(
+        &archive_path,
+        &url,
+        &expected_sha256,
+        "Downloading guest nimbus",
+    )
+    .expect_err("a tampered guest archive must be rejected");
+
+    let message = error.to_string();
+    assert!(message.contains("digest mismatch"), "{message}");
+    assert!(message.contains(&expected_sha256), "{message}");
+    assert!(
+        !archive_path.exists(),
+        "a tampered guest archive must be deleted"
+    );
+}
+
+#[test]
+fn guest_download_keeps_archive_with_matching_digest() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let archive_path = temp_dir.path().join("v0.0.0-nimbus_linux_arm64.tar.gz");
+    let archive = b"published guest archive".to_vec();
+    let expected_sha256 = format!("{:x}", Sha256::digest(&archive));
+    let url = serve_single_http_response(archive.clone(), Some("/nimbus_linux_arm64.tar.gz"));
+
+    fetch_verified_guest_nimbus_archive(
+        &archive_path,
+        &url,
+        &expected_sha256,
+        "Downloading guest nimbus",
+    )
+    .expect("a matching guest archive should verify");
+
+    assert_eq!(
+        fs::read(&archive_path).expect("archive should read"),
+        archive
+    );
+}
+
+#[test]
+fn guest_download_rejects_tampered_cached_archive() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let archive_path = temp_dir.path().join("v0.0.0-nimbus_linux_arm64.tar.gz");
+    fs::write(&archive_path, b"tampered guest archive").expect("cached archive should write");
+    let expected_sha256 = format!("{:x}", Sha256::digest(b"published guest archive"));
+
+    let error = fetch_verified_guest_nimbus_archive(
+        &archive_path,
+        "http://127.0.0.1:9/unused",
+        &expected_sha256,
+        "Downloading guest nimbus",
+    )
+    .expect_err("a tampered cached guest archive must be rejected");
+
+    assert!(error.to_string().contains("digest mismatch"), "{error}");
+    assert!(!archive_path.exists());
+}
+
+#[test]
+fn guest_download_requires_embedded_digest() {
+    let error = guest_nimbus_archive_sha256(None)
+        .expect_err("a build without an embedded digest must not download");
+    assert!(
+        error.to_string().contains("NIMBUS_MACHINE_GUEST_BINARY"),
+        "{error}"
+    );
+    assert_eq!(
+        guest_nimbus_archive_sha256(Some("abc123")).expect("embedded digest should resolve"),
+        "abc123"
     );
 }

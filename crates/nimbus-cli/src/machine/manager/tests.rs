@@ -14,8 +14,9 @@ use oci_client::manifest::{OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MEDIA_TYPE};
 use tempfile::TempDir;
 
 use super::guest::{
-    guest_nimbus_archive_name, requires_ssh_guest_api_convergence,
-    start_guest_nimbus_service_shell_script, stop_guest_nimbus_service_shell_script,
+    fetch_verified_guest_nimbus_archive, guest_nimbus_archive_name, guest_nimbus_archive_sha256,
+    requires_ssh_guest_api_convergence, start_guest_nimbus_service_shell_script,
+    stop_guest_nimbus_service_shell_script,
 };
 use super::helper_env_guard::write_helper_stub;
 use super::helper_paths::{
@@ -23,9 +24,9 @@ use super::helper_paths::{
     resolve_helper_binary,
 };
 use super::image::{
-    attestation_repositories_for_reference, build_digest_reference,
+    attestation_repositories_for_reference, build_digest_reference, check_build_attestation,
     current_machine_oci_architectures, machine_artifact_metadata_from_annotations,
-    materialize_cached_disk, resolve_bootable_image_path,
+    materialize_cached_disk, require_build_attestation, resolve_bootable_image_path,
 };
 use super::launch::{
     MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg, build_virtiofs_arg,

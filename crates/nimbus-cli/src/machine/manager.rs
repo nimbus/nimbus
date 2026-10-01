@@ -207,10 +207,6 @@ fn emit_machine_info(message: impl AsRef<str>) {
     }
 }
 
-fn emit_machine_warning(message: impl AsRef<str>) {
-    let _ = cli_ux::write_stderr_prefixed_line("warning:", message.as_ref());
-}
-
 pub(super) fn start_machine(
     network: &super::network_composition::HostMachineNetworkAuthority,
     paths: &MachinePaths,
