@@ -17,6 +17,7 @@ use super::support::{
 use super::*;
 
 mod trigger_execution_retry;
+mod write_bindings;
 
 fn trigger_binding(document_id: &DocumentId) -> ResourcePathBinding {
     ResourcePathBinding::new(
