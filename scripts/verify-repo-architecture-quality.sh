@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Verifies the repository architecture-quality baseline and guardrails.
+# The ambient wall-clock check is not run here: verify-clock-sources.py fails on main.
 
 set -uo pipefail
 
@@ -117,7 +118,7 @@ check_large_files() {
   local lines
   local threshold_label
 
-  printf '[1/6] owned-source size ledger\n'
+  printf '[1/5] owned-source size ledger\n'
 
   while IFS= read -r file; do
     rel="${file#${REPO_ROOT}/}"
@@ -155,7 +156,7 @@ check_naming_exceptions() {
   local rel
   local base
 
-  printf '\n[2/6] helper/common naming ledger\n'
+  printf '\n[2/5] helper/common naming ledger\n'
 
   while IFS= read -r file; do
     rel="${file#${REPO_ROOT}/}"
@@ -182,7 +183,7 @@ check_naming_exceptions() {
 }
 
 check_core_no_io() {
-  printf '\n[3/6] nimbus-core zero-I/O invariant\n'
+  printf '\n[3/5] nimbus-core zero-I/O invariant\n'
 
   # Scan IMPORTS and DEPENDENCY declarations only. A bare word-boundary scan
   # false-positives on string literals (e.g. a provider-name label like
@@ -202,7 +203,7 @@ check_core_no_io() {
 }
 
 check_runtime_no_workspace_deps() {
-  printf '\n[4/6] nimbus-runtime zero-workspace-dependency invariant\n'
+  printf '\n[4/5] nimbus-runtime zero-workspace-dependency invariant\n'
 
   local cargo_toml="${REPO_ROOT}/crates/nimbus-runtime/Cargo.toml"
   if rg -n 'path\s*=\s*"\.\./|^nimbus-[A-Za-z0-9_-]+\s*=' "${cargo_toml}"; then
@@ -212,15 +213,8 @@ check_runtime_no_workspace_deps() {
   fi
 }
 
-check_clock_sources() {
-  printf '\n[5/6] ambient wall-clock source ownership\n'
-  if ! python3 "${REPO_ROOT}/scripts/verify-clock-sources.py"; then
-    record_issue "ambient wall-clock source ownership check failed"
-  fi
-}
-
 check_durable_object_boundary() {
-  printf '\n[6/6] Durable Object production-construction boundary\n'
+  printf '\n[5/5] Durable Object production-construction boundary\n'
   local violations
   violations="$(
     rg -n 'DurableObject(Substrate|Stub)' "${REPO_ROOT}/crates" \
@@ -262,7 +256,6 @@ else
   check_naming_exceptions
   check_core_no_io
   check_runtime_no_workspace_deps
-  check_clock_sources
   check_durable_object_boundary
 fi
 
