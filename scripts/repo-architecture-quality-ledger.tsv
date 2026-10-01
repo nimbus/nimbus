@@ -83,7 +83,6 @@ large_file	crates/nimbus-proxy/src/tests/https_intercept.rs	queued-decomposition
 large_file	crates/nimbus-network/src/port_lease/lifetime.rs	queued-decomposition	MR50	MR50 decomposition in flight
 large_file	crates/nimbus-network/src/state_store.rs	queued-decomposition	MR50	MR50 decomposition in flight
 large_file	crates/nimbus-sandbox/src/backends/oci/port_lease.rs	queued-decomposition	MR50	MR50 decomposition in flight
-large_file	crates/nimbus-workloads/src/saga/state.rs	queued-decomposition	MR50	MR50 decomposition in flight
 large_file	crates/nimbus-storage/src/materialized_verification.rs	queued-decomposition	MR50	MR50 decomposition in flight
 large_file	crates/nimbus-engine/src/tests/consistency.rs	queued-decomposition	engine	Durable-journal and replica consistency suite; split journal reload, cursor streaming, and embedded-replica parity into concept-owned case modules when next touched.
 large_file	crates/nimbus-s3/src/tests.rs	queued-decomposition	s3-adapter	S3 wire-surface suite plus its in-memory tenant, blob, and metadata fakes; move the fakes into a support module and split cases by operation family when next touched.
