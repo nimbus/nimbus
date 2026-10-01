@@ -1,0 +1,265 @@
+# Nimbus-owned source forks and every tracked file that copies their pins.
+#
+# Change a pin with `scripts/repin-fork.sh <fork> <tag>`. It rewrites the fork
+# table below and every consumer. `scripts/verify-fork-upstream-standardization.sh`
+# fails when a consumer drifts from this file, or when a tracked file outside
+# `ignore_paths` copies a fork tag or commit without a consumer entry.
+#
+# Fork fields:
+#   repo, upstream_repo  GitHub OWNER/REPO of the fork and of its upstream.
+#   upstream_tag         Upstream release tag that the fork tag is cut from.
+#   upstream_version     Numeric upstream release version.
+#   tag                  Fork release tag. Nimbus consumes only this tag.
+#   commit               Commit that `tag` peels to, where consumers pin it.
+#   kind                 full_source or patch_carrier.
+#   tracks_latest        `--remote` reports a newer upstream tag as an issue.
+#   after_repin          Manual follow-up that repin-fork.sh prints.
+#
+# Consumer patterns are literal text with these placeholders:
+#   {tag}, {upstream_version}, {commit}
+# Each pattern must match at least once, and every match must carry the value
+# from this file. A pattern may span lines.
+
+ignore_paths = ["docs/"]
+
+[forks.deno]
+repo = "nimbus/deno"
+upstream_repo = "denoland/deno"
+upstream_tag = "v2.9.7"
+upstream_version = "2.9.7"
+tag = "v2.9.7-nimbus.1"
+commit = "48420a4fd0149932a55b7c300b90c624c0e45c3b"
+kind = "full_source"
+tracks_latest = true
+after_repin = "Move the Deno crate versions in Cargo.toml and the deno_core skip in deny.toml if the release changes them, refresh Cargo.lock with cargo, then run scripts/verify-deno-fork-provenance.sh."
+
+[[forks.deno.consumers]]
+path = "Cargo.toml"
+patterns = ['git = "https://github.com/nimbus/deno", tag = "{tag}"']
+
+[[forks.deno.consumers]]
+path = "Cargo.lock"
+patterns = ['source = "git+https://github.com/nimbus/deno?tag={tag}#{commit}"']
+
+[[forks.deno.consumers]]
+path = "scripts/deno-fork-policy.md"
+patterns = ['| consumed | `nimbus/deno` | `{tag}` | `{commit}` |']
+
+[[forks.deno.consumers]]
+path = "crates/nimbus-runtime/src/runtime/bootstrap/ops/runtime_local/bootstrap.rs"
+patterns = ['const DENO_COMPAT_VERSION: &str = "{upstream_version}";']
+
+[[forks.deno.consumers]]
+path = "crates/nimbus-runtime/src/runtime/tests/basic_invocation/node_bootstrap.rs"
+patterns = ['"denoVersion": "{upstream_version}",']
+
+[forks.rusty_v8]
+repo = "nimbus/rusty_v8"
+upstream_repo = "denoland/rusty_v8"
+upstream_tag = "v150.4.0"
+upstream_version = "150.4.0"
+tag = "v150.4.0-nimbus.3"
+commit = "5fbb8b4986ba8b55b4ab77100db4304a3b41d9ed"
+kind = "full_source"
+tracks_latest = false
+after_repin = "Replace the asset digests in .cargo/rusty-v8-digests.toml with the new release assets, refresh Cargo.lock with cargo, then run scripts/verify-deno-fork-provenance.sh."
+
+[[forks.rusty_v8.consumers]]
+path = "Cargo.toml"
+patterns = [
+  'v8 = { version = "{upstream_version}", default-features = false',
+  'v8 = { git = "https://github.com/nimbus/rusty_v8", tag = "{tag}" }',
+]
+
+[[forks.rusty_v8.consumers]]
+path = "Cargo.lock"
+patterns = ['source = "git+https://github.com/nimbus/rusty_v8?tag={tag}#{commit}"']
+
+[[forks.rusty_v8.consumers]]
+path = "scripts/deno-fork-policy.md"
+patterns = ['| consumed | `nimbus/rusty_v8` | `{tag}` | `{commit}` |']
+
+[[forks.rusty_v8.consumers]]
+path = ".cargo/rusty-v8-digests.toml"
+patterns = ['tag = "{tag}"', 'commit = "{commit}"']
+
+[forks.bun]
+repo = "nimbus/bun"
+upstream_repo = "oven-sh/bun"
+upstream_tag = "bun-v1.4.2"
+upstream_version = "1.4.2"
+tag = "bun-v1.4.2-nimbus.1"
+commit = "d6d4c5e39938b6c5ac243490a9230c26d52d737f"
+kind = "full_source"
+tracks_latest = true
+after_repin = "Publish the Bun/JSC adapter release for the new tag before a release consumes it."
+
+[[forks.bun.consumers]]
+path = ".github/workflows/bun-jsc-adapter.yml"
+patterns = ['default: "{tag}"', 'default: "{commit}"']
+
+[[forks.bun.consumers]]
+path = "scripts/bun-jsc-adapter-contract.sh"
+patterns = ['BUN_JSC_ADAPTER_SOURCE_REF="{tag}"', 'BUN_JSC_ADAPTER_SOURCE_REVISION="{commit}"']
+
+[[forks.bun.consumers]]
+path = "scripts/install.sh"
+patterns = ['BUN_JSC_ADAPTER_SOURCE_REF="{tag}"', 'BUN_JSC_ADAPTER_SOURCE_REVISION="{commit}"']
+
+[[forks.bun.consumers]]
+path = "scripts/verify-install-helper.sh"
+patterns = [
+  '"bun_source_ref": "{tag}",',
+  '"bun_source_revision": "{commit}",',
+  '{"name": "bun", "version": "{tag}"}',
+]
+
+[[forks.bun.consumers]]
+path = "crates/nimbus-runtime/src/backends/bun_jsc/contract.rs"
+patterns = ['source_ref: "{tag}",', 'git_revision: "{commit}",']
+
+[[forks.bun.consumers]]
+path = "crates/nimbus-runtime/src/backends/bun_jsc/manifest.rs"
+patterns = ['"{tag}"']
+
+[[forks.bun.consumers]]
+path = "crates/nimbus-runtime/src/backends/bun_jsc/mod.rs"
+patterns = ['"{tag}"', '"{commit}"']
+
+[[forks.bun.consumers]]
+path = "crates/nimbus-server/src/tests/registry_and_license/runtime_metrics.rs"
+patterns = ['json!("{tag}")']
+
+[[forks.bun.consumers]]
+path = "packages/nimbus-ui/src/routes/operator/settings/configuration.spec.tsx"
+patterns = ['getByText("{tag}")']
+
+[[forks.bun.consumers]]
+path = "packages/nimbus-ui/src/test/handlers.ts"
+patterns = ['source_ref: "{tag}",', 'source_revision: "{commit}",']
+
+[[forks.bun.consumers]]
+path = "packages/nimbus-ui/src/test/msw.spec.ts"
+patterns = ['"{tag}",', '"{commit}",']
+
+[forks.libkrun]
+repo = "nimbus/nimbus-libkrun"
+upstream_repo = "containers/libkrun"
+upstream_tag = "v1.19.4"
+upstream_version = "1.19.4"
+tag = "v1.19.4-nimbus.3"
+kind = "full_source"
+tracks_latest = true
+after_repin = "Publish the nimbus-libkrun release archives before the packaging workflows consume the new tag."
+
+[[forks.libkrun.companions]]
+name = "libkrunfw"
+upstream_repo = "libkrun/libkrunfw"
+tag = "v5.5.0"
+tracks_latest = true
+
+[[forks.libkrun.consumers]]
+path = "packaging/linux-distribution-contract.env"
+patterns = [
+  'NIMBUS_LIBKRUN_VERSION={tag}',
+  'NIMBUS_LIBKRUN_UPSTREAM_VERSION={upstream_version}',
+]
+
+[[forks.libkrun.consumers]]
+path = "scripts/install.sh"
+patterns = [
+  'DEFAULT_NIMBUS_LIBKRUN_VERSION="{tag}"',
+  'DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="{upstream_version}"',
+]
+
+[[forks.libkrun.consumers]]
+path = "scripts/check-vmm-host.sh"
+patterns = [
+  'DEFAULT_NIMBUS_LIBKRUN_VERSION="{tag}"',
+  'DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="{upstream_version}"',
+]
+
+[[forks.libkrun.consumers]]
+path = "scripts/build-fedora-release-srpms.sh"
+patterns = ['--nimbus-libkrun-version {tag} \']
+
+[[forks.libkrun.consumers]]
+path = "scripts/build-linux-release-packages.sh"
+patterns = ['--libkrun-version {tag} \']
+
+[[forks.libkrun.consumers]]
+path = "scripts/verify-build-fedora-release-srpms-helper.sh"
+patterns = ["nimbus-libkrun={tag}\\n", '--nimbus-libkrun-version {tag} \']
+
+[[forks.libkrun.consumers]]
+path = "scripts/verify-build-linux-release-packages-helper.sh"
+patterns = ["nimbus-libkrun={tag}\\n"]
+
+[[forks.libkrun.consumers]]
+path = "scripts/verify-linux-vmm-validation-bundle-helper.sh"
+patterns = ["nimbus-libkrun={tag}\\n"]
+
+[[forks.libkrun.consumers]]
+path = "scripts/verify-install-helper.sh"
+patterns = [
+  '''
+  https://api.github.com/repos/nimbus/nimbus-libkrun/releases/latest)
+    printf '{"tag_name":"{tag}"}'
+''',
+  'nimbus-libkrun: {tag} (upstream {upstream_version})',
+  '--libkrun-version {tag}',
+]
+
+[forks.crun]
+repo = "nimbus/nimbus-crun"
+upstream_repo = "containers/crun"
+upstream_tag = "1.29.1"
+upstream_version = "1.29.1"
+tag = "v1.29.1-nimbus.2"
+kind = "patch_carrier"
+tracks_latest = true
+after_repin = "Publish the nimbus-crun release binaries before the packaging workflows consume the new tag."
+
+[[forks.crun.consumers]]
+path = "packaging/linux-distribution-contract.env"
+patterns = [
+  'NIMBUS_CRUN_VERSION={tag}',
+  'NIMBUS_CRUN_UPSTREAM_VERSION={upstream_version}',
+]
+
+[[forks.crun.consumers]]
+path = "scripts/install.sh"
+patterns = [
+  'DEFAULT_NIMBUS_CRUN_VERSION="{tag}"',
+  'DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="{upstream_version}"',
+]
+
+[[forks.crun.consumers]]
+path = "scripts/check-vmm-host.sh"
+patterns = [
+  'DEFAULT_NIMBUS_CRUN_VERSION="{tag}"',
+  'DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="{upstream_version}"',
+]
+
+[[forks.crun.consumers]]
+path = "scripts/build-fedora-release-srpms.sh"
+patterns = ['--nimbus-crun-version {tag} \']
+
+[[forks.crun.consumers]]
+path = "scripts/build-linux-release-packages.sh"
+patterns = ['--crun-version {tag} \']
+
+[[forks.crun.consumers]]
+path = "scripts/verify-build-fedora-release-srpms-helper.sh"
+patterns = ['--nimbus-crun-version {tag} \']
+
+[[forks.crun.consumers]]
+path = "scripts/verify-install-helper.sh"
+patterns = [
+  '''
+  https://api.github.com/repos/nimbus/nimbus-crun/releases/latest)
+    printf '{"tag_name":"{tag}"}'
+''',
+  'nimbus-crun: {tag} (upstream {upstream_version})',
+  '--crun-version {tag}',
+]

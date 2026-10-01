@@ -6,9 +6,14 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit
 
-# shellcheck source=scripts/deno-fork-pins.sh
-source "${REPO_ROOT}/scripts/deno-fork-pins.sh"
-deno_fork_load_consumed_pins
+fork_pin() {
+  python3 "${REPO_ROOT}/scripts/fork_pins.py" get "$1" "$2"
+}
+
+DENO_FORK_TAG="$(fork_pin deno tag)"
+DENO_FORK_SHA="$(fork_pin deno commit)"
+RUSTY_V8_TAG="$(fork_pin rusty_v8 tag)"
+RUSTY_V8_SHA="$(fork_pin rusty_v8 commit)"
 
 POLICY_DOC="scripts/deno-fork-policy.md"
 
@@ -85,8 +90,8 @@ require_contains "${POLICY_DOC}" 'Removal or upstream trigger' "Policy requires 
 require_contains "${POLICY_DOC}" 'Prefer wrappers around upstream logic' "Policy minimizes copied fork logic"
 
 step 4 "Consumed pins are derived and recorded separately from forward releases"
-require_contains "${POLICY_DOC}" "consumed.*nimbus/deno.*${DENO_FORK_PATCH_TAG}.*${DENO_FORK_SHA}" "Policy records derived consumed nimbus/deno tag and SHA"
-require_contains "${POLICY_DOC}" "consumed.*nimbus/rusty_v8.*${RUSTY_V8_PATCH_TAG}.*${RUSTY_V8_SHA}" "Policy records derived consumed nimbus/rusty_v8 tag and SHA"
+require_contains "${POLICY_DOC}" "consumed.*nimbus/deno.*${DENO_FORK_TAG}.*${DENO_FORK_SHA}" "Policy records the consumed nimbus/deno tag and SHA from packaging/forks.toml"
+require_contains "${POLICY_DOC}" "consumed.*nimbus/rusty_v8.*${RUSTY_V8_TAG}.*${RUSTY_V8_SHA}" "Policy records the consumed nimbus/rusty_v8 tag and SHA from packaging/forks.toml"
 require_contains "${POLICY_DOC}" 'published, not consumed.*nimbus/rusty_v8.*-nimbus\.' "Policy distinguishes a published forward rusty_v8 release"
 require_contains "${POLICY_DOC}" 'silently change Nimbus.s V8' "Policy prohibits implicit V8-line coupling"
 

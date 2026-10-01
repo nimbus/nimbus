@@ -6,22 +6,24 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit
 
-# shellcheck source=scripts/deno-fork-pins.sh
-source "${REPO_ROOT}/scripts/deno-fork-pins.sh"
-deno_fork_load_consumed_pins
+fork_pin() {
+  python3 "${REPO_ROOT}/scripts/fork_pins.py" get "$1" "$2"
+}
 
 ALLOWLIST="scripts/deno-fork-provenance-allowlist.tsv"
 TREE_OUT="/tmp/nimbus-deno-fork-runtime-tree.out"
 RUNTIME_CRATES="/tmp/nimbus-deno-fork-runtime-crates.txt"
 
-EXPECTED_DENO_REPO="https://github.com/nimbus/deno"
-EXPECTED_DENO_TAG="${DENO_FORK_PATCH_TAG}"
-EXPECTED_DENO_SHA="${DENO_FORK_SHA}"
+# packaging/forks.toml owns the consumed pins. Cargo.toml and Cargo.lock must
+# agree with it.
+EXPECTED_DENO_REPO="https://github.com/$(fork_pin deno repo)"
+EXPECTED_DENO_TAG="$(fork_pin deno tag)"
+EXPECTED_DENO_SHA="$(fork_pin deno commit)"
 EXPECTED_DENO_SOURCE="git+${EXPECTED_DENO_REPO}?tag=${EXPECTED_DENO_TAG}#${EXPECTED_DENO_SHA}"
 
-EXPECTED_V8_REPO="https://github.com/nimbus/rusty_v8"
-EXPECTED_V8_TAG="${RUSTY_V8_PATCH_TAG}"
-EXPECTED_V8_SHA="${RUSTY_V8_SHA}"
+EXPECTED_V8_REPO="https://github.com/$(fork_pin rusty_v8 repo)"
+EXPECTED_V8_TAG="$(fork_pin rusty_v8 tag)"
+EXPECTED_V8_SHA="$(fork_pin rusty_v8 commit)"
 EXPECTED_V8_SOURCE="git+${EXPECTED_V8_REPO}?tag=${EXPECTED_V8_TAG}#${EXPECTED_V8_SHA}"
 
 PATCHED_DENO_CRATES="
@@ -86,7 +88,48 @@ step() {
 lock_field() {
   local crate="$1"
   local field="$2"
-  deno_fork_lock_field "${crate}" "${field}"
+  awk -v crate="${crate}" -v field="${field}" '
+    function emit() {
+      if (!found && name == crate) {
+        if (field == "version") {
+          print version
+        } else if (field == "source") {
+          print source
+        }
+        found = 1
+        exit
+      }
+    }
+    $0 == "[[package]]" {
+      emit()
+      name = ""
+      version = ""
+      source = ""
+      next
+    }
+    /^name = / {
+      name = $3
+      gsub(/"/, "", name)
+      next
+    }
+    /^version = / {
+      version = $3
+      gsub(/"/, "", version)
+      next
+    }
+    /^source = / {
+      source = $0
+      sub(/^source = "/, "", source)
+      sub(/"$/, "", source)
+      next
+    }
+    END {
+      emit()
+      if (!found) {
+        exit 1
+      }
+    }
+  ' Cargo.lock
 }
 
 allowlist_reason() {
@@ -137,14 +180,14 @@ cargo tree -p nimbus-runtime --prefix none --charset ascii >"${TREE_OUT}" 2>/tmp
 TREE_STATUS=$?
 runtime_deno_family_crates >"${RUNTIME_CRATES}"
 
-step 0 "Consumed fork pins are derived coherently from Cargo.toml and Cargo.lock"
-if [ "${DENO_FORK_REPO}" = "${EXPECTED_DENO_REPO}" ] \
-   && [ "${DENO_FORK_PATCH_TAG}" = "${DENO_FORK_LOCK_TAG}" ] \
-   && [ "${RUSTY_V8_REPO}" = "${EXPECTED_V8_REPO}" ] \
-   && [ "${RUSTY_V8_PATCH_TAG}" = "${RUSTY_V8_LOCK_TAG}" ]; then
-  pass "Patch tags, lock tags, and canonical Nimbus repositories agree"
+step 0 "Cargo.toml and Cargo.lock anchors match packaging/forks.toml"
+if workspace_patch_entry_matches "deno_core" "${EXPECTED_DENO_REPO}" "${EXPECTED_DENO_TAG}" \
+   && [ "$(lock_field deno_core source || true)" = "${EXPECTED_DENO_SOURCE}" ] \
+   && workspace_patch_entry_matches "v8" "${EXPECTED_V8_REPO}" "${EXPECTED_V8_TAG}" \
+   && [ "$(lock_field v8 source || true)" = "${EXPECTED_V8_SOURCE}" ]; then
+  pass "deno_core and v8 patch tags and lock sources match the manifest pins"
 else
-  fail "Derived pin mismatch" "Expected Cargo.toml and Cargo.lock to agree on canonical Nimbus repos/tags"
+  fail "Manifest pin mismatch" "Expected deno_core and v8 in Cargo.toml and Cargo.lock to match packaging/forks.toml"
 fi
 
 step 1 "Cargo tree for nimbus-runtime is available"
@@ -240,6 +283,7 @@ else
 fi
 
 step 6 "Consumed Deno closure and rusty_v8 release line are coupled"
+RUSTY_V8_VERSION="$(lock_field v8 version || true)"
 EXPECTED_V8_VERSION="${EXPECTED_V8_TAG#v}"
 EXPECTED_V8_VERSION="${EXPECTED_V8_VERSION%%-nimbus.*}"
 if [ "${RUSTY_V8_VERSION}" = "${EXPECTED_V8_VERSION}" ]; then
