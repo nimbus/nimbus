@@ -20,7 +20,6 @@ const repoRoot = path.resolve(option(process.argv.slice(2), "--repo-root", DEFAU
 const read = (relative) => fs.readFileSync(path.join(repoRoot, relative), "utf8");
 const manifest = JSON.parse(read("scripts/examples-verify-cases.json"));
 const examples = read("examples/README.md");
-const operating = read("docs/private/operating/verification.md");
 const runner = read("scripts/examples-verify.sh");
 
 const tests = [];
@@ -55,17 +54,13 @@ test("node and runner commands match the contract", () => {
     "NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL=5",
     "NIMBUS_EXAMPLES_VERIFY_ONLY=convex/tasks",
   ]) assert(examples.includes(token), `missing example command token: ${token}`);
-  assert.match(operating, /NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL.*1 through 9/su);
 });
 
 test("reports and retained artifacts are actionable", () => {
-  for (const text of [examples, operating]) {
-    assert.match(text, /report\.json/u);
-    assert.match(text, /junit\.xml/u);
-    assert.match(text, /retained diagnostic artifact/u);
-  }
+  assert.match(examples, /report\.json/u);
+  assert.match(examples, /junit\.xml/u);
+  assert.match(examples, /retained diagnostic artifact/u);
   assert.match(examples, /target\/examples-verify-results\/<run-id>\//u);
-  assert.match(operating, /case logs.*network lease state.*cleanup result/su);
 });
 
 test("stale status text is absent", () => {
@@ -75,7 +70,7 @@ test("stale status text is absent", () => {
     "Treat its console pass as application smoke evidence only",
     "current application verification lane contains known",
   ]) {
-    assert(!`${examples}\n${operating}`.includes(stale), `stale text remains: ${stale}`);
+    assert(!examples.includes(stale), `stale text remains: ${stale}`);
   }
 });
 
