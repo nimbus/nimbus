@@ -18,11 +18,9 @@ from typing import Iterable, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_PATH = REPO_ROOT / "tests" / "taxonomy" / "exclusions.toml"
 NEXTEST_CONFIG_PATH = REPO_ROOT / ".config" / "nextest.toml"
-CASE_MATRIX_PATH = REPO_ROOT / "docs" / "private" / "testing" / "case-matrix.toml"
+CASE_MATRIX_PATH = REPO_ROOT / "tests" / "taxonomy" / "case-matrix.toml"
 NEXTEST_INVENTORY_PATH = REPO_ROOT / "target" / "test-inventory" / "nextest-list.json"
-RUST_RECONCILIATION_PATH = (
-    REPO_ROOT / "docs" / "private" / "testing" / "inventory" / "rust-reconciliation.md"
-)
+RUST_RECONCILIATION_PATH = REPO_ROOT / "target" / "test-inventory" / "rust-reconciliation.md"
 
 GENERATED_BEGIN = "# BEGIN GENERATED: test-taxonomy exclusions"
 GENERATED_END = "# END GENERATED: test-taxonomy exclusions"
@@ -958,7 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
     coverage = subcommands.add_parser("coverage-report", help="summarize exclusion and ignored-test coverage")
     coverage.set_defaults(func=cmd_coverage_report)
 
-    matrix = subcommands.add_parser("case-matrix-check", help="validate docs/private/testing/case-matrix.toml when present")
+    matrix = subcommands.add_parser("case-matrix-check", help="validate tests/taxonomy/case-matrix.toml when present")
     matrix.set_defaults(func=cmd_case_matrix_check)
 
     return parser

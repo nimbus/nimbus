@@ -398,7 +398,7 @@ def render_markdown(inventory: dict[str, Any]) -> str:
         "- Predicate: lane entries where",
         "  `support_denominator == \"v8_isolate_required\"`",
         "- Exact generated inventory:",
-        "  `docs/private/plans/proof/node-default-runtime-support-hardening/nds3-required-surface-blockers.json`",
+        "  `target/node-compat/required-surface-blockers/nds3-required-surface-blockers.json`",
         f"- Source posture SHA-256: `{inventory['generated_from_sha256']}`",
         "- Coverage check: every required gap is assigned to exactly one blocker group.",
         "",
@@ -502,7 +502,7 @@ def main() -> int:
     parser.add_argument(
         "--json",
         default=(
-            "docs/private/plans/proof/node-default-runtime-support-hardening/"
+            "target/node-compat/required-surface-blockers/"
             "nds3-required-surface-blockers.json"
         ),
         help="blocker inventory JSON path, relative to the repository root by default",
@@ -510,7 +510,7 @@ def main() -> int:
     parser.add_argument(
         "--markdown",
         default=(
-            "docs/private/plans/proof/node-default-runtime-support-hardening/"
+            "target/node-compat/required-surface-blockers/"
             "nds3-required-surface-blockers.md"
         ),
         help="blocker inventory Markdown path, relative to the repository root by default",

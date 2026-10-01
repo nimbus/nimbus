@@ -8,7 +8,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures/nimbus-server";
 
 const TENANT_ID = "svc-e2e";
-const PROOF_DIR = "../../docs/private/plans/proof/nimbus-ui-rebuild";
+const PROOF_DIR = "test-results/screenshots";
 const JSON_HEADERS = {
   "Content-Type": "application/json",
   Accept: "application/json",
