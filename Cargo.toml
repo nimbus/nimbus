@@ -147,7 +147,7 @@ serial_test = "3"
 # oxc — JS/TS parser + semantic analysis for the deploy-time code-navigation
 # index (FSV7). Pinned exactly: oxc has no semver stability pre-1.0.
 oxc = "=0.136.0"
-object_store = { version = "0.14.0", default-features = false, features = ["aws", "fs"] }
+object_store = { version = "0.14.2", default-features = false, features = ["aws", "fs"] }
 serde = { version = "1", features = ["derive"] }
 # `raw_value` exposes `serde_json::value::RawValue` for the CLI's package.json
 # dependency wiring. The shipped graph also enables `preserve_order` through
@@ -155,7 +155,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml_ng = "0.10"
 semver = "1"
-s3s = "0.14.0"
+s3s = "0.17.0"
 shell-words = "1"
 sha2 = "0.10"
 subtle = "2"
@@ -219,10 +219,9 @@ opt-level = 3
 # Keep the public dependency surface aligned with upstream crate versions while
 # selecting the fork implementation immutably at the workspace root.
 [patch.crates-io]
-# Temporary local patches until object_store/s3s publish quick-xml 0.41+
-# dependency updates for RUSTSEC-2026-0194.
-object_store = { path = "third_party/object_store-0.14.0" }
-s3s = { path = "third_party/s3s-0.14.0" }
+# object_store 0.14.2 still exposes a client option that disables TLS
+# certificate verification. The local copy removes that option.
+object_store = { path = "third_party/object_store-0.14.2" }
 # libsql 0.9.30 enables Hyper's HTTP/2 feature even though its connector is
 # explicitly HTTP/1-only. The local copy removes that unused feature so the
 # unsupported, vulnerable h2 0.3 line is not linked.
