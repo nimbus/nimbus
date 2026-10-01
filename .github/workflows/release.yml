@@ -42,8 +42,8 @@ env:
   MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os
   MACHINE_OS_STAGED_ARTIFACT: nimbus-machine-os-arm64-staged
   MACHINE_OS_RELEASE_ARTIFACT: machine-os-arm64-release
-  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:077182b6ba853b3348d0bede602ac30b9e6568c6422bcf0654de5af96f19b9c3
-  MACHINE_OS_BOOTC_IMAGE_BUILDER: quay.io/centos-bootc/bootc-image-builder@sha256:754fc17718f977313885379e2c779066aba7d15af88fe04b486baec74759f574
+  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:9b270569fa5d66ed0b0fb6692b2a7431fb17c774df8fa7819722420194a6f8eb
+  MACHINE_OS_BOOTC_IMAGE_BUILDER: ghcr.io/osbuild/bootc-image-builder@sha256:26c9ebd8ba43596ffa266749d9745dcf97d60df1a3c7c577a97ebf95f35278da
   NIMBUS_IMAGE_PACKAGE: ghcr.io/nimbus/nimbus
   TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c
 
@@ -594,6 +594,7 @@ jobs:
           cp \
             "${BUILD_OUTPUT_DIR}/summary.txt" \
             "${BUILD_OUTPUT_DIR}/nimbus-machine-os.ociarchive" \
+            "${BUILD_OUTPUT_DIR}/nimbus-machine-os.packages.txt" \
             "${BUILD_OUTPUT_DIR}/nimbus-machine-os.raw.gz" \
             "${BUILD_OUTPUT_DIR}/nimbus-machine-os.sbom.cdx.json" \
             "${STAGE_DIR}/build-output/"
