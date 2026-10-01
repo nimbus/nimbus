@@ -10,12 +10,13 @@ mod inline_reprepare;
 mod journal;
 pub(in crate::engine) mod phase_metrics;
 #[cfg(test)]
-mod prepare_write_op_differential;
+mod prepare_write_op_differential_tests;
 pub(crate) mod prepared;
 mod publisher;
 mod shadow_conflicts;
 mod window_prepare;
 pub(crate) mod write_log;
+mod write_op;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub use direct::{AsyncMutationContext, MutationActor};
 pub(crate) use publisher::{
     begin_definitive_fence_eviction, begin_durable_recovery_eviction, run_ordered_publisher,
 };
+pub(in crate::engine) use write_op::{PreparedWriteOp, prepare_write_op};
 
 use super::Engine;
 

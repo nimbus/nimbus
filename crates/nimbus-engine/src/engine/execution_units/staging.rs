@@ -1,10 +1,8 @@
 use std::time::Duration;
 
-use nimbus_core::{
-    AccessAction, Document, DocumentId, Error, Mutation, Result, TableName, Timestamp,
-};
+use nimbus_core::{Document, DocumentId, Error, Mutation, Result, TableName, Timestamp};
 
-use super::super::mutations::enforce_mutation_authorization;
+use super::super::mutations::{PreparedWriteOp, prepare_write_op};
 use super::MutationExecutionUnit;
 use super::state::{StagedSchedulerEntry, StagedWriteEntry};
 
@@ -24,45 +22,21 @@ impl MutationExecutionUnit {
         fields: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
-        let table_schema = self.schema_snapshot.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| {
-                table_schema.validate(&fields)?;
-                Ok(table_schema.indexes.clone())
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let document = match document_id {
-            Some(document_id) => {
-                Document::with_id_at(document_id, table.clone(), fields, Timestamp(0))
-            }
-            None => Document::with_id_at(
-                self.engine.next_document_id(),
-                table.clone(),
-                fields,
-                Timestamp(0),
-            ),
-        };
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            AccessAction::Create,
+        let document_id = document_id.unwrap_or_else(|| self.engine.next_document_id());
+        let document = Document::with_id_at(document_id, table.clone(), fields, Timestamp(0));
+        let prepared = prepare_write_op(
+            self.schema_snapshot.get_table(&table),
             &self.principal,
-            Some(&document),
+            None,
+            Some(document),
+            None,
             None,
         )?;
-        self.stage_write(
-            table.clone(),
-            document.id.clone(),
-            None,
-            Some(document.clone()),
-            indexes,
-            None,
-        )?;
+        let document_id = self.stage_prepared_write(table.clone(), prepared)?;
         self.active_state()?
             .deferred_server_timestamp_fields
-            .remove(&(table, document.id.clone()));
-        Ok(document.id)
+            .remove(&(table, document_id.clone()));
+        Ok(document_id)
     }
 
     pub fn update_document(
@@ -72,11 +46,6 @@ impl MutationExecutionUnit {
         patch: serde_json::Map<String, serde_json::Value>,
     ) -> Result<DocumentId> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
-        let table_schema = self.schema_snapshot.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default();
         let existing = self
             .current_document(&table, &document_id)?
             .ok_or(Error::DocumentNotFound(document_id.clone()))?;
@@ -85,24 +54,15 @@ impl MutationExecutionUnit {
         for (field, value) in patch {
             document.fields.insert(field, value);
         }
-        if let Some(table_schema) = table_schema.as_ref() {
-            table_schema.validate(&document.fields)?;
-        }
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            AccessAction::Update,
+        let prepared = prepare_write_op(
+            self.schema_snapshot.get_table(&table),
             &self.principal,
-            Some(&document),
-            Some(&existing),
-        )?;
-        self.stage_write(
-            table.clone(),
-            document_id.clone(),
             Some(existing),
             Some(document),
-            indexes,
+            self.current_resource_path_binding(&table, &document_id)?,
             None,
         )?;
+        self.stage_prepared_write(table.clone(), prepared)?;
         if let Some(fields) = self
             .active_state()?
             .deferred_server_timestamp_fields
@@ -115,29 +75,18 @@ impl MutationExecutionUnit {
 
     pub fn delete_document(&self, table: TableName, document_id: DocumentId) -> Result<()> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
-        let table_schema = self.schema_snapshot.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default();
         let existing = self
             .current_document(&table, &document_id)?
             .ok_or(Error::DocumentNotFound(document_id.clone()))?;
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            AccessAction::Delete,
+        let prepared = prepare_write_op(
+            self.schema_snapshot.get_table(&table),
             &self.principal,
-            None,
-            Some(&existing),
-        )?;
-        self.stage_write(
-            table,
-            document_id.clone(),
             Some(existing),
             None,
-            indexes,
+            self.current_resource_path_binding(&table, &document_id)?,
             None,
         )?;
+        self.stage_prepared_write(table, prepared)?;
         Ok(())
     }
 
@@ -179,6 +128,35 @@ impl MutationExecutionUnit {
     pub fn cancel_scheduled_job(&self, job_id: nimbus_core::JobId) -> Result<()> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         self.stage_scheduled_job_cancellation(job_id)
+    }
+
+    /// Stages one write that `prepare_write_op` built and returns its id.
+    pub(super) fn stage_prepared_write(
+        &self,
+        table: TableName,
+        prepared: PreparedWriteOp,
+    ) -> Result<DocumentId> {
+        let PreparedWriteOp {
+            previous,
+            current,
+            indexes,
+            resource_path_binding,
+            ..
+        } = prepared;
+        let document_id = current
+            .as_ref()
+            .or(previous.as_ref())
+            .map(|document| document.id.clone())
+            .ok_or_else(|| Error::Internal("a staged write needs a document image".to_string()))?;
+        self.stage_write(
+            table,
+            document_id.clone(),
+            previous,
+            current,
+            indexes,
+            resource_path_binding,
+        )?;
+        Ok(document_id)
     }
 
     pub(super) fn stage_write(

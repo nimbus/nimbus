@@ -6,7 +6,7 @@ use std::{
 };
 
 use nimbus_core::{
-    AccessAction, CommitEntry, DependencySet, Document, Error, IdSource, Mutation, Result,
+    CommitEntry, DependencySet, Document, DocumentLocator, Error, IdSource, Mutation, Result,
     SequenceNumber, TenantId, Timestamp,
 };
 use tracing::warn;
@@ -21,9 +21,9 @@ use crate::tenant::{
 
 use super::caps::{MutationUsage, check_mutation_caps};
 use super::direct::{MutationExecutionMode, MutationExecutionResult};
-use super::enforce_mutation_authorization;
 use super::inline_reprepare::{InlineReprepareOutcome, reprepare_single_document_from_window};
 use super::phase_metrics::CommitPhaseDurations;
+use super::prepare_write_op;
 use super::prepared::PreparedCommit;
 use super::publisher::begin_durable_recovery_eviction;
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
@@ -1155,138 +1155,78 @@ fn prepare_queued_mutation(
     let snapshot = runtime.store.read_snapshot()?;
     let snapshot_sequence = snapshot.applied_sequence()?;
     let schema = runtime.schema();
-    let (write, result, inline_mutation) = match mutation {
+    let (table, table_id, previous, current, existing_binding, result_document_id) = match &mutation
+    {
         Mutation::Insert { table, id, fields } => {
-            let table_id = runtime.prepared_table_id(&table, snapshot.table_id(&table)?);
-            let table_schema = schema.get_table(&table).cloned();
-            if let Some(table_schema) = table_schema.as_ref() {
-                table_schema.validate(&fields)?;
-            }
-            let document = match id {
-                Some(id) => Document::with_id_at(id, table.clone(), fields, Timestamp(0)),
-                None => Document::with_id_at(
-                    id_source.next_document_id(),
-                    table.clone(),
-                    fields,
-                    Timestamp(0),
-                ),
-            };
-            enforce_mutation_authorization(
-                table_schema.as_ref(),
-                AccessAction::Create,
-                &principal,
-                Some(&document),
-                None,
-            )?;
-            let id = document.id.clone();
-            let inline_mutation = Mutation::Insert {
-                table: table.clone(),
-                id: Some(id.clone()),
-                fields: document.fields.clone(),
-            };
-            (
-                nimbus_core::WriteOp {
-                    table,
-                    table_id,
-                    op_type: nimbus_core::WriteOpType::Insert,
-                    doc_id: id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: None,
-                    current: Some(document),
-                },
-                if scheduled_execution_id.is_some() {
-                    QueuedMutationResult::Scheduled(true)
-                } else {
-                    QueuedMutationResult::Immediate(Some(id))
-                },
-                inline_mutation,
-            )
+            let table_id = runtime.prepared_table_id(table, snapshot.table_id(table)?);
+            let id = id.clone().unwrap_or_else(|| id_source.next_document_id());
+            let document =
+                Document::with_id_at(id.clone(), table.clone(), fields.clone(), Timestamp(0));
+            (table, table_id, None, Some(document), None, Some(id))
         }
         Mutation::Update { table, id, patch } => {
-            let inline_mutation = Mutation::Update {
-                table: table.clone(),
-                id: id.clone(),
-                patch: patch.clone(),
-            };
-            let table_id = snapshot.table_id(&table)?.ok_or_else(|| {
-                Error::Internal(format!("missing table identity for logical table {table}"))
-            })?;
+            let table_id = snapshot
+                .table_id(table)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
             let existing = snapshot
-                .get(&table, &id)?
+                .get(table, id)?
                 .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
             let mut document = existing.clone();
             for (field, value) in patch {
-                document.fields.insert(field, value);
+                document.fields.insert(field.clone(), value.clone());
             }
-            let table_schema = schema.get_table(&table).cloned();
-            if let Some(table_schema) = table_schema.as_ref() {
-                table_schema.validate(&document.fields)?;
-            }
-            enforce_mutation_authorization(
-                table_schema.as_ref(),
-                AccessAction::Update,
-                &principal,
-                Some(&document),
-                Some(&existing),
-            )?;
+            let existing_binding =
+                snapshot.resource_path_binding(&DocumentLocator::new(table.clone(), id.clone()))?;
             (
-                nimbus_core::WriteOp {
-                    table,
-                    table_id,
-                    op_type: nimbus_core::WriteOpType::Update,
-                    doc_id: id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: Some(existing),
-                    current: Some(document),
-                },
-                if scheduled_execution_id.is_some() {
-                    QueuedMutationResult::Scheduled(true)
-                } else {
-                    QueuedMutationResult::Immediate(Some(id))
-                },
-                inline_mutation,
+                table,
+                table_id,
+                Some(existing),
+                Some(document),
+                existing_binding,
+                Some(id.clone()),
             )
         }
         Mutation::Delete { table, id } => {
-            let table_id = snapshot.table_id(&table)?.ok_or_else(|| {
-                Error::Internal(format!("missing table identity for logical table {table}"))
-            })?;
-            let existing = snapshot
-                .get(&table, &id)?
+            let table_id = snapshot
+                .table_id(table)?
                 .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
-            let table_schema = schema.get_table(&table).cloned();
-            enforce_mutation_authorization(
-                table_schema.as_ref(),
-                AccessAction::Delete,
-                &principal,
-                None,
-                Some(&existing),
-            )?;
-            let inline_mutation = Mutation::Delete {
-                table: table.clone(),
-                id: id.clone(),
-            };
+            let existing = snapshot
+                .get(table, id)?
+                .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
+            let existing_binding =
+                snapshot.resource_path_binding(&DocumentLocator::new(table.clone(), id.clone()))?;
             (
-                nimbus_core::WriteOp {
-                    table,
-                    table_id,
-                    op_type: nimbus_core::WriteOpType::Delete,
-                    doc_id: id,
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: Some(existing),
-                    current: None,
-                },
-                if scheduled_execution_id.is_some() {
-                    QueuedMutationResult::Scheduled(true)
-                } else {
-                    QueuedMutationResult::Immediate(None)
-                },
-                inline_mutation,
+                table,
+                table_id,
+                Some(existing),
+                None,
+                existing_binding,
+                None,
             )
         }
+    };
+    // The journal committer selects index work at assignment time.
+    let (write, _) = prepare_write_op(
+        schema.get_table(table),
+        &principal,
+        previous,
+        current,
+        existing_binding,
+        None,
+    )?
+    .into_write_op(table_id);
+    let result = if scheduled_execution_id.is_some() {
+        QueuedMutationResult::Scheduled(true)
+    } else {
+        QueuedMutationResult::Immediate(result_document_id)
+    };
+    let inline_mutation = match mutation {
+        Mutation::Insert { table, fields, .. } => Mutation::Insert {
+            table,
+            id: Some(write.doc_id.clone()),
+            fields,
+        },
+        mutation => mutation,
     };
     let prepared_commit =
         PreparedCommit::for_journal(snapshot_sequence, vec![write], scheduled_execution_id)

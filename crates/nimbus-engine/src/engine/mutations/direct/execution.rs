@@ -1,16 +1,16 @@
 use std::{future, sync::Arc, time::Instant};
 
 use nimbus_core::{
-    AccessAction, DependencySet, Document, DocumentId, DocumentLocator, Error, Mutation,
-    PrincipalContext, Result, Schema, TenantId, Timestamp, WriteOp, WriteOpType,
+    DependencySet, Document, DocumentId, DocumentLocator, Error, Mutation, PrincipalContext,
+    Result, Schema, TenantId, Timestamp,
 };
 
 use crate::engine::tenants::with_tenant_runtime_operation;
 use crate::{Engine, tenant::TenantRuntime};
 
 use super::super::caps::check_mutation_caps;
-use super::super::enforce_mutation_authorization;
 use super::super::journal::validate_prepared_for_provider;
+use super::super::prepare_write_op;
 use super::super::prepared::PreparedCommit;
 use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::super::window_prepare::prepare_single_document_write_from_window;
@@ -239,7 +239,7 @@ pub(in crate::engine::mutations) fn prepare_direct_write_for_testing(
     principal: &PrincipalContext,
     sequence: nimbus_core::SequenceNumber,
     timestamp: Timestamp,
-) -> Result<(WriteOp, Vec<nimbus_core::IndexDefinition>)> {
+) -> Result<(nimbus_core::WriteOp, Vec<nimbus_core::IndexDefinition>)> {
     let PreparedDirectMutation::Commit {
         mut prepared_commit,
         ..
@@ -308,42 +308,21 @@ fn prepare_direct_mutation(
     // selection all finish here on the caller before DirectCommit admission.
     let snapshot = runtime.store.read_snapshot()?;
     let snapshot_sequence = snapshot.applied_sequence()?;
-    let (write, indexes, result_document_id) = match mutation {
+    let (table, table_id, previous, current, existing_binding, result_document_id) = match mutation
+    {
         Mutation::Insert { table, id, fields } => {
-            let table_schema = schema.get_table(&table).cloned();
-            let indexes = table_schema
-                .as_ref()
-                .map(|table_schema| {
-                    table_schema.validate(&fields)?;
-                    Ok(table_schema.indexes.clone())
-                })
-                .transpose()?
-                .unwrap_or_default();
             let document_id = id.ok_or_else(|| {
                 Error::Internal("direct insert id must be normalized before prepare".to_string())
             })?;
+            let table_id = runtime.prepared_table_id(&table, snapshot.table_id(&table)?);
             let document =
                 Document::with_id_at(document_id.clone(), table.clone(), fields, Timestamp(0));
-            enforce_mutation_authorization(
-                table_schema.as_ref(),
-                AccessAction::Create,
-                principal,
-                Some(&document),
-                None,
-            )?;
-            let table_id = runtime.prepared_table_id(&table, snapshot.table_id(&table)?);
             (
-                WriteOp {
-                    table,
-                    table_id,
-                    op_type: WriteOpType::Insert,
-                    doc_id: document_id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: None,
-                    current: Some(document),
-                },
-                indexes,
+                table,
+                table_id,
+                None,
+                Some(document),
+                None,
                 Some(document_id),
             )
         }
@@ -358,34 +337,14 @@ fn prepare_direct_mutation(
             for (field, value) in patch {
                 current.fields.insert(field, value);
             }
-            let table_schema = schema.get_table(&table).cloned();
-            let indexes = table_schema
-                .as_ref()
-                .map(|table_schema| {
-                    table_schema.validate(&current.fields)?;
-                    Ok(table_schema.indexes.clone())
-                })
-                .transpose()?
-                .unwrap_or_default();
-            enforce_mutation_authorization(
-                table_schema.as_ref(),
-                AccessAction::Update,
-                principal,
-                Some(&current),
-                Some(&previous),
-            )?;
+            let existing_binding =
+                snapshot.resource_path_binding(&DocumentLocator::new(table.clone(), id.clone()))?;
             (
-                WriteOp {
-                    table,
-                    table_id,
-                    op_type: WriteOpType::Update,
-                    doc_id: id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: Some(previous),
-                    current: Some(current),
-                },
-                indexes,
+                table,
+                table_id,
+                Some(previous),
+                Some(current),
+                existing_binding,
                 Some(id),
             )
         }
@@ -396,36 +355,27 @@ fn prepare_direct_mutation(
             let previous = snapshot
                 .get(&table, &id)?
                 .ok_or_else(|| Error::DocumentNotFound(id.clone()))?;
-            let table_schema = schema.get_table(&table).cloned();
-            enforce_mutation_authorization(
-                table_schema.as_ref(),
-                AccessAction::Delete,
-                principal,
-                None,
-                Some(&previous),
-            )?;
-            let indexes = table_schema
-                .as_ref()
-                .map(|table_schema| table_schema.indexes.clone())
-                .unwrap_or_default();
-            let resource_path_binding =
+            let existing_binding =
                 snapshot.resource_path_binding(&DocumentLocator::new(table.clone(), id.clone()))?;
             (
-                WriteOp {
-                    table,
-                    table_id,
-                    op_type: WriteOpType::Delete,
-                    doc_id: id,
-                    resource_path_binding,
-                    trigger_write_origin: None,
-                    previous: Some(previous),
-                    current: None,
-                },
-                indexes,
+                table,
+                table_id,
+                Some(previous),
+                None,
+                existing_binding,
                 None,
             )
         }
     };
+    let (write, indexes) = prepare_write_op(
+        schema.get_table(&table),
+        principal,
+        previous,
+        current,
+        existing_binding,
+        None,
+    )?
+    .into_write_op(table_id);
     let mut dependencies = DependencySet::default();
     dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone());
     validate_prepared_for_provider(runtime, snapshot_sequence, &dependencies)?;

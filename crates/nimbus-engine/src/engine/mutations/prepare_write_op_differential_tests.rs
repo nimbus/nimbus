@@ -126,9 +126,7 @@ impl Outcome {
 
 fn error_variant(error: &Error) -> String {
     let debug = format!("{error:?}");
-    let end = debug
-        .find(|character: char| matches!(character, '(' | ' ' | '{'))
-        .unwrap_or(debug.len());
+    let end = debug.find(['(', ' ', '{']).unwrap_or(debug.len());
     let variant = &debug[..end];
     match error {
         Error::Conflict { retryable, .. } => format!("{variant}(retryable={retryable})"),
@@ -146,7 +144,35 @@ struct Case {
     /// The window preparer must not decline this case, so the comparison
     /// covers all six sites.
     window_prepares: bool,
+    /// Outcomes that a commit path owns outside the shared preparer. Each
+    /// pinned site must produce exactly this outcome and leaves the comparison.
+    path_owned: Vec<PathOwned>,
 }
+
+struct PathOwned {
+    site: Site,
+    expected: Outcome,
+    reason: &'static str,
+}
+
+impl Case {
+    fn path_owned(mut self, site: Site, expected: Outcome, reason: &'static str) -> Self {
+        self.path_owned.push(PathOwned {
+            site,
+            expected,
+            reason,
+        });
+        self
+    }
+}
+
+const INSERT_CONFLICT_AT_SERIAL_STEP: &str = "the serial step sees the existing document in its \
+     retained image; the storage commit rejects the other single-document inserts with the same \
+     terminal conflict";
+const BATCH_CREATE_CONTRACT: &str =
+    "a batch create follows the Firestore create contract and reports AlreadyExists";
+const STAGED_NO_OP_ELIDED: &str =
+    "the execution-unit buffer drops a staged write whose image equals the original";
 
 fn table(name: &str) -> TableName {
     messages_table(name)
@@ -201,6 +227,7 @@ fn cases() -> Vec<Case> {
         name,
         mutation,
         window_prepares,
+        path_owned: Vec::new(),
     };
     vec![
         case(
@@ -234,6 +261,16 @@ fn cases() -> Vec<Case> {
                 fields([("owner", json!("alice")), ("body", json!("again"))]),
             ),
             true,
+        )
+        .path_owned(
+            Site::Reprepare,
+            Outcome::Error("Conflict(retryable=false)".to_string()),
+            INSERT_CONFLICT_AT_SERIAL_STEP,
+        )
+        .path_owned(
+            Site::Batch,
+            Outcome::Error("AlreadyExists".to_string()),
+            BATCH_CREATE_CONTRACT,
         ),
         case(
             "insert_unschematized_table",
@@ -263,7 +300,9 @@ fn cases() -> Vec<Case> {
             "update_noop",
             update(TABLE, "seed", fields([("body", json!("one"))])),
             true,
-        ),
+        )
+        .path_owned(Site::Staging, Outcome::NoWrite, STAGED_NO_OP_ELIDED)
+        .path_owned(Site::Batch, Outcome::NoWrite, STAGED_NO_OP_ELIDED),
         case(
             "update_bound",
             update(TABLE, "seed-bound", fields([("body", json!("two"))])),
@@ -511,10 +550,23 @@ fn prepare_at(
     }
 }
 
-/// Returns a report line for every case where two preparers disagree.
+/// Returns a report line for every case where two preparers disagree, or
+/// where a pinned path-owned outcome changed.
 fn divergences(case: &Case, outcomes: &[(Site, Outcome)]) -> Option<String> {
+    let mut pinned_mismatches = Vec::new();
     let mut classes: Vec<(Outcome, Vec<Site>)> = Vec::new();
     for (site, outcome) in outcomes {
+        if let Some(owned) = case.path_owned.iter().find(|owned| owned.site == *site) {
+            if !owned.expected.agrees_with(outcome) {
+                pinned_mismatches.push(format!(
+                    "\n  {site:?} pinned to {} ({}) but produced {}",
+                    owned.expected.summary(),
+                    owned.reason,
+                    outcome.summary()
+                ));
+            }
+            continue;
+        }
         if matches!(outcome, Outcome::Declined) {
             continue;
         }
@@ -529,10 +581,16 @@ fn divergences(case: &Case, outcomes: &[(Site, Outcome)]) -> Option<String> {
     let window_declined = outcomes
         .iter()
         .any(|(site, outcome)| *site == Site::Window && matches!(outcome, Outcome::Declined));
-    if classes.len() <= 1 && !(case.window_prepares && window_declined) {
+    if classes.len() <= 1
+        && !(case.window_prepares && window_declined)
+        && pinned_mismatches.is_empty()
+    {
         return None;
     }
     let mut report = format!("{}: {} distinct outcomes", case.name, classes.len());
+    for mismatch in &pinned_mismatches {
+        report.push_str(mismatch);
+    }
     if case.window_prepares && window_declined {
         report.push_str(" (window declined a case that it must prepare)");
     }
