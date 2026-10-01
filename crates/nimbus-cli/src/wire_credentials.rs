@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use rand::RngCore;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
@@ -69,7 +71,7 @@ fn generate() -> WireCredentials {
 
 fn random_hex(byte_len: usize) -> String {
     let mut bytes = vec![0_u8; byte_len];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
     let mut out = String::with_capacity(byte_len * 2);
     for byte in bytes {
         use std::fmt::Write as _;
