@@ -144,6 +144,8 @@ check_large_files() {
     [[ -z "${rel}" ]] && continue
     if [[ ! -f "${REPO_ROOT}/${rel}" ]]; then
       record_issue "large-file ledger path no longer exists: ${rel}"
+    elif [[ "$(line_count "${REPO_ROOT}/${rel}")" -lt 1500 ]]; then
+      record_issue "large-file ledger path is below 1500 lines; delete its row: ${rel}"
     fi
   done < <(ledger_values "large_file") || true
 }
