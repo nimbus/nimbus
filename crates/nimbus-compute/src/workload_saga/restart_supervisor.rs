@@ -74,7 +74,7 @@ impl RetainedRestartState {
 
     fn allocate_token(&self) -> Result<u64, String> {
         self.next_token
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| "retained restart supervisor exhausted task tokens".to_owned())
