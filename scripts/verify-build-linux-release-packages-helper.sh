@@ -25,7 +25,7 @@ make_libkrun_archive() {
   ln -s libkrunfw.so.5 "${staging_dir}/lib/libkrunfw.so"
   printf 'void krun_set_port_map_with_bind_address(void);\n' >"${staging_dir}/include/libkrun.h"
   printf 'prefix=/usr/libexec/nimbus\nlibdir=${prefix}/lib\n' >"${staging_dir}/lib/pkgconfig/libkrun.pc"
-  printf 'nimbus-libkrun=v1.19.4-nimbus.3\nlibkrunfw=5.5.0\n' >"${staging_dir}/NIMBUS_LIBKRUN_RELEASE.txt"
+  printf 'nimbus-libkrun=v1.19.6-nimbus.1\nlibkrunfw=5.5.0\n' >"${staging_dir}/NIMBUS_LIBKRUN_RELEASE.txt"
   COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -czf "${archive_path}" -C "${staging_dir}" .
 }
 
