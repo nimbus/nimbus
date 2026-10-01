@@ -27,7 +27,7 @@ done
 selection_count="$(rg -c 'let committer_arm = CommitterArm::for_persistence\(&store\)' "${engine_root}/tenant.rs" || true)"
 [[ "${selection_count}" == "1" ]] \
   || fail "tenant construction must derive exactly one exhaustive production committer arm"
-rg -q 'PublisherHandoff::new\(committer_arm,' "${engine_root}/tenant.rs" \
+rg -U -q 'PublisherHandoff::new\(\s*committer_arm,' "${engine_root}/tenant.rs" \
   || fail "tenant construction does not install the immutable committer arm"
 
 arm_file="${engine_root}/tenant/mutation/arm.rs"
