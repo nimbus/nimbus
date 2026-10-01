@@ -1,5 +1,5 @@
 use nimbus_core::{JobId, Result, ScheduledJob, Timestamp};
-use redb::{ReadableTable, TableError};
+use redb::{ReadableDatabase, ReadableTable, TableError};
 
 use crate::store::{
     RUNNING_SCHEDULED_JOBS, SCHEDULED_JOBS, TenantStore, TenantWriteTransaction, map_redb_error,
