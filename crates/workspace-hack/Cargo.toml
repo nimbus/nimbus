@@ -24,7 +24,7 @@ bytes = { version = "1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.1", default-features = false, features = ["getrandom", "std"] }
-deranged = { version = "0.5", features = ["powerfmt", "serde"] }
+deranged = { version = "0.5", features = ["serde"] }
 digest-93f6ce9d446188ac = { package = "digest", version = "0.10", features = ["mac", "std"] }
 digest-a6292c17cd707f01 = { package = "digest", version = "0.11", features = ["alloc", "mac", "oid"] }
 either = { version = "1", features = ["use_std"] }
@@ -63,8 +63,10 @@ phf_shared-594e8ee84c453af0 = { package = "phf_shared", version = "0.13", defaul
 phf_shared-a6292c17cd707f01 = { package = "phf_shared", version = "0.11", features = ["uncased"] }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 prost = { version = "0.13", features = ["prost-derive"] }
+rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
+rand_chacha = { version = "0.9", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
@@ -98,6 +100,7 @@ url = { version = "2", features = ["expose_internals", "serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 winnow = { version = "1" }
 writeable = { version = "0.6" }
+xxhash-rust = { version = "0.8", default-features = false, features = ["std", "xxh3", "xxh64"] }
 yoke = { version = "0.8", default-features = false, features = ["alloc", "derive"] }
 zerocopy = { version = "0.8", default-features = false, features = ["derive", "simd"] }
 zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }

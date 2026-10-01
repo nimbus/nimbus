@@ -3649,7 +3649,6 @@ version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 dependencies = [
- "powerfmt",
  "serde_core",
 ]
 
@@ -13721,6 +13720,8 @@ dependencies = [
  "quote",
  "rand 0.10.1",
  "rand 0.8.5",
+ "rand 0.9.3",
+ "rand_chacha 0.9.0",
  "rand_core 0.6.4",
  "regex",
  "regex-automata",
@@ -13759,6 +13760,7 @@ dependencies = [
  "uuid",
  "winnow 1.0.1",
  "writeable",
+ "xxhash-rust",
  "yoke 0.8.2",
  "zerocopy",
  "zerofrom",
