@@ -17,9 +17,9 @@ make_libkrun_archive() {
 
   staging_dir="$(mktemp -d "${output_dir}/nimbus-libkrun.XXXXXX")"
   mkdir -p "${staging_dir}/lib/pkgconfig" "${staging_dir}/include"
-  printf 'stub libkrun\n' >"${staging_dir}/lib/libkrun.so.1.19.4"
+  printf 'stub libkrun\n' >"${staging_dir}/lib/libkrun.so.1.19.6"
   printf 'stub libkrunfw\n' >"${staging_dir}/lib/libkrunfw.so.5.5.0"
-  ln -s libkrun.so.1.19.4 "${staging_dir}/lib/libkrun.so.1"
+  ln -s libkrun.so.1.19.6 "${staging_dir}/lib/libkrun.so.1"
   ln -s libkrun.so.1 "${staging_dir}/lib/libkrun.so"
   ln -s libkrunfw.so.5.5.0 "${staging_dir}/lib/libkrunfw.so.5"
   ln -s libkrunfw.so.5 "${staging_dir}/lib/libkrunfw.so"
@@ -76,7 +76,7 @@ NIMBUS_BUN_JSC_ADAPTER_NM="${fake_nm}" \
   --nimbus-crun-binary "${nimbus_crun_stub}" \
   --bun-jsc-adapter-archive "${nimbus_bun_jsc_adapter_archive}" \
   --version 0.1.10 \
-  --libkrun-version 1.19.4-nimbus.3 \
+  --libkrun-version 1.19.6-nimbus.1 \
   --crun-version 1.29.1-nimbus.2 \
   --arch amd64 \
   --render-only \
@@ -127,7 +127,7 @@ for format in deb rpm; do
   grep -F "postinstall:" "${output_dir}/render/manifests/nimbus-${format}.yaml" >/dev/null
 done
 grep -F "dst: /usr/libexec/nimbus/crun" "${output_dir}/render/manifests/nimbus-crun-rpm.yaml" >/dev/null
-grep -F "version: 1.19.4-nimbus.3" "${output_dir}/render/manifests/nimbus-libkrun-deb.yaml" >/dev/null
+grep -F "version: 1.19.6-nimbus.1" "${output_dir}/render/manifests/nimbus-libkrun-deb.yaml" >/dev/null
 grep -F "version: 1.29.1-nimbus.2" "${output_dir}/render/manifests/nimbus-crun-deb.yaml" >/dev/null
 grep -F "  - buildah" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
 grep -F "  - conmon" "${output_dir}/render/manifests/nimbus-deb.yaml" >/dev/null
@@ -159,7 +159,7 @@ if command -v nfpm >/dev/null 2>&1; then
     --nimbus-crun-binary "${nimbus_crun_stub}" \
     --bun-jsc-adapter-archive "${nimbus_bun_jsc_adapter_archive}" \
     --version 0.1.10 \
-    --libkrun-version 1.19.4-nimbus.3 \
+    --libkrun-version 1.19.6-nimbus.1 \
     --crun-version 1.29.1-nimbus.2 \
     --arch amd64 \
     >"${output_dir}/package-summary.txt"
