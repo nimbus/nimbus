@@ -7,6 +7,7 @@ export
 .PHONY: verify-bun-webkit-source
 .PHONY: verify-loom-handoff
 .PHONY: verify-fork-upstream-standardization
+.PHONY: verify-repo-architecture-quality
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
 
@@ -440,6 +441,11 @@ verify-fork-upstream-standardization:
 	bash -n scripts/verify-fork-upstream-standardization.sh
 	python3 -m unittest scripts.test_fork_pins
 	bash scripts/verify-fork-upstream-standardization.sh
+
+# Verify owned-source size and naming ledgers plus the crate invariants they guard
+verify-repo-architecture-quality:
+	bash -n scripts/verify-repo-architecture-quality.sh
+	bash scripts/verify-repo-architecture-quality.sh
 
 # Benchmark retained embedded providers on the storage migration workloads
 bench-embedded-providers:
@@ -928,7 +934,7 @@ convex-demo-stop:
 
 # Required local CI-shaped check. Hosted CI still owns coverage upload and the
 # scheduled/manual Node compatibility evidence workflow.
-ci-required: $(UI_DIST_INDEX) fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js typecheck-js lint-js test-js proof-helpers verify-fork-upstream-standardization
+ci-required: $(UI_DIST_INDEX) fmt-check clippy deny test-rust-runtime test-rust-workspace test-rust-docs verify-harness build-js typecheck-js lint-js test-js proof-helpers verify-fork-upstream-standardization verify-repo-architecture-quality
 
 ci: ci-required
 

@@ -1,0 +1,144 @@
+# Nimbus repository architecture quality ledger.
+#
+# Columns:
+# kind<TAB>path_or_pattern<TAB>status<TAB>owner<TAB>rationale
+#
+# `large_file` rows are exact repo-relative paths for owned source files at or
+# above the AGENTS.md thresholds. `naming_exception` rows are exact
+# repo-relative paths whose helper/common naming is currently accepted or queued
+# for review. `exclusion` rows are glob-style patterns used by
+# scripts/verify-repo-architecture-quality.sh to keep generated, vendor,
+# proof-artifact, and imported compatibility corpus files out of owned-source
+# line-count enforcement.
+#
+# Reconciled 2026-10-01 against main 37202c00a (MR50). Rows whose rationale is
+# exactly "MR50 decomposition in flight" mark the five production files at or
+# above the hard threshold that MR50 splits, one pull request per file. Each
+# decomposition pull request deletes its row.
+#
+# Reconciled 2026-07-22 against main c789db2fd plus the U6 provider-pipeline
+# review target d1f04989a. U6 shrinks the PostgreSQL/MySQL write roots and moves
+# their cross-dialect policy into concept-owned pipeline modules; their rows
+# below document the remaining cohesive provider-transaction ownership.
+kind	path_or_pattern	status	owner	rationale
+exclusion	*/node_modules/*	allowed-generated	repo-architecture	Package-manager dependency trees are not Nimbus-owned source.
+exclusion	*/target/*	allowed-generated	repo-architecture	Cargo build artifacts are not source.
+exclusion	*/dist/*	allowed-generated	repo-architecture	Bundled build outputs are verified by package/build gates, not source-size gates.
+exclusion	*/storybook-static/*	allowed-generated	repo-architecture	Storybook static bundles are generated UI artifacts.
+exclusion	*/.nimbus/*	allowed-generated	repo-architecture	Local Nimbus app artifacts are generated.
+exclusion	*/_generated/*	allowed-generated	repo-architecture	Convex generated API/data model outputs are regenerated from source.
+exclusion	*/src/gen/*	allowed-generated	repo-architecture	Generated protobuf/client sources are tracked output, not hand-owned logic.
+exclusion	crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures/*	allowed-test-corpus	repo-architecture	Imported Node compatibility fixtures are evidence corpus, not Nimbus-owned source.
+exclusion	demos/convex/vendor/*	allowed-vendor	repo-architecture	Browser demo vendor bundle is third-party/generated artifact.
+exclusion	docs/plans/proof/*	allowed-proof	repo-architecture	Proof screenshots and evidence artifacts are not source modules.
+large_file	crates/nimbus-runtime/src/runtime/bootstrap/js/node22_runtime_bootstrap.js	justified-exception	RAQ4	Node22 bootstrap is intentionally kept as one extension entry module because its source-order extension imports are Deno-bootstrap-sensitive; keep source-order review discipline and targeted Node bootstrap tests until Deno exposes a safer composition mechanism.
+naming_exception	crates/nimbus-cli/src/machine/manager/helper_env_guard.rs	review	RAQ7	Machine-manager environment-guard ownership is explicit but retains a helper-prefixed filename; rename to env_guard.rs when next touched.
+naming_exception	crates/nimbus-cli/src/machine/manager/helper_paths.rs	review	RAQ7	Machine-manager path-resolution ownership is explicit but retains a helper-prefixed filename; rename to paths.rs when next touched.
+naming_exception	crates/nimbus-cli/src/machine/manager/tests/helper_resolution.rs	allowed-test	RAQ7	Test file names the helper-resolution behavior under test. (path updated 2026-07-04)
+naming_exception	crates/nimbus-engine/benches/provider_bench/common.rs	allowed-bench	RAQ0	Benchmark-only shared setup.
+naming_exception	crates/nimbus-runtime/src/module_loader/builtins/module_fs_helpers.js	allowed-concept	RAQ4	Builtin module helper name includes the filesystem module concept.
+naming_exception	crates/nimbus-server/src/tests/convex_runtime/cancellation/request_drops/helpers.rs	allowed-test	RAQ0	Test support helper.
+naming_exception	crates/nimbus-server/src/tests/convex_runtime/http_routes/demo_flow/helpers.rs	allowed-test	RAQ0	Test support helper.
+naming_exception	packages/codegen/src/emit/reference_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/runtime_bundle_action_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/runtime_bundle_mutation_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/runtime_bundle_query_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/tree_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/emit/type_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the emitted concept.
+naming_exception	packages/codegen/src/parser/helpers.mjs	allowed-concept	RAQ8	Parser-local helper module is scoped to one codegen concept.
+naming_exception	packages/codegen/src/planner/query_state_helpers.mjs	allowed-concept	RAQ8	Codegen helper name includes the planned query-state concept.
+naming_exception	packages/codegen/src/selftest/helpers.mjs	allowed-test	RAQ8	Selftest helper support.
+naming_exception	packages/firebase/src/internal/firestore-helpers.ts	allowed-concept	RAQ8	Firebase helper name includes the Firestore concept.
+exclusion	crates/nimbus-assets/embedded/*	allowed-generated	repo-architecture	Embedded assets are build-output/vendored copies (codegen bundle, esbuild lib, generated protobuf .d.ts, built package files); owned sources live in packages/ or upstream. Added 2026-07-04 (arch-review gate restoration).
+naming_exception	crates/nimbus-storage/src/mysql/query_helpers.rs	review	storage	Provider-scoped SQL builder module; rename to a concept-owned name (query_builder/sql) when next touched. Added 2026-07-04.
+naming_exception	crates/nimbus-storage/src/postgres/query_helpers.rs	review	storage	Provider-scoped SQL builder module; rename to a concept-owned name when next touched. Added 2026-07-04.
+large_file	crates/nimbus-runtime/src/runtime/tests/pool_reuse.rs	queued-decomposition	runtime	Test monolith (hard threshold); decompose into concept-owned case modules like tests/node/cases. Queued 2026-07-04.
+large_file	crates/nimbus-runtime/src/runtime/tests/node/cases/watchpoints_extended.rs	queued-decomposition	runtime	Generated-style watchpoint case corpus (hard threshold); split by watchpoint family or justify as corpus. Queued 2026-07-04.
+large_file	crates/nimbus-runtime/benches/runtime_pool_modes/post_pir.rs	justified-exception	runtime	Custom-harness bench module (harness = false) that holds ten post-PIR scenario groups sharing one trace schema family and fixture set; it is scenario code, not a separable data table, and it never ships. Split by scenario group when a group is next extended.
+large_file	crates/nimbus-runtime/src/runtime/tests/node/mod.rs	queued-decomposition	runtime	Node-compat harness root (hard threshold); split harness vs case registration. Queued 2026-07-04.
+large_file	crates/nimbus-runtime/benches/runtime_pool_modes.rs	justified-exception	runtime	Custom-harness bench root (harness = false) that owns the shared pool-mode fixtures, host bridge, and criterion registration for its post_pir child; it never ships. Move fixtures into concept-owned bench children when the root is next extended.
+large_file	crates/nimbus-server/tests/dynamodb_spec/main.rs	justified-exception	dynamodb-adapter	Spec-suite runner mirrors the external DynamoDB spec corpus ordering; splitting would decouple it from the spec index. Review band.
+large_file	crates/nimbus-server/src/tests.rs	review	server	Server test root should shed concept-owned modules as it grows. Review band, watch on next touch.
+large_file	crates/nimbus-engine/src/tests/queries.rs	review	engine	Query behavior suite; single coherent ownership story (query evaluation); split by operator family when next extended. Review band.
+large_file	crates/nimbus-server/src/tests/service_manager.rs	review	services	Service-manager integration suite remains one lifecycle-and-channel contract; split by behavior family if it approaches the hard threshold.
+large_file	crates/nimbus-runtime/src/limits/tests.rs	review	runtime	Limits suite; coherent (resource limits). Review band.
+large_file	crates/nimbus-storage/src/tests/crud_and_journal.rs	review	storage	CRUD+journal suite; the atomicity invariant tests belong together. Review band.
+large_file	crates/nimbus-runtime/src/runtime/bootstrap/ops/test_runtime/render.rs	review	runtime	Test-runtime render op. Review band.
+large_file	crates/nimbus-runtime/src/runtime/tests/cooperative.rs	review	runtime	Cooperative-scheduling suite; coherent story. Review band.
+large_file	crates/nimbus-cli/src/deploy.rs	review	cli	Deploy command; candidate for stage-owned modules (bundle/upload/activate) when next touched. Review band.
+large_file	crates/nimbus-engine/src/tests/mutation_journal/queued.rs	review	mutation-journal	Queued-journal behavior suite owns enqueue, batching, admission, and response contracts; split by those concepts when next extended.
+large_file	crates/nimbus-engine/src/tests/mutation_journal/publisher_observers.rs	review	mutation-journal	Publisher-observer suite is one ordered-publication observation contract; keep test seams colocated while below the hard threshold.
+large_file	crates/nimbus-engine/src/tests/mutation_journal/publisher_recovery.rs	justified-exception	mutation-journal	Recovery/crash matrix intentionally keeps durable, applied, and published-prefix scenarios together so shared deterministic fault seams cannot drift; hard-threshold exception reviewed during PPSC closeout.
+large_file	crates/nimbus-engine/src/engine/execution_units/tests/mutation_execution_unit.rs	review	mutation-execution-unit	Atomic execution-unit behavior suite keeps staging, commit, replay, cancellation, and error invariants on one production interface.
+large_file	crates/nimbus-engine/src/tests/ppsc.rs	review	ppsc-verification	PPSC production-interface runner and core embedded contract suite; U8 extracted seed-farm artifact lifecycle and cross-backend differential comparison into concept-owned modules, leaving this review-band root below the hard threshold with one scenario-orchestration ownership story.
+large_file	crates/nimbus-blob/src/local.rs	review	blob	Local blob-store backend owns one filesystem-backed BlobStore implementation; candidate split is lifecycle versus range/read operations when next touched.
+large_file	crates/nimbus-egress/src/policy.rs	review	egress	Pre-existing review-band pure policy-decision interface owns rule validation, canonical authority matching, authorization results, and its fail-closed unit contract; unchanged by PPSC U8 and below the hard threshold.
+large_file	crates/nimbus-storage/src/postgres/write.rs	review	storage	Cohesive PostgreSQL transaction surface; U6 moved cross-dialect batching and pipeline policy into sql/write_pipeline.rs and the PostgreSQL adapter, leaving this root below the hard threshold.
+large_file	crates/nimbus-storage/src/mysql/write.rs	review	storage	Cohesive MySQL transaction surface; U6 moved cross-dialect batching and packet planning into concept-owned modules, leaving this root below the hard threshold.
+large_file	crates/nimbus-runtime/src/runtime/tests/host_bridge.rs	review	runtime	Host-bridge behavior suite owns one runtime boundary; split by database, scheduler, and capability families when next extended.
+large_file	crates/nimbus-system/src/projection/tests.rs	review	projection	Projection unit suite keeps provenance, ordering, and replay invariants together on the projection interface.
+large_file	crates/nimbus-system/src/projection/work.rs	review	projection	Projection work owner coordinates durable claim, fenced publication, and recovery; child modules own provider-specific persistence details.
+large_file	crates/nimbus-proxy/src/tests/decision_log_phase.rs	review	proxy	Decision-log phase suite is one policy/audit contract; split by phase family if it grows further.
+large_file	crates/nimbus-proxy/src/tests/https_intercept.rs	queued-decomposition	proxy	HTTPS interception suite owns one end-to-end trust and policy boundary; it crossed the hard threshold, so split by interception phase (handshake, leaf issuance, policy decision) when next touched.
+large_file	crates/nimbus-network/src/port_lease/lifetime.rs	queued-decomposition	MR50	MR50 decomposition in flight
+large_file	crates/nimbus-network/src/state_store.rs	queued-decomposition	MR50	MR50 decomposition in flight
+large_file	crates/nimbus-sandbox/src/backends/oci/port_lease.rs	queued-decomposition	MR50	MR50 decomposition in flight
+large_file	crates/nimbus-workloads/src/saga/state.rs	queued-decomposition	MR50	MR50 decomposition in flight
+large_file	crates/nimbus-storage/src/materialized_verification.rs	queued-decomposition	MR50	MR50 decomposition in flight
+large_file	crates/nimbus-engine/src/tests/consistency.rs	queued-decomposition	engine	Durable-journal and replica consistency suite; split journal reload, cursor streaming, and embedded-replica parity into concept-owned case modules when next touched.
+large_file	crates/nimbus-s3/src/tests.rs	queued-decomposition	s3-adapter	S3 wire-surface suite plus its in-memory tenant, blob, and metadata fakes; move the fakes into a support module and split cases by operation family when next touched.
+large_file	crates/nimbus-runtime/src/runtime/tests/basic_invocation/node_capabilities.rs	queued-decomposition	runtime	Node compatibility-target capability suite; split by builtin module family (events, buffer, assert, crypto, dgram) when next touched.
+large_file	crates/nimbus-server/src/workload_ingress/tests.rs	queued-decomposition	server	Workload-ingress suite plus its process network-authority guard and ingress-source fakes; split fakes from cases and cases by ingress phase when next touched.
+large_file	crates/nimbus-server/src/workload_composition/tests.rs	queued-decomposition	server	Workload-composition suite with its effect-forbidden provider fakes and tenant recovery cuts; move fakes into a support module when next touched.
+large_file	crates/nimbus-workloads/src/saga/tests.rs	queued-decomposition	workloads	Workload-saga transition suite; split provision, restart, and teardown cases to match the saga/state child modules when next touched.
+large_file	crates/nimbus-engine/benches/sqlite-write-overhead.rs	review	engine	Custom-harness benchmark that replays one captured batch distribution through layered SQLite write paths; never ships and keeps one measurement story.
+large_file	crates/nimbus-engine/src/tenant/committer_lease.rs	review	engine	Per-tenant committer lease owns acquisition, renewal clock, and lease status transitions with its contract tests; split renewal from acquisition if it grows.
+large_file	crates/nimbus-engine/src/tests/libsql_replica_provider.rs	review	engine	LibSQL replica provider suite keeps scheduler fencing and commit-acknowledgement fault cases on one provider interface.
+large_file	crates/nimbus-node/src/host_lifecycle.rs	review	node	Host lifecycle root owns the systemd backend trait and unit naming; activation, restart, and teardown already live in child modules.
+large_file	crates/nimbus-storage/src/tests/sqlite_foundation/journal.rs	review	storage	SQLite journal suite keeps commit-entry, pending-prefix, and document-version recovery invariants together; observability and PPSC cases are already children.
+large_file	crates/nimbus-storage/src/sql/store_core.rs	review	storage	Dialect-shared SQL store orchestration sits above sql/write_core; one layer contract shared by every SQL provider.
+large_file	crates/nimbus-network/src/port_lease/lifetime/batch_reservation/tests.rs	review	network	Batch-reservation lifetime suite owns plan-batch identity and scalar-versus-plan fencing cases; recovery fencing is already a child.
+large_file	crates/nimbus-network/src/port_lease/tests.rs	review	network	Port-lease lifecycle suite; adopted replay, claim-required, and tenant quota cases are already children. Split stop-rebind cases out if it grows.
+large_file	crates/nimbus-network/src/port_lease.rs	review	network	Port-lease root owns portable lease identity and durable lifecycle state; binding, error, operation, plan batch, rebind, and request already live in child modules.
+large_file	crates/nimbus-runtime/src/runtime/bootstrap/js/perf_hooks.js	justified-exception	runtime	Whole node:perf_hooks module surface on the restricted loader override path; deno_web supplies only the web Performance base, so the Node types stay here until they move into the fork.
+large_file	crates/nimbus-runtime/src/node_compat.rs	review	runtime	Node compatibility resolver owns scoped npm package checks, node_modules resolution, and their typed denial errors.
+large_file	crates/nimbus-cli/src/network_composition.rs	review	cli	CLI staged composition of one local OS-node network authority; orders existing seams and owns no effects. Forwarded composition is already a child.
+large_file	crates/nimbus-cli/src/compose/retirement/tests.rs	review	cli	Compose retirement suite with its recording provider and static catalog fakes; one retirement contract.
+large_file	crates/nimbus-cli/src/machine/backend/provision/tests.rs	review	machine	Forwarded machine provision suite; teardown substitution is already a child.
+large_file	crates/nimbus-cli/src/machine/backend/provision.rs	review	machine	Parent-host exact-phase adapter for compute-confirmed machine workloads; teardown authority is already a child.
+large_file	crates/nimbus-cli/src/machine/publication_authority/confirmed.rs	review	machine	Confirmed machine publication journal owns its separate format and directory; retirement and stop barrier are already children.
+large_file	crates/nimbus-proxy/src/worker.rs	review	proxy	Per-workload PEP owns configuration, preparation, and serving; health and policy reload are already children.
+large_file	crates/nimbus-proxy/src/engine.rs	review	proxy	Node-scoped egress engine composition root owns the shared substrate and the per-workload PEP lifecycle registry.
+large_file	crates/nimbus-server/src/tenant_isolation_drift.rs	review	server	Tenant-isolation drift scanner owns scan configuration, the report, and per-surface violation detection as one audit contract.
+large_file	crates/nimbus-server/src/construction.rs	review	server	Server construction owns serve options, shutdown handles, and the serve entry points; split leased serving out if it grows.
+large_file	crates/nimbus-server/src/tests/service_manager/definition_retirement.rs	justified-exception	services	Test-only deep module by design: its barriers, saga store, capability providers, fixtures, and ten behavioral cases share private injected authorities (see the module doc).
+large_file	crates/nimbus-server/src/tests/firebase/rest_crud.rs	review	firebase	Firestore REST CRUD suite owns commit, batch get, transform, and transaction-token cases on one REST interface.
+large_file	crates/nimbus-server/src/adapters/cloud_functions/http.rs	review	cloud-functions	Cloud Functions HTTP handler and its contract tests; callable, invocation, response, and tenant concepts are already children.
+large_file	crates/nimbus-server/src/listener_lease.rs	review	server	Server adapter between durable port authority and Tokio listener effects; restart retain and terminal settlement are already children.
+large_file	crates/nimbus-machine/src/api/tests.rs	review	machine	Machine API wire suite owns path encoding and strict DTO round-trip contracts.
+large_file	crates/nimbus-dynamodb/src/commands/item.rs	review	dynamodb-adapter	Single-item operations (PutItem, GetItem, DeleteItem, UpdateItem) share one atomic single-item transaction plan and its contract tests.
+large_file	crates/nimbus-compute/src/workload_projection/tests.rs	review	compute	Workload projection suite with its recording provider and sink fakes; one projection contract.
+large_file	crates/nimbus-compute/src/resource_provision/tests.rs	review	compute	Resource provision suite with its native saga store fake; one provision contract.
+large_file	crates/nimbus-compute/src/state.rs	review	compute	Transport-free ComputeState owns the engine handle, deployment snapshot, and workload composition config with its tests.
+large_file	crates/nimbus-compute/src/workload_network_plan/tests.rs	review	compute	Workload network-plan compilation suite; one compiler contract with shared sovereignty and decision fixtures.
+large_file	crates/nimbus-compute/src/resource_retirement/tests/support.rs	review	compute	Shared fixtures, event log, and fakes for the resource-retirement case modules beside it.
+large_file	crates/nimbus-sandbox/src/backends/oci/egress/tests.rs	review	sandbox	OCI egress PEP suite; post-activation cleanup, readiness, and registration failure are already children.
+large_file	crates/nimbus-sandbox/src/backends/oci/egress.rs	review	sandbox	Shared per-sandbox egress PEP lifecycle; cleanup, process, readiness, assignment, and reload are already children.
+large_file	crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs	review	sandbox	OCI port lease coordinator root; authority, batch state, publication, machine, and Netavark lifetime are already children.
+large_file	crates/nimbus-sandbox/src/backends/oci/port_lifecycle/tests.rs	review	sandbox	OCI port lifecycle suite; batch classification, machine cleanup, Netavark cleanup, and teardown progress are already children.
+large_file	crates/nimbus-sandbox/src/backends/container/runtime/launch_cleanup.rs	review	sandbox	Container launch cleanup suite owns runner execution ownership and owner-death fencing cases.
+large_file	crates/nimbus-sandbox/src/backends/container/runtime/machine_ports.rs	review	sandbox	Container-owned lifecycle for provider-managed machine port proxies, including partial-start cleanup.
+large_file	crates/nimbus-sandbox/src/backends/container/runtime/runner.rs	review	sandbox	Prepared plan-only workload runner entry point; identity, lifecycle lock, and recovery are already children.
+large_file	crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs	review	sandbox	Durable machine port publication state machine that journals each ambiguous per-binding effect; the store is already a child.
+large_file	crates/nimbus-sandbox/src/backends/container/runtime/planning.rs	review	sandbox	Container planning suite owns manifest persistence, network config, and exact-claim ordering cases.
+large_file	crates/nimbus-sandbox/src/backends/container/runtime/restart.rs	review	sandbox	Coordinator-issued, attempt-fenced container restart phases; provider effects only, with tests in a child.
+large_file	crates/nimbus-sandbox/src/backends/krun/bundle.rs	review	sandbox	Krun bundle layout, mounts, process user, and OCI config construction with its contract tests.
+large_file	crates/nimbus-sandbox/src/backends/krun/vm/teardown/tests.rs	review	sandbox	Krun execution teardown suite; fresh-process and network-teardown cases are already children.
+large_file	crates/nimbus-sandbox/src/backends/krun/vm/tests/launch_compensation.rs	review	sandbox	Krun execute-mode launch compensation suite; restart fencing is already a child.
+large_file	crates/nimbus-sandbox/src/provider_command/tests.rs	review	sandbox	Provider-command idempotency suite; async current claim and network recovery are already children.
+large_file	crates/nimbus-sandbox/src/provider_command.rs	review	sandbox	Provider-local idempotency for compute-issued commands; current claim and prepared request are already children.
+large_file	crates/nimbus-workloads/src/saga.rs	review	workloads	Portable workload-saga identity, evidence, and transition vocabulary with its typed errors.
+large_file	crates/nimbus-workloads/src/network_plan.rs	review	workloads	Portable compiled network-plan content and validation for one workload generation.
+large_file	crates/nimbus-workloads/src/saga/state/restart.rs	review	workloads	Intrinsic validation and pure transitions for nested workload restart state.
+large_file	crates/nimbus-workloads/src/store/tests.rs	review	workloads	Workload saga store port suite runs one contract against several reference store implementations.
+large_file	crates/nimbus-tenant/src/operator_policy/tests.rs	review	tenant	Operator policy suite with its image-verification and external-policy fakes; one policy document contract.

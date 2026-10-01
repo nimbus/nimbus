@@ -2806,6 +2806,14 @@ jobs:
       - name: Verify fork pins match packaging/forks.toml
         run: make verify-fork-upstream-standardization
 
+      - name: Install ripgrep for the architecture quality gate
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Verify repository architecture quality ledgers
+        run: make verify-repo-architecture-quality
+
       - name: Verify CI Ubuntu mirror resilience
         run: bash scripts/verify-ci-apt-mirror-resilience.sh
 
