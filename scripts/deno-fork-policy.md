@@ -31,6 +31,18 @@ published-but-unconsumed row is
 deliberately separate so a new fork release cannot silently change Nimbus's V8
 ABI.
 
+## Fork tag discipline
+
+- Keep one fork tag per consumed pin. Cut a fork tag only for a commit that a
+  Nimbus repin will consume.
+- Delete unconsumed tags before the next pin. A tag that no Nimbus pin consumed
+  must not remain on the fork when Nimbus moves to a newer tag.
+- Delete a tag only with owner approval. Delete the local and remote tag, and
+  record the tag name and peeled commit in the repin pull request.
+- Set the `[patch.crates-io]` `v8` tag on the Deno fork release branch to the
+  rusty_v8 tag that Nimbus pins. Change this patch on the fork release branch
+  before the Deno fork tag that Nimbus will consume.
+
 ## Upstream-first patch dispositions
 
 Every upstream bump must classify each existing fork patch and each overlapping
@@ -78,6 +90,8 @@ Prefer wrappers around upstream logic over copied implementations.
 - Nimbus is repinned to published tags only; no local path or candidate revision
   remains.
 - Deno's resolved `v8` crate version matches the consumed rusty_v8 tag line.
+- The Deno fork `[patch.crates-io]` `v8` tag equals the consumed rusty_v8 tag.
+- The fork has no unconsumed tag on the consumed upstream version.
 - Generated Node evidence is refreshed only when compatibility claims move;
   unchanged or unsupported outcomes remain explicit.
 - Published-but-unconsumed fork lines remain separately ledgered.
