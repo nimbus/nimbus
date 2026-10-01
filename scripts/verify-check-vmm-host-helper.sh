@@ -25,8 +25,9 @@ touch "${runtime_root}/lib/libkrun.so.1.19.6" "${runtime_root}/lib/libkrun.so.1.
 ln -s libkrunfw.so.5.3.0 "${runtime_root}/lib/libkrunfw.so.5"
 
 # The fake crun reports the dynamic loader trace that STUB_* selects. It loads
-# nothing unless the bundle asks for the krun handler, and it refuses to run
-# with LD_LIBRARY_PATH set because the probe must use the service search path.
+# nothing unless the bundle asks for the krun handler. It refuses to run with
+# LD_LIBRARY_PATH set because the probe must use the service search path. It
+# refuses to run with a cgroup manager because a failed run leaks the cgroup.
 cat > "${runtime_root}/crun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -36,9 +37,14 @@ case "${1:-}" in
     printf 'crun version %s\ncommit: 0000000\n+SYSTEMD +SECCOMP +LIBKRUN\n' "${STUB_CRUN_VERSION}"
     exit 0
     ;;
+  --cgroup-manager=disabled)
+    [[ "${2:-}" == "--root" ]] || { echo "unexpected args for fake crun: $*" >&2; exit 64; }
+    state_dir="$3"
+    command_name="$4"
+    ;;
   --root)
-    state_dir="$2"
-    command_name="$3"
+    echo "probe must disable the cgroup manager" >&2
+    exit 70
     ;;
   *)
     echo "unexpected args for fake crun: $*" >&2
@@ -48,7 +54,7 @@ esac
 
 case "${command_name}" in
   run)
-    bundle_dir="$5"
+    bundle_dir="$6"
     if [[ -n "${LD_LIBRARY_PATH+set}" ]]; then
       echo "LD_LIBRARY_PATH leaked into the probe" >&2
       exit 70
@@ -172,8 +178,8 @@ expect_line "${good_output}" "nimbus.crun.version    present expected=v1.30.1-ni
 expect_line "${good_output}" "nimbus.crun.runpath    present expected=${runtime_root}/lib"
 expect_line "${good_output}" "nimbus.libkrun.loaded  present path=${runtime_root}/lib/libkrun.so.1 file=libkrun.so.1.19.6"
 expect_line "${good_output}" "nimbus.libkrunfw.loaded present path=${runtime_root}/lib/libkrunfw.so.5"
-grep -E '^--root .* run --bundle .* nimbus-check-vmm-host-[0-9]+$' "${crun_log}" >/dev/null
-grep -E '^--root .* delete -f nimbus-check-vmm-host-[0-9]+$' "${crun_log}" >/dev/null
+grep -E '^--cgroup-manager=disabled --root .* run --bundle .* nimbus-check-vmm-host-[0-9]+$' "${crun_log}" >/dev/null
+grep -E '^--cgroup-manager=disabled --root .* delete -f nimbus-check-vmm-host-[0-9]+$' "${crun_log}" >/dev/null
 if compgen -G "${probe_tmp}/nimbus-check-vmm-host.*" >/dev/null; then
   echo "probe left its bundle directory in TMPDIR" >&2
   exit 1

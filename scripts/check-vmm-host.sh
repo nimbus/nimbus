@@ -146,6 +146,8 @@ check_any_command() {
 # crun dlopens libkrun only while it creates a container with the krun
 # handler. Run it on a bundle whose rootfs does not exist: crun loads libkrun
 # and libkrunfw, then fails before it starts a VM. Print the loader trace.
+# The failed run never records state, so delete cannot remove a cgroup. Keep
+# the cgroup manager disabled so the probe creates none.
 probe_crun_libkrun_load() {
   local crun_path="$1"
   local probe_dir=""
@@ -171,9 +173,9 @@ EOF
   # Nimbus does not set LD_LIBRARY_PATH or LD_PRELOAD for crun. Clear them so
   # the probe sees the same search path as the service.
   env -u LD_LIBRARY_PATH -u LD_PRELOAD LD_DEBUG=libs ${run_prefix[@]+"${run_prefix[@]}"} \
-    "${crun_path}" --root "${probe_dir}/state" run --bundle "${probe_dir}/bundle" "${container_id}" \
+    "${crun_path}" --cgroup-manager=disabled --root "${probe_dir}/state" run --bundle "${probe_dir}/bundle" "${container_id}" \
     >/dev/null 2>"${probe_dir}/trace.txt" || true
-  "${crun_path}" --root "${probe_dir}/state" delete -f "${container_id}" >/dev/null 2>&1 || true
+  "${crun_path}" --cgroup-manager=disabled --root "${probe_dir}/state" delete -f "${container_id}" >/dev/null 2>&1 || true
   cat "${probe_dir}/trace.txt"
   rm -rf "${probe_dir}"
 }
