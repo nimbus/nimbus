@@ -186,8 +186,7 @@ backend is V8; a feature-gated Bun/JSC backend exists under
 Wasmtime runs WASM component bundles (opt-in; V8 remains the default
 production backend) under the same `RuntimePolicy` and `HostBridge`
 authority model, with cooperative fuel scheduling, a retained Store pool,
-and bundle integrity enforcement; its plan verifier
-(`scripts/verify-wasmtime-backend.sh`) gates the lane.
+and bundle integrity enforcement.
 Host calls cross the `HostBridge` trait into `nimbus-bridge`, which routes
 them to the engine.
 → <https://nimbusdocs.com/concepts/architecture/runtime-isolates/>

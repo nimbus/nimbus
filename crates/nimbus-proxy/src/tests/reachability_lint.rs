@@ -15,8 +15,7 @@
 /// key/type names is the non-vacuous form.
 ///
 /// This is the compensating control the egress-engine plan's isolation
-/// argument rests on; the plan verifier (`verify-nimbus-egress-engine.sh`)
-/// enforces the same rule from outside the crate.
+/// argument rests on.
 #[test]
 fn ee1_reachability_lint_workload_map_unreachable_from_request_path() {
     let src_dir = std::env::var_os("CARGO_MANIFEST_DIR")
