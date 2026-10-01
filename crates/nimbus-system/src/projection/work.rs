@@ -522,7 +522,7 @@ impl ProjectionWork {
     #[cfg(test)]
     fn take_injected_lease_contention(&self) -> bool {
         self.lease_contentions_to_inject
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()
@@ -536,7 +536,7 @@ impl ProjectionWork {
     #[cfg(test)]
     fn take_injected_projection_failure(&self) -> bool {
         self.projection_failures_to_inject
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()
@@ -740,7 +740,7 @@ impl ProjectionWork {
         self.maybe_sweep_dead_tenants_locked(&mut registry);
         let tenant_work = self.tenant_work_locked(&mut registry, tenant_id, runtime_identity);
         tenant_work.observe_scopes(scopes);
-        let previous = match tenant_work.in_flight.fetch_update(
+        let previous = match tenant_work.in_flight.try_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |depth| (depth < self.capacity).then_some(depth + 1),
@@ -770,7 +770,7 @@ impl ProjectionWork {
                 return None;
             }
         };
-        let aggregate_previous = match self.aggregate_in_flight.fetch_update(
+        let aggregate_previous = match self.aggregate_in_flight.try_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |depth| (depth < self.aggregate_capacity).then_some(depth + 1),
