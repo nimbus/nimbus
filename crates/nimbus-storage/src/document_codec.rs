@@ -25,7 +25,7 @@ mod tests {
 
     use nimbus_core::{Document, TableName, Timestamp, TypedScalarValue};
     use rmp::decode::read_array_len;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::{
         DOCUMENT_MSGPACK_FIELD_COUNT_WITH_TYPED_FIELDS, DOCUMENT_MSGPACK_REQUIRED_FIELD_COUNT,
@@ -47,6 +47,45 @@ mod tests {
         let decoded = decode_document_msgpack(&bytes).expect("document should deserialize");
 
         assert_eq!(decoded, document);
+    }
+
+    #[test]
+    fn codec_map_key_order_is_insertion_order() {
+        let mut object = serde_json::Map::new();
+        object.insert("key_b".to_string(), json!(1));
+        object.insert("key_a".to_string(), json!(2));
+        let mut fields = serde_json::Map::new();
+        fields.insert("zeta".to_string(), json!(1));
+        fields.insert("alpha".to_string(), json!(2));
+        fields.insert("object".to_string(), Value::Object(object));
+        let document = Document::new(
+            TableName::new("tasks").expect("table name should be valid"),
+            fields,
+        );
+
+        let bytes = encode_document_msgpack(&document).expect("document should serialize");
+        let offset = |key: &str| {
+            bytes
+                .windows(key.len())
+                .position(|window| window == key.as_bytes())
+                .unwrap_or_else(|| panic!("{key} should be persisted"))
+        };
+        for [before, after] in [["zeta", "alpha"], ["alpha", "object"], ["key_b", "key_a"]] {
+            assert!(
+                offset(before) < offset(after),
+                "{before} should persist before {after}"
+            );
+        }
+
+        let decoded = decode_document_msgpack(&bytes).expect("document should deserialize");
+        assert_eq!(
+            decoded.fields.keys().collect::<Vec<_>>(),
+            ["zeta", "alpha", "object"]
+        );
+        let Some(Value::Object(object)) = decoded.fields.get("object") else {
+            panic!("object field should decode as a JSON object");
+        };
+        assert_eq!(object.keys().collect::<Vec<_>>(), ["key_b", "key_a"]);
     }
 
     #[test]
