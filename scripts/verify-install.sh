@@ -156,13 +156,10 @@ check_private_libkrun_stack() {
   if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
     local dynamic_entries=""
     dynamic_entries="$(readelf -d "${crun_path}" 2>/dev/null || true)"
-    # shellcheck disable=SC2016 # $ORIGIN is a literal ELF loader token.
-    if [[ "${dynamic_entries}" == *'$ORIGIN/lib'* ]]; then
-      # shellcheck disable=SC2016 # Keep the literal loader token in output.
-      print_line "nimbus-crun.runpath" 'present $ORIGIN/lib'
+    if [[ "${dynamic_entries}" == *'path: [/usr/libexec/nimbus/lib]'* ]]; then
+      print_line "nimbus-crun.runpath" "present /usr/libexec/nimbus/lib"
     else
-      # shellcheck disable=SC2016 # Keep the literal loader token in output.
-      print_line "nimbus-crun.runpath" 'missing $ORIGIN/lib'
+      print_line "nimbus-crun.runpath" "missing /usr/libexec/nimbus/lib"
       mark_failure
     fi
   else

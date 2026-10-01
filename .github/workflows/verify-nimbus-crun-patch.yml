@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "scripts/check-vmm-host.sh"
+      - "scripts/verify-check-vmm-host-helper.sh"
       - "scripts/collect-vmm-package-versions.sh"
       - "scripts/collect-podman-machine-diagnostics.sh"
       - "scripts/prepare-krun-bundle.sh"
@@ -23,6 +24,7 @@ on:
       - main
     paths:
       - "scripts/check-vmm-host.sh"
+      - "scripts/verify-check-vmm-host-helper.sh"
       - "scripts/collect-vmm-package-versions.sh"
       - "scripts/collect-podman-machine-diagnostics.sh"
       - "scripts/prepare-krun-bundle.sh"
@@ -59,6 +61,7 @@ jobs:
       - name: Verify helper script syntax and help entrypoints
         run: |
           bash -n scripts/check-vmm-host.sh
+          bash -n scripts/verify-check-vmm-host-helper.sh
           bash -n scripts/collect-vmm-package-versions.sh
           bash -n scripts/collect-podman-machine-diagnostics.sh
           bash -n scripts/prepare-krun-bundle.sh
@@ -77,6 +80,9 @@ jobs:
           bash scripts/verify-runtime-separation.sh --help
           bash scripts/prepare-conmon-krun-drill.sh --help
           bash scripts/collect-vmm-package-versions.sh
+
+      - name: Verify check-vmm-host helper
+        run: bash scripts/verify-check-vmm-host-helper.sh
 
       - name: Verify krun bundle helper
         run: bash scripts/verify-krun-bundle-helper.sh

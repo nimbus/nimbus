@@ -139,10 +139,10 @@ check_private_libkrun_stack() {
   fi
 
   if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
-    if readelf -d "${crun_path}" 2>/dev/null | grep -q '\$ORIGIN/lib'; then
-      print_line "nimbus.crun.runpath" 'present $ORIGIN/lib'
+    if readelf -d "${crun_path}" 2>/dev/null | grep -qF 'path: [/usr/libexec/nimbus/lib]'; then
+      print_line "nimbus.crun.runpath" "present /usr/libexec/nimbus/lib"
     else
-      print_line "nimbus.crun.runpath" 'missing $ORIGIN/lib'
+      print_line "nimbus.crun.runpath" "missing /usr/libexec/nimbus/lib"
     fi
   else
     print_line "nimbus.crun.runpath" "skipped (readelf or crun missing)"

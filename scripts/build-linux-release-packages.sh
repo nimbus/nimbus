@@ -44,7 +44,7 @@ Examples:
     --nimbus-crun-binary /tmp/nimbus-crun \
     --version v0.1.10 \
     --libkrun-version v1.19.6-nimbus.1 \
-    --crun-version v1.30.1-nimbus.1 \
+    --crun-version v1.30.1-nimbus.2 \
     --render-only
 EOF
 }
