@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 

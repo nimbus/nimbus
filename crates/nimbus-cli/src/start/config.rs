@@ -927,7 +927,7 @@ pub(crate) fn load_runtime_config_file(path: Option<&Path>) -> nimbus::Result<Ru
             path.display()
         ))
     })?;
-    serde_yaml::from_slice(&bytes).map_err(|error| {
+    serde_yaml_ng::from_slice(&bytes).map_err(|error| {
         Error::InvalidInput(format!(
             "failed to parse config file {} as YAML/JSON: {error}",
             path.display()
@@ -1133,7 +1133,7 @@ mod network_root_tests {
 
     #[test]
     fn network_config_is_top_level_and_keeps_unknown_field_guards() {
-        let parsed: RuntimeConfigFile = serde_yaml::from_str(
+        let parsed: RuntimeConfigFile = serde_yaml_ng::from_str(
             r#"
 network:
   state_dir: /config/network
@@ -1145,7 +1145,7 @@ network:
             Some(Path::new("/config/network"))
         );
 
-        let nested_error = serde_yaml::from_str::<RuntimeConfigFile>(
+        let nested_error = serde_yaml_ng::from_str::<RuntimeConfigFile>(
             r#"
 network:
   state_root: /config/network
@@ -1154,7 +1154,7 @@ network:
         .expect_err("unknown network fields must be rejected");
         assert!(nested_error.to_string().contains("unknown field"));
 
-        let top_level_error = serde_yaml::from_str::<RuntimeConfigFile>(
+        let top_level_error = serde_yaml_ng::from_str::<RuntimeConfigFile>(
             r#"
 networking:
   state_dir: /config/network

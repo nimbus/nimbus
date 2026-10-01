@@ -262,7 +262,7 @@ impl TenantImageVerificationProvider for SbomImageVerifier {
 }
 
 fn parse_policy(body: &str) -> OperatorPolicyDocument {
-    serde_yaml::from_str(body).expect("policy fixture should parse")
+    serde_yaml_ng::from_str(body).expect("policy fixture should parse")
 }
 
 fn valid_policy_with_network_endpoint_host(host: &str) -> OperatorPolicyDocument {
@@ -902,7 +902,7 @@ fn denied_egress_draft_proposes_minimal_rule_without_mutating_policy() {
         vec!["/repos/nimbus/nimbus".to_string()]
     );
     assert!(
-        !serde_yaml::to_string(&draft)
+        !serde_yaml_ng::to_string(&draft)
             .expect("draft should serialize")
             .contains("do-not-log"),
         "query parameters from denial evidence must not leak into draft policy"
@@ -1145,7 +1145,7 @@ fn operator_image_policy_sbom_required_compiles_to_admission_hook() {
 
 #[test]
 fn policy_fixture_rejects_unknown_fields_at_parse_time() {
-    let error = serde_yaml::from_str::<OperatorPolicyDocument>(UNKNOWN_FIELD)
+    let error = serde_yaml_ng::from_str::<OperatorPolicyDocument>(UNKNOWN_FIELD)
         .expect_err("unknown fields should be rejected");
     assert!(
         error.to_string().contains("unknown field"),
@@ -1269,7 +1269,7 @@ fn node_runtime_profiles_follow_lts_registry_targets() {
         assert_eq!(metadata.product_default, product_default);
     }
 
-    let numeric: OperatorPolicyDocument = serde_yaml::from_str(
+    let numeric: OperatorPolicyDocument = serde_yaml_ng::from_str(
         r#"
 schema_version: 1
 tenant: tenant-a

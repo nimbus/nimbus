@@ -473,8 +473,6 @@ fn current_effective_uid() -> u32 {
 }
 
 fn acquire_publish_lock(path: &Path) -> SigningResult<File> {
-    use fs2::FileExt;
-
     let lock_path = publish_lock_path(path);
     if let Some(parent) = nonempty_parent(&lock_path) {
         fs::create_dir_all(parent).map_err(|source| SigningError::KeyFileWrite {
@@ -496,7 +494,7 @@ fn acquire_publish_lock(path: &Path) -> SigningResult<File> {
             source,
         })?;
     lock_file
-        .lock_exclusive()
+        .lock()
         .map_err(|source| SigningError::KeyFileWrite {
             path: lock_path,
             source,

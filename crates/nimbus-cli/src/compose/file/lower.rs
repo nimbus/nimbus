@@ -125,7 +125,7 @@ impl ComposeProjectPlan {
     }
 
     pub(crate) fn render(&self) -> Result<String, Error> {
-        serde_yaml::to_string(self).map_err(|error| {
+        serde_yaml_ng::to_string(self).map_err(|error| {
             Error::InvalidInput(format!(
                 "failed to render resolved compose config from {}: {error}",
                 self.source_file.display()
@@ -271,7 +271,7 @@ fn read_raw_compose_document(path: &Path) -> Result<RawComposeDocument, Error> {
             path.display()
         ))
     })?;
-    serde_yaml::from_slice(&bytes).map_err(|error| {
+    serde_yaml_ng::from_slice(&bytes).map_err(|error| {
         Error::InvalidInput(format!(
             "failed to parse compose file {} as YAML: {error}",
             path.display()

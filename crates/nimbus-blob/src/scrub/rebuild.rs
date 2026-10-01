@@ -410,27 +410,28 @@ pub(super) fn rebuild_index_locked(
         // quarantine claims we are refusing to drop. The unlink is fsynced
         // (parent dir) and its error propagated — a swallowed error could
         // leave the empty index durable across a crash.
-        if state.index_provisional && state.index.is_empty() {
-            if let Some(root) = state.index_path.parent() {
-                match std::fs::remove_file(&state.index_path) {
-                    Ok(()) => {
-                        disk::fsync_dir(root, &*observer).map_err(|err| {
-                            local::io_error(
-                                err,
-                                format!(
-                                    "sync root after provisional index unlink {}",
-                                    root.display()
-                                ),
-                            )
-                        })?;
-                    }
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => {
-                        return Err(local::io_error(
+        if state.index_provisional
+            && state.index.is_empty()
+            && let Some(root) = state.index_path.parent()
+        {
+            match std::fs::remove_file(&state.index_path) {
+                Ok(()) => {
+                    disk::fsync_dir(root, &*observer).map_err(|err| {
+                        local::io_error(
                             err,
-                            format!("remove provisional index {}", state.index_path.display()),
-                        ));
-                    }
+                            format!(
+                                "sync root after provisional index unlink {}",
+                                root.display()
+                            ),
+                        )
+                    })?;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(local::io_error(
+                        err,
+                        format!("remove provisional index {}", state.index_path.display()),
+                    ));
                 }
             }
         }

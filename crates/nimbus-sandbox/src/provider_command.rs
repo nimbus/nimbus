@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -1713,7 +1712,7 @@ fn acquire_lock(file: File, path: &Path) -> Result<JournalGuard, ProviderCommand
     }
     let deadline = Instant::now() + LOCK_TIMEOUT;
     loop {
-        match FileExt::try_lock_exclusive(&file) {
+        match file.try_lock().map_err(std::io::Error::from) {
             Ok(()) => return Ok(JournalGuard { _file: file }),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 #[cfg(test)]

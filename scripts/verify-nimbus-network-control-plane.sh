@@ -427,7 +427,6 @@ verify_network_dependency_contract() {
             process.exit(1);
           }
           const approved = new Map([
-            ["fs2", {kind: null, target: null, features: [], defaultFeatures: true}],
             ["serde", {kind: null, target: null, features: ["derive"], defaultFeatures: true}],
             ["serde_json", {kind: null, target: null, features: ["raw_value"], defaultFeatures: true}],
             ["sha2", {kind: null, target: null, features: [], defaultFeatures: true}],

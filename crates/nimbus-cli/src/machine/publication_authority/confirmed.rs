@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt as _;
 use nimbus::{Error, SandboxId, SandboxPortBinding};
 use nimbus_compute::workload_saga::ConfirmedWorkloadTeardownCommand;
 use nimbus_compute::workload_saga::teardown_provider_command::ConfirmedTeardownProviderCommand;
@@ -843,7 +842,7 @@ impl ConfirmedMachinePublicationJournal {
         #[cfg(test)]
         let mut contention_reported = false;
         loop {
-            match file.try_lock_exclusive() {
+            match file.try_lock().map_err(std::io::Error::from) {
                 Ok(()) => return Ok(ConfirmedMachinePublicationLock { file }),
                 Err(error) if lock_is_contended(&error) && Instant::now() < deadline => {
                     #[cfg(test)]

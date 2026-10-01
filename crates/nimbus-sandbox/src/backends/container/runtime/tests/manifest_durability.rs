@@ -11,7 +11,6 @@ use super::super::manifest::{
 };
 use super::support::*;
 use super::*;
-use fs2::FileExt;
 use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 use nimbus_process_harness::PortWindow;
 use tempfile::TempDir;
@@ -820,14 +819,14 @@ fn publication_lock_contention_is_bounded_and_preserves_canonical_bytes() {
         .write(true)
         .open(&lock_path)
         .expect("publication lock should open");
-    FileExt::lock_exclusive(&lock).expect("test should hold the publication lock");
+    lock.lock().expect("test should hold the publication lock");
     let started = Instant::now();
 
     let error = backend
         .write_manifest(&manifest)
         .expect_err("a contended publication must fail at its bounded deadline");
     let elapsed = started.elapsed();
-    FileExt::unlock(&lock).expect("test publication lock should release");
+    lock.unlock().expect("test publication lock should release");
 
     assert!(
         error

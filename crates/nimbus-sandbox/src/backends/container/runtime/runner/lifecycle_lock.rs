@@ -5,8 +5,6 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
-
 use super::*;
 
 /// Process-scoped ownership of one lifecycle transition.
@@ -139,7 +137,7 @@ fn lock_current_inspection_with_timeout(
         })?;
     let deadline = Instant::now() + timeout;
     loop {
-        match FileExt::try_lock_shared(&lock) {
+        match lock.try_lock_shared().map_err(std::io::Error::from) {
             Ok(()) => break,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 #[cfg(test)]
@@ -274,7 +272,7 @@ fn lock_runner_handoff_path_with_deadline(
             ),
         })?;
     loop {
-        match FileExt::try_lock_exclusive(&lock) {
+        match lock.try_lock().map_err(std::io::Error::from) {
             Ok(()) => return Ok(RunnerHandoffGuard { _lock: lock }),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 #[cfg(test)]

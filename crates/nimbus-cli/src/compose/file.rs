@@ -12,7 +12,7 @@ use nimbus::{
     TenantId, validate_tenant_volume_name,
 };
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
+use serde_yaml_ng::Value;
 
 mod lower;
 mod parse;

@@ -17,7 +17,6 @@ All Rust workspace members, per the root `Cargo.toml`.
 | Crate | Role |
 | --- | --- |
 | `nimbus` | Public facade re-exporting the stable surface for embedders. |
-| `nimbus-adapters` | Feature-gated facade of re-exports over the adapter crates; no logic. |
 | `nimbus-artifacts` | Artifact verification: OCI references, SLSA provenance, admission checks. |
 | `nimbus-assets` | Embedded production asset catalog (distribution payloads, UI bytes, templates). |
 | `nimbus-auth` | Application auth contract: `ApplicationAuthVerifier` bearer-token verification into `InvocationAuth`. |

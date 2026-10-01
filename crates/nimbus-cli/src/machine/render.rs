@@ -233,7 +233,7 @@ pub(super) fn render_machine_status_view(
         MachineStatusOutputFormat::Json => serde_json::to_string_pretty(&view).map_err(|error| {
             Error::Internal(format!("failed to serialize machine status: {error}"))
         }),
-        MachineStatusOutputFormat::Yaml => serde_yaml::to_string(&view).map_err(|error| {
+        MachineStatusOutputFormat::Yaml => serde_yaml_ng::to_string(&view).map_err(|error| {
             Error::Internal(format!("failed to serialize machine status: {error}"))
         }),
         MachineStatusOutputFormat::Table => Ok(render_machine_status_table(&view, no_heading)),
@@ -590,7 +590,7 @@ pub(super) fn render_machine_info_view(
     match format {
         MachineInfoOutputFormat::Json => serde_json::to_string_pretty(view)
             .map_err(|error| Error::Internal(format!("failed to serialize machine info: {error}"))),
-        MachineInfoOutputFormat::Yaml => serde_yaml::to_string(view)
+        MachineInfoOutputFormat::Yaml => serde_yaml_ng::to_string(view)
             .map_err(|error| Error::Internal(format!("failed to serialize machine info: {error}"))),
     }
 }
@@ -610,7 +610,7 @@ pub(super) fn render_machine_inspect_view(
                 "failed to serialize machine inspect output: {error}"
             ))
         }),
-        MachineInspectOutputFormat::Yaml => serde_yaml::to_string(&view).map_err(|error| {
+        MachineInspectOutputFormat::Yaml => serde_yaml_ng::to_string(&view).map_err(|error| {
             Error::Internal(format!(
                 "failed to serialize machine inspect output: {error}"
             ))

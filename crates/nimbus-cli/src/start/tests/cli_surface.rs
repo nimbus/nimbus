@@ -463,7 +463,7 @@ fn start_function_scaling_admission_keeps_selector_overrides() {
         runtime_seat_millicpus: 250,
         ..StartCommand::default()
     };
-    let runtime_config: RuntimeConfigFile = serde_yaml::from_str(
+    let runtime_config: RuntimeConfigFile = serde_yaml_ng::from_str(
         r#"
 functions:
   scaling:
@@ -508,7 +508,7 @@ functions:
 #[test]
 fn start_function_scaling_admission_uses_explicit_operator_policy() {
     let command = StartCommand::default();
-    let runtime_config: RuntimeConfigFile = serde_yaml::from_str(
+    let runtime_config: RuntimeConfigFile = serde_yaml_ng::from_str(
         r#"
 functions:
   scaling:
@@ -520,7 +520,7 @@ functions:
 "#,
     )
     .expect("runtime config should parse");
-    let operator_policy: nimbus_tenant::OperatorPolicyDocument = serde_yaml::from_str(
+    let operator_policy: nimbus_tenant::OperatorPolicyDocument = serde_yaml_ng::from_str(
         r#"
 schema_version: 1
 tenant: tenant-a

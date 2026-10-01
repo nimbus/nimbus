@@ -219,8 +219,6 @@ async fn local_pack_second_open_shares_live_state() {
 
 #[tokio::test]
 async fn root_lock_excludes_second_process() {
-    use fs2::FileExt;
-
     let (dir, store) = open_temp(256);
 
     // Probe the flock the way another process would: a separate file
@@ -229,15 +227,15 @@ async fn root_lock_excludes_second_process() {
     let lock_path = dir.path().canonicalize().unwrap().join("lock");
     let probe = OpenOptions::new().write(true).open(&lock_path).unwrap();
     assert!(
-        probe.try_lock_exclusive().is_err(),
+        probe.try_lock().is_err(),
         "a live store holds the exclusive root flock"
     );
 
     drop(store);
     probe
-        .try_lock_exclusive()
+        .try_lock()
         .expect("dropping the last handle releases the flock");
-    fs2::FileExt::unlock(&probe).unwrap();
+    probe.unlock().unwrap();
 }
 
 #[test]

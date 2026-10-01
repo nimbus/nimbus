@@ -35,7 +35,6 @@
     {
       "shard": "adapters",
       "packages": [
-        "nimbus-adapters",
         "nimbus-convex",
         "nimbus-firebase",
         "nimbus-cloud-functions",

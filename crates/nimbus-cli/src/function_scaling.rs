@@ -563,7 +563,7 @@ mod tests {
     use super::*;
 
     fn parse(body: &str) -> NimbusFunctionsFileConfig {
-        serde_yaml::from_str(body).expect("functions config should parse")
+        serde_yaml_ng::from_str(body).expect("functions config should parse")
     }
 
     #[test]
@@ -650,7 +650,7 @@ scaling:
 
     #[test]
     fn unknown_function_scaling_shapes_reject_actionably() {
-        let error = serde_yaml::from_str::<NimbusFunctionsFileConfig>(
+        let error = serde_yaml_ng::from_str::<NimbusFunctionsFileConfig>(
             r#"
 scaling:
   default:
@@ -667,7 +667,7 @@ scaling:
 
     #[test]
     fn unknown_public_activation_warm_rejects() {
-        let error = serde_yaml::from_str::<NimbusFunctionsFileConfig>(
+        let error = serde_yaml_ng::from_str::<NimbusFunctionsFileConfig>(
             r#"
 scaling:
   default:
@@ -681,7 +681,7 @@ scaling:
 
     #[test]
     fn unknown_public_autoscaling_rejects() {
-        let error = serde_yaml::from_str::<NimbusFunctionsFileConfig>(
+        let error = serde_yaml_ng::from_str::<NimbusFunctionsFileConfig>(
             r#"
 scaling:
   default:
@@ -695,7 +695,7 @@ scaling:
 
     #[test]
     fn unknown_public_live_scaling_rejects() {
-        let error = serde_yaml::from_str::<NimbusFunctionsFileConfig>(
+        let error = serde_yaml_ng::from_str::<NimbusFunctionsFileConfig>(
             r#"
 scaling:
   default:

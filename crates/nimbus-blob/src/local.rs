@@ -892,15 +892,13 @@ pub(crate) fn ensure_writable(state: &LocalPackState, operation: &str) -> Result
 /// sync may falsely succeed against a clean-but-lost page cache (fsyncgate),
 /// so the store stops accepting mutations until it is reopened.
 pub(crate) fn poison_on_write_failure<T>(state: &mut LocalPackState, result: &Result<T>) {
-    // Nested `if` rather than a let-chain: nimbus-blob's MSRV is 1.86 and
-    // let-chains need 1.88.
-    if let Err(err) = result {
-        if matches!(
+    if let Err(err) = result
+        && matches!(
             err.storage_kind(),
             Some(StorageErrorKind::Io) | Some(StorageErrorKind::Corruption)
-        ) {
-            state.poisoned = true;
-        }
+        )
+    {
+        state.poisoned = true;
     }
 }
 

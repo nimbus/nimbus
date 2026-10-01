@@ -33,7 +33,6 @@ aes-gcm-siv.workspace = true
 axum.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
-fs2.workspace = true
 hyper = { workspace = true, features = ["client", "http1", "runtime"] }
 indicatif.workspace = true
 libc.workspace = true
@@ -61,7 +60,7 @@ reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
+serde_yaml_ng.workspace = true
 sha2.workspace = true
 signal-hook-registry.workspace = true
 shell-words.workspace = true

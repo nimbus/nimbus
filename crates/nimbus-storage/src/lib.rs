@@ -75,7 +75,7 @@ pub use format::{
     validate_document_version_storage_format_state, validate_index_version_storage_format,
     validate_index_version_storage_format_state, validate_storage_format_version,
 };
-pub use kv::{FJALL_KV_ENGINE_NAME, RedbTenantKvStore, fjall_kv_engine_type_marker};
+pub use kv::RedbTenantKvStore;
 #[cfg(feature = "libsql")]
 pub use libsql::{
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,

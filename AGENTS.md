@@ -81,7 +81,6 @@ intended item:
 | Name | Path | What it is |
 | --- | --- | --- |
 | `nimbus` (facade crate) | `crates/nimbus/` | Re-exports public types for embedders |
-| `nimbus-adapters` | `crates/nimbus-adapters/` | Optional adapter-family aggregation crate |
 | `nimbus-auth` | `crates/nimbus-auth/` | Shared auth and identity primitives |
 | `nimbus-bin` | `crates/nimbus-bin/` | CLI binary entry point |
 | `nimbus-blob` | `crates/nimbus-blob/` | Content-addressed byte plane (`BlobStore`, Seam A) |

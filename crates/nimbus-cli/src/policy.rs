@@ -103,7 +103,7 @@ pub(crate) fn load_policy_document(path: &Path) -> nimbus::Result<OperatorPolicy
             path.display()
         ))
     })?;
-    serde_yaml::from_str(&body).map_err(|error| {
+    serde_yaml_ng::from_str(&body).map_err(|error| {
         nimbus::Error::InvalidInput(format!(
             "failed to parse policy file {}: {error}",
             path.display()
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn validate_and_explain_render_stable_text() {
         let document: OperatorPolicyDocument =
-            serde_yaml::from_str(VALID_POLICY).expect("fixture should parse");
+            serde_yaml_ng::from_str(VALID_POLICY).expect("fixture should parse");
         let evaluation = document.evaluate().expect("policy should evaluate");
 
         let validation = evaluation.render_validate_text();

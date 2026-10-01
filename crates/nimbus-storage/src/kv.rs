@@ -359,12 +359,6 @@ impl KvStorageEngine for TenantStore {
     }
 }
 
-pub const FJALL_KV_ENGINE_NAME: &str = "fjall";
-
-pub fn fjall_kv_engine_type_marker() -> &'static str {
-    std::any::type_name::<fjall::SingleWriterTxDatabase>()
-}
-
 fn tenant_key(tenant: &TenantId, key: &[u8]) -> Vec<u8> {
     let tenant = tenant.as_str().as_bytes();
     let mut scoped = Vec::with_capacity(tenant.len() + 1 + key.len());

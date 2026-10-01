@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/nimbus",
-    "crates/nimbus-adapters",
     "crates/nimbus-artifacts",
     "crates/nimbus-assets",
     "crates/nimbus-auth",
@@ -112,9 +111,7 @@ node_resolver = { version = "0.97.0", features = ["sync"] }
 crc32c = "0.6"
 crc32fast = "1"
 extenddb-core = { git = "https://github.com/ExtendDB/extenddb", rev = "0448ca066c86bddf2eb465092b8b6854923665ee" }
-fjall = "3.1.9"
 futures = "0.3"
-fs2 = "0.4"
 fuser = "0.17.0"
 hex = "0.4"
 hkdf = "0.12"
@@ -156,7 +153,7 @@ serde = { version = "1", features = ["derive"] }
 # dependency wiring. The shipped graph also enables `preserve_order` through
 # `workspace-hack`, so storage codecs must define their own canonical map order.
 serde_json = { version = "1", features = ["raw_value"] }
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 semver = "1"
 s3s = "0.14.0"
 shell-words = "1"
@@ -230,9 +227,6 @@ s3s = { path = "third_party/s3s-0.14.0" }
 # explicitly HTTP/1-only. The local copy removes that unused feature so the
 # unsupported, vulnerable h2 0.3 line is not linked.
 libsql = { path = "third_party/libsql-0.9.30" }
-# flume 0.12.0 declares spin 0.9.8 even for consumers such as fjall that
-# disable every flume feature. The local copy selects the current spin line.
-flume = { path = "third_party/flume-0.12.0" }
 # lazy_static 1.5.0's no-std feature selects yanked spin 0.9.8. Its use of
 # spin::Once is source-compatible with the current spin line.
 lazy_static = { path = "third_party/lazy_static-1.5.0" }

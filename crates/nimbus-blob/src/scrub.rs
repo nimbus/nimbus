@@ -346,13 +346,13 @@ impl LocalPackScrubber {
                     continue;
                 }
             }
-            if let Some(limit) = max_packs {
-                if scanned >= limit {
-                    report.checkpoint.last_completed_pack_id = last_checkpoint;
-                    report.completed = false;
-                    report.pacing = pacing.finish();
-                    return Ok(report);
-                }
+            if let Some(limit) = max_packs
+                && scanned >= limit
+            {
+                report.checkpoint.last_completed_pack_id = last_checkpoint;
+                report.completed = false;
+                report.pacing = pacing.finish();
+                return Ok(report);
             }
 
             let packs_dir = snapshot.packs_dir.clone();
@@ -877,10 +877,9 @@ fn load_checkpoint(path: &Path) -> Result<Option<ScrubCheckpoint>> {
     // ours or is damaged.
     if let (Some(last), Some(max_seen)) =
         (checkpoint.last_completed_pack_id, checkpoint.max_pack_seen)
+        && last > max_seen
     {
-        if last > max_seen {
-            return Ok(None);
-        }
+        return Ok(None);
     }
     Ok(Some(checkpoint))
 }

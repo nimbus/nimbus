@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -306,7 +305,7 @@ fn lock_publication_typed(
     }
     let deadline = Instant::now() + MACHINE_PORT_EVIDENCE_LOCK_TIMEOUT;
     loop {
-        match FileExt::try_lock_exclusive(&lock) {
+        match lock.try_lock().map_err(std::io::Error::from) {
             Ok(()) => return Ok(MachinePortEvidenceGuard { _lock: lock }),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {

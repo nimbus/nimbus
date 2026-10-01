@@ -13,7 +13,6 @@ doctest = false
 workspace = true
 
 [dependencies]
-fs2.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }

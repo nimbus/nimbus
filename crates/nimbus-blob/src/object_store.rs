@@ -199,13 +199,13 @@ impl BlobStore for ObjectStoreBlobStore {
                 // size (a metadata-only HEAD, no body bytes) to disambiguate and
                 // produce the same `InvalidInput` shape the other two `BlobStore`
                 // legs use for out-of-bounds ranges.
-                if let Ok(meta) = self.store.head(&path).await {
-                    if range.end > meta.size {
-                        return Err(Error::InvalidInput(format!(
-                            "range {}..{} out of bounds for blob of {} bytes",
-                            range.start, range.end, meta.size
-                        )));
-                    }
+                if let Ok(meta) = self.store.head(&path).await
+                    && range.end > meta.size
+                {
+                    return Err(Error::InvalidInput(format!(
+                        "range {}..{} out of bounds for blob of {} bytes",
+                        range.start, range.end, meta.size
+                    )));
                 }
                 Err(map_object_error(err, "get_range", &path))
             }

@@ -182,7 +182,7 @@ pub(crate) fn load_quarantine(path: &Path) -> Result<HashMap<BlobHash, Quarantin
         )));
     }
     let payload_len = bytes.len() - QUARANTINE_MAGIC.len();
-    if payload_len % QUARANTINE_ENTRY_LEN != 0 {
+    if !payload_len.is_multiple_of(QUARANTINE_ENTRY_LEN) {
         return Err(corruption(format!(
             "quarantine {} has truncated entry",
             path.display()
