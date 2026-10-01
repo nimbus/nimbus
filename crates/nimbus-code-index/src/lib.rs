@@ -9,7 +9,7 @@
 //!
 //! This is the structural foundation for console code navigation
 //! (go-to-definition, callers, import/call graph). Pure (source -> index), no
-//! I/O. oxc is pinned at `=0.136.0`.
+//! I/O. oxc is pinned at `=0.152.0`.
 
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{Expression, StaticMemberExpression};

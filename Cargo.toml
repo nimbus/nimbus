@@ -148,7 +148,7 @@ rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl",
 serial_test = "3"
 # oxc — JS/TS parser + semantic analysis for the deploy-time code-navigation
 # index (FSV7). Pinned exactly: oxc has no semver stability pre-1.0.
-oxc = "=0.136.0"
+oxc = "=0.152.0"
 object_store = { version = "0.14.2", default-features = false, features = ["aws", "fs"] }
 serde = { version = "1", features = ["derive"] }
 # `raw_value` exposes `serde_json::value::RawValue` for the CLI's package.json
@@ -176,10 +176,10 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 wait-timeout = "0.2"
 time = "0.3"
-toml = "0.9"
+toml = "1.1"
 twox-hash = "2"
 ulid = { version = "1", features = ["serde"] }
-zip = { version = "6", default-features = false }
+zip = { version = "8", default-features = false }
 sys_traits = "0.1.28"
 url = "2"
 v8 = { version = "150.4.0", default-features = false, features = ["simdutf"] }
