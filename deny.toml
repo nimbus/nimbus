@@ -28,6 +28,7 @@ ignore = [
   { id = "RUSTSEC-2023-0071", reason = "RustCrypto rsa has no safe fixed release; exposure is limited to user-authored Deno/Node crypto operations, so keep the audit visible until upstream replaces the implementation." },
   { id = "RUSTSEC-2026-0118", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork moves DNSSEC validation off the affected 0.25 API." },
   { id = "RUSTSEC-2026-0119", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork advances to hickory-proto >=0.26.1." },
+  { id = "RUSTSEC-2026-0285", reason = "rustls 0.23.40 TLS 1.3 handshake-level check (fixed in 0.23.45). deno_tls in nimbus/deno v2.9.7-nimbus.1 and upstream Deno main pin rustls =0.23.40, so this workspace cannot move it. Remove when the Deno fork carries rustls >=0.23.45 (tracked for the next v2.9.7-nimbus tag, 2026-10-01)." },
   { id = "RUSTSEC-2026-0204", reason = "crossbeam-epoch 0.9.20 (the advisory's fix release) deterministically SIGABRTs the nimbus-server test binary on macOS (libc++ hardening: vector[] OOB; A/B/A-bisected 2026-07-08), so we hold 0.9.18 — banned below. The advisory itself is unsound fmt::Pointer/Display of invalid Atomic/Shared pointers, which no Nimbus path formats. Revisit on crossbeam-epoch >0.9.20." },
 ]
 
@@ -96,7 +97,7 @@ skip = [
     { crate = "brotli-decompressor@4.0.3", reason = "The pinned Deno HTTP/web stack carries brotli-decompressor 4 while async-compression carries brotli-decompressor 5." },
     { crate = "compact_str@0.7.1", reason = "The pinned Deno SWC codegen stack carries compact_str 0.7 while the OXC code-index stack carries compact_str 0.9." },
     { crate = "crypto-bigint@0.7.5", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
-    { crate = "der@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
+    { crate = "der@0.8.2", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "elliptic-curve@0.14.0-rc.28", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "fixedbitset@0.4.2", reason = "Wasmtime wasm-compose carries petgraph 0.6/fixedbitset 0.4 while tonic-build carries petgraph 0.7/fixedbitset 0.5." },
     { crate = "hashbrown@0.12.3", reason = "Pingora-cache 0.9.0 carries indexmap 1.9/hashbrown 0.12 alongside the workspace's newer hashbrown lanes." },
