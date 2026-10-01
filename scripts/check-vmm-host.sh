@@ -5,7 +5,8 @@ failures=0
 allow_pending_private_runtime=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LINUX_DISTRIBUTION_CONTRACT_ENV="${NIMBUS_LINUX_DISTRIBUTION_CONTRACT_ENV:-${SCRIPT_DIR}/../packaging/linux-distribution-contract.env}"
-DEFAULT_NIMBUS_CRUN_VERSION="v1.30.1-nimbus.1"
+PRIVATE_RUNTIME_ROOT="${NIMBUS_PRIVATE_RUNTIME_ROOT:-/usr/libexec/nimbus}"
+DEFAULT_NIMBUS_CRUN_VERSION="v1.30.1-nimbus.2"
 DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.30.1"
 DEFAULT_NIMBUS_LIBKRUN_VERSION="v1.19.6-nimbus.1"
 DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="1.19.6"
@@ -35,7 +36,7 @@ EXPECTED_NIMBUS_LIBKRUN_UPSTREAM_VERSION="${EXPECTED_NIMBUS_LIBKRUN_UPSTREAM_VER
 EXPECTED_LIBKRUN_SONAME="${EXPECTED_LIBKRUN_SONAME:-libkrun.so.1}"
 EXPECTED_LIBKRUNFW_SONAME="${EXPECTED_LIBKRUNFW_SONAME:-libkrunfw.so.5}"
 EXPECTED_LIBKRUN_ABI_SYMBOL="${EXPECTED_LIBKRUN_ABI_SYMBOL:-krun_set_port_map_with_bind_address}"
-EXPECTED_CRUN_RUNPATH="${EXPECTED_CRUN_RUNPATH:-\$ORIGIN/lib}"
+EXPECTED_CRUN_RUNPATH="${EXPECTED_CRUN_RUNPATH:-${PRIVATE_RUNTIME_ROOT}/lib}"
 
 print_line() {
   printf '%-22s %s\n' "$1" "$2"
@@ -142,12 +143,102 @@ check_any_command() {
   mark_failure
 }
 
+# crun dlopens libkrun only while it creates a container with the krun
+# handler. Run it on a bundle whose rootfs does not exist: crun loads libkrun
+# and libkrunfw, then fails before it starts a VM. Print the loader trace.
+probe_crun_libkrun_load() {
+  local crun_path="$1"
+  local probe_dir=""
+  local container_id="nimbus-check-vmm-host-$$"
+  local -a run_prefix=()
+
+  probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-check-vmm-host.XXXXXX")"
+  mkdir -p "${probe_dir}/bundle" "${probe_dir}/state"
+  cat > "${probe_dir}/bundle/config.json" <<'EOF'
+{
+  "ociVersion": "1.0.2",
+  "process": {"terminal": false, "user": {"uid": 0, "gid": 0}, "args": ["/nonexistent"], "cwd": "/"},
+  "root": {"path": "rootfs-missing"},
+  "mounts": [],
+  "annotations": {"run.oci.handler": "krun"},
+  "linux": {"namespaces": [{"type": "mount"}]}
+}
+EOF
+  if command -v timeout >/dev/null 2>&1; then
+    run_prefix=(timeout 30)
+  fi
+
+  # Nimbus does not set LD_LIBRARY_PATH or LD_PRELOAD for crun. Clear them so
+  # the probe sees the same search path as the service.
+  env -u LD_LIBRARY_PATH -u LD_PRELOAD LD_DEBUG=libs ${run_prefix[@]+"${run_prefix[@]}"} \
+    "${crun_path}" --root "${probe_dir}/state" run --bundle "${probe_dir}/bundle" "${container_id}" \
+    >/dev/null 2>"${probe_dir}/trace.txt" || true
+  "${crun_path}" --root "${probe_dir}/state" delete -f "${container_id}" >/dev/null 2>&1 || true
+  cat "${probe_dir}/trace.txt"
+  rm -rf "${probe_dir}"
+}
+
+loaded_library_path() {
+  local soname="$1"
+  local trace="$2"
+
+  printf '%s\n' "${trace}" | awk -v soname="/${soname}" '
+    /calling init: / {
+      path = $0
+      sub(/.*calling init: /, "", path)
+      sub(/[[:space:]]+$/, "", path)
+      if (substr(path, length(path) - length(soname) + 1) == soname) {
+        print path
+        exit
+      }
+    }'
+}
+
+check_loaded_library() {
+  local label="$1"
+  local soname="$2"
+  local expected_path="$3"
+  local expected_file="$4"
+  local trace="$5"
+  local loaded_path=""
+  local loaded_file=""
+
+  loaded_path="$(loaded_library_path "${soname}" "${trace}")"
+  if [[ -z "${loaded_path}" ]]; then
+    print_line "${label}" "missing expected=${expected_path} (crun did not load ${soname}: $(compact_value "$(printf '%s\n' "${trace}" | grep -Ev '^[[:space:]]*[0-9]+:' | tail -n1)")) $(tuple_action)"
+    mark_private_runtime_failure
+    return 0
+  fi
+
+  if [[ "${loaded_path}" != "${expected_path}" ]]; then
+    print_line "${label}" "mismatch path=${loaded_path} expected=${expected_path} $(tuple_action)"
+    mark_private_runtime_failure
+    return 0
+  fi
+
+  if [[ -z "${expected_file}" ]]; then
+    print_line "${label}" "present path=${loaded_path}"
+    return 0
+  fi
+
+  loaded_file="$(basename "$(readlink -f "${loaded_path}" 2>/dev/null || printf '%s' "${loaded_path}")")"
+  if [[ "${loaded_file}" == "${expected_file}" ]]; then
+    print_line "${label}" "present path=${loaded_path} file=${loaded_file}"
+  else
+    print_line "${label}" "mismatch path=${loaded_path} file=${loaded_file} expected_file=${expected_file} $(tuple_action)"
+    mark_private_runtime_failure
+  fi
+}
+
 check_private_libkrun_stack() {
-  local lib_root="/usr/libexec/nimbus/lib"
-  local release_info="/usr/libexec/nimbus/NIMBUS_LIBKRUN_RELEASE.txt"
-  local crun_path="/usr/libexec/nimbus/crun"
+  local lib_root="${PRIVATE_RUNTIME_ROOT}/lib"
+  local release_info="${PRIVATE_RUNTIME_ROOT}/NIMBUS_LIBKRUN_RELEASE.txt"
+  local crun_path="${PRIVATE_RUNTIME_ROOT}/crun"
   local installed_version=""
   local crun_version=""
+  local crun_version_line=""
+  local crun_runpath=""
+  local load_trace=""
 
   print_line "nimbus.expected_tuple" "nimbus-crun=${EXPECTED_NIMBUS_CRUN_VERSION} upstream-crun=${EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION} nimbus-libkrun=${EXPECTED_NIMBUS_LIBKRUN_VERSION} upstream-libkrun=${EXPECTED_NIMBUS_LIBKRUN_UPSTREAM_VERSION}"
 
@@ -194,11 +285,15 @@ check_private_libkrun_stack() {
 
   if [[ -x "${crun_path}" ]]; then
     crun_version="$("${crun_path}" --version 2>/dev/null || true)"
-    if echo "${crun_version}" | grep -q '+LIBKRUN'; then
-      print_line "nimbus.crun.version" "present expected=${EXPECTED_NIMBUS_CRUN_VERSION} upstream=${EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION} actual=$(compact_value "${crun_version}")"
-    else
+    crun_version_line="$(printf '%s\n' "${crun_version}" | head -n1)"
+    if ! echo "${crun_version}" | grep -q '+LIBKRUN'; then
       print_line "nimbus.crun.version" "missing +LIBKRUN path=${crun_path} expected=${EXPECTED_NIMBUS_CRUN_VERSION} $(tuple_action)"
       mark_private_runtime_failure
+    elif [[ "${crun_version_line}" != "crun version ${EXPECTED_NIMBUS_CRUN_VERSION#v}" ]]; then
+      print_line "nimbus.crun.version" "mismatch path=${crun_path} actual=$(compact_value "${crun_version_line}") expected=${EXPECTED_NIMBUS_CRUN_VERSION} $(tuple_action)"
+      mark_private_runtime_failure
+    else
+      print_line "nimbus.crun.version" "present expected=${EXPECTED_NIMBUS_CRUN_VERSION} upstream=${EXPECTED_NIMBUS_CRUN_UPSTREAM_VERSION} actual=$(compact_value "${crun_version}")"
     fi
   else
     print_line "nimbus.crun.version" "missing path=${crun_path} expected=${EXPECTED_NIMBUS_CRUN_VERSION} $(tuple_action)"
@@ -206,16 +301,25 @@ check_private_libkrun_stack() {
   fi
 
   if command -v readelf >/dev/null 2>&1 && [[ -x "${crun_path}" ]]; then
-    if readelf -d "${crun_path}" 2>/dev/null | grep -q "\$ORIGIN/lib"; then
+    crun_runpath="$(readelf -d "${crun_path}" 2>/dev/null | sed -n 's/.*Library r[un]*path: \[\(.*\)\]$/\1/p' | head -n1)"
+    if [[ "${crun_runpath}" == "${EXPECTED_CRUN_RUNPATH}" ]]; then
       print_line "nimbus.crun.runpath" "present expected=${EXPECTED_CRUN_RUNPATH}"
     else
-      print_line "nimbus.crun.runpath" "missing expected=${EXPECTED_CRUN_RUNPATH} $(tuple_action)"
+      print_line "nimbus.crun.runpath" "mismatch actual=${crun_runpath:-none} expected=${EXPECTED_CRUN_RUNPATH} $(tuple_action)"
       mark_private_runtime_failure
     fi
   else
     print_line "nimbus.crun.runpath" "missing expected=${EXPECTED_CRUN_RUNPATH} (readelf or crun unavailable) $(tuple_action)"
     mark_private_runtime_failure
   fi
+
+  if [[ -x "${crun_path}" ]]; then
+    load_trace="$(probe_crun_libkrun_load "${crun_path}")"
+  fi
+  check_loaded_library "nimbus.libkrun.loaded" "${EXPECTED_LIBKRUN_SONAME}" \
+    "${lib_root}/${EXPECTED_LIBKRUN_SONAME}" "libkrun.so.${EXPECTED_NIMBUS_LIBKRUN_UPSTREAM_VERSION}" "${load_trace}"
+  check_loaded_library "nimbus.libkrunfw.loaded" "${EXPECTED_LIBKRUNFW_SONAME}" \
+    "${lib_root}/${EXPECTED_LIBKRUNFW_SONAME}" "" "${load_trace}"
 }
 
 os_name="$(uname -s)"
@@ -272,10 +376,10 @@ else
   mark_failure
 fi
 if [[ "${allow_pending_private_runtime}" == "true" ]]; then
-  check_command "runtime.private_crun" "/usr/libexec/nimbus/crun" optional
+  check_command "runtime.private_crun" "${PRIVATE_RUNTIME_ROOT}/crun" optional
   print_line "runtime.private_gate" "pending install permitted for preflight"
 else
-  check_command "runtime.private_crun" "/usr/libexec/nimbus/crun"
+  check_command "runtime.private_crun" "${PRIVATE_RUNTIME_ROOT}/crun"
 fi
 check_command "runtime.podman" "podman" optional
 check_any_command "runtime.init" "catatonit" "tini" "dumb-init"

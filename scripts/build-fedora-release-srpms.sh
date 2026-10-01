@@ -37,7 +37,7 @@ Examples:
     --nimbus-libkrun-version v1.19.6-nimbus.1 \
     --nimbus-libkrun-linux-amd64-archive /tmp/nimbus-libkrun-linux-amd64.tar.gz \
     --nimbus-libkrun-linux-arm64-archive /tmp/nimbus-libkrun-linux-arm64.tar.gz \
-    --nimbus-crun-version v1.30.1-nimbus.1 \
+    --nimbus-crun-version v1.30.1-nimbus.2 \
     --nimbus-crun-linux-amd64 /tmp/nimbus-crun-linux-amd64 \
     --nimbus-crun-linux-arm64 /tmp/nimbus-crun-linux-arm64
 EOF

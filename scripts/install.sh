@@ -88,7 +88,7 @@ NIMBUS_LIBKRUN_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus-libkrun/relea
 # baked values keep standalone curl|sh installs pinned to the same validated
 # tuple instead of resolving fork artifacts through GitHub "latest".
 LINUX_DISTRIBUTION_CONTRACT_ENV="${NIMBUS_LINUX_DISTRIBUTION_CONTRACT_ENV:-packaging/linux-distribution-contract.env}"
-DEFAULT_NIMBUS_CRUN_VERSION="v1.30.1-nimbus.1"
+DEFAULT_NIMBUS_CRUN_VERSION="v1.30.1-nimbus.2"
 DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.30.1"
 DEFAULT_NIMBUS_LIBKRUN_VERSION="v1.19.6-nimbus.1"
 DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="1.19.6"
@@ -1779,13 +1779,12 @@ inline_check_private_libkrun_stack() {
   crun_path="/usr/libexec/nimbus/crun"
   if check_cmd readelf && [ -x "$crun_path" ]; then
     dynamic_entries="$(readelf -d "$crun_path" 2>/dev/null || true)"
-    # shellcheck disable=SC2016 # $ORIGIN is a literal ELF loader token.
     case "$dynamic_entries" in
-      *'$ORIGIN/lib'*)
-        inline_print_line "nimbus-crun.runpath" 'present $ORIGIN/lib'
+      *'path: [/usr/libexec/nimbus/lib]'*)
+        inline_print_line "nimbus-crun.runpath" "present /usr/libexec/nimbus/lib"
         ;;
       *)
-        inline_print_line "nimbus-crun.runpath" 'missing $ORIGIN/lib'
+        inline_print_line "nimbus-crun.runpath" "missing /usr/libexec/nimbus/lib"
         inline_mark_failure
         ;;
     esac
