@@ -44,12 +44,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -59,7 +59,7 @@ jobs:
         run: make build-ui
 
       - name: Upload nimbus-ui artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ui-artifacts
           path: |
@@ -74,7 +74,7 @@ jobs:
         run: make build-packages
 
       - name: Upload embedded package payload
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -91,7 +91,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -100,7 +100,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -109,7 +109,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -147,7 +147,7 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Verify every workspace member is sharded or excluded
         run: python3 scripts/check-coverage-scope.py
@@ -229,7 +229,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -254,7 +254,7 @@ jobs:
           fallback: none
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -263,7 +263,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -274,7 +274,7 @@ jobs:
       # PW1: pin libsql image + cache docker layer.
       - name: Restore cached libsql docker image
         id: libsql-image-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /tmp/libsql-image.tar.gz
           key: libsql-image-v0.24.33
@@ -350,7 +350,7 @@ jobs:
         run: sccache --show-stats
 
       - name: Upload coverage shard profraw
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-profraw-${{ matrix.shard }}
           path: target/nimbus-${{ matrix.shard }}-*.profraw
@@ -364,7 +364,7 @@ jobs:
     needs: [coverage, ui-artifacts]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -380,7 +380,7 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -389,7 +389,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -407,7 +407,7 @@ jobs:
           cargo test --no-run --workspace --exclude nimbus-runtime -j 4
 
       - name: Download every shard's profraw
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: coverage-profraw-*
           path: target/
@@ -449,7 +449,7 @@ jobs:
         run: sccache --show-stats
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-lcov
           path: lcov.info

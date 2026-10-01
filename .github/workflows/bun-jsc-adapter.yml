@@ -57,7 +57,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -69,9 +69,9 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Verify runtime contracts
@@ -89,14 +89,14 @@ jobs:
           } > dist/bun-jsc-runtime-preflight/attestation.txt
 
       - name: Upload runtime preflight attestation
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bun-jsc-runtime-preflight
           path: dist/bun-jsc-runtime-preflight/attestation.txt
           if-no-files-found: error
 
       - name: Upload runtime build prerequisites
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bun-jsc-runtime-ui
           path: |
@@ -126,10 +126,10 @@ jobs:
 
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check out Bun source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.bun_repository }}
           ref: ${{ inputs.bun_source_ref }}
@@ -202,7 +202,7 @@ jobs:
 
       - name: Cache WebKit source
         id: webkit-src-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ steps.webkit.outputs.src }}
           key: webkit-src-${{ steps.webkit.outputs.version }}
@@ -219,7 +219,7 @@ jobs:
           git -C "${src}" checkout -q FETCH_HEAD
 
       - name: Cache WebKit build (JSC/WTF from source)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ steps.webkit.outputs.webkit_build }}
           key: webkit-build-${{ matrix.platform_arch }}-${{ steps.webkit.outputs.version }}-release-local-nimbus_bun_simdutf-v1
@@ -234,9 +234,9 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install pinned Bun CLI
@@ -261,13 +261,13 @@ jobs:
 
       - name: Download Linux runtime preflight attestation
         if: runner.os == 'Linux'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: bun-jsc-runtime-preflight
           path: dist/bun-jsc-runtime-preflight
 
       - name: Download runtime build prerequisites
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: bun-jsc-runtime-ui
           path: packages/nimbus-ui
@@ -315,7 +315,7 @@ jobs:
 
       - name: Upload adapter archive and proof logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bun-jsc-adapter-${{ matrix.platform_arch }}
           path: dist/bun-jsc-adapter-${{ matrix.platform_arch }}/**
@@ -335,10 +335,10 @@ jobs:
 
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download adapter artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: adapter-artifacts
           pattern: bun-jsc-adapter-*
@@ -360,7 +360,7 @@ jobs:
             --require-platform darwin-arm64
 
       - name: Attest adapter build provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: |
             adapter-artifacts/nimbus-bun-jsc-adapter-*.tar.gz

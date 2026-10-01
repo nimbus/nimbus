@@ -15,9 +15,11 @@ updates:
         patterns:
           - "*"
 
-  # GitHub Actions versions
+  # GitHub Actions versions (workflows and local composite actions)
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
       day: monday
@@ -40,5 +42,19 @@ updates:
       include: "scope"
     groups:
       npm-dependencies:
+        patterns:
+          - "*"
+
+  # Docs site npm dependencies (website/package.json / package-lock.json)
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      website-npm-dependencies:
         patterns:
           - "*"
