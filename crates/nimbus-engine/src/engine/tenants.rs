@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, TenantId};
 
+use crate::config::EngineConfig;
 use crate::tenant::{TenantRuntime, TenantRuntimeEnvironment, TenantRuntimeLease};
 
 use super::{Engine, TenantLoadGateGuard};
@@ -259,6 +260,7 @@ impl Engine {
                     committer_owner_id,
                     self.id_source.clone(),
                     self.metadata_retention,
+                    self.config.clone(),
                 ),
             )
             .await?,
@@ -540,18 +542,21 @@ impl Engine {
                     self.wait_for_runtime_eviction(tenant_id, runtime).await?;
                     continue;
                 }
-                maybe_emit_tenant_load_profile(TenantLoadProfileSample {
-                    tenant_id,
-                    cache_hit: true,
-                    open_existing: Duration::ZERO,
-                    runtime_init: Duration::ZERO,
-                    runtime_schema_load: Duration::ZERO,
-                    runtime_journal_progress: Duration::ZERO,
-                    runtime_profile_total: Duration::ZERO,
-                    recover_durable: Duration::ZERO,
-                    catch_up: Duration::ZERO,
-                    total: total_started.elapsed(),
-                });
+                maybe_emit_tenant_load_profile(
+                    &self.config,
+                    TenantLoadProfileSample {
+                        tenant_id,
+                        cache_hit: true,
+                        open_existing: Duration::ZERO,
+                        runtime_init: Duration::ZERO,
+                        runtime_schema_load: Duration::ZERO,
+                        runtime_journal_progress: Duration::ZERO,
+                        runtime_profile_total: Duration::ZERO,
+                        recover_durable: Duration::ZERO,
+                        catch_up: Duration::ZERO,
+                        total: total_started.elapsed(),
+                    },
+                );
                 return Ok(runtime);
             }
             if self.background_shutdown_started() {
@@ -574,18 +579,21 @@ impl Engine {
                     self.wait_for_runtime_eviction(tenant_id, runtime).await?;
                     continue;
                 }
-                maybe_emit_tenant_load_profile(TenantLoadProfileSample {
-                    tenant_id,
-                    cache_hit: true,
-                    open_existing: Duration::ZERO,
-                    runtime_init: Duration::ZERO,
-                    runtime_schema_load: Duration::ZERO,
-                    runtime_journal_progress: Duration::ZERO,
-                    runtime_profile_total: Duration::ZERO,
-                    recover_durable: Duration::ZERO,
-                    catch_up: Duration::ZERO,
-                    total: total_started.elapsed(),
-                });
+                maybe_emit_tenant_load_profile(
+                    &self.config,
+                    TenantLoadProfileSample {
+                        tenant_id,
+                        cache_hit: true,
+                        open_existing: Duration::ZERO,
+                        runtime_init: Duration::ZERO,
+                        runtime_schema_load: Duration::ZERO,
+                        runtime_journal_progress: Duration::ZERO,
+                        runtime_profile_total: Duration::ZERO,
+                        recover_durable: Duration::ZERO,
+                        catch_up: Duration::ZERO,
+                        total: total_started.elapsed(),
+                    },
+                );
                 return Ok(runtime);
             }
             if self.background_shutdown_started() {
@@ -680,6 +688,7 @@ impl Engine {
                 self.committer_owner_id_for_store(&opened.persistence),
                 self.id_source.clone(),
                 self.metadata_retention,
+                self.config.clone(),
             ),
         ));
         runtime.mark_scheduler_recovery_pending();
@@ -721,18 +730,21 @@ impl Engine {
             .expect("tenant registry lock should not be poisoned")
             .insert(tenant_id.clone(), runtime.clone());
         self.notify_tenant_runtime_loaded(&runtime);
-        maybe_emit_tenant_load_profile(TenantLoadProfileSample {
-            tenant_id,
-            cache_hit: false,
-            open_existing: open_elapsed,
-            runtime_init: runtime_init_elapsed,
-            runtime_schema_load: runtime_profile.schema_load,
-            runtime_journal_progress: runtime_profile.journal_progress,
-            runtime_profile_total: runtime_profile.total,
-            recover_durable: recover_elapsed,
-            catch_up: catch_up_elapsed,
-            total: total_started.elapsed(),
-        });
+        maybe_emit_tenant_load_profile(
+            &self.config,
+            TenantLoadProfileSample {
+                tenant_id,
+                cache_hit: false,
+                open_existing: open_elapsed,
+                runtime_init: runtime_init_elapsed,
+                runtime_schema_load: runtime_profile.schema_load,
+                runtime_journal_progress: runtime_profile.journal_progress,
+                runtime_profile_total: runtime_profile.total,
+                recover_durable: recover_elapsed,
+                catch_up: catch_up_elapsed,
+                total: total_started.elapsed(),
+            },
+        );
         Ok(runtime)
     }
 
@@ -838,11 +850,11 @@ struct TenantLoadProfileSample<'a> {
     total: Duration,
 }
 
-fn maybe_emit_tenant_load_profile(sample: TenantLoadProfileSample<'_>) {
-    if std::env::var_os("NIMBUS_TENANT_LOAD_PROFILE").is_none() {
+fn maybe_emit_tenant_load_profile(config: &EngineConfig, sample: TenantLoadProfileSample<'_>) {
+    if !config.diagnostics.tenant_load_profile {
         return;
     }
-    if std::env::var_os("NIMBUS_PROFILE_ONLY_COLD_SAMPLES").is_some() && sample.cache_hit {
+    if config.storage.profile.only_cold_samples && sample.cache_hit {
         return;
     }
 

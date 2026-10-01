@@ -1,6 +1,12 @@
 use super::support::expect_blocking_wait_reaches_state;
 use super::*;
 
+fn sample_every_batch_engine(path: &std::path::Path) -> nimbus_core::Result<Engine> {
+    let mut config = crate::config::EngineConfig::default();
+    config.shadow_conflicts.sample_every = 1;
+    Engine::new_with_engine_config(path, config)
+}
+
 fn title(value: &str) -> serde_json::Map<String, serde_json::Value> {
     serde_json::Map::from_iter([("title".to_string(), json!(value))])
 }
@@ -39,10 +45,8 @@ async fn pause_direct_update_after_prepare(
 async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_mutations_without_rejection()
  {
     // Observe every eligible batch: sampling defaults to 1-in-16, which
-    // would make this small scenario nondeterministic. Safe under nextest
-    // (process-per-test isolation).
-    unsafe { std::env::set_var("NIMBUS_SHADOW_CONFLICT_SAMPLE_EVERY", "1") };
-    let fixture = EngineFixture::new(|path| Engine::new(path));
+    // would make this small scenario nondeterministic.
+    let fixture = EngineFixture::new(sample_every_batch_engine);
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("shadow-conflict", Engine::create_tenant);
     let document_id = engine
@@ -90,8 +94,7 @@ async fn shadow_conflict_total_increments_for_conflicting_queued_and_direct_muta
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shadow_conflict_total_stays_zero_for_disjoint_queued_and_direct_mutations() {
     // Observe every eligible batch (see the conflicting-workload test).
-    unsafe { std::env::set_var("NIMBUS_SHADOW_CONFLICT_SAMPLE_EVERY", "1") };
-    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let fixture = EngineFixture::new(sample_every_batch_engine);
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("shadow-disjoint", Engine::create_tenant);
     let queued_document_id = engine

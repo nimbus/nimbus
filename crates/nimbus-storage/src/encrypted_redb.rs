@@ -185,7 +185,7 @@ impl EncryptedFileBackend {
         Ok(Self {
             state: Mutex::new(FileState { file, logical_len }),
             cipher,
-            read_profile: maybe_create_read_profile(),
+            read_profile: None,
         })
     }
 
@@ -202,8 +202,14 @@ impl EncryptedFileBackend {
         Ok(Self {
             state: Mutex::new(FileState { file, logical_len }),
             cipher,
-            read_profile: maybe_create_read_profile(),
+            read_profile: None,
         })
+    }
+
+    /// Counts page reads when `enabled`, for the redb open profile.
+    pub(crate) fn with_read_profile(mut self, enabled: bool) -> Self {
+        self.read_profile = enabled.then(|| Arc::new(EncryptedReadProfile::default()));
+        self
     }
 
     pub(crate) fn read_profile_handle(&self) -> Option<EncryptedReadProfileHandle> {
@@ -452,16 +458,6 @@ impl StorageBackend for EncryptedFileBackend {
         }
 
         Ok(())
-    }
-}
-
-fn maybe_create_read_profile() -> Option<Arc<EncryptedReadProfile>> {
-    if std::env::var_os("NIMBUS_REDB_OPEN_PROFILE").is_some()
-        || std::env::var_os("NIMBUS_REDB_IO_PROFILE").is_some()
-    {
-        Some(Arc::new(EncryptedReadProfile::default()))
-    } else {
-        None
     }
 }
 

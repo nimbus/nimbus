@@ -25,9 +25,6 @@ use fault_vfs::{PhysicalFault, arm, fault_fired, install};
 
 mod fault_vfs;
 
-/// Environment variable naming the database the crash child must write.
-const CRASH_DB_ENV: &str = "NIMBUS_SIC6_CRASH_DB";
-
 /// How long the crash test waits for its child to report before failing.
 const CRASH_CHILD_REPORT_TIMEOUT: Duration = BLOCKING_TEST_RELEASE_TIMEOUT;
 
@@ -281,7 +278,7 @@ fn sqlite_crash_after_durable_commit_recovers_matching_position() {
         "--ignored",
         "--nocapture",
     ])
-    .env(CRASH_DB_ENV, &path)
+    .env(crate::config::SQLITE_CRASH_DB_ENV, &path)
     .stdout(std::process::Stdio::piped())
     .spawn()
     .expect("the crash child should spawn");
@@ -325,10 +322,10 @@ fn sqlite_crash_after_durable_commit_recovers_matching_position() {
 #[test]
 #[ignore = "spawned by sqlite_crash_after_durable_commit_recovers_matching_position"]
 fn crash_child_writes_and_parks() {
-    let Some(path) = std::env::var_os(CRASH_DB_ENV) else {
+    let Some(path) = crate::config::StorageTestHarness::from_env().sqlite_crash_db else {
         return;
     };
-    let store = open_through_shim(&std::path::PathBuf::from(path));
+    let store = open_through_shim(&path);
     let acknowledged = seed_acknowledged(&store, "tasks", 5);
     println!(
         "ACK {}",

@@ -448,9 +448,10 @@ fn duration_nanos(duration: Duration) -> u64 {
 
 impl SqliteTenantStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_max_read_connections(path, default_sqlite_read_connection_limit())
+        Self::open_with_simulation(path, Arc::new(SystemWallClock), Arc::new(NoopFaultInjector))
     }
 
+    #[cfg(test)]
     pub(crate) fn open_with_max_read_connections(
         path: impl AsRef<Path>,
         max_read_connections: usize,
@@ -460,6 +461,7 @@ impl SqliteTenantStore {
             Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
             max_read_connections,
+            StorageProfileConfig::default(),
         )
     }
 
@@ -468,34 +470,41 @@ impl SqliteTenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        Self::open_with_simulation_and_id_source(
+        Self::open_with_config(
             path,
             clock,
             fault_injector,
             Arc::new(SystemIdSource),
+            &StorageConfig::default(),
         )
     }
 
-    pub fn open_with_simulation_and_id_source(
+    /// Opens or creates a SQLite tenant store with the read-connection cap
+    /// and profiling from `config`.
+    pub fn open_with_config(
         path: impl AsRef<Path>,
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         id_source: Arc<dyn IdSource>,
+        config: &StorageConfig,
     ) -> Result<Self> {
         Self::open_with_simulation_and_max_read_connections_and_id_source(
             path,
             clock,
             fault_injector,
-            default_sqlite_read_connection_limit(),
+            config.sqlite_read_connection_limit(),
             id_source,
+            config.profile,
         )
     }
 
+    #[cfg(any(test, feature = "libsql"))]
     pub(crate) fn open_with_simulation_and_max_read_connections(
         path: impl AsRef<Path>,
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
+        profile: StorageProfileConfig,
     ) -> Result<Self> {
         Self::open_with_simulation_and_max_read_connections_and_id_source(
             path,
@@ -503,6 +512,7 @@ impl SqliteTenantStore {
             fault_injector,
             max_read_connections,
             Arc::new(SystemIdSource),
+            profile,
         )
     }
 
@@ -512,6 +522,7 @@ impl SqliteTenantStore {
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
         id_source: Arc<dyn IdSource>,
+        profile: StorageProfileConfig,
     ) -> Result<Self> {
         Self::open_internal(
             path,
@@ -520,6 +531,7 @@ impl SqliteTenantStore {
             fault_injector,
             max_read_connections,
             id_source,
+            profile,
         )
     }
 
@@ -528,24 +540,11 @@ impl SqliteTenantStore {
     /// The DEK must be a 32-byte key obtained from the key provider system.
     /// All connections will use SQLCipher encryption with this key.
     pub fn open_encrypted(path: impl AsRef<Path>, dek: &[u8; 32]) -> Result<Self> {
-        Self::open_encrypted_with_max_read_connections(
-            path,
-            dek,
-            default_sqlite_read_connection_limit(),
-        )
-    }
-
-    pub(crate) fn open_encrypted_with_max_read_connections(
-        path: impl AsRef<Path>,
-        dek: &[u8; 32],
-        max_read_connections: usize,
-    ) -> Result<Self> {
-        Self::open_encrypted_with_simulation_and_max_read_connections(
+        Self::open_encrypted_with_simulation(
             path,
             dek,
             Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
-            max_read_connections,
         )
     }
 
@@ -556,38 +555,45 @@ impl SqliteTenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        Self::open_encrypted_with_simulation_and_id_source(
+        Self::open_encrypted_with_config(
             path,
             dek,
             clock,
             fault_injector,
             Arc::new(SystemIdSource),
+            &StorageConfig::default(),
         )
     }
 
-    pub fn open_encrypted_with_simulation_and_id_source(
+    /// Opens or creates an encrypted SQLite tenant store with the
+    /// read-connection cap and profiling from `config`.
+    pub fn open_encrypted_with_config(
         path: impl AsRef<Path>,
         dek: &[u8; 32],
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         id_source: Arc<dyn IdSource>,
+        config: &StorageConfig,
     ) -> Result<Self> {
         Self::open_encrypted_with_simulation_and_max_read_connections_and_id_source(
             path,
             dek,
             clock,
             fault_injector,
-            default_sqlite_read_connection_limit(),
+            config.sqlite_read_connection_limit(),
             id_source,
+            config.profile,
         )
     }
 
+    #[cfg(feature = "libsql")]
     pub(crate) fn open_encrypted_with_simulation_and_max_read_connections(
         path: impl AsRef<Path>,
         dek: &[u8; 32],
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
+        profile: StorageProfileConfig,
     ) -> Result<Self> {
         Self::open_encrypted_with_simulation_and_max_read_connections_and_id_source(
             path,
@@ -596,6 +602,7 @@ impl SqliteTenantStore {
             fault_injector,
             max_read_connections,
             Arc::new(SystemIdSource),
+            profile,
         )
     }
 
@@ -606,6 +613,7 @@ impl SqliteTenantStore {
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
         id_source: Arc<dyn IdSource>,
+        profile: StorageProfileConfig,
     ) -> Result<Self> {
         Self::open_internal(
             path,
@@ -614,6 +622,7 @@ impl SqliteTenantStore {
             fault_injector,
             max_read_connections,
             id_source,
+            profile,
         )
     }
 
@@ -624,6 +633,7 @@ impl SqliteTenantStore {
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
         id_source: Arc<dyn IdSource>,
+        profile: StorageProfileConfig,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
@@ -642,6 +652,7 @@ impl SqliteTenantStore {
             schema_cache: Arc::new(RwLock::new(Schema::default())),
             materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             retention_floor: RetentionFloor::new(),
+            profile,
         };
         let pooled_open_started = std::time::Instant::now();
         let conn = store.open_pooled_read_connection()?.ok_or_else(|| {
@@ -654,7 +665,7 @@ impl SqliteTenantStore {
         let schema = load_schema_from_conn(&conn)?;
         let schema_load_elapsed = schema_load_started.elapsed();
         store.replace_cached_schema(schema)?;
-        if sqlite_open_profile_enabled(&store.path) {
+        if store.open_profile_enabled() {
             eprintln!(
                 "sqlite-open-profile path={} encrypted={} pooled_open={:?} schema_load={:?} total={:?}",
                 store.path.display(),
@@ -675,6 +686,10 @@ impl SqliteTenantStore {
 
     pub fn max_read_connections(&self) -> usize {
         self.max_read_connections
+    }
+
+    fn open_profile_enabled(&self) -> bool {
+        self.profile.sqlite_open && self.profile.allows_path(&self.path)
     }
 
     pub fn read_snapshot(&self) -> Result<SqliteReadSnapshot> {
@@ -786,7 +801,7 @@ impl SqliteTenantStore {
         let initialize_started = std::time::Instant::now();
         initialize_connection(&conn)?;
         let initialize_elapsed = initialize_started.elapsed();
-        if sqlite_open_profile_enabled(&self.path) {
+        if self.open_profile_enabled() {
             eprintln!(
                 "sqlite-connection-profile path={} encrypted={} connection_open={:?} apply_key={:?} temp_hardening={:?} verify_key={:?} initialize={:?} total={:?}",
                 self.path.display(),
@@ -945,18 +960,6 @@ const READ_POOL_WAIT: Duration = Duration::from_secs(2);
 /// Poll cadence while waiting for a pooled read connection.
 const READ_POOL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
-pub(super) fn default_sqlite_read_connection_limit() -> usize {
-    if let Ok(value) = std::env::var("NIMBUS_SQLITE_MAX_READ_CONNECTIONS")
-        && let Ok(parsed) = value.parse::<usize>()
-        && parsed > 0
-    {
-        return parsed;
-    }
-    std::thread::available_parallelism()
-        .map(|parallelism| parallelism.get().max(MIN_SQLITE_READ_CONNECTIONS))
-        .unwrap_or(MIN_SQLITE_READ_CONNECTIONS)
-}
-
 pub(super) fn initialize_connection(conn: &Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(map_sqlite_error)?;
@@ -969,16 +972,4 @@ pub(super) fn initialize_connection(conn: &Connection) -> Result<()> {
     conn.execute_batch(SQLITE_INIT_SQL)
         .map_err(map_sqlite_error)?;
     Ok(())
-}
-
-fn sqlite_open_profile_enabled(path: &Path) -> bool {
-    std::env::var_os("NIMBUS_SQLITE_OPEN_PROFILE").is_some() && profile_scope_allows_path(path)
-}
-
-fn profile_scope_allows_path(path: &Path) -> bool {
-    if std::env::var_os("NIMBUS_PROFILE_ONLY_COLD_SAMPLES").is_none() {
-        return true;
-    }
-
-    path.to_string_lossy().contains("cold-sample")
 }

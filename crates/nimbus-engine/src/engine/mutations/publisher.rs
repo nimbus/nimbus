@@ -12,9 +12,6 @@ use crate::engine::execution_units::{CommitFaultClient, labels};
 use crate::engine::{DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error};
 use crate::tenant::{AssignedPublisherBatch, PublisherMessage, TenantRuntime};
 
-const DEFAULT_PUBLISHER_RETRY_LIMIT: usize = 4;
-const DEFAULT_PUBLISHER_RETRY_INITIAL_MS: u64 = 1;
-const DEFAULT_PUBLISHER_RETRY_MAX_MS: u64 = 100;
 #[cfg(test)]
 const PUBLISHER_BATCH_BASE: usize = crate::config::COMMITTER_PUBLISHER_BATCH_BASE;
 #[cfg(test)]
@@ -30,10 +27,6 @@ const PUBLISHER_COALESCE_ENV: &str = crate::config::COMMITTER_PUBLISHER_COALESCE
 #[cfg(test)]
 const DEFAULT_PUBLISHER_COALESCE_MICROS: u64 =
     crate::config::COMMITTER_PUBLISHER_COALESCE_DEFAULT_MICROS;
-
-fn publisher_batch_policy() -> crate::config::BatchPolicy {
-    crate::config::committer_publisher_batch_policy()
-}
 
 fn has_assignment_pressure(
     receiver_has_backlog: bool,
@@ -64,6 +57,7 @@ pub(crate) struct PublishedBatch {
 
 pub(crate) async fn run_ordered_publisher(
     runtime: Weak<TenantRuntime>,
+    policy: crate::config::BatchPolicy,
     receiver: mpsc::Receiver<PublisherMessage>,
     engine_shutdown: CancellationToken,
     tenant_shutdown: CancellationToken,
@@ -96,7 +90,6 @@ pub(crate) async fn run_ordered_publisher(
     // Publisher accumulation is independently tunable from actor admission:
     // NIMBUS_COMMITTER_PUBLISHER_BATCH_MAX defaults to 256 records and
     // NIMBUS_COMMITTER_PUBLISHER_COALESCE_MICROS defaults to 750 microseconds.
-    let policy = publisher_batch_policy();
     let mut pending_message = None;
     loop {
         let message = if let Some(pending) = pending_message.take() {
@@ -365,19 +358,8 @@ async fn publish_with_retry(
     batch: &AssignedPublisherBatch,
     expected_previous: SequenceNumber,
 ) -> std::result::Result<PublishedBatch, PublishAttemptError> {
-    let retry_limit = crate::config::env_positive_usize(
-        "NIMBUS_COMMITTER_PUBLISHER_RETRY_LIMIT",
-        DEFAULT_PUBLISHER_RETRY_LIMIT,
-    );
-    let initial_ms = crate::config::env_nonnegative_u64(
-        "NIMBUS_COMMITTER_PUBLISHER_RETRY_INITIAL_MS",
-        DEFAULT_PUBLISHER_RETRY_INITIAL_MS,
-    );
-    let max_ms = crate::config::env_nonnegative_u64(
-        "NIMBUS_COMMITTER_PUBLISHER_RETRY_MAX_MS",
-        DEFAULT_PUBLISHER_RETRY_MAX_MS,
-    )
-    .max(initial_ms);
+    let retry = runtime.config().publisher_retry;
+    let retry_limit = retry.max_attempts;
 
     for attempt in 1..=retry_limit {
         let runtime_for_attempt = runtime.clone();
@@ -424,11 +406,7 @@ async fn publish_with_retry(
                 if attempt == retry_limit {
                     return Err(PublishAttemptError::Definitive(error));
                 }
-                let shift = u32::try_from(attempt.saturating_sub(1))
-                    .unwrap_or(u32::MAX)
-                    .min(63);
-                let delay =
-                    Duration::from_millis(initial_ms.saturating_mul(1u64 << shift).min(max_ms));
+                let delay = retry.backoff(attempt);
                 warn!(
                     tenant = %runtime.tenant_id(),
                     attempt,

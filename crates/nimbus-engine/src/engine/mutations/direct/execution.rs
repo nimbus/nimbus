@@ -10,9 +10,7 @@ use crate::{Engine, tenant::TenantRuntime};
 
 use super::super::caps::check_mutation_caps;
 use super::super::enforce_mutation_authorization;
-use super::super::journal::{
-    mutation_occ_backoff, mutation_occ_max_attempts, validate_prepared_for_provider,
-};
+use super::super::journal::validate_prepared_for_provider;
 use super::super::prepared::PreparedCommit;
 use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::super::window_prepare::prepare_single_document_write_from_window;
@@ -52,7 +50,8 @@ impl Engine {
             // A generated insert id is part of the logical mutation and must
             // survive transparent stale-prepare retries unchanged.
             let mutation = normalize_direct_insert_id(self, mutation);
-            let max_attempts = mutation_occ_max_attempts();
+            let occ_retry = self.config.mutation_occ_retry;
+            let max_attempts = occ_retry.max_attempts;
             let mut attempt = 1;
             let mut rate_accounted = false;
             loop {
@@ -137,7 +136,7 @@ impl Engine {
                         runtime
                             .commit_phase_metrics()
                             .record_mutation_conflict_retry();
-                        std::thread::sleep(mutation_occ_backoff(attempt));
+                        std::thread::sleep(occ_retry.backoff(attempt));
                         attempt += 1;
                     }
                     Err(error) => return Err(error),

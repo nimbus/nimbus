@@ -5,6 +5,8 @@ use std::time::Instant;
 #[cfg(test)]
 mod tests;
 
+use crate::config::StorageProfileConfig;
+
 use super::{
     COMMIT_LOG, MaterializedJournalSnapshot, TenantReadSnapshot, TenantStore, map_redb_error,
 };
@@ -138,16 +140,19 @@ impl TenantReadSnapshot {
             latest_sequence,
             has_more,
         )?;
-        maybe_emit_redb_journal_profile(format_args!(
-            "redb-journal-profile op=stream latest_sequence={:?} cursor_floor={:?} open_table={:?} scan={:?} records={} has_more={} total={:?}",
-            latest_sequence_elapsed,
-            cursor_floor_elapsed,
-            open_table_elapsed,
-            scan_elapsed,
-            records.len(),
-            has_more,
-            total_started.elapsed(),
-        ));
+        maybe_emit_redb_journal_profile(
+            self.profile,
+            format_args!(
+                "redb-journal-profile op=stream latest_sequence={:?} cursor_floor={:?} open_table={:?} scan={:?} records={} has_more={} total={:?}",
+                latest_sequence_elapsed,
+                cursor_floor_elapsed,
+                open_table_elapsed,
+                scan_elapsed,
+                records.len(),
+                has_more,
+                total_started.elapsed(),
+            ),
+        );
         Ok(DurableJournalPage {
             records,
             next_cursor,
@@ -172,14 +177,17 @@ impl TenantReadSnapshot {
             "durable journal bootstrap",
         )?;
         let cursor_floor_elapsed = cursor_floor_started.elapsed();
-        maybe_emit_redb_journal_profile(format_args!(
-            "redb-journal-profile op=bootstrap snapshot={:?} cursor_floor={:?} documents={} scheduled_execution_ids={} total={:?}",
-            snapshot_elapsed,
-            cursor_floor_elapsed,
-            snapshot.documents.len(),
-            snapshot.scheduled_execution_ids.len(),
-            total_started.elapsed(),
-        ));
+        maybe_emit_redb_journal_profile(
+            self.profile,
+            format_args!(
+                "redb-journal-profile op=bootstrap snapshot={:?} cursor_floor={:?} documents={} scheduled_execution_ids={} total={:?}",
+                snapshot_elapsed,
+                cursor_floor_elapsed,
+                snapshot.documents.len(),
+                snapshot.scheduled_execution_ids.len(),
+                total_started.elapsed(),
+            ),
+        );
         Ok(DurableJournalBootstrap {
             resume_after: snapshot.applied_sequence,
             bootstrap_cut: snapshot.durable_head,
@@ -220,8 +228,8 @@ fn validate_durable_journal_stream_limit(limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn maybe_emit_redb_journal_profile(args: std::fmt::Arguments<'_>) {
-    if std::env::var_os("NIMBUS_REDB_JOURNAL_PROFILE").is_none() {
+fn maybe_emit_redb_journal_profile(profile: StorageProfileConfig, args: std::fmt::Arguments<'_>) {
+    if !profile.redb_journal {
         return;
     }
 

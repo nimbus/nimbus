@@ -50,9 +50,8 @@ fn elle_target_path(label: &str) -> PathBuf {
     // Runtime lookup keeps the test tree free of compile-time Cargo env
     // macros (taxonomy rule F2); CARGO_MANIFEST_DIR is always set when the
     // test runs under cargo/nextest.
-    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR should be set by the cargo test runner");
-    PathBuf::from(manifest_dir)
+    crate::config::EngineTestHarness::from_env()
+        .required_manifest_dir()
         .join("../..")
         .join("target/elle")
         .join(format!("nimbus-list-append-{label}-{ELLE_SEED:016x}.edn"))
@@ -230,9 +229,11 @@ async fn elle_history_recorder_emits_wellformed_edn() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "dedicated pinned Elle checker lane owns the verified external lifecycle"]
 async fn elle_serializable_check_passes() {
-    let jar = std::env::var_os("NIMBUS_ELLE_CLI_JAR")
+    let harness = crate::config::EngineTestHarness::from_env();
+    let jar = harness
+        .elle_cli_jar
         .expect("dedicated Elle lane must supply its checksum-verified CLI jar");
-    let java = std::env::var_os("NIMBUS_ELLE_JAVA_BIN").unwrap_or_else(|| "java".into());
+    let java = harness.elle_java_bin.unwrap_or_else(|| "java".into());
     let (path, edn) = generate_elle_history("serializable").await;
     validate_elle_edn_history(&edn).expect("history passed to elle-cli should be well formed");
     let output = std::process::Command::new(java)

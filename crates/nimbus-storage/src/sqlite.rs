@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
+use crate::config::{StorageConfig, StorageProfileConfig};
 use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
@@ -642,6 +643,7 @@ pub struct SqliteTenantStore {
     schema_cache: Arc<RwLock<Schema>>,
     materialized_verification: MaterializedVerificationInvalidator,
     pub(crate) retention_floor: Arc<RetentionFloor>,
+    profile: StorageProfileConfig,
 }
 
 impl SqliteTenantStore {

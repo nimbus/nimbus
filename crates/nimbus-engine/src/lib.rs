@@ -12,6 +12,7 @@ mod tenant;
 mod triggers;
 mod verification;
 
+pub use config::EngineConfig;
 pub use engine::{
     AsyncMutationContext, CommitPhaseMetricsSnapshot, CommittedMutationEvent,
     CommittedMutationObserver, CommittedMutationObserverWorkStats, DocumentReadFilter,

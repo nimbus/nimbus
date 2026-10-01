@@ -90,9 +90,8 @@ struct CoreScan {
 }
 
 fn repo_root() -> std::path::PathBuf {
-    let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-storage tests");
+    let harness = crate::config::StorageTestHarness::from_env();
+    let manifest = harness.required_manifest_dir();
     manifest
         .parent()
         .and_then(std::path::Path::parent)

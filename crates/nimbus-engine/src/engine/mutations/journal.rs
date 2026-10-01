@@ -148,7 +148,7 @@ impl Engine {
         #[cfg(any(test, debug_assertions))]
         Engine::assert_running_on_background_task("mutation_committer");
 
-        let batch_policy = crate::config::mutation_journal_batch_policy();
+        let batch_policy = self.config.mutation_journal_batch;
         runtime.drain_mutation_admission_queue();
         #[cfg(any(test, feature = "test-hooks"))]
         runtime.wait_before_mutation_drain().await;
@@ -447,7 +447,8 @@ impl Engine {
             MutationExecutionMode::Immediate => None,
             MutationExecutionMode::Scheduled { execution_id } => Some(execution_id.clone()),
         };
-        let max_attempts = mutation_occ_max_attempts();
+        let occ_retry = self.config.mutation_occ_retry;
+        let max_attempts = occ_retry.max_attempts;
         let mut attempt = 1;
         loop {
             let operation = runtime.enter_operation(tenant_id)?;
@@ -559,7 +560,7 @@ impl Engine {
                         .record_mutation_conflict_retry();
                     tokio::select! {
                         _ = &mut cancel_wait => return Err(Error::Cancelled),
-                        _ = tokio::time::sleep(mutation_occ_backoff(attempt)) => {}
+                        _ = tokio::time::sleep(occ_retry.backoff(attempt)) => {}
                     }
                     attempt += 1;
                 }
@@ -567,20 +568,6 @@ impl Engine {
             }
         }
     }
-}
-
-pub(super) fn mutation_occ_max_attempts() -> usize {
-    crate::config::env_positive_usize("NIMBUS_MUTATION_OCC_MAX_RETRIES", 4)
-}
-
-pub(super) fn mutation_occ_backoff(attempt: usize) -> Duration {
-    let initial = crate::config::env_nonnegative_u64("NIMBUS_MUTATION_OCC_INITIAL_BACKOFF_MS", 100);
-    let maximum = crate::config::env_nonnegative_u64("NIMBUS_MUTATION_OCC_MAX_BACKOFF_MS", 2_000)
-        .max(initial);
-    let shift = u32::try_from(attempt.saturating_sub(1))
-        .unwrap_or(u32::MAX)
-        .min(63);
-    Duration::from_millis(initial.saturating_mul(1u64 << shift).min(maximum))
 }
 
 fn assign_queued_mutation_batch(
@@ -1407,7 +1394,7 @@ mod tests {
             Timestamp(1),
         );
         let log = super::super::write_log::WriteLog::new(
-            super::super::write_log::WriteLogConfig::from_env(),
+            crate::config::EngineConfig::default().write_log,
             SequenceNumber(0),
             SequenceNumber(0),
         );

@@ -10,6 +10,7 @@ use nimbus_core::{
 };
 use rpds::RedBlackTreeMapSync;
 
+use crate::config::{EnvLookup, positive_usize};
 use crate::tenant::WriteLogFrontierSample;
 
 const DEFAULT_MIN_RETENTION_SECS: usize = 30;
@@ -31,12 +32,14 @@ pub(crate) struct WriteLogConfig {
 }
 
 impl WriteLogConfig {
-    pub(crate) fn from_env() -> Self {
-        let min_retention_secs = crate::config::env_positive_usize(
+    pub(crate) fn from_lookup(lookup: EnvLookup<'_>) -> Self {
+        let min_retention_secs = positive_usize(
+            lookup,
             "NIMBUS_WRITE_LOG_MIN_RETENTION_SECS",
             DEFAULT_MIN_RETENTION_SECS,
         );
-        let max_retention_secs = crate::config::env_positive_usize(
+        let max_retention_secs = positive_usize(
+            lookup,
             "NIMBUS_WRITE_LOG_MAX_RETENTION_SECS",
             DEFAULT_MAX_RETENTION_SECS,
         )
@@ -44,7 +47,8 @@ impl WriteLogConfig {
         Self::for_tests(
             min_retention_secs,
             max_retention_secs,
-            crate::config::env_positive_usize(
+            positive_usize(
+                lookup,
                 "NIMBUS_WRITE_LOG_SOFT_MAX_BYTES",
                 DEFAULT_SOFT_MAX_BYTES,
             ),

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, Weak};
 use nimbus_core::{Error, IdSource, Result, SystemIdSource, TenantId, WallClock};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::{FaultInjector, TenantStore};
+use crate::{FaultInjector, StorageConfig, TenantStore};
 use nimbus_crypto::{
     KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
 };
@@ -95,6 +95,7 @@ pub struct EmbeddedRedbProvider {
     tenant_read_parallelism: usize,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     open_registry: Arc<RedbTenantOpenRegistry>,
+    storage_config: StorageConfig,
 }
 
 impl EmbeddedRedbProvider {
@@ -130,6 +131,7 @@ impl EmbeddedRedbProvider {
             tenant_read_parallelism: default_tenant_read_parallelism(),
             encryption_provider: None,
             open_registry: Arc::new(RedbTenantOpenRegistry::default()),
+            storage_config: StorageConfig::default(),
         })
     }
 
@@ -168,7 +170,14 @@ impl EmbeddedRedbProvider {
             tenant_read_parallelism: default_tenant_read_parallelism(),
             encryption_provider: Some(provider),
             open_registry: Arc::new(RedbTenantOpenRegistry::default()),
+            storage_config: StorageConfig::default(),
         })
+    }
+
+    /// Opens every tenant store with the profiling from `config`.
+    pub fn with_storage_config(mut self, config: StorageConfig) -> Self {
+        self.storage_config = config;
+        self
     }
 
     pub fn is_encrypted(&self) -> bool {
@@ -301,6 +310,7 @@ impl EmbeddedRedbProvider {
         );
         let provider = self.encryption_provider.clone();
         let id_source = self.id_source.clone();
+        let storage_config = self.storage_config;
         let tenant_id_for_open = tenant_id.clone();
         let store = self
             .storage_handle
@@ -317,19 +327,21 @@ impl EmbeddedRedbProvider {
                         &subject,
                         ManifestCipher::RedbAes256GcmSiv,
                     )?;
-                    TenantStore::open_encrypted_with_simulation_and_id_source(
+                    TenantStore::open_encrypted_with_config(
                         path,
                         &dek,
                         clock,
                         fault_injector,
                         id_source,
+                        &storage_config,
                     )
                 } else {
-                    TenantStore::open_with_simulation_and_id_source(
+                    TenantStore::open_with_config(
                         path,
                         clock,
                         fault_injector,
                         id_source,
+                        &storage_config,
                     )
                 }
             })

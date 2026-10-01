@@ -137,16 +137,19 @@ impl Engine {
         let prepare_elapsed = prepare_timer.finish();
         match prepared {
             None => {
-                maybe_emit_query_profile(QueryProfileSample {
-                    tenant_id: &tenant_id,
-                    plan: "none",
-                    tenant_load,
-                    wait_visibility,
-                    prepare: prepare_elapsed,
-                    execute: Duration::ZERO,
-                    cache: Duration::ZERO,
-                    total: total_started.elapsed(),
-                });
+                maybe_emit_query_profile(
+                    self.config.diagnostics.query_profile,
+                    QueryProfileSample {
+                        tenant_id: &tenant_id,
+                        plan: "none",
+                        tenant_load,
+                        wait_visibility,
+                        prepare: prepare_elapsed,
+                        execute: Duration::ZERO,
+                        cache: Duration::ZERO,
+                        total: total_started.elapsed(),
+                    },
+                );
                 Ok(Vec::new())
             }
             Some(prepared) if matches!(prepared.plan, QueryPlan::FullScan) => {
@@ -166,16 +169,19 @@ impl Engine {
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
                 let cache_elapsed = cache_timer.finish();
-                maybe_emit_query_profile(QueryProfileSample {
-                    tenant_id: &tenant_id,
-                    plan: query_plan_metric_kind_label(plan_kind),
-                    tenant_load,
-                    wait_visibility,
-                    prepare: prepare_elapsed,
-                    execute: execute_elapsed,
-                    cache: cache_elapsed,
-                    total: total_started.elapsed(),
-                });
+                maybe_emit_query_profile(
+                    self.config.diagnostics.query_profile,
+                    QueryProfileSample {
+                        tenant_id: &tenant_id,
+                        plan: query_plan_metric_kind_label(plan_kind),
+                        tenant_load,
+                        wait_visibility,
+                        prepare: prepare_elapsed,
+                        execute: execute_elapsed,
+                        cache: cache_elapsed,
+                        total: total_started.elapsed(),
+                    },
+                );
                 Ok(documents)
             }
             Some(prepared) => {
@@ -193,16 +199,19 @@ impl Engine {
                 runtime.record_query_plan_metric(QueryPlanMetricOperation::Query, plan_kind);
                 runtime.cache_documents(&documents);
                 let cache_elapsed = cache_timer.finish();
-                maybe_emit_query_profile(QueryProfileSample {
-                    tenant_id: &tenant_id,
-                    plan: query_plan_metric_kind_label(plan_kind),
-                    tenant_load,
-                    wait_visibility,
-                    prepare: prepare_elapsed,
-                    execute: execute_elapsed,
-                    cache: cache_elapsed,
-                    total: total_started.elapsed(),
-                });
+                maybe_emit_query_profile(
+                    self.config.diagnostics.query_profile,
+                    QueryProfileSample {
+                        tenant_id: &tenant_id,
+                        plan: query_plan_metric_kind_label(plan_kind),
+                        tenant_load,
+                        wait_visibility,
+                        prepare: prepare_elapsed,
+                        execute: execute_elapsed,
+                        cache: cache_elapsed,
+                        total: total_started.elapsed(),
+                    },
+                );
                 Ok(documents)
             }
         }
@@ -600,8 +609,8 @@ struct QueryProfileSample<'a> {
     total: Duration,
 }
 
-fn maybe_emit_query_profile(sample: QueryProfileSample<'_>) {
-    if std::env::var_os("NIMBUS_QUERY_PROFILE").is_none() {
+fn maybe_emit_query_profile(enabled: bool, sample: QueryProfileSample<'_>) {
+    if !enabled {
         return;
     }
 

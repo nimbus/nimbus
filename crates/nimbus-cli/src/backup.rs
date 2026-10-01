@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand, ValueEnum};
 use nimbus::{
-    ControlPlaneConfig, EmbeddedProviderKind, Engine, EnginePersistenceConfig,
+    ControlPlaneConfig, EmbeddedProviderKind, Engine, EngineConfig, EnginePersistenceConfig,
     PointInTimeRestoreArchive, TenantId,
 };
 use serde::{Deserialize, Serialize};
@@ -337,7 +337,8 @@ async fn open_engine(
     control_data_dir: Option<&Path>,
     provider: BackupProvider,
 ) -> Result<std::sync::Arc<Engine>, Box<dyn Error>> {
-    let mut config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind());
+    let mut config = EnginePersistenceConfig::embedded(data_dir, provider.embedded_kind())
+        .with_engine_config(EngineConfig::from_env());
     if let Some(control_data_dir) = control_data_dir {
         config.control_plane = ControlPlaneConfig::embedded_redb(control_data_dir);
     }

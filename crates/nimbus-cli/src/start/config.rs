@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
 use nimbus::{
-    AwsKmsConfig, EmbeddedProviderKind, EnginePersistenceConfig, Error, KeyDirectoryConfig,
-    LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig, MetadataRetentionProfile,
+    AwsKmsConfig, EmbeddedProviderKind, EngineConfig, EnginePersistenceConfig, Error,
+    KeyDirectoryConfig, LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig,
+    MetadataRetentionProfile,
 };
 use nimbus_operator::LocalNodeNetworkRoot;
 use serde::Deserialize;
@@ -620,6 +621,7 @@ impl ResolvedTenantProviderConfig {
                 control_plane: nimbus::ControlPlaneConfig::embedded_redb(control_data_dir),
                 local_encryption: LocalEncryptionConfig::Disabled,
                 metadata_retention: MetadataRetentionProfile::shipped(),
+                engine: EngineConfig::default(),
             }),
             Self::LibsqlReplica {
                 control_data_dir,
@@ -850,7 +852,10 @@ pub(crate) fn persistence_config_from_start_command(
     let config_path = runtime_config_path(command);
     let file_config = load_runtime_config_file(config_path.as_deref())?;
     let env = PersistenceEnv::load()?;
-    persistence_config_from_sources(command, &file_config.persistence, &env)
+    Ok(
+        persistence_config_from_sources(command, &file_config.persistence, &env)?
+            .with_engine_config(EngineConfig::from_env()),
+    )
 }
 
 /// Resolve the one OS-node network-authority root for a start-family command.

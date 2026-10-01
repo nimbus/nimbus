@@ -1,4 +1,3 @@
-use std::env;
 use std::future::Future;
 use std::io::Read;
 use std::panic::{AssertUnwindSafe, resume_unwind};
@@ -30,10 +29,7 @@ use nimbus_storage::{
     NoopFaultInjector,
 };
 
-const LIBSQL_URL_ENV: &str = "NIMBUS_LIBSQL_URL";
-const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
-const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
-const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
+use nimbus_storage::config::{LIBSQL_ADMIN_URL_ENV, LIBSQL_URL_ENV};
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 mod ppsc;
@@ -1209,6 +1205,7 @@ where
             MasterKeyFileConfig { path: key_path },
         )),
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
 
     run_libsql_test_with_namespace_cleanup(
@@ -1267,6 +1264,7 @@ where
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
     let engine_config_b = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
@@ -1280,6 +1278,7 @@ where
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
 
     run_libsql_test_with_namespace_cleanup(
@@ -1347,14 +1346,19 @@ async fn test_connection() -> Option<TestConnection> {
         "libSQL replica engine provider",
         &[LIBSQL_URL_ENV, LIBSQL_ADMIN_URL_ENV],
     ) {
-        ExternalProviderFixtureMode::UseExplicit => Some(TestConnection {
-            primary_url: env::var(LIBSQL_URL_ENV)
-                .expect("fixture policy should require the libSQL primary URL"),
-            auth_token: env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
-            admin_api_url: env::var(LIBSQL_ADMIN_URL_ENV)
-                .expect("fixture policy should require the libSQL admin URL"),
-            admin_auth_header: env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
-        }),
+        ExternalProviderFixtureMode::UseExplicit => {
+            let inputs = nimbus_storage::config::StorageTestHarness::from_env().external_providers;
+            Some(TestConnection {
+                primary_url: inputs
+                    .libsql_url
+                    .expect("fixture policy should require the libSQL primary URL"),
+                auth_token: inputs.libsql_auth_token,
+                admin_api_url: inputs
+                    .libsql_admin_url
+                    .expect("fixture policy should require the libSQL admin URL"),
+                admin_auth_header: inputs.libsql_admin_auth_header,
+            })
+        }
         ExternalProviderFixtureMode::Omit => None,
     }
 }

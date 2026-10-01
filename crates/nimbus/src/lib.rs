@@ -14,9 +14,9 @@ pub use nimbus_core::{
 // Engine coordination and persistence configuration.
 pub use nimbus_engine::{
     AwsKmsConfig, ControlPlaneConfig, EncryptionConfigDescriptor, EncryptionStatus,
-    EncryptionValidationError, Engine, EnginePersistenceConfig, InitializedKeyProvider,
-    KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig, LocalKeyProviderConfig,
-    LocalPersistenceFamily, MasterKeyFileConfig, MetadataRetentionProfile,
+    EncryptionValidationError, Engine, EngineConfig, EnginePersistenceConfig,
+    InitializedKeyProvider, KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig,
+    LocalKeyProviderConfig, LocalPersistenceFamily, MasterKeyFileConfig, MetadataRetentionProfile,
     MonthlyActiveUsersSnapshot, PersistenceDialect, PersistenceTopology, PoolConfig,
     ProviderCredentials, SubscriptionUpdate, TenantAdmissionOutcome, TenantProviderConfig,
     TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,

@@ -17,9 +17,8 @@ const BANNED_AMBIENT_MINTS: [(&str, &str); 6] = [
 
 #[test]
 fn mutation_committer_source_tree_has_no_ambient_time_or_id_mints() {
-    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .expect("Cargo should expose the nimbus-engine manifest directory at runtime");
+    let harness = crate::config::EngineTestHarness::from_env();
+    let manifest_dir = harness.required_manifest_dir();
     let mut rust_files = Vec::new();
     for relative_dir in ["src/engine/mutations", "src/engine/execution_units"] {
         collect_rust_files(&manifest_dir.join(relative_dir), &mut rust_files);
@@ -31,7 +30,7 @@ fn mutation_committer_source_tree_has_no_ambient_time_or_id_mints() {
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
         for (pattern, rationale) in BANNED_AMBIENT_MINTS {
             if source.contains(pattern) {
-                let display_path = path.strip_prefix(&manifest_dir).unwrap_or(&path);
+                let display_path = path.strip_prefix(manifest_dir).unwrap_or(&path);
                 violations.push(format!(
                     "{} contains `{pattern}` ({rationale})",
                     display_path.display()

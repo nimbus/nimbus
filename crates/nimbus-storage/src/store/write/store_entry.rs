@@ -6,6 +6,7 @@ use nimbus_core::{IdSource, Result, SystemIdSource, SystemWallClock, Timestamp, 
 use redb::backends::InMemoryBackend;
 
 use crate::RetentionFloor;
+use crate::config::{StorageConfig, StorageProfileConfig};
 use crate::encrypted_redb::{
     EncryptedFileBackend, EncryptedMemoryBackend, EncryptedReadProfileSnapshot,
 };
@@ -24,19 +25,22 @@ impl TenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        Self::open_with_simulation_and_id_source(
+        Self::open_with_config(
             path,
             clock,
             fault_injector,
             Arc::new(SystemIdSource),
+            &StorageConfig::default(),
         )
     }
 
-    pub fn open_with_simulation_and_id_source(
+    /// Opens or creates a tenant store with the profiling from `config`.
+    pub fn open_with_config(
         path: impl AsRef<Path>,
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         id_source: Arc<dyn IdSource>,
+        config: &StorageConfig,
     ) -> Result<Self> {
         let path = path.as_ref();
         let total_started = Instant::now();
@@ -45,6 +49,7 @@ impl TenantStore {
             .create(path)
             .map_err(map_redb_error)?;
         maybe_emit_redb_open_profile(
+            config.profile,
             path,
             false,
             Duration::ZERO,
@@ -60,6 +65,7 @@ impl TenantStore {
             retention_floor: RetentionFloor::new(),
             materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
+            profile: config.profile,
         })
     }
 
@@ -84,26 +90,32 @@ impl TenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        Self::open_encrypted_with_simulation_and_id_source(
+        Self::open_encrypted_with_config(
             path,
             dek,
             clock,
             fault_injector,
             Arc::new(SystemIdSource),
+            &StorageConfig::default(),
         )
     }
 
-    pub fn open_encrypted_with_simulation_and_id_source(
+    /// Opens or creates an encrypted tenant store with the profiling from
+    /// `config`.
+    pub fn open_encrypted_with_config(
         path: impl AsRef<Path>,
         dek: &[u8; 32],
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         id_source: Arc<dyn IdSource>,
+        config: &StorageConfig,
     ) -> Result<Self> {
         let path = path.as_ref();
         let total_started = Instant::now();
         let backend_open_started = Instant::now();
-        let backend = EncryptedFileBackend::create(path, dek).map_err(map_redb_error)?;
+        let backend = EncryptedFileBackend::create(path, dek)
+            .map_err(map_redb_error)?
+            .with_read_profile(config.profile.encrypted_read_counters());
         let read_profile = backend.read_profile_handle();
         let backend_open_elapsed = backend_open_started.elapsed();
         let database_open_started = Instant::now();
@@ -111,6 +123,7 @@ impl TenantStore {
             .create_with_backend(backend)
             .map_err(map_redb_error)?;
         maybe_emit_redb_open_profile(
+            config.profile,
             path,
             true,
             backend_open_elapsed,
@@ -126,6 +139,7 @@ impl TenantStore {
             retention_floor: RetentionFloor::new(),
             materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
+            profile: config.profile,
         })
     }
 
@@ -163,6 +177,7 @@ impl TenantStore {
             retention_floor: RetentionFloor::new(),
             materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
+            profile: StorageProfileConfig::default(),
         })
     }
 
@@ -207,6 +222,7 @@ impl TenantStore {
             retention_floor: RetentionFloor::new(),
             materialized_verification: crate::MaterializedVerificationInvalidator::default(),
             scan_metrics: Arc::new(ScanMetrics::new()),
+            profile: StorageProfileConfig::default(),
         })
     }
 
@@ -292,6 +308,7 @@ impl TenantStore {
 }
 
 fn maybe_emit_redb_open_profile(
+    profile: StorageProfileConfig,
     path: &Path,
     encrypted: bool,
     backend_open: Duration,
@@ -299,12 +316,7 @@ fn maybe_emit_redb_open_profile(
     total: Duration,
     encrypted_reads: Option<EncryptedReadProfileSnapshot>,
 ) {
-    if std::env::var_os("NIMBUS_REDB_OPEN_PROFILE").is_none() {
-        return;
-    }
-    if std::env::var_os("NIMBUS_PROFILE_ONLY_COLD_SAMPLES").is_some()
-        && !path.to_string_lossy().contains("cold-sample")
-    {
+    if !profile.redb_open || !profile.allows_path(path) {
         return;
     }
 

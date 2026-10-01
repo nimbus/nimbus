@@ -4,6 +4,8 @@ use nimbus_core::Error;
 use nimbus_storage::{EmbeddedProviderKind, RetentionGcConfig};
 use serde::Serialize;
 
+use crate::config::EngineConfig;
+
 pub const DEFAULT_DOCUMENT_VERSION_WINDOW_SEQUENCES: u64 = 100_000;
 pub const DEFAULT_INDEX_VERSION_WINDOW_SEQUENCES: u64 = 100_000;
 pub const DEFAULT_CDC_WINDOW_SEQUENCES: u64 = 50_000;
@@ -16,6 +18,9 @@ pub struct EnginePersistenceConfig {
     pub control_plane: ControlPlaneConfig,
     pub local_encryption: LocalEncryptionConfig,
     pub metadata_retention: MetadataRetentionProfile,
+    /// Engine and storage tuning. A composition root sets it from
+    /// [`EngineConfig::from_env`]. Every constructor uses the shipped defaults.
+    pub engine: EngineConfig,
 }
 
 /// Production policy for durable metadata-history retention.
@@ -422,6 +427,7 @@ impl EnginePersistenceConfig {
             control_plane: ControlPlaneConfig::embedded_redb(data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
             metadata_retention: MetadataRetentionProfile::shipped(),
+            engine: EngineConfig::default(),
         }
     }
 
@@ -434,6 +440,7 @@ impl EnginePersistenceConfig {
             control_plane: ControlPlaneConfig::embedded_redb(control_data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
             metadata_retention: MetadataRetentionProfile::shipped(),
+            engine: EngineConfig::default(),
         }
     }
 
@@ -456,6 +463,7 @@ impl EnginePersistenceConfig {
             control_plane: ControlPlaneConfig::embedded_redb(control_data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
             metadata_retention: MetadataRetentionProfile::shipped(),
+            engine: EngineConfig::default(),
         }
     }
 
@@ -468,6 +476,7 @@ impl EnginePersistenceConfig {
             control_plane: ControlPlaneConfig::embedded_redb(control_data_dir),
             local_encryption: LocalEncryptionConfig::Disabled,
             metadata_retention: MetadataRetentionProfile::shipped(),
+            engine: EngineConfig::default(),
         }
     }
 
@@ -480,6 +489,12 @@ impl EnginePersistenceConfig {
     /// Sets the durable metadata-history retention policy.
     pub fn with_metadata_retention(mut self, profile: MetadataRetentionProfile) -> Self {
         self.metadata_retention = profile;
+        self
+    }
+
+    /// Sets the engine and storage tuning.
+    pub fn with_engine_config(mut self, config: EngineConfig) -> Self {
+        self.engine = config;
         self
     }
 
@@ -914,6 +929,7 @@ mod tests {
             control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
             local_encryption: LocalEncryptionConfig::Disabled,
             metadata_retention: MetadataRetentionProfile::shipped(),
+            engine: EngineConfig::default(),
         };
 
         let plan = config
@@ -957,6 +973,7 @@ mod tests {
             control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
             local_encryption: LocalEncryptionConfig::Disabled,
             metadata_retention: MetadataRetentionProfile::shipped(),
+            engine: EngineConfig::default(),
         };
 
         let plan = config
@@ -992,6 +1009,7 @@ mod tests {
             control_plane: ControlPlaneConfig::embedded_redb("./control-data"),
             local_encryption,
             metadata_retention: MetadataRetentionProfile::shipped(),
+            engine: EngineConfig::default(),
         }
     }
 

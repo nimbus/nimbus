@@ -1014,12 +1014,14 @@ async fn projection_provider_restart_reconciles_cancelled_scope() {
         control_plane: ControlPlaneConfig::embedded_redb(control_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
+        engine: nimbus_engine::EngineConfig::default(),
     };
     let config_b = EnginePersistenceConfig {
         tenant_provider: provider,
         control_plane: ControlPlaneConfig::embedded_redb(control_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
+        engine: nimbus_engine::EngineConfig::default(),
     };
     let tenant_id = TenantId::new(format!("projection-provider-{suffix}")).unwrap();
     let restart_tenant = TenantId::new(format!("projection-provider-restart-{suffix}")).unwrap();
@@ -1128,6 +1130,7 @@ async fn projection_libsql_two_engine_takeover_rejects_late_old_document_schema_
         control_plane: ControlPlaneConfig::embedded_redb(control_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
+        engine: nimbus_engine::EngineConfig::default(),
     };
     let config_b = EnginePersistenceConfig {
         tenant_provider: TenantProviderConfig {
@@ -1141,6 +1144,7 @@ async fn projection_libsql_two_engine_takeover_rejects_late_old_document_schema_
         control_plane: ControlPlaneConfig::embedded_redb(control_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
+        engine: nimbus_engine::EngineConfig::default(),
     };
     let tenant_id = TenantId::new(format!("projection-libsql-{suffix}")).unwrap();
     let restart_tenant = TenantId::new(format!("projection-libsql-restart-{suffix}")).unwrap();
@@ -1250,12 +1254,14 @@ async fn projection_mysql_two_engine_takeover_rejects_late_old_document_schema_a
         control_plane: ControlPlaneConfig::embedded_redb(control_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
+        engine: nimbus_engine::EngineConfig::default(),
     };
     let config_b = EnginePersistenceConfig {
         tenant_provider: provider,
         control_plane: ControlPlaneConfig::embedded_redb(control_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: nimbus_engine::MetadataRetentionProfile::shipped(),
+        engine: nimbus_engine::EngineConfig::default(),
     };
     let tenant_id = TenantId::new(format!("projection-mysql-{suffix}")).unwrap();
     let restart_tenant = TenantId::new(format!("projection-mysql-restart-{suffix}")).unwrap();

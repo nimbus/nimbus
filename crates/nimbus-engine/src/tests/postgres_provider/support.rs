@@ -1,6 +1,5 @@
 pub(super) use super::*;
 
-use std::env;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,7 +16,7 @@ use crate::{
     ProviderCredentials, TenantProviderConfig, TenantRoutingConfig,
 };
 
-const TEST_POSTGRES_URL_ENV: &str = "NIMBUS_TEST_POSTGRES_URL";
+use nimbus_storage::config::TEST_POSTGRES_URL_ENV;
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_postgres_engine_config<F, Fut>(test: F)
@@ -71,12 +70,14 @@ where
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
     let engine_config_b = EnginePersistenceConfig {
         tenant_provider: engine_config_a.tenant_provider.clone(),
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_b.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
         metadata_retention: crate::persistence_config::MetadataRetentionProfile::shipped(),
+        engine: crate::config::EngineConfig::default(),
     };
 
     test(engine_config_a, engine_config_b, provider_config.clone()).await;
@@ -98,7 +99,9 @@ async fn test_connection() -> Option<String> {
         &[TEST_POSTGRES_URL_ENV],
     ) {
         ExternalProviderFixtureMode::UseExplicit => Some(
-            env::var(TEST_POSTGRES_URL_ENV)
+            nimbus_storage::config::StorageTestHarness::from_env()
+                .external_providers
+                .postgres_url
                 .expect("fixture policy should require the PostgreSQL URL"),
         ),
         ExternalProviderFixtureMode::Omit => None,

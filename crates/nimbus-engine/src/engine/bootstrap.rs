@@ -7,7 +7,7 @@ use nimbus_crypto::LocalKeyProvider;
 use nimbus_storage::MemoryTenantProvider;
 use nimbus_storage::{
     EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
-    EmbeddedSqliteProvider, FaultInjector,
+    EmbeddedSqliteProvider, FaultInjector, StorageConfig,
 };
 #[cfg(feature = "libsql")]
 use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
@@ -18,6 +18,7 @@ use nimbus_storage::{PostgresProvider, PostgresProviderConfig};
 
 use super::process_fence::EngineProcessFence;
 use super::{BackgroundExecutor, Engine, EngineBootstrapParts, encryption};
+use crate::config::EngineConfig;
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider};
 use crate::persistence_config::{
     ControlPlaneBootstrapPlan, EmbeddedTenantBootstrapPlan, EngineBootstrapPlan,
@@ -30,6 +31,7 @@ struct EngineSimulationSeams {
     id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     metadata_retention: MetadataRetentionProfile,
+    config: Arc<EngineConfig>,
     #[cfg(feature = "libsql")]
     libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
 }
@@ -59,6 +61,7 @@ pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
 ) -> Result<Engine> {
     config.metadata_retention.validate()?;
     let metadata_retention = config.metadata_retention;
+    let engine_config = Arc::new(config.engine.clone());
     let key_provider = encryption::initialize_encryption(&config)?;
     let encryption_status = encryption::EncryptionStatus::from_config(&config);
     let plan = config.bootstrap_plan()?;
@@ -73,6 +76,7 @@ pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
         id_source,
         storage_fault_injector,
         metadata_retention,
+        config: engine_config,
         #[cfg(feature = "libsql")]
         libsql_replica_fault_injector,
     };
@@ -87,28 +91,29 @@ pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
 }
 
 pub(super) fn build_embedded_engine(
-    tenant_data_dir: PathBuf,
-    control_data_dir: PathBuf,
+    data_dir: PathBuf,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     clock: Arc<dyn WallClock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     id_source: Arc<dyn IdSource>,
     embedded_provider_kind: EmbeddedProviderKind,
+    config: EngineConfig,
 ) -> Result<Engine> {
     let simulation = EngineSimulationSeams {
         clock,
         id_source,
         storage_fault_injector,
         metadata_retention: MetadataRetentionProfile::shipped(),
+        config: Arc::new(config),
         #[cfg(feature = "libsql")]
         libsql_replica_fault_injector: None,
     };
     build_embedded_from_plan(
-        tenant_data_dir.clone(),
-        control_data_dir,
+        data_dir.clone(),
+        data_dir.clone(),
         EmbeddedTenantBootstrapPlan {
             provider_kind: embedded_provider_kind,
-            data_dir: tenant_data_dir,
+            data_dir,
         },
         encryption_provider,
         simulation,
@@ -123,10 +128,11 @@ pub(super) fn build_memory_engine(
     storage_fault_injector: Arc<dyn FaultInjector>,
     id_source: Arc<dyn IdSource>,
 ) -> Result<Engine> {
+    let config = EngineConfig::default();
     let process_fence = EngineProcessFence::acquire([data_dir.clone()])?;
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
-        build_control_plane_provider(data_dir.clone(), None, &storage_executor)?;
+        build_control_plane_provider(data_dir.clone(), None, &storage_executor, &config.storage)?;
     let persistence_provider =
         PersistenceProvider::Memory(Arc::new(MemoryTenantProvider::new_with_id_source(
             clock.clone(),
@@ -147,6 +153,7 @@ pub(super) fn build_memory_engine(
         storage_executor,
         encryption_status: None,
         metadata_retention: MetadataRetentionProfile::shipped(),
+        config: Arc::new(config),
         process_fence,
     }))
 }
@@ -230,6 +237,7 @@ fn build_embedded_from_plan(
         control_data_dir,
         encryption_provider.clone(),
         &storage_executor,
+        &simulation.config.storage,
     )?;
     let persistence_provider = match plan.provider_kind {
         EmbeddedProviderKind::Redb => {
@@ -250,7 +258,8 @@ fn build_embedded_from_plan(
                     storage_executor.handle(),
                     simulation.id_source.clone(),
                 )?
-            };
+            }
+            .with_storage_config(simulation.config.storage);
             PersistenceProvider::Redb(Arc::new(provider))
         }
         EmbeddedProviderKind::Sqlite => {
@@ -271,7 +280,8 @@ fn build_embedded_from_plan(
                     storage_executor.handle(),
                     simulation.id_source.clone(),
                 )?
-            };
+            }
+            .with_storage_config(simulation.config.storage);
             PersistenceProvider::Sqlite(Arc::new(provider))
         }
     };
@@ -288,6 +298,7 @@ fn build_embedded_from_plan(
         storage_executor,
         encryption_status,
         metadata_retention: simulation.metadata_retention,
+        config: simulation.config,
         process_fence,
     }))
 }
@@ -309,8 +320,12 @@ async fn build_postgres_from_plan(
     let process_fence =
         EngineProcessFence::acquire([engine_data_dir.clone(), control_data_dir.clone()])?;
     let (engine_executor, storage_executor) = build_executors()?;
-    let control_plane_provider =
-        build_control_plane_provider(control_data_dir, encryption_provider, &storage_executor)?;
+    let control_plane_provider = build_control_plane_provider(
+        control_data_dir,
+        encryption_provider,
+        &storage_executor,
+        &simulation.config.storage,
+    )?;
     let provider_config = PostgresProviderConfig {
         connection_string: plan.connection_string,
         metadata_schema: plan.metadata_schema,
@@ -341,6 +356,7 @@ async fn build_postgres_from_plan(
         storage_executor,
         encryption_status,
         metadata_retention: simulation.metadata_retention,
+        config: simulation.config,
         process_fence,
     }))
 }
@@ -366,6 +382,7 @@ async fn build_libsql_replica_from_plan(
         control_data_dir,
         encryption_provider.clone(),
         &storage_executor,
+        &simulation.config.storage,
     )?;
     let provider_config = LibsqlReplicaProviderConfig {
         primary_url: plan.primary_url,
@@ -390,7 +407,8 @@ async fn build_libsql_replica_from_plan(
             replica_fault_injector,
             simulation.id_source.clone(),
         )
-        .await?,
+        .await?
+        .with_storage_config(simulation.config.storage),
     );
 
     Ok(Engine::from_bootstrap_parts(EngineBootstrapParts {
@@ -405,6 +423,7 @@ async fn build_libsql_replica_from_plan(
         storage_executor,
         encryption_status,
         metadata_retention: simulation.metadata_retention,
+        config: simulation.config,
         process_fence,
     }))
 }
@@ -423,8 +442,12 @@ async fn build_mysql_from_plan(
     let process_fence =
         EngineProcessFence::acquire([engine_data_dir.clone(), control_data_dir.clone()])?;
     let (engine_executor, storage_executor) = build_executors()?;
-    let control_plane_provider =
-        build_control_plane_provider(control_data_dir, encryption_provider, &storage_executor)?;
+    let control_plane_provider = build_control_plane_provider(
+        control_data_dir,
+        encryption_provider,
+        &storage_executor,
+        &simulation.config.storage,
+    )?;
     let provider_config = MySqlProviderConfig {
         connection_string: plan.connection_string,
         metadata_database: plan.metadata_database,
@@ -455,6 +478,7 @@ async fn build_mysql_from_plan(
         storage_executor,
         encryption_status,
         metadata_retention: simulation.metadata_retention,
+        config: simulation.config,
         process_fence,
     }))
 }
@@ -513,6 +537,7 @@ fn build_control_plane_provider(
     control_data_dir: PathBuf,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     storage_executor: &BackgroundExecutor,
+    storage_config: &StorageConfig,
 ) -> Result<ControlPlaneProvider> {
     Ok(ControlPlaneProvider::EmbeddedRedb(Arc::new(
         if let Some(provider) = encryption_provider {
@@ -520,9 +545,14 @@ fn build_control_plane_provider(
                 control_data_dir,
                 provider,
                 storage_executor.handle(),
+                storage_config,
             )?
         } else {
-            EmbeddedRedbControlPlaneProvider::new(control_data_dir, storage_executor.handle())?
+            EmbeddedRedbControlPlaneProvider::new(
+                control_data_dir,
+                storage_executor.handle(),
+                storage_config,
+            )?
         },
     )))
 }

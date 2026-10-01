@@ -5,7 +5,6 @@
 //! deliberately omit provider execution in an ordinary workspace lane, or fail
 //! with an actionable command. They never provision an implicit container.
 
-use std::env;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -23,6 +22,7 @@ use nimbus_core::{Result, TenantId};
 #[cfg(feature = "postgres")]
 use tokio_postgres::NoTls;
 
+use crate::config::{DISABLE_EXTERNAL_PROVIDER_FIXTURES_ENV, StorageTestHarness};
 #[cfg(feature = "libsql")]
 use crate::libsql::libsql_transport_connector;
 #[cfg(feature = "libsql")]
@@ -31,11 +31,6 @@ use crate::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
 use crate::{MySqlProvider, MySqlProviderConfig};
 #[cfg(feature = "postgres")]
 use crate::{PostgresProvider, PostgresProviderConfig};
-
-pub const REQUIRE_EXTERNAL_PROVIDER_FIXTURES_ENV: &str =
-    "NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES";
-pub const DISABLE_EXTERNAL_PROVIDER_FIXTURES_ENV: &str =
-    "NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExternalProviderFixtureMode {
@@ -247,10 +242,6 @@ fn classify_fixture_inputs(
     FixtureInputDecision::Omit
 }
 
-fn nonempty_env(name: &str) -> bool {
-    env::var_os(name).is_some_and(|value| !value.is_empty())
-}
-
 /// Select the only legal fixture mode for provider-backed tests.
 ///
 /// `UseExplicit` means every required URL is present. `Omit` is reserved for
@@ -262,14 +253,17 @@ pub fn external_provider_fixture_mode(
     provider_label: &str,
     required_env_names: &[&str],
 ) -> ExternalProviderFixtureMode {
+    let inputs = StorageTestHarness::from_env().external_providers;
     let required_env_present: Vec<bool> = required_env_names
         .iter()
-        .map(|name| nonempty_env(name))
+        .map(|name| inputs.is_nonempty(name))
         .collect();
-    let fixtures_required = env::var_os(REQUIRE_EXTERNAL_PROVIDER_FIXTURES_ENV).is_some();
-    let fixtures_disabled = env::var_os(DISABLE_EXTERNAL_PROVIDER_FIXTURES_ENV).is_some();
 
-    match classify_fixture_inputs(&required_env_present, fixtures_required, fixtures_disabled) {
+    match classify_fixture_inputs(
+        &required_env_present,
+        inputs.required,
+        inputs.implicit_disabled,
+    ) {
         FixtureInputDecision::UseExplicit => ExternalProviderFixtureMode::UseExplicit,
         FixtureInputDecision::Omit => {
             eprintln!(

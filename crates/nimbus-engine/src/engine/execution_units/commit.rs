@@ -75,7 +75,11 @@ impl MutationExecutionUnit {
             self.runtime.clone(),
             prepared_commit.accounted_bytes(),
         );
-        maybe_warn_wide_read_set(&self.tenant_id, &prepared_commit.read_set);
+        maybe_warn_wide_read_set(
+            &self.tenant_id,
+            &prepared_commit.read_set,
+            self.engine.config.diagnostics.wide_read_set_warn_threshold,
+        );
         self.engine
             .wait_for_commit_fault(labels::PREPARE_COMPLETE, &self.tenant_id)?;
         let has_scheduled_insert = prepared_commit.has_scheduled_insert();

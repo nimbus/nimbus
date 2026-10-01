@@ -54,9 +54,8 @@ struct ProviderSource {
 /// its fault points sit on the replica's remote durable-batch round-trips,
 /// which are a different surface from the write transaction the gates own.
 fn scan_provider_sources() -> Vec<ProviderSource> {
-    let src_dir = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-storage tests")
+    let src_dir = crate::config::StorageTestHarness::from_env()
+        .required_manifest_dir()
         .join("src");
 
     let mut sources = Vec::new();
@@ -89,9 +88,8 @@ fn scan_provider_sources() -> Vec<ProviderSource> {
 }
 
 fn read_shared_core() -> String {
-    let core_path = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-storage tests")
+    let core_path = crate::config::StorageTestHarness::from_env()
+        .required_manifest_dir()
         .join("src")
         .join("sql")
         .join("write_core.rs");

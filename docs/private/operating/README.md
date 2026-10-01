@@ -13,6 +13,7 @@ delivery state belongs in [`../plans/README.md`](../plans/README.md).
 | Add, resize, or diagnose a hosted CI cache, or check the 10 GiB budget | [`ci-caching.md`](ci-caching.md) |
 | Configure or verify Cloudflare adapter behavior | [`cloudflare-adapters.md`](cloudflare-adapters.md) |
 | Build and operate the container image | [`container-image.md`](container-image.md) |
+| Tune engine or storage settings, or add a configuration variable | [`engine-storage-config.md`](engine-storage-config.md) |
 | Configure encryption and key custody | [`encryption.md`](encryption.md) |
 | Configure, observe, or recover metadata retention | [`metadata-retention.md`](metadata-retention.md) |
 | Diagnose the Node Compatibility nightly or refresh the corpus baseline | [`node-compat-nightly.md`](node-compat-nightly.md) |

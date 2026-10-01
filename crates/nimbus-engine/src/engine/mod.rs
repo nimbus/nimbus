@@ -8,6 +8,7 @@ mod kv;
 mod latency;
 pub(crate) mod metadata_retention;
 mod mutations;
+pub(crate) use mutations::caps::MutationCapConfig;
 pub(crate) use mutations::durable_outcome::{
     DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error,
 };
@@ -49,6 +50,7 @@ use nimbus_storage::{
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
+use crate::config::EngineConfig;
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
 use crate::persistence_config::{EnginePersistenceConfig, MetadataRetentionProfile};
 use crate::tenant::{
@@ -128,6 +130,7 @@ pub struct Engine {
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
     metadata_retention: MetadataRetentionProfile,
+    config: Arc<EngineConfig>,
     // Declared last so provider and executor fields drop before the OS locks.
     _process_fence: process_fence::EngineProcessFence,
 }
@@ -204,6 +207,7 @@ pub(super) struct EngineBootstrapParts {
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
     metadata_retention: MetadataRetentionProfile,
+    config: Arc<EngineConfig>,
     process_fence: process_fence::EngineProcessFence,
 }
 
@@ -283,13 +287,32 @@ impl Engine {
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         bootstrap::build_embedded_engine(
-            data_dir.clone(),
             data_dir,
             None,
             clock,
             storage_fault_injector,
             id_source,
             EmbeddedProviderKind::default(),
+            EngineConfig::default(),
+        )
+    }
+
+    /// Creates a test engine for the default embedded provider with explicit
+    /// engine settings.
+    #[cfg(test)]
+    pub(crate) fn new_with_engine_config(
+        data_dir: impl Into<PathBuf>,
+        config: EngineConfig,
+    ) -> Result<Self> {
+        let data_dir = data_dir.into();
+        bootstrap::build_embedded_engine(
+            data_dir,
+            None,
+            Arc::new(SystemWallClock),
+            Arc::new(NoopFaultInjector),
+            Arc::new(SystemIdSource),
+            EmbeddedProviderKind::default(),
+            config,
         )
     }
 
@@ -348,13 +371,13 @@ impl Engine {
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         bootstrap::build_embedded_engine(
-            data_dir.clone(),
             data_dir,
             None,
             clock,
             storage_fault_injector,
             Arc::new(SystemIdSource),
             embedded_provider_kind,
+            EngineConfig::default(),
         )
     }
 
@@ -372,13 +395,13 @@ impl Engine {
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         let mut engine = bootstrap::build_embedded_engine(
-            data_dir.clone(),
             data_dir,
             None,
             clock,
             storage_fault_injector,
             id_source,
             embedded_provider_kind,
+            EngineConfig::default(),
         )?;
         engine.monotonic_clock = monotonic_clock;
         Ok(engine)
@@ -503,6 +526,7 @@ impl Engine {
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,
             metadata_retention: parts.metadata_retention,
+            config: parts.config,
             _process_fence: parts.process_fence,
         }
     }
@@ -553,10 +577,12 @@ impl Engine {
             let engine_shutdown = self.engine_executor.shutdown_token();
             let tenant_shutdown = runtime.committer_shutdown_token();
             let publisher_runtime = Arc::downgrade(&runtime);
+            let publisher_batch = runtime.config().committer_publisher_batch;
             spawn_permit.spawn(
                 ENGINE_BACKGROUND_TASK.scope("mutation_publisher", async move {
                     crate::engine::mutations::run_ordered_publisher(
                         publisher_runtime,
+                        publisher_batch,
                         publisher_receiver,
                         engine_shutdown,
                         tenant_shutdown,
@@ -688,16 +714,20 @@ impl Engine {
 
     pub(crate) fn open_tenant_store(&self, path: &Path) -> Result<TenantPersistence> {
         match self.require_embedded_provider_kind()? {
-            EmbeddedProviderKind::Redb => TenantStore::open_with_simulation(
+            EmbeddedProviderKind::Redb => TenantStore::open_with_config(
                 path,
                 self.clock.clone(),
                 self.storage_fault_injector.clone(),
+                Arc::new(SystemIdSource),
+                &self.config.storage,
             )
             .map(|store| TenantPersistence::Redb(Arc::new(store))),
-            EmbeddedProviderKind::Sqlite => SqliteTenantStore::open_with_simulation(
+            EmbeddedProviderKind::Sqlite => SqliteTenantStore::open_with_config(
                 path,
                 self.clock.clone(),
                 self.storage_fault_injector.clone(),
+                Arc::new(SystemIdSource),
+                &self.config.storage,
             )
             .map(|store| TenantPersistence::Sqlite(Arc::new(store))),
         }
@@ -727,6 +757,7 @@ impl Engine {
                 self.committer_owner_id_for_store(&store),
                 self.id_source.clone(),
                 self.metadata_retention,
+                self.config.clone(),
             ),
         )?);
         self.restore_publisher_error_counts(&runtime);

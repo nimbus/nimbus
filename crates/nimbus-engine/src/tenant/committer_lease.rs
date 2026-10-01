@@ -1332,6 +1332,7 @@ mod tests {
                     Some("lease-owner".to_string()),
                     Arc::new(nimbus_core::SystemIdSource),
                     crate::persistence_config::MetadataRetentionProfile::shipped(),
+                    Arc::new(crate::config::EngineConfig::default()),
                 ),
             )
             .expect("test runtime should construct"),

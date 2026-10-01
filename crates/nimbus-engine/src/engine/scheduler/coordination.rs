@@ -256,6 +256,7 @@ impl Engine {
                     self.committer_owner_id_for_store(&opened.persistence),
                     self.id_source.clone(),
                     self.metadata_retention,
+                    self.config.clone(),
                 ),
             )
             .await?,

@@ -9,7 +9,9 @@ use nimbus_crypto::{
 use parking_lot::Mutex;
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::{ObjectPlacementStore, TenantIncarnationStore, UsageStore};
+use crate::{
+    ObjectPlacementStore, StorageConfig, StorageProfileConfig, TenantIncarnationStore, UsageStore,
+};
 
 use super::engine::EmbeddedProviderKind;
 use super::read::RedbUsageStorage;
@@ -29,6 +31,7 @@ struct ControlPlaneState {
     path: PathBuf,
     encryption: Option<ControlPlaneEncryption>,
     storage_handle: TokioRuntimeHandle,
+    profile: StorageProfileConfig,
     opened: Mutex<Option<OpenedControlPlane>>,
 }
 
@@ -46,13 +49,18 @@ struct OpenedControlPlane {
 }
 
 impl EmbeddedRedbControlPlaneProvider {
-    pub fn new(data_dir: impl Into<PathBuf>, storage_handle: TokioRuntimeHandle) -> Result<Self> {
+    pub fn new(
+        data_dir: impl Into<PathBuf>,
+        storage_handle: TokioRuntimeHandle,
+        config: &StorageConfig,
+    ) -> Result<Self> {
         let data_dir = data_dir.into();
         Ok(Self {
             state: Arc::new(ControlPlaneState {
                 path: data_dir.join(EmbeddedProviderKind::Redb.control_database_filename()),
                 encryption: None,
                 storage_handle,
+                profile: config.profile,
                 opened: Mutex::new(None),
             }),
         })
@@ -62,6 +70,7 @@ impl EmbeddedRedbControlPlaneProvider {
         data_dir: impl Into<PathBuf>,
         provider: Arc<dyn LocalKeyProvider>,
         storage_handle: TokioRuntimeHandle,
+        config: &StorageConfig,
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         Ok(Self {
@@ -74,6 +83,7 @@ impl EmbeddedRedbControlPlaneProvider {
                     ),
                 }),
                 storage_handle,
+                profile: config.profile,
                 opened: Mutex::new(None),
             }),
         })
@@ -147,6 +157,7 @@ impl EmbeddedRedbControlPlaneProvider {
         let tenant_incarnation_store = Arc::new(TenantIncarnationStore::new(usage_store.clone()));
 
         maybe_emit_profile(
+            self.state.profile,
             &self.state.path,
             self.state.encryption.is_some(),
             started.elapsed(),
@@ -161,13 +172,13 @@ impl EmbeddedRedbControlPlaneProvider {
     }
 }
 
-fn maybe_emit_profile(path: &Path, encrypted: bool, total: std::time::Duration) {
-    if std::env::var_os("NIMBUS_CONTROL_PLANE_PROFILE").is_none() {
-        return;
-    }
-    if std::env::var_os("NIMBUS_PROFILE_ONLY_COLD_SAMPLES").is_some()
-        && !path.to_string_lossy().contains("cold-sample")
-    {
+fn maybe_emit_profile(
+    profile: StorageProfileConfig,
+    path: &Path,
+    encrypted: bool,
+    total: std::time::Duration,
+) {
+    if !profile.control_plane || !profile.allows_path(path) {
         return;
     }
 
