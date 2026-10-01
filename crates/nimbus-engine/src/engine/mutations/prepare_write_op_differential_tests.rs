@@ -640,9 +640,6 @@ fn prepare_write_op_sites_agree_on_every_case() {
                 )
             })
             .collect::<Vec<_>>();
-        for (site, outcome) in &outcomes {
-            println!("{} {site:?}: {}", case.name, outcome.summary());
-        }
         report.extend(divergences(&case, &outcomes));
     }
     assert!(

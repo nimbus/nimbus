@@ -83,7 +83,7 @@ impl MutationExecutionUnit {
             &self.principal,
             Some(existing),
             None,
-            self.current_resource_path_binding(&table, &document_id)?,
+            None,
             None,
         )?;
         self.stage_prepared_write(table, prepared)?;
@@ -134,8 +134,9 @@ impl MutationExecutionUnit {
     pub(super) fn stage_prepared_write(
         &self,
         table: TableName,
-        prepared: PreparedWriteOp,
+        prepared: PreparedWriteOp<'_>,
     ) -> Result<DocumentId> {
+        let document_id = prepared.document()?.id.clone();
         let PreparedWriteOp {
             previous,
             current,
@@ -143,17 +144,12 @@ impl MutationExecutionUnit {
             resource_path_binding,
             ..
         } = prepared;
-        let document_id = current
-            .as_ref()
-            .or(previous.as_ref())
-            .map(|document| document.id.clone())
-            .ok_or_else(|| Error::Internal("a staged write needs a document image".to_string()))?;
         self.stage_write(
             table,
             document_id.clone(),
             previous,
             current,
-            indexes,
+            indexes.to_vec(),
             resource_path_binding,
         )?;
         Ok(document_id)

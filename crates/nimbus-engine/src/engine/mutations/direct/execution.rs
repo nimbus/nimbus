@@ -375,7 +375,8 @@ fn prepare_direct_mutation(
         existing_binding,
         None,
     )?
-    .into_write_op(table_id);
+    .into_write_op(table_id)?;
+    let indexes = indexes.to_vec();
     let mut dependencies = DependencySet::default();
     dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone());
     validate_prepared_for_provider(runtime, snapshot_sequence, &dependencies)?;

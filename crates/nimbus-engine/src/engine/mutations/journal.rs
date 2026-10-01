@@ -1214,7 +1214,7 @@ fn prepare_queued_mutation(
         existing_binding,
         None,
     )?
-    .into_write_op(table_id);
+    .into_write_op(table_id)?;
     let result = if scheduled_execution_id.is_some() {
         QueuedMutationResult::Scheduled(true)
     } else {

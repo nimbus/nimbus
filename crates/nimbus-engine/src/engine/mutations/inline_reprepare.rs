@@ -236,7 +236,7 @@ fn rebuild_write(
     };
     // Paths A/C originate as client writes, so the rebuilt write carries no
     // trigger origin from the image it supersedes.
-    Ok(prepare_write_op(
+    let (write, indexes) = prepare_write_op(
         plan.schema.get_table(table),
         &plan.principal,
         previous,
@@ -244,5 +244,6 @@ fn rebuild_write(
         base.resource_path_binding.clone(),
         None,
     )?
-    .into_write_op(base.table_id.clone()))
+    .into_write_op(base.table_id.clone())?;
+    Ok((write, indexes.to_vec()))
 }

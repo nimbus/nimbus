@@ -347,7 +347,7 @@ impl MutationExecutionUnit {
             &self.principal,
             Some(existing),
             None,
-            self.current_resource_path_binding(&table, &locator.id)?,
+            None,
             None,
         )?;
         self.stage_prepared_write(table, prepared)?;

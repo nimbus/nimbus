@@ -8,25 +8,32 @@ use super::enforce_mutation_authorization;
 /// One validated and authorized single-document write. The owning commit path
 /// still assigns the table identity, sequence, and lifecycle times.
 #[derive(Debug)]
-pub(in crate::engine) struct PreparedWriteOp {
+pub(in crate::engine) struct PreparedWriteOp<'schema> {
     pub(in crate::engine) op_type: WriteOpType,
     pub(in crate::engine) previous: Option<Document>,
     pub(in crate::engine) current: Option<Document>,
-    pub(in crate::engine) indexes: Vec<IndexDefinition>,
+    pub(in crate::engine) indexes: &'schema [IndexDefinition],
     pub(in crate::engine) resource_path_binding: Option<ResourcePathBinding>,
 }
 
-impl PreparedWriteOp {
+impl<'schema> PreparedWriteOp<'schema> {
+    /// Returns the image that names the written document: the new image, or
+    /// the removed one for a delete.
+    pub(in crate::engine) fn document(&self) -> Result<&Document> {
+        self.current
+            .as_ref()
+            .or(self.previous.as_ref())
+            .ok_or_else(|| {
+                Error::Internal("a document write needs a previous or a current image".to_string())
+            })
+    }
+
     /// Returns the durable write and the index work that its commit carries.
     pub(in crate::engine) fn into_write_op(
         self,
         table_id: TableId,
-    ) -> (WriteOp, Vec<IndexDefinition>) {
-        let document = self
-            .current
-            .as_ref()
-            .or(self.previous.as_ref())
-            .expect("a prepared write always carries a document image");
+    ) -> Result<(WriteOp, &'schema [IndexDefinition])> {
+        let document = self.document()?;
         let write = WriteOp {
             table: document.table.clone(),
             table_id,
@@ -39,7 +46,7 @@ impl PreparedWriteOp {
             previous: self.previous,
             current: self.current,
         };
-        (write, self.indexes)
+        Ok((write, self.indexes))
     }
 }
 
@@ -50,16 +57,18 @@ impl PreparedWriteOp {
 /// `existing_binding` is the resource path that `previous` holds now.
 /// `requested_binding` is a path that the client named for this write. An
 /// insert or update keeps the requested path, else the existing one. A delete
-/// always carries the existing path so that collection-group conflicts and
-/// trigger dispatch still see the removed document.
-pub(in crate::engine) fn prepare_write_op(
-    table_schema: Option<&TableSchema>,
+/// carries the existing path so that collection-group conflicts and trigger
+/// dispatch still see the removed document. The execution unit passes no
+/// existing path for a delete. Its commit reads that path from the unit
+/// snapshot, because a staged path can belong to an uncommitted write.
+pub(in crate::engine) fn prepare_write_op<'schema>(
+    table_schema: Option<&'schema TableSchema>,
     principal: &PrincipalContext,
     previous: Option<Document>,
     current: Option<Document>,
     existing_binding: Option<ResourcePathBinding>,
     requested_binding: Option<ResourcePathBinding>,
-) -> Result<PreparedWriteOp> {
+) -> Result<PreparedWriteOp<'schema>> {
     let (op_type, action, resource_path_binding) = match (&previous, &current) {
         (None, Some(_)) => (
             WriteOpType::Insert,
@@ -92,9 +101,7 @@ pub(in crate::engine) fn prepare_write_op(
         op_type,
         previous,
         current,
-        indexes: table_schema
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default(),
+        indexes: table_schema.map_or(&[], |table_schema| table_schema.indexes.as_slice()),
         resource_path_binding,
     })
 }

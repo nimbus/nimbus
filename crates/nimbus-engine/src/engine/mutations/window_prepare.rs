@@ -116,7 +116,8 @@ pub(super) fn prepare_single_document_write_from_window(
         existing_binding,
         None,
     )?;
-    let (write, indexes) = prepared.into_write_op(table_id);
+    let (write, indexes) = prepared.into_write_op(table_id)?;
+    let indexes = indexes.to_vec();
     let mut dependencies = DependencySet::default();
     dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone());
     Ok(Some(WindowPreparedWrite {
