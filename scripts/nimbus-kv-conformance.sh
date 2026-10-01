@@ -68,6 +68,10 @@ ensure_nimbus_binary() {
 
 ensure_valkey_checkout() {
   if [ ! -d "${VALKEY_DIR}/.git" ]; then
+    if [ -e "${VALKEY_DIR}" ]; then
+      printf 'removing partial Valkey checkout without .git at %s\n' "${VALKEY_DIR}"
+      rm -rf "${VALKEY_DIR}"
+    fi
     mkdir -p "$(dirname "${VALKEY_DIR}")"
     git clone --depth 1 --branch "${VALKEY_TAG}" "${VALKEY_REPO_URL}" "${VALKEY_DIR}"
   fi
