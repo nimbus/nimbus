@@ -82,15 +82,15 @@ grep -F "must not use deprecated MACHINE_OS_RELEASE_APP_ID" \
   "${tmp_dir}/bad-app-id.out" >/dev/null
 
 bad_app_token_ref="${tmp_dir}/bad-app-token-ref.yml"
-sed 's|actions/create-github-app-token@v3.2.0|actions/create-github-app-token@v3|g' \
+sed -E 's|actions/create-github-app-token@[0-9a-f]{40} # v3\.2\.0|actions/create-github-app-token@v3|g' \
   "${repo_root}/.github/workflows/release.yml" >"${bad_app_token_ref}"
 if bash "${repo_root}/scripts/verify-machine-os-release-ref-contract.sh" \
   --workflow "${bad_app_token_ref}" \
   >"${tmp_dir}/bad-app-token-ref.out" 2>&1; then
-  echo "expected release ref contract to reject create-github-app-token major-only refs while actionlint needs exact client-id metadata" >&2
+  echo "expected release ref contract to reject create-github-app-token tag refs that are not SHA-pinned" >&2
   exit 1
 fi
-grep -F "actions/create-github-app-token@v3.2.0" \
+grep -F "must SHA-pin actions/create-github-app-token" \
   "${tmp_dir}/bad-app-token-ref.out" >/dev/null
 
 bad_fedora_drift="${tmp_dir}/bad-fedora-drift.yml"

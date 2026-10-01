@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Free runner disk for archive build
         run: |
@@ -63,9 +63,9 @@ jobs:
           fallback: none
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -78,7 +78,7 @@ jobs:
         run: make build-packages
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -119,7 +119,7 @@ jobs:
         run: sha256sum .config/nextest.toml > .config/nextest.toml.sha256
 
       - name: Upload probe nimbus tests archive
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: probe-nimbus-tests-archive
           path: |
@@ -130,7 +130,7 @@ jobs:
           retention-days: 1
 
       - name: Upload probe nextest config
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: probe-nextest-config
           path: |
@@ -140,7 +140,7 @@ jobs:
           retention-days: 1
 
       - name: Upload probe nimbus-ui artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: probe-ui-artifacts
           path: |
@@ -150,7 +150,7 @@ jobs:
           retention-days: 1
 
       - name: Upload probe embedded packages
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: probe-embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -173,7 +173,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
@@ -182,7 +182,7 @@ jobs:
           fallback: none
 
       - name: Download probe nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: probe-ui-artifacts
           path: packages/nimbus-ui
@@ -191,7 +191,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download probe embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: probe-embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -203,13 +203,13 @@ jobs:
         run: date +%s%3N > "$RUNNER_TEMP/probe-restore-start-ms"
 
       - name: Download probe nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: probe-nimbus-tests-archive
           path: ${{ runner.temp }}/probe-nimbus-tests-archive
 
       - name: Download probe nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: probe-nextest-config
           path: ${{ runner.temp }}/probe-nextest-config
@@ -235,7 +235,7 @@ jobs:
 
       - name: Upload K=${{ matrix.k }} timing JSON
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: shard-scaling-probe-k-${{ matrix.k }}
           path: ${{ runner.temp }}/shard-scaling-probe-k-${{ matrix.k }}.json
@@ -251,13 +251,13 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Prepare timing directory
         run: mkdir -p "$RUNNER_TEMP/shard-scaling-probe-results"
 
       - name: Download timing JSON artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         continue-on-error: true
         with:
           pattern: shard-scaling-probe-k-*
@@ -272,7 +272,7 @@ jobs:
 
       - name: Upload combined probe timing JSON
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: shard-scaling-probe-timings
           path: ${{ runner.temp }}/shard-scaling-probe-summary.json

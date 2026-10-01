@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Verify tag matches workspace/package versions
         run: bash scripts/verify-release-version-contract.sh "${{ github.ref_name }}"
@@ -106,12 +106,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -121,7 +121,7 @@ jobs:
         run: make build-ui
 
       - name: Upload nimbus-ui artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ui-artifacts
           path: |
@@ -137,7 +137,7 @@ jobs:
     timeout-minutes: 240
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # CA4: Centralize toolchain + sccache + Swatinem cache + googlesource
       # bootstrap through the composite action. Release tag builds opt into
@@ -157,7 +157,7 @@ jobs:
         run: bash scripts/ci/verify-prebuilt-v8-consumption.sh ptrcomp
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -166,9 +166,9 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Set up Node.js for target-local embedded payload
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -224,7 +224,7 @@ jobs:
 
       - name: Upload SQLCipher proof bundle
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sqlcipher-proof-aarch64-unknown-linux-gnu
           path: dist/sqlcipher-proof-aarch64-unknown-linux-gnu
@@ -238,7 +238,7 @@ jobs:
             -C ${{ github.workspace }} README.md LICENSE
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nimbus_linux_arm64
           path: nimbus_linux_arm64.tar.gz
@@ -291,7 +291,7 @@ jobs:
           #   archive: zip
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The windows-latest image ships Visual Studio 2026 (v18), whose cmake
       # generator name the runner's cmake does not know yet; libz-ng-sys's
@@ -324,7 +324,7 @@ jobs:
         run: bash scripts/ci/verify-prebuilt-v8-consumption.sh ptrcomp
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -334,9 +334,9 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Set up Node.js for target-local embedded payload
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -373,7 +373,7 @@ jobs:
       # verifies each download against the embedded digest and fails closed.
       - name: Download Linux arm64 guest archive
         if: matrix.os == 'darwin'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus_linux_arm64
           path: guest-archive
@@ -426,7 +426,7 @@ jobs:
 
       - name: Upload SQLCipher proof bundle
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sqlcipher-proof-${{ matrix.target }}
           path: dist/sqlcipher-proof-${{ matrix.target }}
@@ -487,7 +487,7 @@ jobs:
             -DestinationPath nimbus_windows_x86_64.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nimbus_${{ matrix.os }}_${{ matrix.arch }}
           path: nimbus_${{ matrix.os }}_${{ matrix.arch }}.${{ matrix.archive }}
@@ -504,11 +504,11 @@ jobs:
       contents: read
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Create machine-os source token
         id: machine_os_source_token
-        uses: actions/create-github-app-token@v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
@@ -517,7 +517,7 @@ jobs:
           permission-contents: read
 
       - name: Check out machine-os repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ env.MACHINE_OS_REPOSITORY }}
           ref: ${{ env.MACHINE_OS_SOURCE_REF }}
@@ -538,7 +538,7 @@ jobs:
             "${RUNNER_TEMP}/nimbus-machine-os-staged"
 
       - name: Download Linux arm64 nimbus artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus_linux_arm64
           path: ${{ runner.temp }}/nimbus-linux-arm64
@@ -568,7 +568,7 @@ jobs:
 
       - name: Restore container image cache
         id: image-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/image-cache
           key: machine-os-base-image-arm64-${{ hashFiles('.github/workflows/release.yml', 'machine-os/image/Containerfile', 'machine-os/image/build-common.sh', 'machine-os/image/build.sh') }}
@@ -642,7 +642,7 @@ jobs:
           cp -R "${LAYOUT_DIR}/." "${STAGE_DIR}/layout/"
 
       - name: Upload staged machine-os artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ env.MACHINE_OS_STAGED_ARTIFACT }}
           if-no-files-found: error
@@ -658,11 +658,11 @@ jobs:
       contents: read
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Create machine-os workflow token
         id: machine_os_workflow_token
-        uses: actions/create-github-app-token@v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.MACHINE_OS_RELEASE_APP_PRIVATE_KEY }}
@@ -739,7 +739,7 @@ jobs:
           exit 66
 
       - name: Download machine-os release bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ${{ env.MACHINE_OS_RELEASE_ARTIFACT }}
           path: ${{ runner.temp }}/machine-os-release
@@ -755,7 +755,7 @@ jobs:
             --require-ghcr-public
 
       - name: Upload machine-os release bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ env.MACHINE_OS_RELEASE_ARTIFACT }}
           if-no-files-found: error
@@ -789,12 +789,12 @@ jobs:
             arch_tag: arm64
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Download Linux release archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ${{ matrix.artifact }}
           path: ${{ runner.temp }}/${{ matrix.artifact }}
@@ -871,14 +871,14 @@ jobs:
             --expected-version "${{ github.ref_name }}"
 
       - name: Attest per-arch image provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ${{ env.NIMBUS_IMAGE_PACKAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Upload per-arch image digest
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: oci-image-digest-${{ matrix.arch_tag }}
           path: oci-digest-${{ matrix.arch_tag }}.env
@@ -897,10 +897,10 @@ jobs:
       artifact-metadata: write
     steps:
       - name: Check out Nimbus repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download per-arch image digests
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: oci-image-digests
           pattern: oci-image-digest-*
@@ -974,7 +974,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Attest multi-arch image provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ${{ env.NIMBUS_IMAGE_PACKAGE }}
           subject-digest: ${{ steps.manifest.outputs.multi_digest }}
@@ -1071,7 +1071,7 @@ jobs:
             --expected-tag "${{ github.ref_name }}"
 
       - name: Upload OCI image release evidence
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nimbus_oci_image
           if-no-files-found: error
@@ -1089,12 +1089,12 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Download nimbus build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           pattern: nimbus_*
@@ -1200,12 +1200,12 @@ jobs:
           fi
 
       - name: Attest release asset provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-checksums: artifacts/checksums-sha256.txt
 
       - name: Attest checksum manifest provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: artifacts/checksums-sha256.txt
 
@@ -1220,7 +1220,7 @@ jobs:
 
       - name: Create Homebrew tap token
         id: homebrew_tap_token
-        uses: actions/create-github-app-token@v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.HOMEBREW_TAP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}

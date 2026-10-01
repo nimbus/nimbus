@@ -50,6 +50,14 @@ require_in_section() {
     die "${section_name} must contain: ${needle}"
 }
 
+require_match_in_section() {
+  local section_name="$1"
+  local section="$2"
+  local pattern="$3"
+  grep -E -- "${pattern}" <<<"${section}" >/dev/null || \
+    die "${section_name} must match: ${pattern}"
+}
+
 reject_in_section() {
   local section_name="$1"
   local section="$2"
@@ -123,8 +131,8 @@ fi
 if grep -F "app-id:" "${workflow_path}" >/dev/null; then
   die "release workflow must not use deprecated actions/create-github-app-token app-id input; use client-id"
 fi
-grep -F "actions/create-github-app-token@v3.2.0" "${workflow_path}" >/dev/null || \
-  die "release workflow must pin actions/create-github-app-token@v3.2.0 so actionlint validates the current client-id input contract"
+grep -E "uses: actions/create-github-app-token@[0-9a-f]{40} # v3\\.2\\.0$" "${workflow_path}" >/dev/null || \
+  die "release workflow must SHA-pin actions/create-github-app-token to the v3.2.0 commit with a '# v3.2.0' ref comment"
 grep -F "MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:" "${workflow_path}" >/dev/null || \
   die "release workflow must set MACHINE_OS_FEDORA_BOOTC_IMAGE to a digest-pinned Fedora bootc image"
 fedora_bootc_refs="$(
@@ -145,7 +153,7 @@ release_section="$(job_section release)"
 
 require_in_section build-machine-os "${build_machine_os_section}" "needs: [build-linux-arm64]"
 require_in_section build-machine-os "${build_machine_os_section}" "contents: read"
-require_in_section build-machine-os "${build_machine_os_section}" "uses: actions/create-github-app-token@v3.2.0"
+require_match_in_section build-machine-os "${build_machine_os_section}" "uses: actions/create-github-app-token@[0-9a-f]{40} # v3\\.2\\.0$"
 require_in_section build-machine-os "${build_machine_os_section}" 'client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}'
 require_in_section build-machine-os "${build_machine_os_section}" 'repository: ${{ env.MACHINE_OS_REPOSITORY }}'
 require_in_section build-machine-os "${build_machine_os_section}" 'ref: ${{ env.MACHINE_OS_SOURCE_REF }}'
@@ -177,7 +185,7 @@ reject_in_section build-machine-os "${build_machine_os_section}" "gh release"
 reject_in_section build-machine-os "${build_machine_os_section}" "actions/attest"
 
 require_in_section publish-machine-os "${publish_machine_os_section}" "needs: [build-linux-arm64, build, build-machine-os]"
-require_in_section publish-machine-os "${publish_machine_os_section}" "uses: actions/create-github-app-token@v3.2.0"
+require_match_in_section publish-machine-os "${publish_machine_os_section}" "uses: actions/create-github-app-token@[0-9a-f]{40} # v3\\.2\\.0$"
 require_in_section publish-machine-os "${publish_machine_os_section}" 'client-id: ${{ vars.MACHINE_OS_RELEASE_APP_CLIENT_ID }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "permission-actions: write"
 require_in_section publish-machine-os "${publish_machine_os_section}" "permission-contents: read"
@@ -189,7 +197,7 @@ require_in_section publish-machine-os "${publish_machine_os_section}" "inputs[so
 require_in_section publish-machine-os "${publish_machine_os_section}" "inputs[machine_os_source_revision]"
 require_in_section publish-machine-os "${publish_machine_os_section}" "workflow_run_id"
 require_in_section publish-machine-os "${publish_machine_os_section}" "gh run view"
-require_in_section publish-machine-os "${publish_machine_os_section}" "actions/download-artifact@v8"
+require_match_in_section publish-machine-os "${publish_machine_os_section}" "uses: actions/download-artifact@[0-9a-f]{40} # v8$"
 require_in_section publish-machine-os "${publish_machine_os_section}" 'name: ${{ env.MACHINE_OS_RELEASE_ARTIFACT }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" 'repository: ${{ env.MACHINE_OS_REPOSITORY }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" 'run-id: ${{ steps.machine_os_publish.outputs.run_id }}'
@@ -201,13 +209,13 @@ reject_in_section publish-machine-os "${publish_machine_os_section}" "attestatio
 reject_in_section publish-machine-os "${publish_machine_os_section}" "permission-packages: write"
 reject_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/publish.sh"
 reject_in_section publish-machine-os "${publish_machine_os_section}" "gh release"
-reject_in_section publish-machine-os "${publish_machine_os_section}" "actions/attest@v4"
+reject_in_section publish-machine-os "${publish_machine_os_section}" "actions/attest@"
 reject_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ steps.machine_os_token.outputs.token }}'
 reject_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MACHINE_OS_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}'
 
 require_in_section release "${release_section}" "needs:"
 require_in_section release "${release_section}" "publish-machine-os"
-require_in_section release "${release_section}" "uses: actions/create-github-app-token@v3.2.0"
+require_match_in_section release "${release_section}" "uses: actions/create-github-app-token@[0-9a-f]{40} # v3\\.2\\.0$"
 reject_in_section release "${release_section}" "build-machine-os"
 
 if [[ -n "${machine_os_repo}" ]]; then

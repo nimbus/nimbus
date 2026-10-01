@@ -19,6 +19,12 @@ assert_contains() {
   grep -F -- "${needle}" "${path}" >/dev/null || die "${path} missing expected text: ${needle}"
 }
 
+assert_matches() {
+  local path="$1"
+  local pattern="$2"
+  grep -E -- "${pattern}" "${path}" >/dev/null || die "${path} missing expected pattern: ${pattern}"
+}
+
 extract_job() {
   local job="$1"
   local output="$2"
@@ -115,7 +121,7 @@ for job_file in "${build_job}" "${publish_job}"; do
   assert_not_contains "${job_file}" "target/release"
 done
 
-assert_contains "${build_job}" "actions/download-artifact@v8"
+assert_matches "${build_job}" "uses: actions/download-artifact@[0-9a-f]{40} # v8$"
 assert_contains "${build_job}" "tar -tzf"
 assert_contains "${build_job}" 'NIMBUS_VERSION=${TAG}'
 assert_contains "${build_job}" "--sbom=true"

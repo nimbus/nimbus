@@ -46,11 +46,18 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: |
+          channel="$(bash scripts/ci/rust-toolchain-channel.sh)"
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt
 
       - name: Check formatting
@@ -64,7 +71,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -81,9 +88,9 @@ jobs:
       # and nimbus-assets' SPA embed inputs resolve. Node is therefore a build
       # prerequisite for any Rust target that touches nimbus-server.
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -99,7 +106,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -177,7 +184,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -299,7 +306,7 @@ jobs:
 
       - name: Upload failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: container-pep-egress-diagnostics
           path: ${{ runner.temp }}/container-pep-egress-diagnostics
@@ -313,7 +320,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -325,7 +332,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -355,7 +362,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -386,7 +393,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -401,7 +408,7 @@ jobs:
         run: bash scripts/ci/verify-prebuilt-v8-consumption.sh ptrcomp
 
       - name: Cache Node22 anchor snapshot (pointer-compression)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.pc.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-on-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -448,7 +455,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         uses: ./.github/actions/setup-rust-cached
@@ -473,7 +480,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -489,9 +496,9 @@ jobs:
       # This lane touches nimbus-server runtime diagnostics and the operator UI
       # contract, so it needs the same Node/UI prerequisites as workspace lanes.
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -526,10 +533,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -538,7 +545,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -547,13 +554,13 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Download nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-tests-archive
           path: ${{ runner.temp }}/nimbus-tests-archive
 
       - name: Download nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nextest-config
           path: ${{ runner.temp }}/nextest-config
@@ -597,10 +604,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -609,7 +616,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -618,13 +625,13 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Download nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-tests-archive
           path: ${{ runner.temp }}/nimbus-tests-archive
 
       - name: Download nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nextest-config
           path: ${{ runner.temp }}/nextest-config
@@ -639,9 +646,9 @@ jobs:
           fallback: none
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -746,7 +753,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Free runner disk for archive build
         run: |
@@ -783,13 +790,13 @@ jobs:
           fallback: cargo-install
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
 
       - name: Download ui-artifacts timing
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         continue-on-error: true
         with:
           name: ci-timings-ui-artifacts
@@ -799,7 +806,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -808,7 +815,7 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -979,7 +986,7 @@ jobs:
         run: date +%s%3N > "$RUNNER_TEMP/archive-upload-start-ms"
 
       - name: Upload nimbus tests archive
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nimbus-tests-archive
           path: |
@@ -1114,7 +1121,7 @@ jobs:
           PY
 
       - name: Upload nextest config
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nextest-config
           path: |
@@ -1124,7 +1131,7 @@ jobs:
           retention-days: 1
 
       - name: Upload nextest inventory
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nextest-inventory
           path: |
@@ -1135,7 +1142,7 @@ jobs:
 
       - name: Upload disk report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: disk-report
           path: target/disk-report.json
@@ -1151,7 +1158,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Free runner disk for nimbus-bin build
         run: |
@@ -1176,7 +1183,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -1185,7 +1192,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -1194,7 +1201,7 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -1213,7 +1220,7 @@ jobs:
         run: bash scripts/ci/disk-guard.sh enforce --label after-nimbus-bin --min-free-gib 20
 
       - name: Upload nimbus-bin binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nimbus-bin
           path: target/ci-archive/nimbus
@@ -1222,7 +1229,7 @@ jobs:
 
       - name: Upload nimbus-bin disk report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: disk-report-nimbus-bin
           path: target/disk-report.json
@@ -1238,7 +1245,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Free runner disk for release build
         run: |
@@ -1262,7 +1269,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -1271,7 +1278,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -1312,7 +1319,7 @@ jobs:
         run: bash scripts/ci/disk-guard.sh enforce --label after-linux-release-candidate --min-free-gib 10
 
       - name: Upload build-only release candidate
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux-release-candidate-${{ github.sha }}
           path: |
@@ -1341,10 +1348,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -1353,7 +1360,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -1362,13 +1369,13 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Download nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-tests-archive
           path: ${{ runner.temp }}/nimbus-tests-archive
 
       - name: Download nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nextest-config
           path: ${{ runner.temp }}/nextest-config
@@ -1383,9 +1390,9 @@ jobs:
           fallback: none
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -1430,7 +1437,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -1444,7 +1451,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -1453,7 +1460,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -1462,7 +1469,7 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -1491,10 +1498,10 @@ jobs:
           - provider: libsql
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -1503,7 +1510,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -1512,13 +1519,13 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Download nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-tests-archive
           path: ${{ runner.temp }}/nimbus-tests-archive
 
       - name: Download nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nextest-config
           path: ${{ runner.temp }}/nextest-config
@@ -1546,10 +1553,10 @@ jobs:
     needs: [archive]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -1558,7 +1565,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -1567,13 +1574,13 @@ jobs:
         run: find crates/nimbus-assets/embedded/packages -exec touch {} +
 
       - name: Download nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-tests-archive
           path: ${{ runner.temp }}/nimbus-tests-archive
 
       - name: Download nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nextest-config
           path: ${{ runner.temp }}/nextest-config
@@ -1619,16 +1626,16 @@ jobs:
             label: 4
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-tests-archive
           path: ${{ runner.temp }}/nimbus-tests-archive
 
       - name: Download nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nextest-config
           path: ${{ runner.temp }}/nextest-config
@@ -1658,7 +1665,7 @@ jobs:
 
       - name: Upload PPSC seed-farm evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ppsc-seed-farm-${{ matrix.label }}-of-4
           path: target/ppsc-seed-farm/shard-${{ matrix.shard-index }}-of-4
@@ -1673,7 +1680,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Verify Node support docs, release metadata, fixtures, and claims
         run: |
@@ -1716,7 +1723,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Free runner disk for Node compatibility evidence
         run: |
@@ -1739,7 +1746,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-bin binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-bin
           path: target/ci-archive
@@ -1748,7 +1755,7 @@ jobs:
         run: chmod +x target/ci-archive/nimbus
 
       - name: Set up Node.js 24 for package canaries
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: npm
@@ -1759,7 +1766,7 @@ jobs:
             tests/runtime/node/sdk-canaries/package-lock.json
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -1807,7 +1814,7 @@ jobs:
           esac
 
       - name: Upload Node compatibility reports
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: node-compat-reports-${{ matrix.preset }}-${{ matrix.lane }}
           path: target/node-compat
@@ -1835,7 +1842,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Free runner disk for Node compatibility evidence
         run: |
@@ -1858,7 +1865,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-bin binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-bin
           path: target/ci-archive
@@ -1867,7 +1874,7 @@ jobs:
         run: chmod +x target/ci-archive/nimbus
 
       - name: Set up Node.js ${{ matrix.node-version }} for oracle sample
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -1890,7 +1897,7 @@ jobs:
           esac
 
       - name: Upload Node compatibility reports
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: node-compat-reports-oracle-${{ matrix.lane }}
           path: target/node-compat
@@ -1909,10 +1916,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download Node compatibility reports
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: node-compat-reports-*
           path: target/node-compat
@@ -1949,7 +1956,7 @@ jobs:
     if: github.event_name != 'schedule'
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2159,15 +2166,15 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Record ui-artifacts start
         run: date +%s%3N > "$RUNNER_TEMP/ui-artifacts-start-ms"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -2210,7 +2217,7 @@ jobs:
           PY
 
       - name: Upload nimbus-ui artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ui-artifacts
           path: |
@@ -2220,7 +2227,7 @@ jobs:
           retention-days: 1
 
       - name: Upload embedded-packages artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -2228,7 +2235,7 @@ jobs:
           retention-days: 1
 
       - name: Upload ui-artifacts timing
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ci-timings-ui-artifacts
           path: target/ci-timings/ui-artifacts.json
@@ -2263,7 +2270,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2275,7 +2282,7 @@ jobs:
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
 
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -2284,7 +2291,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -2346,16 +2353,16 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download nimbus tests archive
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-tests-archive
           path: ${{ runner.temp }}/nimbus-tests-archive
 
       - name: Download nextest config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nextest-config
           path: ${{ runner.temp }}/nextest-config
@@ -2384,7 +2391,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2404,7 +2411,7 @@ jobs:
       # Makefile's UI_DIST_INDEX target stays satisfied and no rebuild
       # happens transitively.
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -2413,7 +2420,7 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -2451,7 +2458,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Rust with cache
         id: setup-rust
@@ -2465,9 +2472,9 @@ jobs:
       # `make build-ui` runs codegen + SPA build via the Makefile dependency
       # graph so the nimbus-server crate compiles regardless of matrix surface.
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install JS dependencies
@@ -2477,7 +2484,7 @@ jobs:
         run: make build-ui
 
       - name: Cache Node22 anchor snapshot
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: crates/nimbus-runtime/src/backends/v8/node22_anchor_snapshot.bin
           key: node22-anchor-snapshot-${{ steps.setup-rust.outputs.rust-target }}-pc-off-${{ steps.setup-rust.outputs.rusty-v8-tag }}-${{ steps.setup-rust.outputs.deno-tag }}-${{ hashFiles('crates/nimbus-runtime/src/runtime/bootstrap/**', 'crates/nimbus-runtime/src/bin/build_node22_anchor_snapshot.rs', 'crates/nimbus-runtime/build.rs', 'crates/nimbus-runtime/src/backends/v8/*.rs') }}
@@ -2499,12 +2506,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -2534,7 +2541,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The Node22 anchor snapshot blob itself needs no staging (it's
       # `include_bytes!`'d into nimbus-bin unconditionally at compile time —
@@ -2565,8 +2572,16 @@ jobs:
       # (Swatinem/rust-cache src/restore.ts), and target/ci-archive is not a
       # cargo profile directory, so the cleanup deletes every file in it,
       # including the downloaded nimbus binary.
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: |
+          channel="$(bash scripts/ci/rust-toolchain-channel.sh)"
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
       - name: Cache vendored deno checkout
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -2585,7 +2600,7 @@ jobs:
         run: cargo fetch --locked
 
       - name: Download nimbus-bin binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nimbus-bin
           path: target/ci-archive
@@ -2603,7 +2618,7 @@ jobs:
       # firebase, cloud-functions) can find the manifest instead of panicking
       # at crates/nimbus-assets/src/js_packages.rs:84.
       - name: Download embedded package payload
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: embedded-packages
           path: crates/nimbus-assets/embedded/packages
@@ -2622,7 +2637,7 @@ jobs:
       # instead of a genuine smoke result. Stage it the same way
       # nimbus-bin-build and node-dbus-integration already do.
       - name: Download nimbus-ui artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ui-artifacts
           path: packages/nimbus-ui
@@ -2631,9 +2646,9 @@ jobs:
         run: find packages/nimbus-ui/.nimbus packages/nimbus-ui/dist -exec touch {} +
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -2647,7 +2662,7 @@ jobs:
 
       - name: Upload examples-verification reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: examples-verification-reports
           path: |
@@ -2664,7 +2679,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check helper script syntax
         run: |
@@ -2802,7 +2817,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Homebrew ships preinstalled on the runner image but is pinned to
       # whatever release that image snapshot carried, and it is not on PATH.
