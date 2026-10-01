@@ -11,8 +11,6 @@ on:
       - "crates/nimbus-sandbox/tests/krun_linux_egress.rs"
       - "crates/nimbus-egress/**"
       - "crates/nimbus-proxy/**"
-      - "docs/private/plans/nimbus-sandbox-egress-launch-hardening-plan.md"
-      - "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/**"
       - "scripts/verify-nimbus-sandbox-egress-launch-hardening.sh"
   push:
     branches:
@@ -26,8 +24,6 @@ on:
       - "crates/nimbus-sandbox/tests/krun_linux_egress.rs"
       - "crates/nimbus-egress/**"
       - "crates/nimbus-proxy/**"
-      - "docs/private/plans/nimbus-sandbox-egress-launch-hardening-plan.md"
-      - "docs/private/plans/proof/nimbus-sandbox-egress-launch-hardening/**"
       - "scripts/verify-nimbus-sandbox-egress-launch-hardening.sh"
   workflow_dispatch:
 
