@@ -68,16 +68,9 @@ Copyright 2020-2024 The Apache Software Foundation
 This product includes software developed at
 The Apache Software Foundation (http://www.apache.org/).
 
-Nimbus uses a locally patched copy at third_party/object_store-0.14.0 while
-upstream dependency updates are pending. The complete upstream license and
-notice are retained in that directory.
-================================================================================
-s3s — https://github.com/Nugine/s3s
-Licensed under the Apache License, Version 2.0; a copy is retained at
-third_party/s3s-0.14.0/LICENSE.
-
-Nimbus uses a locally patched copy at third_party/s3s-0.14.0 while upstream
-dependency updates are pending.
+Nimbus uses a locally patched copy at third_party/object_store-0.14.2. The
+patch removes the client option that disabled TLS certificate verification.
+The complete upstream license and notice are retained in that directory.
 ================================================================================
 libSQL — https://github.com/tursodatabase/libsql
 Copyright 2023 the sqld authors

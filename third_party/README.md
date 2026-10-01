@@ -3,24 +3,29 @@
 This directory contains local crates.io patches used only when an upstream crate
 has no released version carrying a required fix.
 
-## object_store and s3s
+## object_store
 
-The `object_store-0.14.0` and `s3s-0.14.0` patches copy the crates.io releases.
-Both patches change the `quick-xml` dependency floor and the `crc-fast` pin.
-Nimbus requires `quick-xml >= 0.41.0` for RUSTSEC-2026-0194. The upstream
-releases still require `quick-xml 0.40.x`.
+The `object_store-0.14.2` patch copies its crates.io release. Nimbus removes
+only the client option that disabled TLS certificate verification. Nimbus has
+no caller for that option. The client continues to verify certificates through
+the system trust store or explicit roots registered with
+`ClientOptions::with_root_certificate`.
 
-The `object_store-0.14.0` patch also removes the client option that disabled
-TLS certificate verification. Nimbus has no caller for that option. The client
-continues to verify certificates through the system trust store or explicit
-roots registered with `ClientOptions::with_root_certificate`.
+The patch changes three files:
 
-Nimbus pins `crc-fast` at version `1.6.0`. Newer `crc-fast` 1.x releases
-require yanked `spin` version `0.10.0`. Version `1.6.0` provides the same CRC
-digest API that both patches use. Remove the pin after `crc-fast` drops the
-yanked dependency. Remove `s3s` after upstream supports the fixed `quick-xml`
-version. Replace the `object_store` patch only with a release that also omits
-the certificate verification bypass.
+- `src/client/mod.rs` removes the `AllowInvalidCertificates` configuration key,
+  the `with_allow_invalid_certificates` builder method, and the
+  `danger_accept_invalid_certs` call. A unit test proves that the HTTP client
+  rejects the `allow_invalid_certificates` key.
+- `src/aws/builder.rs` adds a unit test. The test proves that the S3 builder
+  rejects the `allow_invalid_certificates` and `aws_allow_invalid_certificates`
+  keys.
+- `src/aws/mod.rs` removes the bypass from the SSE-C integration test.
+
+The release requires `quick-xml` 0.41, which meets the RUSTSEC-2026-0194
+floor. It accepts current `crc-fast` 1.x releases. The manifests need no
+change. Replace this patch only with a release that also omits the certificate
+verification bypass.
 
 ## libsql
 
