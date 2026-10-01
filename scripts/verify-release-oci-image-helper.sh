@@ -208,13 +208,7 @@ if grep -F -- "--privileged" "${workflow}" >/dev/null; then
 fi
 
 for current_guidance in \
-  "${repo_root}/README.md" \
-  "${repo_root}/docs/private/operating/container-image.md" \
-  "${repo_root}/docs/private/operating/encryption.md" \
-  "${repo_root}/docs/private/plans/windows-machine-support-plan.md" \
-  "${repo_root}/docs/private/plans/research/bundle-distribution-from-object-storage.md" \
-  "${repo_root}/docs/private/plans/research/runtime-file-storage-surface.md" \
-  "${repo_root}/docs/private/plans/research/nimbus-agent-prompt.md"; do
+  "${repo_root}/README.md"; do
   assert_no_stale_nimbus_serve_command "${current_guidance}"
   assert_not_contains "${current_guidance}" "--privileged"
   assert_not_contains "${current_guidance}" "ghcr.io/nimbus/nimbus:latest"

@@ -19,8 +19,8 @@ PLAN_ARCHIVED="docs/private/plans/archive/node-default-runtime-support-hardening
 PROOF_DIR="docs/private/plans/proof/node-default-runtime-support-hardening"
 BASELINE_PROOF="${PROOF_DIR}/nds0-baseline.md"
 CONTROL_PROOF="${PROOF_DIR}/nds0-control-plane.md"
-POSTURE_JSON="docs/private/architecture/runtime/node-default-support-posture.json"
-POSTURE_MD="docs/private/architecture/runtime/node-default-support-posture.md"
+POSTURE_JSON="tests/runtime/node/compat/node-default-support-posture.json"
+POSTURE_MD="tests/runtime/node/compat/node-default-support-posture.md"
 CANARY_REGISTRY="tests/runtime/node/canary-registry.json"
 STATUS_SUMMARY="tests/runtime/node/compat/node-compat-evidence/latest/status-summary.md"
 
@@ -527,15 +527,15 @@ else
 fi
 
 step 23 "Shim/emulation inventory"
-if [ -f docs/private/architecture/runtime/node-isolate-shim-inventory.json ] ||
-   [ -f docs/private/architecture/runtime/node-isolate-shim-inventory.md ]; then
+if [ -f tests/runtime/node/compat/node-isolate-shim-inventory.json ] ||
+   [ -f tests/runtime/node/compat/node-isolate-shim-inventory.md ]; then
   pass "Shim/emulation inventory exists"
 else
   fail "Shim/emulation inventory missing" "Expected inventory covering nimbus/nimbus and nimbus/deno"
 fi
 
 step 24 "User-facing docs disclose capability classes"
-if has 'native|shimmed|emulated|test-harness-only|diagnostic|unsupported' tests/runtime/node/published/nodejs docs/private/architecture/runtime 2>/dev/null; then
+if has 'native|shimmed|emulated|test-harness-only|diagnostic|unsupported' tests/runtime/node/published/nodejs tests/runtime/node/compat 2>/dev/null; then
   pass "User-facing docs disclose capability classes"
 else
   fail "Capability class docs missing" "Expected native/shimmed/emulated/diagnostic/unsupported disclosure"

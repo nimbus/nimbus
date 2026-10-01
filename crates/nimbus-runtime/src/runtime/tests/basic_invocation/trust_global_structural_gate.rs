@@ -18,11 +18,11 @@
 //! enumerates the post-bootstrap-and-post-bundle-load realm's own globals via
 //! `Reflect.ownKeys(globalThis)`, and classifies every `__nimbus*`-prefixed
 //! name (plus the explicit non-prefixed allowlist entry, `Deno` — Finding 1)
-//! against `docs/private/plans/proof/runtime-guest-trust-globals/
-//! structural-gate-allowlist.json`. A future unhardened trust global —
-//! whether newly added or accidentally un-hardened by an edit to an existing
-//! one — either (a) is not in the fixture at all, and the gate fails naming
-//! the offending global and lane, or (b) is in the fixture's
+//! against the sibling fixture `structural-gate-allowlist.json`. A future
+//! unhardened trust global — whether newly added or accidentally un-hardened
+//! by an edit to an existing one — either (a) is not in the fixture at all,
+//! and the gate fails naming the offending global and lane, or (b) is in the
+//! fixture's
 //! `trust_hardened` bucket but its live descriptor is not
 //! `{writable:false, configurable:false}`, and the gate fails naming the
 //! global, the lane, and the observed descriptor. Adding a new hardened
@@ -44,18 +44,13 @@ use super::*;
 /// `CARGO_MANIFEST_DIR` — the runtime env var Cargo/nextest set for the test
 /// process, NOT the compile-time `env!` macro (the repo's test-taxonomy F2
 /// rule forbids compile-time Cargo env macros in the test tree; see
-/// `scripts/test-taxonomy.py`). `crates/nimbus-runtime`'s parent's parent is
-/// the repo root, matching the `repo_root()` helper the node canary tests use.
-/// The committed, force-tracked fixture stays the single source of truth.
+/// `scripts/test-taxonomy.py`). The committed fixture sits beside this module
+/// and stays the single source of truth.
 fn fixture_path() -> std::path::PathBuf {
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
         .map(std::path::PathBuf::from)
         .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-runtime tests");
-    manifest_dir
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crate manifest dir should have a repo root")
-        .join("docs/private/plans/proof/runtime-guest-trust-globals/structural-gate-allowlist.json")
+    manifest_dir.join("src/runtime/tests/basic_invocation/structural-gate-allowlist.json")
 }
 
 /// Shared JS: enumerates every guest-reachable trust-relevant global on
@@ -192,7 +187,7 @@ fn assert_structural_gate(lane: &str, inventory: &BTreeMap<String, GlobalDescrip
                 "structural gate FAILED: guest-reachable global '{name}' on lane '{lane}' is not \
                  classified in structural-gate-allowlist.json (observed writable={}, \
                  configurable={}). A new trust global must be a deliberate allowlist edit \
-                 (docs/private/plans/proof/runtime-guest-trust-globals/structural-gate-allowlist.json \
+                 (src/runtime/tests/basic_invocation/structural-gate-allowlist.json \
                  + classification-ledger.md's \"Structural-test allowlist\" section), not a silent \
                  addition.",
                 descriptor.writable, descriptor.configurable

@@ -53,7 +53,7 @@
       "claimed_capability": "Native Rust and V8-backed Node extension operations provide the low-level isolate implementation for Node builtins that are promoted into the V8-isolate-required surface.",
       "capability_limits": "Native isolate support remains bounded by Nimbus runtime permission profiles and by the generated default-support posture; it is not a grant of ambient host process, filesystem, network, or native-addon authority.",
       "evidence_paths": [
-        "docs/architecture/runtime/node-default-support-posture.json",
+        "tests/runtime/node/compat/node-default-support-posture.json",
         "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
         "nimbus/deno:ext/node/lib.rs",
         "nimbus/deno:ext/node/ops",
@@ -98,7 +98,7 @@
       "claimed_capability": "Host-adjacent Node state is emulated inside each isolate so fixture-visible semantics can pass without mutating host-global process state.",
       "capability_limits": "Emulation is per-isolate and capability-scoped; it must not expose host cwd mutation, process exit, OS signals, ambient subprocesses, or unbounded filesystem access.",
       "evidence_paths": [
-        "docs/architecture/runtime/node-default-support-posture.json",
+        "tests/runtime/node/compat/node-default-support-posture.json",
         "nimbus/deno:ext/node/lib.rs",
         "nimbus/deno:ext/node/polyfills/internal/http2/util.ts",
         "nimbus/deno:ext/node/polyfills/internal/stream_base_commons.ts",
@@ -124,7 +124,7 @@
         "crates/nimbus-runtime/src/runtime/bootstrap/ops/test_runtime",
         "crates/nimbus-runtime/src/runtime/tests/node/cases",
         "tests/runtime/node/classifications",
-        "docs/architecture/runtime/node-default-support-posture.json"
+        "tests/runtime/node/compat/node-default-support-posture.json"
       ]
     },
     {
@@ -168,7 +168,7 @@
       "claimed_capability": "Unsupported entries remain visible as measured boundaries in the generated posture and lane classification catalogs.",
       "capability_limits": "These entries are excluded from V8-isolate-required support claims until an owner lands fixture-backed native, shimmed, emulated, or service-routed behavior.",
       "evidence_paths": [
-        "docs/architecture/runtime/node-default-support-posture.json",
+        "tests/runtime/node/compat/node-default-support-posture.json",
         "tests/runtime/node/classifications/node22.json",
         "tests/runtime/node/classifications/node24.json",
         "tests/runtime/node/classifications/node26.json"
