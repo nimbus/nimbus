@@ -33,7 +33,10 @@ aes-gcm-siv.workspace = true
 deadpool-postgres = { workspace = true, optional = true }
 futures.workspace = true
 hex.workspace = true
-hyper = { workspace = true, features = [
+# libsql 0.9.30's `Builder::connector` requires the stream to implement
+# hyper 0.14's `Connection` trait, so the libsql transport stays on 0.14
+# until libsql moves to hyper 1.
+hyper = { version = "0.14.32", features = [
     "client",
     "server",
     "http1",
