@@ -149,7 +149,12 @@ jobs:
           shared-key: release-aarch64-unknown-linux-gnu-ptrcomp-no-bin-v1
           save-cache: always
           linux-linker: default
+          consume-prebuilt-v8: ptrcomp
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Verify prebuilt V8 consumption pairing (ptrcomp)
+        run: bash scripts/ci/verify-prebuilt-v8-consumption.sh ptrcomp
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
@@ -308,7 +313,15 @@ jobs:
           shared-key: release-${{ matrix.target }}-${{ matrix.runtime_feature_mode }}-no-bin-v1
           save-cache: always
           linux-linker: default
+          # Every matrix entry builds ptrcomp. A restored non-ptrcomp entry
+          # fails closed here until its assets are pinned.
+          consume-prebuilt-v8: ptrcomp
+          github-token: ${{ github.token }}
           googlesource-cookie: ${{ secrets.GOOGLESOURCE_COOKIE }}
+
+      - name: Verify prebuilt V8 consumption pairing (ptrcomp)
+        shell: bash
+        run: bash scripts/ci/verify-prebuilt-v8-consumption.sh ptrcomp
 
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8

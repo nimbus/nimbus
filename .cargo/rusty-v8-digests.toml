@@ -12,8 +12,17 @@ tag = "v150.4.0-nimbus.3"
 # git+https://github.com/<repo>?tag=<tag>#<commit>.
 commit = "5fbb8b4986ba8b55b4ab77100db4304a3b41d9ed"
 
+# One release and one ptrcomp pair per release.yml build target.
 [assets]
 "librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "be7b19d1d234b434f7abb5de6bf6df592dbb0909f5f2002b8266117533b7d467"
 "librusty_v8_ptrcomp_simdutf_release_x86_64-unknown-linux-gnu.a.gz" = "653acda8e1699d1a7e0e93b5b5fe9bc5d5ffb17b0442d2d23a18cddd315eb24a"
 "src_binding_simdutf_release_x86_64-unknown-linux-gnu.rs" = "7727826ae479bdb645e807239fb12d1f8e2e23de7a6cf16f5ee592690d1d8506"
 "src_binding_ptrcomp_simdutf_release_x86_64-unknown-linux-gnu.rs" = "7727826ae479bdb645e807239fb12d1f8e2e23de7a6cf16f5ee592690d1d8506"
+"librusty_v8_simdutf_release_aarch64-unknown-linux-gnu.a.gz" = "82e50f09b508a821593204d96fc1d6168cab755937b508e008077ce9486ea4dc"
+"librusty_v8_ptrcomp_simdutf_release_aarch64-unknown-linux-gnu.a.gz" = "7236461f2282e145d315ec7389596998e640e3061ab62a9003830a276e66bd95"
+"src_binding_simdutf_release_aarch64-unknown-linux-gnu.rs" = "7727826ae479bdb645e807239fb12d1f8e2e23de7a6cf16f5ee592690d1d8506"
+"src_binding_ptrcomp_simdutf_release_aarch64-unknown-linux-gnu.rs" = "7727826ae479bdb645e807239fb12d1f8e2e23de7a6cf16f5ee592690d1d8506"
+"librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz" = "ed5abfe564c8e125f5d28cf691d80bf136c7a7ddc5377b9c1006c482d4ec1e3e"
+"librusty_v8_ptrcomp_simdutf_release_aarch64-apple-darwin.a.gz" = "51fae2c891af48866eff9f72a605a961ca096efce612a45ee9a4b5dc9ba96b30"
+"src_binding_simdutf_release_aarch64-apple-darwin.rs" = "ca5adf0cf89c9a70ad460ae73648b2fe89b74aa113b3cb7f757b6a02b758394f"
+"src_binding_ptrcomp_simdutf_release_aarch64-apple-darwin.rs" = "ca5adf0cf89c9a70ad460ae73648b2fe89b74aa113b3cb7f757b6a02b758394f"
