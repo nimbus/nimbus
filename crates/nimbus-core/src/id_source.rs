@@ -65,7 +65,7 @@ impl IdSource for SeededIdSource {
     fn next_document_id(&self) -> DocumentId {
         let counter = self
             .next_document_counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |counter| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |counter| {
                 counter.checked_add(1)
             })
             .expect("seeded id source counter should not be exhausted");
@@ -77,7 +77,7 @@ impl IdSource for SeededIdSource {
     fn next_table_id(&self) -> TableId {
         let counter = self
             .next_table_counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |counter| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |counter| {
                 counter.checked_add(1)
             })
             .expect("seeded table id source counter should not be exhausted");
@@ -89,7 +89,7 @@ impl IdSource for SeededIdSource {
     fn next_committer_owner_id(&self) -> String {
         let counter = self
             .next_committer_owner_counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |counter| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |counter| {
                 counter.checked_add(1)
             })
             .expect("seeded committer-owner id source counter should not be exhausted");

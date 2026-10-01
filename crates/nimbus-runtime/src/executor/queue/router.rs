@@ -258,7 +258,7 @@ impl RuntimeWorkerRouter {
         let worker = &self.workers[assignment.worker_id];
         let update = worker
             .load
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 current.checked_sub(1)
             });
         debug_assert!(update.is_ok(), "worker load rollback should not underflow");
@@ -399,7 +399,7 @@ impl RuntimeWorkerRouter {
         let worker = &self.workers[worker_id];
         let update = worker
             .load
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 current.checked_sub(1)
             });
         debug_assert!(update.is_ok(), "worker load should not underflow");
