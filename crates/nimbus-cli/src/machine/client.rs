@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use hyper::body::HttpBody as _;
-use hyper::{Body, Request, StatusCode};
+use http_body_util::{BodyExt as _, Full};
+use hyper::body::Bytes;
+use hyper::{Request, StatusCode};
+use hyper_util::rt::TokioIo;
 use nimbus::{Error, SandboxId, TenantId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -404,8 +406,7 @@ async fn send_machine_api_request<T>(
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let (mut sender, connection) = hyper::client::conn::Builder::new()
-        .handshake(stream)
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
         .map_err(|error| {
             Error::Internal(format!(
@@ -429,13 +430,13 @@ where
             request_builder = request_builder
                 .header("content-type", "application/json")
                 .header("content-length", bytes.len());
-            Body::from(bytes.to_vec())
+            Full::new(Bytes::copy_from_slice(bytes))
         }
         None if method == "POST" => {
             request_builder = request_builder.header("content-length", 0);
-            Body::empty()
+            Full::new(Bytes::new())
         }
-        None => Body::empty(),
+        None => Full::new(Bytes::new()),
     };
     let request = request_builder.body(request_body).map_err(|error| {
         Error::Internal(format!(
@@ -466,14 +467,17 @@ where
     let body_bytes = tokio::time::timeout(io_timeout, async {
         let mut body = response.into_body();
         let mut body_bytes = Vec::new();
-        while let Some(chunk) = body.data().await {
-            let chunk = chunk.map_err(|error| {
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|error| {
                 Error::Internal(format!(
                     "machine API response from {}{} closed after the connection ended before the declared response body completed: {error}",
                     socket_path.display(),
                     path
                 ))
             })?;
+            let Ok(chunk) = frame.into_data() else {
+                continue;
+            };
             if max_response_body_bytes.is_some_and(|limit| {
                 chunk
                     .len()

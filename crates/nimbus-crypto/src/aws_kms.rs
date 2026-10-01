@@ -356,12 +356,14 @@ where
 mod tests {
     use std::collections::VecDeque;
     use std::convert::Infallible;
-    use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
 
-    use hyper::body::to_bytes;
-    use hyper::service::{make_service_fn, service_fn};
-    use hyper::{Body, Request, Response, Server, StatusCode};
+    use http_body_util::{BodyExt as _, Full};
+    use hyper::body::{Bytes, Incoming};
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper::{Request, Response, StatusCode};
+    use hyper_util::rt::TokioIo;
     use nimbus_core::TenantId;
     use nimbus_core::base64_encode_standard;
     use serde_json::{Value, json};
@@ -393,73 +395,78 @@ mod tests {
             let requests = Arc::new(Mutex::new(Vec::new()));
             let responses = Arc::new(Mutex::new(VecDeque::from(responses)));
 
-            let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("listener should bind");
             let addr = listener.local_addr().expect("listener should have address");
 
             let requests_for_server = Arc::clone(&requests);
             let responses_for_server = Arc::clone(&responses);
             tokio::spawn(async move {
-                let make_service = make_service_fn(move |_| {
+                loop {
+                    let (stream, _) = listener
+                        .accept()
+                        .await
+                        .expect("kms test listener should accept");
                     let requests = Arc::clone(&requests_for_server);
                     let responses = Arc::clone(&responses_for_server);
-                    async move {
-                        Ok::<_, Infallible>(service_fn(move |request: Request<Body>| {
-                            let requests = Arc::clone(&requests);
-                            let responses = Arc::clone(&responses);
-                            async move {
-                                let target = request
-                                    .headers()
-                                    .get("x-amz-target")
-                                    .and_then(|value| value.to_str().ok())
-                                    .unwrap_or_default()
-                                    .to_string();
-                                let body = to_bytes(request.into_body()).await.unwrap();
-                                let body_json: Value = serde_json::from_slice(&body)
-                                    .expect("kms request should be json");
-                                requests.lock().unwrap().push(RequestRecord {
-                                    target: target.clone(),
-                                    body: body_json,
-                                });
+                    let service = service_fn(move |request: Request<Incoming>| {
+                        let requests = Arc::clone(&requests);
+                        let responses = Arc::clone(&responses);
+                        async move {
+                            let target = request
+                                .headers()
+                                .get("x-amz-target")
+                                .and_then(|value| value.to_str().ok())
+                                .unwrap_or_default()
+                                .to_string();
+                            let body = request.into_body().collect().await.unwrap().to_bytes();
+                            let body_json: Value =
+                                serde_json::from_slice(&body).expect("kms request should be json");
+                            requests.lock().unwrap().push(RequestRecord {
+                                target: target.clone(),
+                                body: body_json,
+                            });
 
-                                let response = responses
-                                    .lock()
-                                    .unwrap()
-                                    .pop_front()
-                                    .expect("response queue should be populated");
-                                if target != response.target {
-                                    let body = Body::from(format!(
-                                        "unexpected target {target}, expected {}",
-                                        response.target
-                                    ));
-                                    return Ok::<_, Infallible>(
-                                        Response::builder()
-                                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                            .body(body)
-                                            .unwrap(),
-                                    );
-                                }
-
-                                Ok::<_, Infallible>(
+                            let response = responses
+                                .lock()
+                                .unwrap()
+                                .pop_front()
+                                .expect("response queue should be populated");
+                            if target != response.target {
+                                let body = Full::new(Bytes::from(format!(
+                                    "unexpected target {target}, expected {}",
+                                    response.target
+                                )));
+                                return Ok::<_, Infallible>(
                                     Response::builder()
-                                        .status(response.status)
-                                        .header("content-type", "application/x-amz-json-1.1")
-                                        .header("x-amzn-RequestId", "test-request-id")
-                                        .body(Body::from(
-                                            serde_json::to_vec(&response.body)
-                                                .expect("kms response should serialize"),
-                                        ))
+                                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                        .body(body)
                                         .unwrap(),
-                                )
+                                );
                             }
-                        }))
-                    }
-                });
 
-                Server::from_tcp(listener)
-                    .expect("hyper server should start")
-                    .serve(make_service)
-                    .await
-                    .expect("hyper server should serve");
+                            Ok::<_, Infallible>(
+                                Response::builder()
+                                    .status(response.status)
+                                    .header("content-type", "application/x-amz-json-1.1")
+                                    .header("x-amzn-RequestId", "test-request-id")
+                                    .body(Full::new(Bytes::from(
+                                        serde_json::to_vec(&response.body)
+                                            .expect("kms response should serialize"),
+                                    )))
+                                    .unwrap(),
+                            )
+                        }
+                    });
+                    // The SDK client can close a connection at any time, so a
+                    // per-connection error is not a test failure.
+                    tokio::spawn(async move {
+                        let _ = http1::Builder::new()
+                            .serve_connection(TokioIo::new(stream), service)
+                            .await;
+                    });
+                }
             });
 
             Self {

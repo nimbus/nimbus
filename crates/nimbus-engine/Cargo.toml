@@ -54,7 +54,6 @@ zeroize.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
-hyper.workspace = true
 libc.workspace = true
 libsql.workspace = true
 loom = "0.7"
