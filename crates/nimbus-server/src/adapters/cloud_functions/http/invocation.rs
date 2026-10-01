@@ -11,9 +11,9 @@ use serde_json::Value;
 
 use super::response::build_http_response;
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
-use crate::execution::invocations::next_runtime_server_request_id;
 use crate::state::AppError;
 use nimbus_compute::deploy::ComputeCloudFunctionsRuntimeInvoker;
+use nimbus_compute::execution::invocations::next_runtime_server_request_id;
 use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::TenantIsolationMode;

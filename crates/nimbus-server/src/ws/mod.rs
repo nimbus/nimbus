@@ -7,7 +7,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 
 use crate::state::{AppError, AppState};
-use crate::tenant::TenantIsolationContext;
+use nimbus_tenant::TenantIsolationContext;
 
 mod negotiation;
 mod socket;

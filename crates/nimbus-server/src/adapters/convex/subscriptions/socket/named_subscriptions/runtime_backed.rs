@@ -1,4 +1,4 @@
-use crate::execution::subscriptions::RuntimeSubscriptionHandle;
+use nimbus_compute::execution::subscriptions::RuntimeSubscriptionHandle;
 
 use super::*;
 use nimbus_auth::normalize_principal_context;

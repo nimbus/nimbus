@@ -178,17 +178,12 @@ else
 fi
 
 # --- 9. NSR3 node-agent invariants --------------------------------------------
-C="9. NSR3 node agent keeps nimbus-node server-free and has node state tests"
+C="9. NSR3 nimbus-node stays server-free"
 if ! grep -q 'nimbus-server' "${NODE_CARGO}" \
-  && ! grep -rq 'nimbus_server' "${NODE_SRC}" 2>/dev/null \
-  && crates_grep 'NodeAgent' \
-  && crates_grep 'node_agent_reconciles_multiple_workloads_idempotently' \
-  && crates_grep 'node_state_transition_assignment_disposition' \
-  && crates_grep 'node_agent_reports_capabilities' \
-  && crates_grep 'node_agent_rejects_unauthenticated_transport'; then
+  && ! grep -rq 'nimbus_server' "${NODE_SRC}" 2>/dev/null; then
   pass "${C}"
 else
-  fail "${C}" "nimbus-node dependency invariant failed or node-agent capability/auth tests missing"
+  fail "${C}" "nimbus-node dependency invariant failed"
 fi
 
 # --- 10. NSR4 typed runner/systemd launch -------------------------------------

@@ -75,7 +75,7 @@ async fn convex_mutation_dispatches_existing_document_operations() {
             async move {
                 service
                     .list_documents_async(
-                        crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                        nimbus_system::system_tenant_id().expect("system id should parse"),
                         TableName::new("tables").expect("system table name should parse"),
                     )
                     .await

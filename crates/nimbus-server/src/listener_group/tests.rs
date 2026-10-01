@@ -139,7 +139,7 @@ impl FaultInjector for ProjectionFault {
         tenant_id: &nimbus_core::TenantId,
         records: &[TenantEventRecord],
     ) -> nimbus_core::Result<()> {
-        if !crate::system_tenant::is_system_tenant_id(tenant_id)
+        if !nimbus_system::is_system_tenant_id(tenant_id)
             || !records.iter().any(is_port_listener_projection_record)
         {
             return Ok(());
@@ -402,7 +402,7 @@ async fn listener_projection_failure_keeps_every_listener_active_and_retries() {
         !server.is_finished(),
         "a projection failure must not terminate the listener group"
     );
-    let system_tenant = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let system_tenant = nimbus_system::system_tenant_id().expect("system id should parse");
     timeout(Duration::from_secs(5), async {
         loop {
             let listeners = fixture

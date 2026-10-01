@@ -1,5 +1,5 @@
 use super::*;
-use crate::execution::invocations::{
+use nimbus_compute::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_egress_gateway,
     invoke_runtime_bundle_on_worker_with_egress_gateway,
 };

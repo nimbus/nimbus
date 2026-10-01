@@ -121,7 +121,7 @@ async fn list_system_documents(
     table: &str,
     report: &mut TenantIsolationDriftReport,
 ) -> Result<Vec<Document>> {
-    let system_tenant = crate::system_tenant::system_tenant_id()?;
+    let system_tenant = nimbus_system::system_tenant_id()?;
     let table_name = TableName::new(table.to_owned())?;
     match engine.list_documents_async(system_tenant, table_name).await {
         Ok(documents) => Ok(documents),
@@ -1103,7 +1103,7 @@ fn validate_observed_manifests(
 }
 
 fn validate_route_metadata(route_documents: &[Document], report: &mut TenantIsolationDriftReport) {
-    let expected = crate::system_tenant::route_inventory()
+    let expected = nimbus_system::route_inventory()
         .into_iter()
         .map(|route| (route.document_id(), route))
         .collect::<BTreeMap<_, _>>();
@@ -1421,9 +1421,9 @@ mod tests {
             NonZeroU16::new(endpoint.address.port()).expect("non-zero port"),
         )
         .expect("bound endpoint should validate");
-        let listener = crate::system_tenant::SystemPortListenerObservation::new(
+        let listener = nimbus_system::SystemPortListenerObservation::new(
             "sandbox-ingress",
-            crate::system_tenant::endpoint_protocol(planned_listener.binding().protocol),
+            nimbus_system::endpoint_protocol(planned_listener.binding().protocol),
             planned_listener.listener_id().clone(),
             planned_listener.port_lease().clone(),
             bound_endpoint,
@@ -1437,13 +1437,13 @@ mod tests {
             plan.generation(),
             endpoint.clone(),
         );
-        let route = crate::system_tenant::SystemPublishedEndpointObservation::new(
+        let route = nimbus_system::SystemPublishedEndpointObservation::new(
             IngressRouteId::for_published_endpoint(endpoint_handle.endpoint_id()),
             endpoint_handle,
             listener,
         )
         .expect("endpoint observation should validate");
-        let service = crate::system_tenant::SystemServiceConnectivityObservation::new(
+        let service = nimbus_system::SystemServiceConnectivityObservation::new(
             &SandboxSpec::new(
                 tenant_id.clone(),
                 SandboxOwnerSpec::service("db"),
@@ -1461,7 +1461,7 @@ mod tests {
             [route],
         )
         .expect("service observation should validate");
-        crate::system_tenant::record_service_connectivity_observation_async(engine, &service)
+        nimbus_system::record_service_connectivity_observation_async(engine, &service)
             .await
             .expect("typed service connectivity should record");
     }
@@ -1490,7 +1490,7 @@ mod tests {
     async fn tenant_isolation_drift_scanner_accepts_clean_projection() {
         let temp = tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-        crate::system_tenant::prepare_system_tenant_async(&engine, None)
+        nimbus_system::prepare_system_tenant_async(&engine, None)
             .await
             .expect("system tenant should prepare");
         let state_root = temp.path().join("sandbox-state");
@@ -1554,7 +1554,7 @@ mod tests {
         );
 
         let system_tenant =
-            crate::system_tenant::system_tenant_id().expect("system tenant identity should parse");
+            nimbus_system::system_tenant_id().expect("system tenant identity should parse");
         let port_table = TableName::new("ports").expect("ports table should parse");
         let mut ports = engine
             .list_documents_async(system_tenant.clone(), port_table.clone())
@@ -1666,7 +1666,7 @@ mod tests {
     async fn tenant_isolation_drift_scanner_does_not_treat_standalone_sandboxes_as_services() {
         let temp = tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-        crate::system_tenant::prepare_system_tenant_async(&engine, None)
+        nimbus_system::prepare_system_tenant_async(&engine, None)
             .await
             .expect("system tenant should prepare");
         let state_root = temp.path().join("sandbox-state");
@@ -1721,7 +1721,7 @@ mod tests {
     async fn tenant_isolation_drift_scanner_reports_malformed_state_without_mutating() {
         let temp = tempdir().expect("tempdir should create");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-        crate::system_tenant::prepare_system_tenant_async(&engine, None)
+        nimbus_system::prepare_system_tenant_async(&engine, None)
             .await
             .expect("system tenant should prepare");
         let state_root = temp.path().join("sandbox-state");
@@ -1767,7 +1767,7 @@ mod tests {
 
         let routes = engine
             .list_documents_async(
-                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_system::system_tenant_id().expect("system id should parse"),
                 TableName::new("routes").expect("table should parse"),
             )
             .await
@@ -1880,7 +1880,7 @@ mod tests {
         let provider_id = NetworkProviderId::for_registration_key("orphan-provider");
         engine
             .insert_document_async_with_id(
-                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_system::system_tenant_id().expect("system id should parse"),
                 TableName::new("services").expect("table should parse"),
                 DocumentId::from_key("service:tenant-a:db").expect("document id should parse"),
                 serde_json::from_value(json!({
@@ -1912,8 +1912,7 @@ mod tests {
     }
 
     async fn insert_bad_port_document(engine: &Arc<Engine>) {
-        let system_tenant =
-            crate::system_tenant::system_tenant_id().expect("system id should parse");
+        let system_tenant = nimbus_system::system_tenant_id().expect("system id should parse");
         let table = TableName::new("ports").expect("table should parse");
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let orphan_listener =
@@ -1964,7 +1963,7 @@ mod tests {
     async fn corrupt_health_route(engine: &Arc<Engine>) {
         engine
             .update_document_async(
-                crate::system_tenant::system_tenant_id().expect("system id should parse"),
+                nimbus_system::system_tenant_id().expect("system id should parse"),
                 TableName::new("routes").expect("table should parse"),
                 health_route_document_id(),
                 serde_json::from_value(json!({
@@ -1981,7 +1980,7 @@ mod tests {
     }
 
     fn health_route_document_id() -> DocumentId {
-        let route = crate::system_tenant::route_inventory()
+        let route = nimbus_system::route_inventory()
             .into_iter()
             .find(|route| route.method == "GET" && route.path == "/health")
             .expect("health route should be present in system route inventory");

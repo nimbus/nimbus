@@ -10,7 +10,7 @@ use super::super::authz::{
 };
 use super::super::parse_user_tenant_id;
 use crate::state::{AppError, AppState};
-use crate::tenant::TenantIsolationContext;
+use nimbus_tenant::TenantIsolationContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::http) enum SandboxAction {

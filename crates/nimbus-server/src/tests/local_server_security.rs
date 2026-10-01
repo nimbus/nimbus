@@ -673,7 +673,7 @@ async fn system_tenant_convex_routes_use_system_registry_not_application_registr
     let application_registry = convex_registry(json!([query_function("notes:list", "notes")]));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    crate::system_tenant::prepare_system_tenant_async(&service, None)
+    nimbus_system::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
     let server = ServerFixture::start(
@@ -741,7 +741,7 @@ async fn system_tenant_convex_routes_require_local_admin_auth_when_configured() 
     let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    crate::system_tenant::prepare_system_tenant_async(&service, None)
+    nimbus_system::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
     let server = ServerFixture::start(
@@ -824,7 +824,7 @@ export {};
     let fixture = EngineFixture::new(|path| Engine::new(path));
     fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
-    crate::system_tenant::prepare_system_tenant_async(&service, None)
+    nimbus_system::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare");
     let server = ServerFixture::start(

@@ -21,7 +21,7 @@ pub(crate) async fn list_tenants(
     Ok(Json(TenantListResponse {
         tenants: tenants
             .into_iter()
-            .filter(|tenant| !crate::system_tenant::is_reserved_tenant_id(tenant))
+            .filter(|tenant| !nimbus_system::is_reserved_tenant_id(tenant))
             .map(|tenant| tenant.to_string())
             .collect(),
     }))

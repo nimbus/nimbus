@@ -15,7 +15,6 @@ pub mod execution;
 pub mod machine_lifecycle;
 pub mod machine_stop_authority;
 pub mod machines;
-pub mod node_workloads;
 pub mod pagination;
 pub mod resource_provision;
 pub mod resource_retirement;

@@ -58,7 +58,7 @@ async fn list_tenants_returns_all_known_tenants() {
 async fn local_admin_tenant_api_rejects_and_hides_reserved_system_tenants() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    crate::system_tenant::ensure_system_tenant_async(&service)
+    nimbus_system::ensure_system_tenant_async(&service)
         .await
         .expect("system tenant should initialize");
     let server = ServerFixture::start(router_for_engine(service)).await;

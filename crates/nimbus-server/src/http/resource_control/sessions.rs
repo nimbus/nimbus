@@ -96,7 +96,7 @@ pub(in crate::http) async fn authorize_session_resource_lookup(
         None => application_session_tenant_id(&resolved.principal, surface)?,
     };
     let principal_class = principal_class_from_principal(&resolved.principal, "session")?;
-    let tenant_context = crate::tenant::TenantIsolationContext::application(
+    let tenant_context = nimbus_tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         resolved.principal.clone(),
         surface,
@@ -225,7 +225,7 @@ pub(in crate::http) async fn authorize_session_route(
     }
 
     let principal_class = principal_class_from_principal(&resolved.principal, "session")?;
-    let tenant_context = crate::tenant::TenantIsolationContext::application(
+    let tenant_context = nimbus_tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         resolved.principal.clone(),
         surface,

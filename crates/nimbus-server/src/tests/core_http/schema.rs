@@ -293,7 +293,7 @@ async fn schema_apply_reports_violations_and_never_applies_partially() {
 async fn schema_and_document_writes_project_table_state_into_system_tenant() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
-    crate::system_tenant::prepare_system_tenant_async(&service, None)
+    nimbus_system::prepare_system_tenant_async(&service, None)
         .await
         .expect("system tenant should prepare before subscribing");
     let server = ServerFixture::start(
@@ -316,7 +316,7 @@ async fn schema_and_document_writes_project_table_state_into_system_tenant() {
         tokio::sync::mpsc::channel(nimbus_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
     let system_subscription = service
         .subscribe_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
+            nimbus_system::system_tenant_id().expect("system id should parse"),
             nimbus_core::Query {
                 table: TableName::new("tables").expect("table should parse"),
                 filters: Vec::new(),
@@ -385,7 +385,7 @@ async fn schema_and_document_writes_project_table_state_into_system_tenant() {
         tokio::sync::mpsc::channel(nimbus_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
     let cleanup_subscription = service
         .subscribe_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
+            nimbus_system::system_tenant_id().expect("system id should parse"),
             nimbus_core::Query {
                 table: TableName::new("tables").expect("table should parse"),
                 filters: Vec::new(),

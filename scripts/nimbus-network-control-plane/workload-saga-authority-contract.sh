@@ -284,14 +284,6 @@ verify_operational_identity_cutover() {
     add_error "legacy node identity derivation, selector, or unit convention remains"
   fi
 
-  assigned_node_fences="$({
-    rg -n -F 'ensure_assigned_node_matches(&self.node_id' \
-      crates/nimbus-node/src/reconciler.rs 2>/dev/null || true
-  } | wc -l | tr -d ' ')"
-  if [ "${assigned_node_fences}" -ne 2 ]; then
-    add_error "node reconcile and inspect need exactly two pre-effect assigned-node fences, observed ${assigned_node_fences}"
-  fi
-
   product_saga_store_implementations="$({
     while IFS= read -r source; do
       sed '/^#\[cfg(test)\]/,$d' "${source}" |

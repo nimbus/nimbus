@@ -237,15 +237,12 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use nimbus::Engine;
-    use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
-    use nimbus_server::{
-        ServeOptions, ServerDiscoveryLease,
-        machine_lifecycle::{
-            MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
-            MachineLifecycleSnapshot, MachineUpdateRequest,
-        },
-        serve,
+    use nimbus_compute::machine_lifecycle::{
+        MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
+        MachineLifecycleSnapshot, MachineUpdateRequest,
     };
+    use nimbus_operator::{LocalServerSecurityState, load_or_create_local_admin_token};
+    use nimbus_server::{ServeOptions, ServerDiscoveryLease, serve};
     use tempfile::tempdir;
 
     use super::super::command::{

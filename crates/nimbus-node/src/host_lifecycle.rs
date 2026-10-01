@@ -1477,6 +1477,25 @@ fn high_cardinality_evidence_value(value: impl Into<String>, field: &str) -> Res
     Ok(value)
 }
 
+pub trait NodeBackendCapabilitySource: Send + Sync + 'static {
+    fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities>;
+}
+
+impl NodeBackendCapabilitySource for crate::DirectProcessBackend {
+    fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+        vec![HostLifecycleBackendCapabilities::direct_process()]
+    }
+}
+
+impl<C> NodeBackendCapabilitySource for crate::SystemdTransientUnitBackend<C>
+where
+    C: crate::SystemdDbusClient,
+{
+    fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+        vec![self.backend_capabilities()]
+    }
+}
+
 #[cfg(test)]
 #[path = "host_lifecycle/tests.rs"]
 mod tests;

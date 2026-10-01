@@ -11,7 +11,7 @@ use super::super::authz::{
 use super::super::parse_user_tenant_id;
 use super::super::service_grants::principal_has_exact_service_grant;
 use crate::state::{AppError, AppState};
-use crate::tenant::TenantIsolationContext;
+use nimbus_tenant::TenantIsolationContext;
 
 #[derive(Debug)]
 pub(in crate::http) struct ServiceRouteAuthorization {

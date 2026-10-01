@@ -1263,7 +1263,7 @@ function verifyComputeNetworkManagerInjection() {
     !/ComputeWorkloadComposition\s*::\s*ProtocolOnly\s*=>\s*\{[\s\S]*?Self\s*::\s*require_protocol_only_node_services\s*\(\s*&node_services\s*\)/s.test(
       computeState,
     ) ||
-    !/fn\s+require_protocol_only_node_services[\s\S]*?service_manager\(\)\.is_none\(\)[\s\S]*?machine_lifecycle_manager\(\)\.is_none\(\)[\s\S]*?node_workload_coordinator\(\)\.is_none\(\)/.test(
+    !/fn\s+require_protocol_only_node_services[\s\S]*?service_manager\(\)\.is_none\(\)[\s\S]*?machine_lifecycle_manager\(\)\.is_none\(\)/.test(
       computeState,
     )
   ) {
@@ -1450,35 +1450,7 @@ function verifyComputeNodeWorkloadCoordinator() {
   if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1") {
     const mutation =
       process.env.NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_COORDINATOR_MUTATION ?? "";
-    if (mutation === "missing-node-capability") {
-      replaceIn(
-        nodeSources,
-        "crates/nimbus-node/src/reconciler.rs",
-        "pub trait NodeWorkloadReconcileCapability",
-        "pub trait OmittedNodeWorkloadReconcileCapability",
-      );
-    } else if (mutation === "missing-compute-coordinator") {
-      replaceIn(
-        computeSources,
-        "crates/nimbus-compute/src/node_workloads.rs",
-        "pub struct NodeWorkloadCoordinator",
-        "pub struct OmittedNodeWorkloadCoordinator",
-      );
-    } else if (mutation === "missing-state-coordinator") {
-      replaceIn(
-        computeSources,
-        "crates/nimbus-compute/src/config/node_services.rs",
-        "node_workload_coordinator: Option<Arc<NodeWorkloadCoordinator>>",
-        "omitted_node_workload_coordinator: ()",
-      );
-    } else if (mutation === "missing-profile-fence") {
-      replaceIn(
-        computeSources,
-        "crates/nimbus-compute/src/state.rs",
-        "node_workload_coordinator().is_none()",
-        "bypassed_node_workload_coordinator_fence()",
-      );
-    } else if (mutation === "direct-cli-reconcile") {
+    if (mutation === "direct-cli-reconcile") {
       requiredSource(
         cliSources,
         "crates/nimbus-cli/src/workload_boot.rs",
@@ -1503,13 +1475,6 @@ function verifyComputeNodeWorkloadCoordinator() {
         "HostLifecycleProperty::Restart(HostRestartPolicy::No)",
         "HostLifecycleProperty::Restart(HostRestartPolicy::OnFailure)",
       );
-    } else if (mutation === "missing-restart-fence") {
-      replaceIn(
-        nodeSources,
-        "crates/nimbus-node/src/reconciler.rs",
-        "request.ensure_external_restart_disabled()?;",
-        "",
-      );
     } else if (mutation === "duplicate-restart-accepted") {
       replaceIn(
         nodeSources,
@@ -1517,20 +1482,10 @@ function verifyComputeNodeWorkloadCoordinator() {
         "restart_properties.len() <= 1",
         "true",
       );
-    } else if (mutation === "coordinator-desired-store") {
-      requiredSource(
-        computeSources,
-        "crates/nimbus-compute/src/node_workloads.rs",
-      ).source += "\nuse nimbus_workloads::WorkloadSagaStore;\n";
-    } else if (mutation === "coordinator-network-authority") {
-      requiredSource(
-        computeSources,
-        "crates/nimbus-compute/src/node_workloads.rs",
-      ).source += "\nuse nimbus_network::LocalNetworkManager;\n";
     } else if (mutation === "second-coordinator") {
       requiredSource(
         computeSources,
-        "crates/nimbus-compute/src/node_workloads.rs",
+        "crates/nimbus-compute/src/state.rs",
       ).source += "\nstruct AnotherNodeWorkloadCoordinator;\n";
     } else if (mutation === "duplicate-saga-coordinator") {
       requiredSource(
@@ -1549,57 +1504,6 @@ function verifyComputeNodeWorkloadCoordinator() {
     }
   }
 
-  const nodeReconciler = requiredSource(
-    nodeSources,
-    "crates/nimbus-node/src/reconciler.rs",
-  ).source;
-  if (
-    !/pub\s+trait\s+NodeWorkloadReconcileCapability\s*:\s*Send\s*\+\s*Sync/.test(
-      nodeReconciler,
-    ) ||
-    !/impl\s*<[^>]*>\s+NodeWorkloadReconcileCapability\s+for\s+NodeAgent/.test(
-      nodeReconciler,
-    ) ||
-    !/fn\s+reconcile_assignment\s*<'a>/.test(nodeReconciler) ||
-    !/fn\s+reconcile_assignments\s*<'a>/.test(nodeReconciler) ||
-    !/fn\s+inspect_assignment\s*<'a>/.test(nodeReconciler)
-  ) {
-    errors.push(
-      "nimbus-node must expose one object-safe reconcile/inspect capability implemented by NodeAgent",
-    );
-  }
-
-  const computeCoordinator = requiredSource(
-    computeSources,
-    "crates/nimbus-compute/src/node_workloads.rs",
-  ).source;
-  if (
-    !/pub\s+struct\s+NodeWorkloadCoordinator\s*\{[^}]*Arc\s*<\s*dyn\s+NodeWorkloadReconcileCapability\s*>/s.test(
-      computeCoordinator,
-    ) ||
-    !/pub\s+async\s+fn\s+reconcile_assignment[\s\S]*?\.reconcile_assignment\s*\(/.test(
-      computeCoordinator,
-    ) ||
-    !/pub\s+async\s+fn\s+reconcile_assignments[\s\S]*?\.reconcile_assignments\s*\(/.test(
-      computeCoordinator,
-    ) ||
-    !/pub\s+async\s+fn\s+inspect_assignment[\s\S]*?\.inspect_assignment\s*\(/.test(
-      computeCoordinator,
-    )
-  ) {
-    errors.push(
-      "nimbus-compute must own one concrete coordinator over the node capability",
-    );
-  }
-  if (
-    /\bnimbus_workloads\b|\bWorkloadSagaStore\b|\bnimbus_network\b|\bLocalNetworkManager\b|\bNetworkPlan\b|\bnimbus_system\b|\bSystemTenantStatusEvidenceWriter\b/.test(
-      computeCoordinator,
-    )
-  ) {
-    errors.push(
-      "compute node coordinator acquired desired-state, network, or projection authority",
-    );
-  }
   const coordinatorDefinitions = firstMatch(
     [...computeSources, ...cliSources],
     /\bstruct\s+(?!NodeWorkloadCoordinator\b)(?!WorkloadSagaCoordinator\b)[A-Za-z0-9_]*(?:NodeWorkload|Saga|Reconcile)[A-Za-z0-9_]*Coordinator\b/,
@@ -1622,30 +1526,6 @@ function verifyComputeNodeWorkloadCoordinator() {
   ) {
     errors.push(
       `exactly one WorkloadSagaCoordinator must exist in its compute owner: ${sagaCoordinatorOwners.join(",") || "none"}`,
-    );
-  }
-
-  const nodeServices = requiredSource(
-    computeSources,
-    "crates/nimbus-compute/src/config/node_services.rs",
-  ).source;
-  const computeState = requiredSource(
-    computeSources,
-    "crates/nimbus-compute/src/state.rs",
-  ).source;
-  if (
-    !/node_workload_coordinator\s*:\s*Option\s*<\s*Arc\s*<\s*NodeWorkloadCoordinator\s*>\s*>/.test(
-      nodeServices,
-    ) ||
-    !/pub\s+fn\s+node_workload_coordinator\s*\(\s*&self\s*\)\s*->\s*Option\s*<\s*Arc\s*<\s*NodeWorkloadCoordinator\s*>\s*>/.test(
-      computeState,
-    ) ||
-    !/fn\s+require_protocol_only_node_services[\s\S]*?node_workload_coordinator\(\)\.is_none\(\)/.test(
-      computeState,
-    )
-  ) {
-    errors.push(
-      "ComputeState must retain the optional coordinator and fence it from protocol-only profiles",
     );
   }
 
@@ -1687,7 +1567,6 @@ function verifyComputeNodeWorkloadCoordinator() {
     hostLifecycle,
     "ensure_external_restart_disabled",
   );
-  const reconcileBody = functionBody(nodeReconciler, "reconcile_binding");
   if (
     !/HostLifecycleProperty\s*::\s*Restart\s*\(\s*HostRestartPolicy\s*::\s*No\s*\)/.test(
       runnerBody,
@@ -1700,13 +1579,10 @@ function verifyComputeNodeWorkloadCoordinator() {
   }
   if (
     !/restart_properties\.len\(\)\s*<=\s*1/.test(restartFenceBody) ||
-    !/HostRestartPolicy\s*::\s*No/.test(restartFenceBody) ||
-    !/request\.ensure_external_restart_disabled\(\)\?;[\s\S]*?backend\.validate/.test(
-      reconcileBody,
-    )
+    !/HostRestartPolicy\s*::\s*No/.test(restartFenceBody)
   ) {
     errors.push(
-      "node reconciliation must reject provider restart and duplicates before backend validation",
+      "the host lifecycle restart fence must reject provider restart and duplicates",
     );
   }
 

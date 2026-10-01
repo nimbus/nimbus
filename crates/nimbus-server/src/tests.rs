@@ -480,7 +480,7 @@ async fn router_prepare_system_tenant_does_not_fabricate_physical_adapter_listen
     let listeners = fixture
         .engine()
         .list_documents_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
+            nimbus_system::system_tenant_id().expect("system id should parse"),
             TableName::new("listeners").expect("table should parse"),
         )
         .await

@@ -7,7 +7,6 @@ mod construction;
 mod error_envelope;
 mod http;
 mod latency;
-mod license;
 mod listener_group;
 mod listener_lease;
 mod local_server;
@@ -18,8 +17,6 @@ mod protocol;
 mod router;
 mod state;
 mod system;
-mod system_tenant;
-mod tenant;
 #[cfg(test)]
 mod tenant_isolation_drift;
 mod tls;
@@ -28,16 +25,6 @@ mod workload_composition;
 mod workload_ingress;
 mod workload_saga_store;
 mod ws;
-
-// CP1: runtime execution, artifact/provenance admission, machine lifecycle,
-// and service manager wiring moved to the transport-free nimbus-compute
-// crate. Bringing them in as crate-root `use` items (rather than re-declaring
-// `mod`) keeps every existing `crate::execution::...` etc. call site in this
-// crate unchanged. (`artifact_verifier_effects` has no consumers left in this
-// crate — its only caller, `execution::invocations::provenance`, moved with
-// it — so it is not re-imported here.)
-use nimbus_compute::execution;
-pub use nimbus_compute::machine_lifecycle;
 
 pub use adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 pub use adapters::cloudflare::{

@@ -18,10 +18,10 @@ use crate::protocol::{
     VersionInfoResponse,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard};
-use crate::tenant::TenantIsolationContext;
 use nimbus_compute::scheduling::{
     CronJobsResponse, ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
 };
+use nimbus_tenant::TenantIsolationContext;
 
 mod authz;
 mod deploy;
@@ -103,7 +103,7 @@ fn parse_document_id(value: &str) -> Result<DocumentId, AppError> {
 }
 
 fn parse_user_tenant_id(value: impl Into<String>) -> Result<TenantId, AppError> {
-    crate::system_tenant::user_tenant_id(value).map_err(AppError::from)
+    nimbus_system::user_tenant_id(value).map_err(AppError::from)
 }
 
 fn parse_operator_tenant_context(

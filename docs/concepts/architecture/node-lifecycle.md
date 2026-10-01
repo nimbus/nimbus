@@ -10,7 +10,7 @@ A Nimbus node is one host running the `nimbus` binary as a long-lived
 service. Nimbus never self-daemonizes: the host's service manager owns the
 process, and Nimbus's job is to make that ownership explicit, reviewable,
 and reproducible. This page explains the machinery — the unit generation
-surface, the D-Bus client seam, and the workload reconciler. For the
+surface, the D-Bus client seam, and the status evidence seam. For the
 step-by-step install commands, see the
 [operator guide](/operators/node-lifecycle/).
 
@@ -82,8 +82,8 @@ unit, and inspect a unit. The seam is fail-closed by design:
 
 A second implementation of the node's host-lifecycle seam,
 `crates/nimbus-node/src/direct_process.rs`, runs workloads as in-memory
-records with captured logs and evidence — it exists so the reconciler
-and its callers can be tested deterministically without systemd.
+records with captured logs and evidence — it exists so the backend's
+callers can be tested deterministically without systemd.
 
 ## Transient units, not unit files
 
@@ -137,19 +137,14 @@ activating units are *submitted*, active-and-running units are
 are *stopped*, failed units are *failed*, and a unit systemd does not
 know about is reported as stopped rather than as an error.
 
-## The workload reconciler
+## Status evidence
 
-`crates/nimbus-node/src/reconciler.rs` provides
-`NodeWorkloadReconciler`, which validates and observes the desired state
-derived from a tenant workload spec: an active spec should already be
-running, while a deleting spec should be stopped.
-
-The running path is deliberately observation-only. It validates the exact
-host plan and inspects the provider. Submitted, running, or ready is recorded
-as "observed running"; any other state fails because the compute coordinator
-has not authorized an activation. The deleting path may inspect and stop the
-unit. Each pass writes status evidence through a writer seam so the observation
-that justified the outcome is recorded alongside it.
+`crates/nimbus-node/src/status_evidence.rs` provides the `StatusEvidenceWriter`
+seam. A `StatusEvidenceWrite` pairs a tenant system-evidence projection with an
+observed workload status, and its constructor rejects a status whose generation
+does not match the projection before any write happens. The server owns the
+concrete writer, so the node crate records the observation that justified an
+outcome without depending on persistence.
 
 There is no hidden node workload executor in the CLI. Workload provisioning is
 coordinated above the node boundary by `crates/nimbus-compute`; the node backend

@@ -1,4 +1,4 @@
-use crate::machine_lifecycle::{
+use nimbus_compute::machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
     MachineLifecycleSnapshot, MachineUpdateRequest,
 };
@@ -247,14 +247,14 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
             .build(),
     )
     .await;
-    crate::system_tenant::prepare_system_tenant_async(&engine, None)
+    nimbus_system::prepare_system_tenant_async(&engine, None)
         .await
         .expect("system tenant should prepare before subscribing");
     let (system_tx, mut system_rx) =
         tokio::sync::mpsc::channel(nimbus_engine::DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY);
     let system_subscription = engine
         .subscribe_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
+            nimbus_system::system_tenant_id().expect("system id should parse"),
             nimbus_core::Query {
                 table: nimbus_core::TableName::new("machines").expect("table should parse"),
                 filters: Vec::new(),
@@ -534,7 +534,7 @@ async fn assert_system_machine_state(
     machine_state: &str,
     connectivity_present: bool,
 ) {
-    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let tenant_id = nimbus_system::system_tenant_id().expect("system id should parse");
     timeout(Duration::from_secs(5), async {
         loop {
             let machines = engine
@@ -619,7 +619,7 @@ async fn assert_system_machine_document(
     memory_mib: u32,
     disk_gib: u32,
 ) {
-    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let tenant_id = nimbus_system::system_tenant_id().expect("system id should parse");
     let table = TableName::new("machines").expect("table should parse");
     let document_id =
         DocumentId::from_key(system_machine_document_id(name)).expect("id should parse");
@@ -648,7 +648,7 @@ async fn assert_system_machine_document(
 }
 
 async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
-    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let tenant_id = nimbus_system::system_tenant_id().expect("system id should parse");
     let machine_api_listener = nimbus_network::ListenerId::for_workload_listener(
         &format!("managed-machine:{name}"),
         "machine-api",
@@ -737,7 +737,7 @@ async fn assert_system_events_for_machine(
     machine_name: &str,
     expected: &[(&str, &str, &str)],
 ) {
-    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let tenant_id = nimbus_system::system_tenant_id().expect("system id should parse");
     let table = TableName::new("events").expect("table should parse");
     let events = timeout(Duration::from_secs(5), async {
         loop {

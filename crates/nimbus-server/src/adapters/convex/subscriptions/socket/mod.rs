@@ -4,9 +4,9 @@ use super::transforms::{
     subscription_plan_for_named_query, update_runtime_transform_read_set,
 };
 use super::*;
-use crate::execution::subscriptions::subscribe_runtime_base_queries;
 use crate::owned_tasks::OwnedTaskSet;
 use crate::ws::NegotiatedWebSocketProtocol;
+use nimbus_compute::execution::subscriptions::subscribe_runtime_base_queries;
 use nimbus_convex::subscriptions::{
     ConvexClientMessage, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
 };
@@ -21,7 +21,7 @@ enum ActiveSubscription {
     Direct {
         cleanup_handles: Vec<SubscriptionCleanupHandle>,
     },
-    Runtime(crate::execution::subscriptions::RuntimeSubscriptionHandle),
+    Runtime(nimbus_compute::execution::subscriptions::RuntimeSubscriptionHandle),
 }
 
 impl ActiveSubscription {
@@ -33,7 +33,7 @@ impl ActiveSubscription {
     }
 
     fn from_runtime_handle(
-        handle: crate::execution::subscriptions::RuntimeSubscriptionHandle,
+        handle: nimbus_compute::execution::subscriptions::RuntimeSubscriptionHandle,
     ) -> Self {
         Self::Runtime(handle)
     }
