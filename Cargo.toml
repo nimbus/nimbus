@@ -150,9 +150,10 @@ oxc = "=0.136.0"
 object_store = { version = "0.14.2", default-features = false, features = ["aws", "fs"] }
 serde = { version = "1", features = ["derive"] }
 # `raw_value` exposes `serde_json::value::RawValue` for the CLI's package.json
-# dependency wiring. The shipped graph also enables `preserve_order` through
-# `workspace-hack`, so storage codecs must define their own canonical map order.
-serde_json = { version = "1", features = ["raw_value"] }
+# dependency wiring. `preserve_order` is declared here so that `Document.fields`
+# (nimbus-core) and the storage codecs keep insertion order by their own
+# declaration, independent of workspace-hack feature unification.
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 serde_yaml_ng = "0.10"
 semver = "1"
 s3s = "0.17.0"
