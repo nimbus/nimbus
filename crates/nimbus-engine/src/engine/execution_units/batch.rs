@@ -5,7 +5,7 @@ use nimbus_core::{
     WriteKey, WritePrecondition, WriteSetMode,
 };
 
-use super::super::mutations::enforce_mutation_authorization;
+use super::super::mutations::{enforce_mutation_authorization, prepare_write_op};
 use super::MutationExecutionUnit;
 
 struct PendingAtomicWriteResult {
@@ -189,11 +189,6 @@ impl MutationExecutionUnit {
         let table = locator.table.clone();
         let existing = self.load_batch_document(&key)?;
         self.ensure_write_precondition(&locator, existing.as_ref(), &precondition)?;
-        let table_schema = self.schema_snapshot.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default();
 
         let mut current = match mode {
             WriteSetMode::Create => {
@@ -237,30 +232,19 @@ impl MutationExecutionUnit {
         };
         let transform_results = apply_field_transforms_at(&mut current, &transforms, write_time)?;
 
-        if let Some(table_schema) = table_schema.as_ref() {
-            table_schema.validate(&current.fields)?;
-        }
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            if existing.is_some() {
-                AccessAction::Update
-            } else {
-                AccessAction::Create
-            },
+        let existing_binding = self.existing_batch_binding(&locator, existing.as_ref())?;
+        let mut prepared = prepare_write_op(
+            self.schema_snapshot.get_table(&table),
             &self.principal,
-            Some(&current),
-            existing.as_ref(),
-        )?;
-        preserve_document_lifecycle_times(existing.as_ref(), &mut current, write_time);
-
-        self.stage_write(
-            table,
-            locator.id.clone(),
             existing,
             Some(current),
-            indexes,
+            existing_binding,
             key.resource_path_binding().cloned(),
         )?;
+        if let Some(current) = prepared.current.as_mut() {
+            preserve_document_lifecycle_times(prepared.previous.as_ref(), current, write_time);
+        }
+        self.stage_prepared_write(table, prepared)?;
         self.update_deferred_server_timestamp_fields(
             &locator,
             replace_document,
@@ -301,41 +285,25 @@ impl MutationExecutionUnit {
         let table = locator.table.clone();
         let existing = self.load_batch_document(&key)?;
         self.ensure_write_precondition(&locator, existing.as_ref(), &precondition)?;
-        let table_schema = self.schema_snapshot.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default();
 
         let mut current = existing.clone().unwrap_or_else(|| {
             Document::with_id(locator.id.clone(), table.clone(), serde_json::Map::new())
         });
         apply_patch_mask(&mut current, &field_patch, &typed_fields, &mask);
         let transform_results = apply_field_transforms_at(&mut current, &transforms, write_time)?;
-        if let Some(table_schema) = table_schema.as_ref() {
-            table_schema.validate(&current.fields)?;
-        }
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            if existing.is_some() {
-                AccessAction::Update
-            } else {
-                AccessAction::Create
-            },
+        let existing_binding = self.existing_batch_binding(&locator, existing.as_ref())?;
+        let mut prepared = prepare_write_op(
+            self.schema_snapshot.get_table(&table),
             &self.principal,
-            Some(&current),
-            existing.as_ref(),
-        )?;
-        preserve_document_lifecycle_times(existing.as_ref(), &mut current, write_time);
-
-        self.stage_write(
-            table,
-            locator.id.clone(),
             existing,
             Some(current),
-            indexes,
+            existing_binding,
             key.resource_path_binding().cloned(),
         )?;
+        if let Some(current) = prepared.current.as_mut() {
+            preserve_document_lifecycle_times(prepared.previous.as_ref(), current, write_time);
+        }
+        self.stage_prepared_write(table, prepared)?;
         self.update_deferred_server_timestamp_fields(
             &locator,
             false,
@@ -374,26 +342,15 @@ impl MutationExecutionUnit {
             return Err(Error::DocumentNotFound(locator.id));
         };
 
-        let table_schema = self.schema_snapshot.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default();
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            AccessAction::Delete,
+        let prepared = prepare_write_op(
+            self.schema_snapshot.get_table(&table),
             &self.principal,
-            None,
-            Some(&existing),
-        )?;
-        self.stage_write(
-            table,
-            locator.id.clone(),
             Some(existing),
             None,
-            indexes,
+            None,
             None,
         )?;
+        self.stage_prepared_write(table, prepared)?;
 
         Ok(PendingAtomicWriteResult {
             update_time: None,
@@ -452,40 +409,24 @@ impl MutationExecutionUnit {
         let table = locator.table.clone();
         let existing = self.load_batch_document(&key)?;
         self.ensure_write_precondition(&locator, existing.as_ref(), &precondition)?;
-        let table_schema = self.schema_snapshot.get_table(&table).cloned();
-        let indexes = table_schema
-            .as_ref()
-            .map(|table_schema| table_schema.indexes.clone())
-            .unwrap_or_default();
 
         let mut current = existing.clone().unwrap_or_else(|| {
             Document::with_id(locator.id.clone(), table.clone(), serde_json::Map::new())
         });
         let transform_results = apply_field_transforms_at(&mut current, &transforms, write_time)?;
-        if let Some(table_schema) = table_schema.as_ref() {
-            table_schema.validate(&current.fields)?;
-        }
-        enforce_mutation_authorization(
-            table_schema.as_ref(),
-            if existing.is_some() {
-                AccessAction::Update
-            } else {
-                AccessAction::Create
-            },
+        let existing_binding = self.existing_batch_binding(&locator, existing.as_ref())?;
+        let mut prepared = prepare_write_op(
+            self.schema_snapshot.get_table(&table),
             &self.principal,
-            Some(&current),
-            existing.as_ref(),
-        )?;
-        preserve_document_lifecycle_times(existing.as_ref(), &mut current, write_time);
-
-        self.stage_write(
-            table,
-            locator.id.clone(),
             existing,
             Some(current),
-            indexes,
+            existing_binding,
             key.resource_path_binding().cloned(),
         )?;
+        if let Some(current) = prepared.current.as_mut() {
+            preserve_document_lifecycle_times(prepared.previous.as_ref(), current, write_time);
+        }
+        self.stage_prepared_write(table, prepared)?;
         self.update_deferred_server_timestamp_fields(&locator, false, &[], &transforms)?;
 
         Ok(PendingAtomicWriteResult {
@@ -550,6 +491,19 @@ impl MutationExecutionUnit {
                 .record_missing_table(&locator.table),
         }
         Ok(document)
+    }
+
+    /// Reads the current binding only when the batch write replaces a
+    /// document, so a create pays no extra lookup.
+    fn existing_batch_binding(
+        &self,
+        locator: &nimbus_core::DocumentLocator,
+        existing: Option<&Document>,
+    ) -> Result<Option<nimbus_core::ResourcePathBinding>> {
+        match existing {
+            Some(_) => self.current_resource_path_binding(&locator.table, &locator.id),
+            None => Ok(None),
+        }
     }
 
     fn ensure_write_precondition(

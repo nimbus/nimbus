@@ -1,10 +1,8 @@
-use nimbus_core::{
-    AccessAction, DependencySet, Document, Error, Mutation, Result, Timestamp, WriteOp, WriteOpType,
-};
+use nimbus_core::{DependencySet, Document, Error, Mutation, Result, Timestamp, WriteOp};
 
 use crate::tenant::TenantRuntime;
 
-use super::enforce_mutation_authorization;
+use super::prepare_write_op;
 use super::prepared::{PreparedCommit, PreparedSerializedEffects};
 use super::write_log::{SingleDocumentWindowChange, ValidationSource, WindowDocumentState};
 
@@ -168,9 +166,7 @@ fn rebuild_prepared_commit(
         prepared.serialized_effects,
         PreparedSerializedEffects::Direct { .. }
     );
-    let (table, _) = mutation_key(&plan.mutation)?;
-    let table_schema = plan.schema.get_table(table).cloned();
-    let write = rebuild_write(&plan, &base, table_schema.as_ref())?;
+    let (write, indexes) = rebuild_write(&plan, &base)?;
     let mut dependencies = DependencySet::default();
     dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone());
     let mut rebuilt = if is_direct {
@@ -178,10 +174,7 @@ fn rebuild_prepared_commit(
             base.sequence,
             dependencies,
             write,
-            table_schema
-                .as_ref()
-                .map(|schema| schema.indexes.clone())
-                .unwrap_or_default(),
+            indexes,
             scheduled_execution_id.as_deref(),
         )?
     } else {
@@ -192,13 +185,22 @@ fn rebuild_prepared_commit(
     Ok(())
 }
 
+/// Rebuilds one write from a retained base image exactly as the serial step
+/// does, and returns the index work that the rebuilt commit would carry.
+#[cfg(test)]
+pub(super) fn rebuild_write_for_testing(
+    plan: &super::prepared::InlineRepreparePlan,
+    base: &WindowDocumentState,
+) -> Result<(WriteOp, Vec<nimbus_core::IndexDefinition>)> {
+    rebuild_write(plan, base)
+}
+
 fn rebuild_write(
     plan: &super::prepared::InlineRepreparePlan,
     base: &WindowDocumentState,
-    table_schema: Option<&nimbus_core::TableSchema>,
-) -> Result<WriteOp> {
+) -> Result<(WriteOp, Vec<nimbus_core::IndexDefinition>)> {
     let (table, document_id) = mutation_key(&plan.mutation)?;
-    let (op_type, previous, current) = match &plan.mutation {
+    let (previous, current) = match &plan.mutation {
         Mutation::Insert { fields, .. } => {
             if base.document.is_some() {
                 return Err(Error::conflict(format!(
@@ -206,74 +208,42 @@ fn rebuild_write(
                     base.sequence
                 )));
             }
-            if let Some(schema) = table_schema {
-                schema.validate(fields)?;
-            }
             let document = Document::with_id_at(
                 document_id.clone(),
                 table.clone(),
                 fields.clone(),
                 Timestamp(0),
             );
-            enforce_mutation_authorization(
-                table_schema,
-                AccessAction::Create,
-                &plan.principal,
-                Some(&document),
-                None,
-            )?;
-            (WriteOpType::Insert, None, Some(document))
+            (None, Some(document))
         }
         Mutation::Update { patch, .. } => {
+            // A fresh prepare against this image reports the same not-found.
             let Some(previous) = base.document.clone() else {
-                return Err(Error::conflict(format!(
-                    "update precondition failed against the latest document image at sequence {}",
-                    base.sequence
-                )));
+                return Err(Error::DocumentNotFound(document_id.clone()));
             };
             let mut current = previous.clone();
             for (field, value) in patch {
                 current.fields.insert(field.clone(), value.clone());
             }
-            if let Some(schema) = table_schema {
-                schema.validate(&current.fields)?;
-            }
-            enforce_mutation_authorization(
-                table_schema,
-                AccessAction::Update,
-                &plan.principal,
-                Some(&current),
-                Some(&previous),
-            )?;
-            (WriteOpType::Update, Some(previous), Some(current))
+            (Some(previous), Some(current))
         }
         Mutation::Delete { .. } => {
             let Some(previous) = base.document.clone() else {
-                return Err(Error::conflict(format!(
-                    "delete precondition failed against the latest document image at sequence {}",
-                    base.sequence
-                )));
+                return Err(Error::DocumentNotFound(document_id.clone()));
             };
-            enforce_mutation_authorization(
-                table_schema,
-                AccessAction::Delete,
-                &plan.principal,
-                None,
-                Some(&previous),
-            )?;
-            (WriteOpType::Delete, Some(previous), None)
+            (Some(previous), None)
         }
     };
-    Ok(WriteOp {
-        table: table.clone(),
-        table_id: base.table_id.clone(),
-        op_type,
-        doc_id: document_id.clone(),
-        resource_path_binding: base.resource_path_binding.clone(),
-        // Trigger origin belongs to this logical write, not to the document
-        // image it supersedes. Paths A/C originate as client writes.
-        trigger_write_origin: None,
+    // Paths A/C originate as client writes, so the rebuilt write carries no
+    // trigger origin from the image it supersedes.
+    let (write, indexes) = prepare_write_op(
+        plan.schema.get_table(table),
+        &plan.principal,
         previous,
         current,
-    })
+        base.resource_path_binding.clone(),
+        None,
+    )?
+    .into_write_op(base.table_id.clone())?;
+    Ok((write, indexes.to_vec()))
 }

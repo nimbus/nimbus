@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use nimbus_core::{
-    CollectionName, Document, DocumentId, DocumentPath, PaginatedQuery, PaginatedWindowDependency,
-    Query, Result, StructuredQuery, TableName,
+    CollectionName, Document, DocumentId, DocumentLocator, DocumentPath, PaginatedQuery,
+    PaginatedWindowDependency, Query, ResourcePathBinding, Result, StructuredQuery, TableName,
 };
 
 use crate::evaluator::{
@@ -215,6 +215,24 @@ impl MutationExecutionUnit {
                 .record_documents_read(std::iter::once(document));
         }
         Ok(document)
+    }
+
+    /// Returns the resource path that the document holds in this unit's view.
+    /// A staged write owns the binding. Otherwise the snapshot supplies it.
+    pub(super) fn current_resource_path_binding(
+        &self,
+        table: &TableName,
+        document_id: &DocumentId,
+    ) -> Result<Option<ResourcePathBinding>> {
+        if let Some(entry) = self
+            .active_state()?
+            .staged_writes
+            .get(&(table.clone(), document_id.clone()))
+        {
+            return Ok(entry.resource_path_binding.clone());
+        }
+        self.snapshot
+            .resource_path_binding(&DocumentLocator::new(table.clone(), document_id.clone()))
     }
 
     fn materialize_table_view(
