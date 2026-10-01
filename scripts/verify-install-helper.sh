@@ -504,7 +504,7 @@ case "\$last_arg" in
     printf '{"tag_name":"v0.1.14"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-crun/releases/latest)
-    printf '{"tag_name":"v1.29.1-nimbus.2"}'
+    printf '{"tag_name":"v1.30.1-nimbus.1"}'
     ;;
   https://api.github.com/repos/nimbus/nimbus-libkrun/releases/latest)
     printf '{"tag_name":"v1.19.4-nimbus.3"}'
@@ -529,7 +529,7 @@ if PATH="${mock_linux_bin}:$PATH" GITHUB_TOKEN=test-token \
   else
     pass "Linux dry-run avoids fork latest lookups"
   fi
-  if grep -q "nimbus-crun: v1.29.1-nimbus.2 (upstream 1.29.1)" "${output_dir}/linux-dry-run.txt" &&
+  if grep -q "nimbus-crun: v1.30.1-nimbus.1 (upstream 1.30.1)" "${output_dir}/linux-dry-run.txt" &&
      grep -q "nimbus-libkrun: v1.19.4-nimbus.3 (upstream 1.19.4)" "${output_dir}/linux-dry-run.txt"; then
     pass "Linux dry-run uses validated VMM tuple"
   else
@@ -916,7 +916,7 @@ echo ""
 echo "Checking dry-run output..."
 
 # Use a mock version to avoid GitHub API calls
-if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.29.1-nimbus.2 --libkrun-version v1.19.4-nimbus.3 \
+if sh "${repo_root}/scripts/install.sh" --dry-run --version v0.1.14 --crun-version v1.30.1-nimbus.1 --libkrun-version v1.19.4-nimbus.3 \
     > "${output_dir}/dry-run.txt" 2>&1; then
 
   if grep -q "Install Plan" "${output_dir}/dry-run.txt"; then

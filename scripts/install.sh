@@ -88,8 +88,8 @@ NIMBUS_LIBKRUN_RELEASES_DOWNLOAD="https://github.com/nimbus/nimbus-libkrun/relea
 # baked values keep standalone curl|sh installs pinned to the same validated
 # tuple instead of resolving fork artifacts through GitHub "latest".
 LINUX_DISTRIBUTION_CONTRACT_ENV="${NIMBUS_LINUX_DISTRIBUTION_CONTRACT_ENV:-packaging/linux-distribution-contract.env}"
-DEFAULT_NIMBUS_CRUN_VERSION="v1.29.1-nimbus.2"
-DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.29.1"
+DEFAULT_NIMBUS_CRUN_VERSION="v1.30.1-nimbus.1"
+DEFAULT_NIMBUS_CRUN_UPSTREAM_VERSION="1.30.1"
 DEFAULT_NIMBUS_LIBKRUN_VERSION="v1.19.4-nimbus.3"
 DEFAULT_NIMBUS_LIBKRUN_UPSTREAM_VERSION="1.19.4"
 LINUX_DISTRIBUTION_CONTRACT_LOADED=""
