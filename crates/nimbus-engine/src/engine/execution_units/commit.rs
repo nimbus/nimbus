@@ -263,6 +263,48 @@ impl MutationExecutionUnit {
         }
         Ok(commit)
     }
+
+    /// Runs the commit-time prepare over the staged writes and returns each
+    /// write as assignment would stamp it, with its staged index work. The
+    /// unit stays active and nothing is submitted.
+    #[cfg(test)]
+    pub(crate) fn assigned_writes_for_testing(
+        &self,
+        sequence: SequenceNumber,
+        timestamp: Timestamp,
+    ) -> Result<Vec<(WriteOp, Vec<nimbus_core::IndexDefinition>)>> {
+        let state = self.active_state()?;
+        let writes = self.build_resolved_writes(&state);
+        let indexes = writes
+            .iter()
+            .map(|write| match write {
+                ResolvedWrite::Insert { indexes, .. }
+                | ResolvedWrite::Update { indexes, .. }
+                | ResolvedWrite::Delete { indexes, .. } => indexes.clone(),
+            })
+            .collect::<Vec<_>>();
+        let record = prepare_execution_unit_record(
+            &self.runtime,
+            &self.snapshot,
+            &writes,
+            state.trigger_write_origin.as_ref(),
+        )?;
+        let mut prepared_commit = PreparedCommit::for_execution_unit(
+            self.snapshot_sequence,
+            DependencySet::default(),
+            writes,
+            record,
+            Vec::new(),
+            state.deferred_server_timestamp_fields.clone(),
+            state.usage,
+        )?;
+        prepared_commit.stamp_for_assignment(sequence, timestamp)?;
+        let (record, _) = prepared_commit.execution_unit_effects()?;
+        let writes = record
+            .map(|record| record.writes.clone())
+            .unwrap_or_default();
+        Ok(writes.into_iter().zip(indexes).collect())
+    }
 }
 
 fn prepare_execution_unit_record(

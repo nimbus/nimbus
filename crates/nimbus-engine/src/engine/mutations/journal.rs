@@ -1301,6 +1301,29 @@ fn prepare_queued_mutation(
     })
 }
 
+/// Runs the queued journal prepare and returns its write as assignment would
+/// stamp it. The journal path selects no index work during prepare.
+#[cfg(test)]
+pub(super) fn prepare_queued_write_for_testing(
+    runtime: &TenantRuntime,
+    mutation: Mutation,
+    principal: nimbus_core::PrincipalContext,
+    sequence: SequenceNumber,
+    timestamp: Timestamp,
+) -> Result<nimbus_core::WriteOp> {
+    let parts = prepare_queued_mutation(
+        runtime,
+        mutation,
+        principal,
+        None,
+        &nimbus_core::SeededIdSource::new(0),
+    )?;
+    let record = parts.prepared_commit.into_record(sequence, timestamp)?;
+    let [write] = <[nimbus_core::WriteOp; 1]>::try_from(record.writes)
+        .map_err(|_| Error::Internal("queued prepare must emit exactly one write".to_string()))?;
+    Ok(write)
+}
+
 pub(super) fn validate_prepared_for_provider(
     runtime: &TenantRuntime,
     snapshot_sequence: SequenceNumber,

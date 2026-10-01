@@ -9,6 +9,8 @@ pub(crate) mod durable_outcome;
 mod inline_reprepare;
 mod journal;
 pub(in crate::engine) mod phase_metrics;
+#[cfg(test)]
+mod prepare_write_op_differential;
 pub(crate) mod prepared;
 mod publisher;
 mod shadow_conflicts;

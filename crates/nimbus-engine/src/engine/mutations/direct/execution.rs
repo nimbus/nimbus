@@ -230,6 +230,46 @@ fn prepare_direct_mutation_from_window(
     }))
 }
 
+/// Runs the direct storage prepare and returns its write as assignment would
+/// stamp it, with the index work that the prepare selected.
+#[cfg(test)]
+pub(in crate::engine::mutations) fn prepare_direct_write_for_testing(
+    runtime: &TenantRuntime,
+    mutation: Mutation,
+    principal: &PrincipalContext,
+    sequence: nimbus_core::SequenceNumber,
+    timestamp: Timestamp,
+) -> Result<(WriteOp, Vec<nimbus_core::IndexDefinition>)> {
+    let PreparedDirectMutation::Commit {
+        mut prepared_commit,
+        ..
+    } = prepare_direct_mutation(
+        runtime,
+        runtime.schema(),
+        &MutationExecutionMode::Immediate,
+        mutation,
+        principal,
+    )?
+    else {
+        return Err(Error::Internal(
+            "immediate direct prepare cannot skip a scheduled execution".to_string(),
+        ));
+    };
+    prepared_commit.stamp_for_assignment(sequence, timestamp)?;
+    let indexes = prepared_commit
+        .index_deltas
+        .iter()
+        .map(|delta| delta.index.clone())
+        .collect();
+    let (record, _, _) = prepared_commit.direct_effects()?;
+    let [write] = record.writes.as_slice() else {
+        return Err(Error::Internal(
+            "direct prepare must emit exactly one write".to_string(),
+        ));
+    };
+    Ok((write.clone(), indexes))
+}
+
 fn normalize_direct_insert_id(engine: &Engine, mutation: Mutation) -> Mutation {
     match mutation {
         Mutation::Insert {

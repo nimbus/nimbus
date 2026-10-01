@@ -192,6 +192,22 @@ fn rebuild_prepared_commit(
     Ok(())
 }
 
+/// Rebuilds one write from a retained base image exactly as the serial step
+/// does, and returns the index work that the rebuilt commit would carry.
+#[cfg(test)]
+pub(super) fn rebuild_write_for_testing(
+    plan: &super::prepared::InlineRepreparePlan,
+    base: &WindowDocumentState,
+) -> Result<(WriteOp, Vec<nimbus_core::IndexDefinition>)> {
+    let (table, _) = mutation_key(&plan.mutation)?;
+    let table_schema = plan.schema.get_table(table);
+    let write = rebuild_write(plan, base, table_schema)?;
+    let indexes = table_schema
+        .map(|schema| schema.indexes.clone())
+        .unwrap_or_default();
+    Ok((write, indexes))
+}
+
 fn rebuild_write(
     plan: &super::prepared::InlineRepreparePlan,
     base: &WindowDocumentState,
