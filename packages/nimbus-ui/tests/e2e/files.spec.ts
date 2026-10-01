@@ -8,7 +8,7 @@ import { expect, test } from "./fixtures/nimbus-server";
 
 const TENANT_ID = "files-e2e";
 const BUCKET = "assets";
-const PROOF_DIR = "../../docs/private/plans/proof/nimbus-ui-rebuild";
+const PROOF_DIR = "test-results/screenshots";
 const HELLO = "hello from nimbus";
 
 async function authenticate(

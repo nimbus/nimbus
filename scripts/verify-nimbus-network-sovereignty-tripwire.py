@@ -70,8 +70,6 @@ def main(argv: list[str] | None = None) -> int:
         / "scripts/nimbus-network-control-plane/sovereignty_tripwire_wrapper_harness.py",
         root
         / "scripts/nimbus-network-control-plane/sovereignty-tripwire-self-tests.sh",
-        root
-        / "docs/private/plans/proof/nimbus-network-control-plane/nnc4.7-local-sovereignty-tripwire.md",
     )
     missing = [
         path.relative_to(root).as_posix() for path in required if not path.is_file()

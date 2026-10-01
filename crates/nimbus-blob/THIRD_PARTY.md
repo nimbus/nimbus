@@ -20,8 +20,7 @@ discipline from `crates/ecstore/src/disk/local.rs` and
 (`src/root_guard.rs`) and are not lifted files.
 
 Provenance and security-review requirements for this table are enforced by
-`scripts/verify-third-party-attribution.sh` and
-`scripts/verify-rustfs-storage-hardening.sh`.
+`scripts/verify-third-party-attribution.sh`.
 
 ## reed-solomon-simd
 

@@ -15,7 +15,7 @@ const TABLE = "messages";
 const DOCUMENT_COUNT = 230;
 const ACTIVE_TENANT_KEY = "nimbus-ui:active-tenant";
 const COLUMN_PREFS_KEY = `nimbus-ui:columns:${TENANT_ID}:${TABLE}`;
-const PROOF_DIR = "../../docs/private/plans/proof/nimbus-ui-rebuild";
+const PROOF_DIR = "test-results/screenshots";
 const GRACE_COUNT = Math.floor(DOCUMENT_COUNT / 2);
 
 async function authenticate(
