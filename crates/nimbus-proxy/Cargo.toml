@@ -16,9 +16,9 @@ bytes.workspace = true
 http.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-egress = { path = "../nimbus-egress" }
-pingora-core = { version = "0.8.1", default-features = false }
-pingora-http = { version = "0.8.1", default-features = false }
-pingora-proxy = { version = "0.8.1", default-features = false }
+pingora-core = { version = "0.9.0", default-features = false }
+pingora-http = { version = "0.9.0", default-features = false }
+pingora-proxy = { version = "0.9.0", default-features = false }
 rcgen = { version = "0.14.8", default-features = false, features = ["crypto", "pem", "ring"] }
 rustls = { version = "0.23.31", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde_json.workspace = true

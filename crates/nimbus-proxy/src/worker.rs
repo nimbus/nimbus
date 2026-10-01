@@ -1264,7 +1264,7 @@ async fn handle_forward_http(
         response_started_signal: response_started_signal.clone(),
         final_response_write_gate: final_response_write_gate.clone(),
     };
-    // Pingora 0.8 runs `ProxyHttp::response_filter` while constructing an
+    // Pingora 0.9 runs `ProxyHttp::response_filter` while constructing an
     // `HttpTask::Header`; `Session::write_response_tasks()` later calls
     // `HttpSession::write_response_header()` to write downstream. There is no
     // post-write `ProxyHttp` hook, so the first successful write on our

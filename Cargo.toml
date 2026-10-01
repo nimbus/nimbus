@@ -124,7 +124,7 @@ signal-hook-registry = "1"
 libsql = { version = "0.9.30", default-features = false, features = ["remote"] }
 libc = "0.2"
 libloading = "0.8"
-mysql_async = "0.36"
+mysql_async = "0.37.1"
 native-tls = { version = "0.2", features = ["vendored"] }
 parking_lot = "0.12"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
@@ -230,7 +230,7 @@ libsql = { path = "third_party/libsql-0.9.30" }
 # lazy_static 1.5.0's no-std feature selects yanked spin 0.9.8. Its use of
 # spin::Once is source-compatible with the current spin line.
 lazy_static = { path = "third_party/lazy_static-1.5.0" }
-# Pingora 0.8.1 depends on brotli 3 with default features, whose `ffi-api`
+# Pingora 0.9.0 depends on brotli 3 with default features, whose `ffi-api`
 # exports C Brotli symbols that collide with the pinned Deno runtime.
 brotli = { path = "third_party/brotli-3.5.0" }
 # brotli-decompressor 2.5.1 (pingora's, via brotli 3) exports the BrotliDecoder*
@@ -240,9 +240,6 @@ brotli = { path = "third_party/brotli-3.5.0" }
 # vendored copy backports upstream's own 4.x gate so pingora's copy exports no
 # C symbols. Applies only to the ^2 node; Deno's 4.x/5.x stay on crates.io.
 brotli-decompressor = { path = "third_party/brotli-decompressor-2.5.1" }
-# Pingora 0.8.1 and mysql_async 0.36 require lru 0.16. The local copy carries
-# upstream's panic-safety and mutable-borrow soundness fixes without a waiver.
-lru = { path = "third_party/lru-0.16.4" }
 deno_core = { git = "https://github.com/nimbus/deno", tag = "v2.9.7-nimbus.1" }
 deno_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.9.7-nimbus.1" }
 deno_crypto_provider = { git = "https://github.com/nimbus/deno", tag = "v2.9.7-nimbus.1" }
