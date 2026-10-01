@@ -1,30 +1,61 @@
 name: Container PEP Egress
 
 on:
+  # Keep both path lists equal to the tracked inputs of the cargo test steps:
+  # the Linux in-workspace closure of
+  # `cargo tree -p nimbus-sandbox -e normal,build,dev --target x86_64-unknown-linux-gnu`,
+  # the workspace manifests and toolchain pins, and the setup-rust-cached action
+  # with the scripts it runs.
   pull_request:
     paths:
       - ".github/workflows/container-pep-egress.yml"
-      - "crates/nimbus-sandbox/src/backends/container/**"
-      - "crates/nimbus-sandbox/src/backends/oci/**"
-      - "crates/nimbus-sandbox/src/backends/krun/**"
-      - "crates/nimbus-sandbox/tests/container_linux_egress.rs"
-      - "crates/nimbus-sandbox/tests/krun_linux_egress.rs"
+      - ".github/actions/setup-rust-cached/**"
+      - "scripts/ci/configure-ubuntu-apt-mirrors.sh"
+      - "scripts/ci/disable-unused-apt-sources.sh"
+      - ".cargo/config.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/nimbus-blob/**"
+      - "crates/nimbus-core/**"
+      - "crates/nimbus-crypto/**"
       - "crates/nimbus-egress/**"
+      - "crates/nimbus-network/**"
+      - "crates/nimbus-process-harness/**"
       - "crates/nimbus-proxy/**"
-      - "scripts/verify-nimbus-sandbox-egress-launch-hardening.sh"
+      - "crates/nimbus-sandbox/**"
+      - "crates/workspace-hack/**"
+      - "third_party/brotli-3.5.0/**"
+      - "third_party/brotli-decompressor-2.5.1/**"
+      - "third_party/lazy_static-1.5.0/**"
+      - "third_party/lru-0.16.4/**"
+      - "third_party/object_store-0.14.2/**"
   push:
     branches:
       - main
     paths:
       - ".github/workflows/container-pep-egress.yml"
-      - "crates/nimbus-sandbox/src/backends/container/**"
-      - "crates/nimbus-sandbox/src/backends/oci/**"
-      - "crates/nimbus-sandbox/src/backends/krun/**"
-      - "crates/nimbus-sandbox/tests/container_linux_egress.rs"
-      - "crates/nimbus-sandbox/tests/krun_linux_egress.rs"
+      - ".github/actions/setup-rust-cached/**"
+      - "scripts/ci/configure-ubuntu-apt-mirrors.sh"
+      - "scripts/ci/disable-unused-apt-sources.sh"
+      - ".cargo/config.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/nimbus-blob/**"
+      - "crates/nimbus-core/**"
+      - "crates/nimbus-crypto/**"
       - "crates/nimbus-egress/**"
+      - "crates/nimbus-network/**"
+      - "crates/nimbus-process-harness/**"
       - "crates/nimbus-proxy/**"
-      - "scripts/verify-nimbus-sandbox-egress-launch-hardening.sh"
+      - "crates/nimbus-sandbox/**"
+      - "crates/workspace-hack/**"
+      - "third_party/brotli-3.5.0/**"
+      - "third_party/brotli-decompressor-2.5.1/**"
+      - "third_party/lazy_static-1.5.0/**"
+      - "third_party/lru-0.16.4/**"
+      - "third_party/object_store-0.14.2/**"
   workflow_dispatch:
 
 permissions:
