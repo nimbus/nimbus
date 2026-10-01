@@ -34,7 +34,7 @@ Examples:
     --nimbus-version v0.1.10 \
     --nimbus-linux-amd64-tarball /tmp/nimbus_linux_x86_64.tar.gz \
     --nimbus-linux-arm64-tarball /tmp/nimbus_linux_arm64.tar.gz \
-    --nimbus-libkrun-version v1.19.4-nimbus.3 \
+    --nimbus-libkrun-version v1.19.6-nimbus.1 \
     --nimbus-libkrun-linux-amd64-archive /tmp/nimbus-libkrun-linux-amd64.tar.gz \
     --nimbus-libkrun-linux-arm64-archive /tmp/nimbus-libkrun-linux-arm64.tar.gz \
     --nimbus-crun-version v1.30.1-nimbus.1 \

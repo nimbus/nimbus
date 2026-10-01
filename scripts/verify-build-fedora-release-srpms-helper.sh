@@ -42,15 +42,15 @@ make_libkrun_archive() {
 
   staging_dir="$(mktemp -d "${output_dir}/nimbus-libkrun-${arch_label}.XXXXXX")"
   mkdir -p "${staging_dir}/lib/pkgconfig" "${staging_dir}/include"
-  printf 'stub libkrun %s\n' "${arch_label}" >"${staging_dir}/lib/libkrun.so.1.19.4"
+  printf 'stub libkrun %s\n' "${arch_label}" >"${staging_dir}/lib/libkrun.so.1.19.6"
   printf 'stub libkrunfw %s\n' "${arch_label}" >"${staging_dir}/lib/libkrunfw.so.5.5.0"
-  ln -s libkrun.so.1.19.4 "${staging_dir}/lib/libkrun.so.1"
+  ln -s libkrun.so.1.19.6 "${staging_dir}/lib/libkrun.so.1"
   ln -s libkrun.so.1 "${staging_dir}/lib/libkrun.so"
   ln -s libkrunfw.so.5.5.0 "${staging_dir}/lib/libkrunfw.so.5"
   ln -s libkrunfw.so.5 "${staging_dir}/lib/libkrunfw.so"
   printf 'void krun_set_port_map_with_bind_address(void);\n' >"${staging_dir}/include/libkrun.h"
   printf 'prefix=/usr/libexec/nimbus\nlibdir=${prefix}/lib\n' >"${staging_dir}/lib/pkgconfig/libkrun.pc"
-  printf 'nimbus-libkrun=v1.19.4-nimbus.3\nlibkrunfw=5.5.0\narch=%s\n' "${arch_label}" >"${staging_dir}/NIMBUS_LIBKRUN_RELEASE.txt"
+  printf 'nimbus-libkrun=v1.19.6-nimbus.1\nlibkrunfw=5.5.0\narch=%s\n' "${arch_label}" >"${staging_dir}/NIMBUS_LIBKRUN_RELEASE.txt"
   COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -czf "${archive_path}" -C "${staging_dir}" .
 }
 
@@ -92,7 +92,7 @@ fi
       --nimbus-version 0.1.10 \
       --nimbus-linux-amd64-tarball /work/output/nimbus_linux_x86_64.tar.gz \
       --nimbus-linux-arm64-tarball /work/output/nimbus_linux_arm64.tar.gz \
-      --nimbus-libkrun-version v1.19.4-nimbus.3 \
+      --nimbus-libkrun-version v1.19.6-nimbus.1 \
       --nimbus-libkrun-linux-amd64-archive /work/output/nimbus-libkrun-linux-amd64.tar.gz \
       --nimbus-libkrun-linux-arm64-archive /work/output/nimbus-libkrun-linux-arm64.tar.gz \
       --nimbus-crun-version v1.30.1-nimbus.1 \
@@ -101,7 +101,7 @@ fi
       >/work/output/amd64-build-summary.txt
 
     rpmbuild --rebuild /work/output/amd64/srpms/nimbus-0.1.10-1.src.rpm
-    rpmbuild --rebuild /work/output/amd64/srpms/nimbus-libkrun-1.19.4.nimbus.3-1.src.rpm
+    rpmbuild --rebuild /work/output/amd64/srpms/nimbus-libkrun-1.19.6.nimbus.1-1.src.rpm
     rpmbuild --rebuild /work/output/amd64/srpms/nimbus-crun-1.30.1.nimbus.1-1.src.rpm
 
     nimbus_rpm="$(find /root/rpmbuild/RPMS -type f -name "nimbus-[0-9]*.x86_64.rpm" | grep -v debuginfo | head -n 1)"
@@ -128,7 +128,7 @@ fi
       --nimbus-version 0.1.10 \
       --nimbus-linux-amd64-tarball /work/output/nimbus_linux_x86_64.tar.gz \
       --nimbus-linux-arm64-tarball /work/output/nimbus_linux_arm64.tar.gz \
-      --nimbus-libkrun-version v1.19.4-nimbus.3 \
+      --nimbus-libkrun-version v1.19.6-nimbus.1 \
       --nimbus-libkrun-linux-amd64-archive /work/output/nimbus-libkrun-linux-amd64.tar.gz \
       --nimbus-libkrun-linux-arm64-archive /work/output/nimbus-libkrun-linux-arm64.tar.gz \
       --nimbus-crun-version v1.30.1-nimbus.1 \
@@ -137,7 +137,7 @@ fi
       >/work/output/arm64-build-summary.txt
 
     rpmbuild --rebuild --target aarch64 /work/output/arm64/srpms/nimbus-0.1.10-1.src.rpm
-    rpmbuild --rebuild --target aarch64 /work/output/arm64/srpms/nimbus-libkrun-1.19.4.nimbus.3-1.src.rpm
+    rpmbuild --rebuild --target aarch64 /work/output/arm64/srpms/nimbus-libkrun-1.19.6.nimbus.1-1.src.rpm
     rpmbuild --rebuild --target aarch64 /work/output/arm64/srpms/nimbus-crun-1.30.1.nimbus.1-1.src.rpm
 
     nimbus_rpm="$(find /root/rpmbuild/RPMS -type f -name "nimbus-[0-9]*.aarch64.rpm" | grep -v debuginfo | head -n 1)"
@@ -157,10 +157,10 @@ fi
   '
 
 test -f "${output_dir}/amd64/srpms/nimbus-0.1.10-1.src.rpm"
-test -f "${output_dir}/amd64/srpms/nimbus-libkrun-1.19.4.nimbus.3-1.src.rpm"
+test -f "${output_dir}/amd64/srpms/nimbus-libkrun-1.19.6.nimbus.1-1.src.rpm"
 test -f "${output_dir}/amd64/srpms/nimbus-crun-1.30.1.nimbus.1-1.src.rpm"
 test -f "${output_dir}/arm64/srpms/nimbus-0.1.10-1.src.rpm"
-test -f "${output_dir}/arm64/srpms/nimbus-libkrun-1.19.4.nimbus.3-1.src.rpm"
+test -f "${output_dir}/arm64/srpms/nimbus-libkrun-1.19.6.nimbus.1-1.src.rpm"
 test -f "${output_dir}/arm64/srpms/nimbus-crun-1.30.1.nimbus.1-1.src.rpm"
 test -f "${output_dir}/amd64/checksums-sha256.txt"
 test -f "${output_dir}/arm64/checksums-sha256.txt"

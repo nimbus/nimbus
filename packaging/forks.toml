@@ -145,9 +145,9 @@ patterns = ['"{tag}",', '"{commit}",']
 [forks.libkrun]
 repo = "nimbus/nimbus-libkrun"
 upstream_repo = "containers/libkrun"
-upstream_tag = "v1.19.4"
-upstream_version = "1.19.4"
-tag = "v1.19.4-nimbus.3"
+upstream_tag = "v1.19.6"
+upstream_version = "1.19.6"
+tag = "v1.19.6-nimbus.1"
 kind = "full_source"
 tracks_latest = true
 after_repin = "Publish the nimbus-libkrun release archives before the packaging workflows consume the new tag."
