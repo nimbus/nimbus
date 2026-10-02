@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+# Verifies the repository architecture-quality baseline and guardrails.
+# The ambient wall-clock check is not run here: verify-clock-sources.py fails on main.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LEDGER="${REPO_ROOT}/scripts/repo-architecture-quality-ledger.tsv"
+
+issue_count=0
+exclusion_patterns=()
+large_file_paths=()
+naming_exception_paths=()
+
+record_issue() {
+  printf 'repo-architecture-quality: %s\n' "$1" >&2
+  issue_count=$((issue_count + 1))
+}
+
+load_ledger() {
+  local kind
+  local value
+  local rest
+
+  exclusion_patterns=()
+  large_file_paths=()
+  naming_exception_paths=()
+
+  while IFS=$'\t' read -r kind value rest; do
+    [[ -z "${kind}" || "${kind}" == \#* || "${kind}" == "kind" ]] && continue
+    case "${kind}" in
+      exclusion) exclusion_patterns+=("${value}") ;;
+      large_file) large_file_paths+=("${value}") ;;
+      naming_exception) naming_exception_paths+=("${value}") ;;
+    esac
+  done < "${LEDGER}"
+}
+
+ledger_values() {
+  local kind="$1"
+  local value
+  local values=()
+
+  case "${kind}" in
+    exclusion) values=("${exclusion_patterns[@]}") ;;
+    large_file) values=("${large_file_paths[@]}") ;;
+    naming_exception) values=("${naming_exception_paths[@]}") ;;
+    *) return 0 ;;
+  esac
+
+  for value in "${values[@]}"; do
+    printf '%s\n' "${value}"
+  done
+}
+
+ledger_has_value() {
+  local kind="$1"
+  local needle="$2"
+  local value
+  local values=()
+
+  case "${kind}" in
+    exclusion) values=("${exclusion_patterns[@]}") ;;
+    large_file) values=("${large_file_paths[@]}") ;;
+    naming_exception) values=("${naming_exception_paths[@]}") ;;
+    *) return 1 ;;
+  esac
+
+  for value in "${values[@]}"; do
+    [[ "${value}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+is_source_file() {
+  case "$1" in
+    *.rs|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_excluded() {
+  local path="$1"
+  local pattern
+
+  for pattern in "${exclusion_patterns[@]}"; do
+    [[ -z "${pattern}" ]] && continue
+    case "${path}" in
+      ${pattern}) return 0 ;;
+    esac
+  done
+
+  return 1
+}
+
+line_count() {
+  wc -l < "$1" | tr -d ' '
+}
+
+source_files() {
+  find "${REPO_ROOT}/crates" "${REPO_ROOT}/packages" "${REPO_ROOT}/examples" \
+    \( \
+      -path '*/node_modules' -o \
+      -path '*/target' -o \
+      -path '*/dist' -o \
+      -path '*/storybook-static' -o \
+      -path '*/.nimbus' -o \
+      -path '*/_generated' -o \
+      -path '*/src/gen' -o \
+      -path "${REPO_ROOT}/crates/nimbus-runtime/src/runtime/tests/node_compat_fixtures" -o \
+      -path "${REPO_ROOT}/examples/convex/vendor" \
+    \) -prune -o -type f -print
+}
+
+check_large_files() {
+  local file
+  local rel
+  local lines
+  local threshold_label
+
+  printf '[1/5] owned-source size ledger\n'
+
+  while IFS= read -r file; do
+    rel="${file#${REPO_ROOT}/}"
+    is_source_file "${rel}" || continue
+    is_excluded "${rel}" && continue
+
+    lines="$(line_count "${file}")"
+    if [[ "${lines}" -lt 1500 ]]; then
+      continue
+    fi
+
+    threshold_label="review"
+    if [[ "${lines}" -ge 2000 ]]; then
+      threshold_label="hard"
+    fi
+
+    printf '%s\t%s\t%s\n' "${threshold_label}" "${lines}" "${rel}"
+    if ! ledger_has_value "large_file" "${rel}"; then
+      record_issue "untracked large owned-source file (${lines} lines): ${rel}"
+    fi
+  done < <(source_files) || true
+
+  while IFS= read -r rel; do
+    [[ -z "${rel}" ]] && continue
+    if [[ ! -f "${REPO_ROOT}/${rel}" ]]; then
+      record_issue "large-file ledger path no longer exists: ${rel}"
+    elif [[ "$(line_count "${REPO_ROOT}/${rel}")" -lt 1500 ]]; then
+      record_issue "large-file ledger path is below 1500 lines; delete its row: ${rel}"
+    fi
+  done < <(ledger_values "large_file") || true
+}
+
+check_naming_exceptions() {
+  local file
+  local rel
+  local base
+
+  printf '\n[2/5] helper/common naming ledger\n'
+
+  while IFS= read -r file; do
+    rel="${file#${REPO_ROOT}/}"
+    is_source_file "${rel}" || continue
+    is_excluded "${rel}" && continue
+    base="$(basename "${rel}")"
+
+    case "${base}" in
+      helper.*|helpers.*|*helper*.rs|*helper*.ts|*helper*.tsx|*helper*.js|*helper*.jsx|*helper*.mjs|*helper*.cjs|common.rs|common.ts|common.tsx|common.js|common.jsx|common.mjs|common.cjs)
+        printf '%s\n' "${rel}"
+        if ! ledger_has_value "naming_exception" "${rel}"; then
+          record_issue "untracked helper/common naming exception: ${rel}"
+        fi
+        ;;
+    esac
+  done < <(source_files) || true
+
+  while IFS= read -r rel; do
+    [[ -z "${rel}" ]] && continue
+    if [[ ! -f "${REPO_ROOT}/${rel}" ]]; then
+      record_issue "naming-exception ledger path no longer exists: ${rel}"
+    fi
+  done < <(ledger_values "naming_exception") || true
+}
+
+check_core_no_io() {
+  printf '\n[3/5] nimbus-core zero-I/O invariant\n'
+
+  # Scan IMPORTS and DEPENDENCY declarations only. A bare word-boundary scan
+  # false-positives on string literals (e.g. a provider-name label like
+  # "redb" in pure data types) — the invariant is about what nimbus-core can
+  # DO (imports/deps), not which provider names it can mention.
+  # std::net note: address TYPES (IpAddr/Ipv4Addr/SocketAddr/Cidr math) are
+  # pure data and legitimately used by nimbus-core policy types; the invariant
+  # forbids I/O, so only the socket I/O types are banned from std::net.
+  local forbidden_use='^[[:space:]]*(pub[[:space:]]+)?use[[:space:]]+.*(std::fs|std::process|std::net::(TcpListener|TcpStream|UdpSocket|tcp|udp)|tokio|reqwest|hyper|axum|rusqlite|sqlx|redb)'
+  local forbidden_dep='^[[:space:]]*(tokio|reqwest|hyper|axum|rusqlite|sqlx|mysql[a-z_-]*|postgres[a-z_-]*|redb)[[:space:]]*[=.]'
+  if rg -n "${forbidden_use}" "${REPO_ROOT}/crates/nimbus-core/src" \
+    || rg -n "${forbidden_dep}" "${REPO_ROOT}/crates/nimbus-core/Cargo.toml"; then
+    record_issue "nimbus-core contains forbidden I/O import or dependency"
+  else
+    printf 'nimbus-core zero-I/O import scan: pass\n'
+  fi
+}
+
+check_runtime_no_workspace_deps() {
+  printf '\n[4/5] nimbus-runtime zero-workspace-dependency invariant\n'
+
+  local cargo_toml="${REPO_ROOT}/crates/nimbus-runtime/Cargo.toml"
+  if rg -n 'path\s*=\s*"\.\./|^nimbus-[A-Za-z0-9_-]+\s*=' "${cargo_toml}"; then
+    record_issue "nimbus-runtime declares a workspace/local Nimbus dependency"
+  else
+    printf 'nimbus-runtime workspace dependency scan: pass\n'
+  fi
+}
+
+check_durable_object_boundary() {
+  printf '\n[5/5] Durable Object production-construction boundary\n'
+  local violations
+  violations="$(
+    rg -n 'DurableObject(Substrate|Stub)' "${REPO_ROOT}/crates" \
+      --glob '*.rs' \
+      --glob '!**/tests/**' \
+      --glob '!**/benches/**' \
+      --glob '!**/tests.rs' \
+      --glob '!**/*_tests.rs' \
+      --glob '!**/adapters/cloudflare/durable_objects/mod.rs' \
+      || true
+  )"
+  if [[ -n "${violations}" ]]; then
+    printf '%s\n' "${violations}" >&2
+    record_issue "Durable Objects have no production front door before HS5 per-object placement and storage-atomic epoch fencing"
+  else
+    printf 'durable_objects_have_no_production_front_door_before_hs5: PASS\n'
+  fi
+
+  local fixture="${REPO_ROOT}/scripts/fixtures/durable-objects/forbidden_front_door.rs"
+  if ! rg -n 'DurableObjectSubstrate::new' "${fixture}" >/dev/null; then
+    record_issue "Durable Object boundary fixture no longer demonstrates a forbidden construction"
+  else
+    printf 'Durable Object forbidden-construction fixture: PASS\n'
+  fi
+}
+
+if ! command -v rg >/dev/null 2>&1; then
+  # Checks 3, 4, and 6 treat an rg failure as "no match" and would pass.
+  record_issue "missing required tool: rg (ripgrep)"
+elif [[ ! -f "${LEDGER}" ]]; then
+  record_issue "missing ledger: ${LEDGER#${REPO_ROOT}/}"
+else
+  load_ledger
+  printf 'repo architecture quality gate\n'
+  printf 'Repo: %s\n' "${REPO_ROOT}"
+  printf 'Ledger: %s\n\n' "${LEDGER#${REPO_ROOT}/}"
+
+  check_large_files
+  check_naming_exceptions
+  check_core_no_io
+  check_runtime_no_workspace_deps
+  check_durable_object_boundary
+fi
+
+if [[ "${issue_count}" -ne 0 ]]; then
+  printf '\nrepo-architecture-quality: %s issue(s) detected\n' "${issue_count}" >&2
+  exit 1
+fi
+
+printf '\nrepo-architecture-quality: pass\n'
