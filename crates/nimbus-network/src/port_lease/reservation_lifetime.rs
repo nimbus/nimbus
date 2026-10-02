@@ -70,7 +70,7 @@ impl LocalPortLeaseAuthority {
             .join(RESERVATION_LIFETIME_LOCK_DIRECTORY);
         create_dir_all_owner_only(&directory).map_err(PortLeaseError::Store)?;
         let path = directory.join(format!("{}.lock", reservation_lifetime_key(claim)));
-        let file = open_owner_file(&path, false).map_err(PortLeaseError::Store)?;
+        let file = open_owner_file(&path).map_err(PortLeaseError::Store)?;
         match file.try_lock().map_err(std::io::Error::from) {
             Ok(()) => Ok(NetworkReservationLifetimeAttempt::Acquired(
                 NetworkReservationLifetimeGuard {

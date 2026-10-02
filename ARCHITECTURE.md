@@ -30,6 +30,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
 | `nimbus-core` | Shared types and validation. Zero I/O. |
 | `nimbus-crypto` | At-rest envelope/keyring primitives, crypto-shred, and framed blob AEAD; depends only on `nimbus-core` plus external crypto crates. |
+| `nimbus-durable-record` | Crash-consistent local records: directory sync, staged atomic file publication, and a checksummed append journal with torn-tail recovery. Zero workspace dependencies. |
 | `nimbus-dynamodb` | DynamoDB wire-protocol adapter: AttributeValue conversion, expressions, operation dispatch, SigV4, streams. |
 | `nimbus-egress` | Egress policy compilation and enforcement-plan types (rules, DLP, credential injection) shared by `nimbus-proxy` and the runtime egress gateway. |
 | `nimbus-engine` | Central coordinator (`Engine`): mutation path, query evaluation, subscriptions, scheduler, triggers. |
@@ -39,7 +40,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-license` | License file loading and status (community / trial / enterprise). |
 | `nimbus-machine` | Render-independent machine records and provider contracts shared by CLI and server. |
 | `nimbus-mongodb` | MongoDB wire protocol: BSON bridging, command handlers, connections, auth. |
-| `nimbus-network` | Transport-free connectivity-resource lifecycle: stable identity, plans, durable leases/state, capability evidence, readiness composition, and reconciliation contracts. Its only outgoing workspace edge is `nimbus-core`. |
+| `nimbus-network` | Transport-free connectivity-resource lifecycle: stable identity, plans, durable leases/state, capability evidence, readiness composition, and reconciliation contracts. Its only outgoing workspace edges are `nimbus-core` and `nimbus-durable-record`. |
 | `nimbus-node` | Node-side workload lifecycle: systemd transient units over D-Bus, reconciler, host lifecycle backends. |
 | `nimbus-object-storage` | Native object-storage control-plane resolver: turns persisted placement policy and operator config into `BlobStore` compositions shared by S3, Convex `_storage`, and backup/restore. Deliberately not a protocol crate. |
 | `nimbus-operator` | Operator (host administrator) security model for local and deploy servers. |

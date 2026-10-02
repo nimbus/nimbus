@@ -554,7 +554,8 @@ mod tests {
             "write-and-boundary" => run_crash_cut_child(|context| {
                 write_synced(context.state_root(), "state", "committed")?;
                 write_synced(context.state_root(), "effect", "created")?;
-                sync_directory(context.state_root())?;
+                nimbus_durable_record::sync_directory(context.state_root())
+                    .map_err(|error| format!("failed to sync state root: {error}"))?;
                 context.reach_boundary(EXPECTED_BOUNDARY)
             })
             .unwrap_or_else(|error| panic!("crash child failed: {error}")),
@@ -609,18 +610,6 @@ mod tests {
             .map_err(|error| format!("failed to write {name}: {error}"))?;
         file.sync_all()
             .map_err(|error| format!("failed to sync {name}: {error}"))
-    }
-
-    #[cfg(unix)]
-    fn sync_directory(root: &std::path::Path) -> Result<(), String> {
-        File::open(root)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| format!("failed to sync state root: {error}"))
-    }
-
-    #[cfg(windows)]
-    fn sync_directory(_root: &std::path::Path) -> Result<(), String> {
-        Ok(())
     }
 
     fn child(role: &str, mode: &str) -> ProcessRoleSpec {

@@ -1,5 +1,5 @@
 [package]
-name = "nimbus-process-harness"
+name = "nimbus-durable-record"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -9,6 +9,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+crc32fast.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
-nimbus-durable-record = { path = "../nimbus-durable-record" }
 tempfile.workspace = true
