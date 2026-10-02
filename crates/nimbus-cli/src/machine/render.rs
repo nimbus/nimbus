@@ -19,8 +19,8 @@ use super::files::{
 };
 use super::manager::{
     GuestNimbusBinarySourceKind, MACHINE_API_FORWARD_TRANSPORT, MACHINE_API_FORWARD_USER,
-    MachineRuntimeState, inspect_desired_guest_nimbus_binary, inspect_observed_guest_nimbus_binary,
-    refresh_machine_state,
+    MachineRuntimeState, VmmBinaryStatus, inspect_desired_guest_nimbus_binary,
+    inspect_observed_guest_nimbus_binary, inspect_vmm_binary, refresh_machine_state,
 };
 use super::record::{
     MachineConfigRecord, MachineGuestConfig, MachineLifecycle, MachineManagerState, MachinePaths,
@@ -28,7 +28,8 @@ use super::record::{
 };
 use super::{
     DEFAULT_MACHINE_NAME, HostMachineNetworkAuthority, describe_machine_image_source,
-    desired_machine_image_source, uses_host_managed_machine_image_contract,
+    desired_machine_image_source, resolve_machine_provider,
+    uses_host_managed_machine_image_contract,
 };
 use nimbus_machine::api::MachineApiCapabilityResponse;
 
@@ -81,6 +82,7 @@ pub(super) struct MachineHostInfoView {
     pub(super) guest_binary_cache_dir: PathBuf,
     pub(super) roots: MachineRootsView,
     pub(super) default_machine: MachineInfoDefaultMachineView,
+    pub(super) vmm: VmmBinaryStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -556,6 +558,12 @@ pub(super) fn build_machine_info_view(
             )
         })
     })?;
+    // Report the VMM the default machine starts with: its configured provider,
+    // or the host selection when it is not initialized yet.
+    let vmm_provider = match default_provider {
+        Some(provider) => provider,
+        None => resolve_machine_provider(None)?,
+    };
 
     Ok(MachineInfoView {
         version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -579,6 +587,7 @@ pub(super) fn build_machine_info_view(
                 provider: default_provider,
                 api_reachable: default_api_reachable,
             },
+            vmm: inspect_vmm_binary(vmm_provider),
         },
     })
 }
