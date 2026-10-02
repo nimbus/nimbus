@@ -1,21 +1,12 @@
+use super::dialect::{PostgresHandle, PostgresSession};
 use super::document_versions::get_document_version_at_from_session;
 use super::*;
-use crate::diagnostics::IndexVersionStorageDiagnostic;
 use crate::index::encoded_index_tuple_for_document;
-use crate::index::history_scan::HistoricalIndexDocumentEntry;
-use crate::sql::index_history::{SqlHistoricalIndexStore, sql_historical_index_facade};
-use crate::{
-    CURRENT_INDEX_VERSION_STORAGE_FORMAT, INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
-    StorageFormatVersion, storage_format_version_from_u64, validate_index_version_storage_format,
+use crate::sql::index_history::sql_historical_index_facade;
+use crate::sql::index_versions::{
+    SqlIndexVersionSession, SqlIndexVersionStore, ensure_index_version_storage_format_in_session,
+    sql_index_version_facade,
 };
-
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexVersionInterval {
-    pub document_id: DocumentId,
-    pub visible_from: SequenceNumber,
-    pub visible_until: Option<SequenceNumber>,
-}
 
 struct IndexVersionMutation {
     table_id: String,
@@ -25,218 +16,60 @@ struct IndexVersionMutation {
     open_tuple: Option<Vec<u8>>,
 }
 
-impl PostgresTenantStore {
-    pub fn index_version_storage_diagnostic(&self) -> Result<IndexVersionStorageDiagnostic> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            index_version_storage_diagnostic_from_session(&client, &schema_name).await
-        })
+impl<H: PostgresHandle> SqlIndexVersionSession for PostgresSession<H> {
+    async fn load_metadata_u64(&mut self, schema_name: &str, key: &str) -> Result<Option<u64>> {
+        load_metadata_u64_from_session(self.driver(), schema_name, key).await
     }
 
-    #[cfg(test)]
-    pub(crate) fn index_version_intervals_for_testing(
-        &self,
-        table_id: &TableId,
-        index_id: &nimbus_core::IndexId,
-    ) -> Result<Vec<IndexVersionInterval>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let table_id = table_id.clone();
-        let index_id = index_id.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            index_version_intervals_from_session(&client, &schema_name, &table_id, &index_id).await
-        })
-    }
-}
-
-// The historical index-scan family is pure plan-then-page orchestration and
-// lives once in `crate::sql::index_history`; only the entry load below is
-// dialect-specific.
-impl SqlHistoricalIndexStore for PostgresTenantStore {
-    fn retention_read_floors(&self) -> Result<crate::RetentionReadFloors> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_retention_read_floors_from_session(&client, &schema_name).await
-        })
-        .map(|floors| floors.max(self.retention_floor.published_read_floors()))
-    }
-
-    fn check_retention_read_page(&self) -> Result<()> {
-        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)
-    }
-
-    fn visible_historical_index_entries(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index: &IndexDefinition,
-        match_prefix: &[u8],
-        start_key: Option<&[u8]>,
-        end_key: Option<&[u8]>,
-    ) -> Result<Vec<HistoricalIndexDocumentEntry>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let read_shape_for_query = read_shape.clone();
-        let index_for_query = index.clone();
-        let match_prefix = match_prefix.to_vec();
-        let start_key = start_key.map(<[u8]>::to_vec);
-        let end_key = end_key.map(<[u8]>::to_vec);
-        self.block_on(async move {
-            let client = provider.client().await?;
-            visible_historical_index_entries_for_tuple_bounds(
-                &client,
-                &schema_name,
-                &read_shape_for_query,
-                &index_for_query,
-                &match_prefix,
-                start_key.as_deref(),
-                end_key.as_deref(),
-            )
+    async fn upsert_metadata_u64(
+        &mut self,
+        schema_name: &str,
+        key: &str,
+        value: u64,
+    ) -> Result<()> {
+        let query = format!(
+            "INSERT INTO {} (key, value_blob) VALUES ($1, $2)
+             ON CONFLICT(key) DO UPDATE SET value_blob = EXCLUDED.value_blob",
+            qualified_table(schema_name, "metadata")
+        );
+        self.driver()
+            .execute(query.as_str(), &[&key, &encode_u64(value).as_slice()])
             .await
-        })
+            .map_err(map_postgres_error)?;
+        Ok(())
     }
-}
 
-sql_historical_index_facade!(PostgresTenantStore);
+    async fn load_retention_read_floors(
+        &mut self,
+        schema_name: &str,
+    ) -> Result<crate::RetentionReadFloors> {
+        load_retention_read_floors_from_session(self.driver(), schema_name).await
+    }
 
-async fn visible_historical_index_entries_for_tuple_bounds<C>(
-    session: &C,
-    schema_name: &str,
-    read_shape: &HistoricalReadShape,
-    index: &IndexDefinition,
-    match_prefix: &[u8],
-    start_key: Option<&[u8]>,
-    end_key: Option<&[u8]>,
-) -> Result<Vec<HistoricalIndexDocumentEntry>>
-where
-    C: GenericClient + Sync,
-{
-    validate_index_version_storage_format_in_session(session, schema_name).await?;
-    let read_sequence = read_shape.read_snapshot().sequence().sequence();
-    let table_id_param = read_shape.table_id().as_str().to_string();
-    let index_id_param = index.id.as_str().to_string();
-    let start_param = start_key
-        .filter(|key| !key.is_empty())
-        .map(ToOwned::to_owned);
-    let end_param = end_key.map(ToOwned::to_owned);
-    let mut params: Vec<&(dyn ToSql + Sync)> = vec![&table_id_param, &index_id_param];
-    let mut query = format!(
-        "SELECT encoded_tuple, document_id, visible_from, visible_until
-         FROM {}
-         WHERE table_id = $1 AND index_id = $2",
-        qualified_table(schema_name, "index_versions")
-    );
-    if let Some(start_key) = &start_param {
-        let ordinal = params.len() + 1;
-        query.push_str(format!(" AND encoded_tuple >= ${ordinal}").as_str());
-        params.push(start_key);
-    }
-    if let Some(end_key) = &end_param {
-        let ordinal = params.len() + 1;
-        query.push_str(format!(" AND encoded_tuple < ${ordinal}").as_str());
-        params.push(end_key);
-    }
-    query.push_str(" ORDER BY encoded_tuple, document_id, visible_from");
-    let rows = session
-        .query(query.as_str(), params.as_slice())
-        .await
-        .map_err(map_postgres_error)?;
-    let mut entries = Vec::new();
-    for row in rows {
-        let encoded_tuple = row.get::<_, Vec<u8>>(0);
-        if !encoded_tuple.starts_with(match_prefix) {
-            if !match_prefix.is_empty() {
-                break;
-            }
-            continue;
-        }
-        let value = PostgresIndexVersionValue {
-            document_id: row.get::<_, String>(1),
-            visible_from: row.get::<_, i64>(2),
-            visible_until: row.get::<_, Option<i64>>(3),
-        };
-        maybe_push_visible_historical_entry(
-            session,
+    async fn document_version_at(
+        &mut self,
+        schema_name: &str,
+        table: &TableName,
+        table_id: &TableId,
+        document_id: &DocumentId,
+        sequence: SequenceNumber,
+    ) -> Result<Option<Document>> {
+        get_document_version_at_from_session(
+            self.driver(),
             schema_name,
-            read_shape,
-            index,
-            read_sequence,
-            value,
-            &mut entries,
+            table,
+            table_id,
+            document_id,
+            sequence,
         )
-        .await?;
+        .await
     }
-    Ok(entries)
 }
 
-struct PostgresIndexVersionValue {
-    document_id: String,
-    visible_from: i64,
-    visible_until: Option<i64>,
-}
+impl SqlIndexVersionStore for PostgresTenantStore {}
 
-async fn maybe_push_visible_historical_entry<C>(
-    session: &C,
-    schema_name: &str,
-    read_shape: &HistoricalReadShape,
-    index: &IndexDefinition,
-    read_sequence: SequenceNumber,
-    value: PostgresIndexVersionValue,
-    entries: &mut Vec<HistoricalIndexDocumentEntry>,
-) -> Result<()>
-where
-    C: GenericClient + Sync,
-{
-    if !postgres_index_version_visible_at(&value, read_sequence)? {
-        return Ok(());
-    }
-    let document_id = DocumentId::from_key(value.document_id.as_str())?;
-    let Some(document) = get_document_version_at_from_session(
-        session,
-        schema_name,
-        read_shape.table(),
-        read_shape.table_id(),
-        &document_id,
-        read_sequence,
-    )
-    .await?
-    else {
-        return Err(Error::storage(
-            StorageErrorKind::Corruption,
-            format!(
-                "visible historical Postgres index row for document {} has no document version at sequence {}",
-                document_id, read_sequence.0
-            ),
-        ));
-    };
-    let tuple = HistoricalIndexTuple::from_document(&document, index)?.ok_or_else(|| {
-        Error::storage(
-            StorageErrorKind::Corruption,
-            format!(
-                "visible historical Postgres index row for document {} has no tuple for index {}",
-                document.id, index.name
-            ),
-        )
-    })?;
-    entries.push(HistoricalIndexDocumentEntry { tuple, document });
-    Ok(())
-}
-
-fn postgres_index_version_visible_at(
-    value: &PostgresIndexVersionValue,
-    sequence: SequenceNumber,
-) -> Result<bool> {
-    let visible_from = sequence_number_from_i64(value.visible_from)?;
-    let visible_until = value
-        .visible_until
-        .map(sequence_number_from_i64)
-        .transpose()?;
-    Ok(visible_from <= sequence && visible_until.is_none_or(|until| sequence < until))
-}
+sql_index_version_facade!(PostgresTenantStore);
+sql_historical_index_facade!(PostgresTenantStore);
 
 pub(super) async fn record_index_versions_for_events_in_session<C>(
     session: &C,
@@ -274,7 +107,8 @@ where
         return Ok(());
     }
 
-    ensure_index_version_storage_format_in_session(session, schema_name).await?;
+    ensure_index_version_storage_format_in_session(&mut PostgresSession(session), schema_name)
+        .await?;
     let sequence = i64_from_sequence(sequence)?;
     let close_query = format!(
         "UPDATE {}
@@ -333,39 +167,6 @@ where
     Ok(())
 }
 
-pub(super) async fn prune_index_versions_before_in_session<C>(
-    session: &C,
-    schema_name: &str,
-    prune_before: SequenceNumber,
-) -> Result<u64>
-where
-    C: GenericClient + Sync,
-{
-    if prune_before.0 == 0 {
-        return Ok(0);
-    }
-    validate_index_version_storage_format_in_session(session, schema_name).await?;
-    let query = format!(
-        "WITH deleted AS (
-            DELETE FROM {}
-            WHERE visible_until IS NOT NULL AND visible_until <= $1
-            RETURNING 1
-         )
-         SELECT COUNT(*) FROM deleted",
-        qualified_table(schema_name, "index_versions")
-    );
-    let row = session
-        .query_one(query.as_str(), &[&i64_from_sequence(prune_before)?])
-        .await
-        .map_err(map_postgres_error)?;
-    u64::try_from(row.get::<_, i64>(0)).map_err(|_| {
-        Error::storage(
-            StorageErrorKind::Corruption,
-            "PostgreSQL index-version prune count is negative",
-        )
-    })
-}
-
 async fn index_version_mutations_for_writes<C>(
     session: &C,
     schema_name: &str,
@@ -406,160 +207,4 @@ where
         }
     }
     Ok(mutations)
-}
-
-#[cfg(test)]
-async fn index_version_intervals_from_session<C>(
-    session: &C,
-    schema_name: &str,
-    table_id: &TableId,
-    index_id: &nimbus_core::IndexId,
-) -> Result<Vec<IndexVersionInterval>>
-where
-    C: GenericClient + Sync,
-{
-    validate_index_version_storage_format_in_session(session, schema_name).await?;
-    let query = format!(
-        "SELECT document_id, visible_from, visible_until
-         FROM {}
-         WHERE table_id = $1 AND index_id = $2
-         ORDER BY encoded_tuple, document_id, visible_from",
-        qualified_table(schema_name, "index_versions")
-    );
-    let rows = session
-        .query(query.as_str(), &[&table_id.as_str(), &index_id.as_str()])
-        .await
-        .map_err(map_postgres_error)?;
-    rows.into_iter()
-        .map(|row| {
-            Ok(IndexVersionInterval {
-                document_id: DocumentId::from_key(row.get::<_, String>(0))?,
-                visible_from: sequence_number_from_i64(row.get::<_, i64>(1))?,
-                visible_until: row
-                    .get::<_, Option<i64>>(2)
-                    .map(sequence_number_from_i64)
-                    .transpose()?,
-            })
-        })
-        .collect()
-}
-
-async fn validate_index_version_storage_format_in_session<C>(
-    session: &C,
-    schema_name: &str,
-) -> Result<()>
-where
-    C: GenericClient + Sync,
-{
-    let format_version =
-        load_index_version_storage_format_from_session(session, schema_name).await?;
-    let has_versions = match format_version {
-        Some(format_version) => {
-            validate_index_version_storage_format(format_version)?;
-            false
-        }
-        None => index_versions_have_rows_in_session(session, schema_name).await?,
-    };
-    crate::validate_index_version_storage_format_state(format_version, has_versions)
-}
-
-async fn index_version_storage_diagnostic_from_session<C>(
-    session: &C,
-    schema_name: &str,
-) -> Result<IndexVersionStorageDiagnostic>
-where
-    C: GenericClient + Sync,
-{
-    let format_version =
-        load_index_version_storage_format_from_session(session, schema_name).await?;
-    let query = format!(
-        "SELECT COUNT(*), MIN(visible_from), MAX(GREATEST(visible_from, COALESCE(visible_until, visible_from))) FROM {}",
-        qualified_table(schema_name, "index_versions")
-    );
-    let row = session
-        .query_one(query.as_str(), &[])
-        .await
-        .map_err(map_postgres_error)?;
-    let version_count = u64::try_from(row.get::<_, i64>(0)).map_err(|_| {
-        Error::storage(
-            StorageErrorKind::Corruption,
-            "PostgreSQL index version count is negative",
-        )
-    })?;
-    let min_sequence = row
-        .get::<_, Option<i64>>(1)
-        .map(sequence_number_from_i64)
-        .transpose()?;
-    let max_sequence = row
-        .get::<_, Option<i64>>(2)
-        .map(sequence_number_from_i64)
-        .transpose()?;
-    crate::validate_index_version_storage_format_state(format_version, version_count > 0)?;
-
-    Ok(IndexVersionStorageDiagnostic {
-        format_version,
-        version_count,
-        min_sequence,
-        max_sequence,
-    })
-}
-
-async fn ensure_index_version_storage_format_in_session<C>(
-    session: &C,
-    schema_name: &str,
-) -> Result<()>
-where
-    C: GenericClient + Sync,
-{
-    if let Some(format_version) =
-        load_index_version_storage_format_from_session(session, schema_name).await?
-    {
-        validate_index_version_storage_format(format_version)?;
-        return Ok(());
-    }
-
-    let query = format!(
-        "INSERT INTO {} (key, value_blob) VALUES ($1, $2)
-         ON CONFLICT(key) DO UPDATE SET value_blob = EXCLUDED.value_blob",
-        qualified_table(schema_name, "metadata")
-    );
-    let key = INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY.to_string();
-    let value = encode_u64(CURRENT_INDEX_VERSION_STORAGE_FORMAT.0.into()).to_vec();
-    session
-        .execute(query.as_str(), &[&key, &value])
-        .await
-        .map_err(map_postgres_error)?;
-    Ok(())
-}
-
-async fn load_index_version_storage_format_from_session<C>(
-    session: &C,
-    schema_name: &str,
-) -> Result<Option<StorageFormatVersion>>
-where
-    C: GenericClient + Sync,
-{
-    load_metadata_u64_from_session(
-        session,
-        schema_name,
-        INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
-    )
-    .await?
-    .map(storage_format_version_from_u64)
-    .transpose()
-}
-
-async fn index_versions_have_rows_in_session<C>(session: &C, schema_name: &str) -> Result<bool>
-where
-    C: GenericClient + Sync,
-{
-    let query = format!(
-        "SELECT EXISTS(SELECT 1 FROM {} LIMIT 1)",
-        qualified_table(schema_name, "index_versions")
-    );
-    let row = session
-        .query_one(query.as_str(), &[])
-        .await
-        .map_err(map_postgres_error)?;
-    Ok(row.get::<_, bool>(0))
 }

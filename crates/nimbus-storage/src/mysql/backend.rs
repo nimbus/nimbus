@@ -1,7 +1,4 @@
-use super::table_lifecycle::{
-    activate_hidden_table_identity_in_session, hard_delete_table_identity_in_session,
-    mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
-};
+use super::dialect::{MySqlDialect, MySqlSession};
 use super::*;
 use crate::keys::prefix_end;
 use crate::mysql::document_versions::{
@@ -11,7 +8,14 @@ use crate::mysql::index_entries::{
     purge_index_entries_for_table_in_session, reconcile_index_entries_for_table_schema_in_session,
     record_index_effects_for_events_in_session, record_index_effects_for_writes_in_session,
 };
-use crate::retention::{validate_contiguous_journal_page, validate_retention_after_page};
+use crate::sql::dialect::Dialect;
+use crate::sql::resource_paths::{
+    remove_resource_path_binding_in_session, upsert_resource_path_binding_in_session,
+};
+use crate::sql::table_lifecycle::{
+    activate_hidden_table_identity_in_session, hard_delete_table_identity_in_session,
+    mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
+};
 
 pub(super) fn validate_identifier_input(value: &str, label: &str) -> Result<()> {
     if value.is_empty() {
@@ -42,24 +46,11 @@ pub(super) fn invalidate_schema_cache_handle(schema_cache: &RwLock<Option<Schema
 }
 
 pub(super) fn qualified_table(database_name: &str, table_name: &str) -> String {
-    format!(
-        "{}.{}",
-        quote_identifier(database_name),
-        quote_identifier(table_name)
-    )
+    MySqlDialect::qualified_table(database_name, table_name)
 }
 
 pub(super) fn quote_identifier(identifier: &str) -> String {
-    let mut quoted = String::with_capacity(identifier.len() + 2);
-    quoted.push('`');
-    for character in identifier.chars() {
-        if character == '`' {
-            quoted.push('`');
-        }
-        quoted.push(character);
-    }
-    quoted.push('`');
-    quoted
+    MySqlDialect::quote_identifier(identifier)
 }
 
 pub(super) async fn initialize_tenant_database(conn: &mut Conn, database_name: &str) -> Result<()> {
@@ -542,45 +533,6 @@ where
         .collect())
 }
 
-pub(super) async fn load_durable_records_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-    sequence: SequenceNumber,
-) -> Result<Vec<TenantEventRecord>>
-where
-    C: Queryable,
-{
-    let latest_sequence = load_latest_sequence_from_session(session, database_name).await?;
-    let cursor_floor =
-        load_durable_journal_cursor_floor_from_session(session, database_name).await?;
-    let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(cursor_floor);
-    let query = format!(
-        "SELECT record_blob FROM {} WHERE sequence >= ? ORDER BY sequence",
-        qualified_table(database_name, "commit_log")
-    );
-    let rows: Vec<Row> = session
-        .exec(query, (suffix_after.0.saturating_add(1),))
-        .await
-        .map_err(map_mysql_error)?;
-    let records = rows
-        .into_iter()
-        .map(|row| {
-            let (record_blob,): (Vec<u8>,) = mysql_async::from_row(row);
-            deserialize_tenant_event_record(record_blob.as_slice())
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let latest_sequence = records
-        .last()
-        .map(|record| record.sequence)
-        .unwrap_or_default()
-        .max(latest_sequence);
-    let authoritative_floor =
-        load_durable_journal_cursor_floor_from_session(session, database_name).await?;
-    validate_retention_after_page(suffix_after, authoritative_floor, "durable journal suffix")?;
-    validate_contiguous_journal_page(suffix_after, records.as_slice(), latest_sequence, false)?;
-    Ok(records)
-}
-
 pub(super) async fn load_documents_by_id_prefix_from_session<C>(
     session: &mut C,
     database_name: &str,
@@ -807,73 +759,6 @@ where
             deserialize_json::<TableSchema>(mysql_async::from_row::<(String,)>(row).0.as_str())
         })
         .transpose()
-}
-
-pub(super) async fn load_scheduled_jobs_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-    table_name: &str,
-) -> Result<Vec<ScheduledJob>>
-where
-    C: Queryable,
-{
-    let order_by = if table_name == "scheduled_jobs" {
-        "run_at, id"
-    } else {
-        "id"
-    };
-    let query = format!(
-        "SELECT data_json FROM {} ORDER BY {}",
-        qualified_table(database_name, table_name),
-        order_by
-    );
-    let rows: Vec<Row> = session.query(query).await.map_err(map_mysql_error)?;
-    rows.into_iter()
-        .map(|row| {
-            deserialize_json::<ScheduledJob>(mysql_async::from_row::<(String,)>(row).0.as_str())
-        })
-        .collect()
-}
-
-pub(super) async fn load_scheduled_job_result_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-    job_id: &str,
-) -> Result<Option<ScheduledJobResult>>
-where
-    C: Queryable,
-{
-    let query = format!(
-        "SELECT data_json FROM {} WHERE job_id = ?",
-        qualified_table(database_name, "scheduled_job_results")
-    );
-    session
-        .exec_first::<Row, _, _>(query, (job_id,))
-        .await
-        .map_err(map_mysql_error)?
-        .map(|row| {
-            deserialize_json::<ScheduledJobResult>(
-                mysql_async::from_row::<(String,)>(row).0.as_str(),
-            )
-        })
-        .transpose()
-}
-
-pub(super) async fn load_cron_jobs_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-) -> Result<Vec<CronJob>>
-where
-    C: Queryable,
-{
-    let query = format!(
-        "SELECT data_json FROM {} ORDER BY name",
-        qualified_table(database_name, "cron_jobs")
-    );
-    let rows: Vec<Row> = session.query(query).await.map_err(map_mysql_error)?;
-    rows.into_iter()
-        .map(|row| deserialize_json::<CronJob>(mysql_async::from_row::<(String,)>(row).0.as_str()))
-        .collect()
 }
 
 pub(super) async fn begin_scheduled_execution_in_session<C>(
@@ -1161,16 +1046,16 @@ where
         }
         match (&write.current, write.resource_path_binding.as_ref()) {
             (Some(_), Some(binding)) => {
-                super::resource_paths::upsert_resource_path_binding_in_session(
-                    session,
+                upsert_resource_path_binding_in_session(
+                    &mut MySqlSession(&mut *session),
                     database_name,
                     binding,
                 )
                 .await?;
             }
             (None, _) => {
-                super::resource_paths::remove_resource_path_binding_in_session(
-                    session,
+                remove_resource_path_binding_in_session(
+                    &mut MySqlSession(&mut *session),
                     database_name,
                     &nimbus_core::DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
                 )
@@ -1246,24 +1131,43 @@ where
 {
     match lifecycle {
         TableLifecycleEvent::StageHidden { table, table_id } => {
-            stage_hidden_table_identity_in_session(session, database_name, table, table_id).await
+            stage_hidden_table_identity_in_session(
+                &mut MySqlSession(&mut *session),
+                database_name,
+                table,
+                table_id,
+            )
+            .await
         }
         TableLifecycleEvent::ActivateHidden {
             table, table_id, ..
         } => {
-            let _ =
-                activate_hidden_table_identity_in_session(session, database_name, table, table_id)
-                    .await?;
+            let _ = activate_hidden_table_identity_in_session(
+                &mut MySqlSession(&mut *session),
+                database_name,
+                table,
+                table_id,
+            )
+            .await?;
             Ok(())
         }
         TableLifecycleEvent::MarkDeleting { table, .. } => {
-            let _ = mark_table_deleting_in_session(session, database_name, table).await?;
+            let _ = mark_table_deleting_in_session(
+                &mut MySqlSession(&mut *session),
+                database_name,
+                table,
+            )
+            .await?;
             Ok(())
         }
         TableLifecycleEvent::HardDelete { table, table_id } => {
-            if hard_delete_table_identity_in_session(session, database_name, table_id)
-                .await?
-                .is_some()
+            if hard_delete_table_identity_in_session(
+                &mut MySqlSession(&mut *session),
+                database_name,
+                table_id,
+            )
+            .await?
+            .is_some()
                 && load_table_id_from_session(session, database_name, table)
                     .await?
                     .is_none()
@@ -1280,25 +1184,6 @@ where
             Ok(())
         }
     }
-}
-
-pub(super) async fn table_has_entries<C>(
-    session: &mut C,
-    database_name: &str,
-    table_name: &str,
-) -> Result<bool>
-where
-    C: Queryable,
-{
-    let query = format!(
-        "SELECT 1 FROM {} LIMIT 1",
-        qualified_table(database_name, table_name)
-    );
-    Ok(session
-        .query_first::<Row, _>(query)
-        .await
-        .map_err(map_mysql_error)?
-        .is_some())
 }
 
 #[cfg(test)]
