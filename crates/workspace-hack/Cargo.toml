@@ -38,7 +38,7 @@ futures-sink = { version = "0.3" }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
-hashbrown = { version = "0.17" }
+hashbrown = { version = "0.17", default-features = false, features = ["allocator-api2", "default-hasher", "inline-more"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "server-auto", "service"] }
 icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
@@ -119,8 +119,9 @@ either = { version = "1", features = ["use_std"] }
 fastrand = { version = "2" }
 fixedbitset = { version = "0.5", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
-hashbrown = { version = "0.17" }
+hashbrown = { version = "0.17", default-features = false, features = ["allocator-api2", "default-hasher", "inline-more"] }
 indexmap = { version = "2", features = ["serde"] }
+itertools = { version = "0.12" }
 libc = { version = "0.2", features = ["extra_traits"] }
 log = { version = "0.4", default-features = false, features = ["kv", "std"] }
 memchr = { version = "2" }
