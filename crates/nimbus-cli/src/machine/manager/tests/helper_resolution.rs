@@ -43,29 +43,6 @@ fn bundled_helper_candidates_cover_root_and_bin_layouts() {
 }
 
 #[test]
-fn helper_resolution_prefers_packaged_candidates_before_fallbacks() {
-    let temp_dir = TempDir::new().expect("temp dir should exist");
-    let packaged_dir = temp_dir.path().join("libexec");
-    let fallback_dir = temp_dir.path().join("fallback");
-    fs::create_dir_all(&packaged_dir).expect("packaged helper dir should exist");
-    fs::create_dir_all(&fallback_dir).expect("fallback helper dir should exist");
-    let packaged_gvproxy = packaged_dir.join("gvproxy");
-    let fallback_gvproxy = fallback_dir.join("gvproxy");
-    write_helper_stub(&packaged_gvproxy, "gvproxy");
-    write_helper_stub(&fallback_gvproxy, "gvproxy");
-
-    let resolved = resolve_helper_binary(
-        "NIMBUS_TEST_GVPROXY",
-        "gvproxy-does-not-exist",
-        std::slice::from_ref(&packaged_gvproxy),
-        &[fallback_gvproxy],
-    )
-    .expect("packaged helper should resolve");
-
-    assert_eq!(resolved, packaged_gvproxy);
-}
-
-#[test]
 fn helper_resolution_honors_helper_binary_directory_override() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let helper_dir = temp_dir.path().join("helpers");
@@ -74,51 +51,10 @@ fn helper_resolution_honors_helper_binary_directory_override() {
     write_helper_stub(&helper_gvproxy, "gvproxy");
     let _guard = MachineHelperEnvGuard::with_helper_binary_dir(&helper_dir);
 
-    let resolved = resolve_helper_binary("NIMBUS_TEST_GVPROXY", "gvproxy", &[], &[])
+    let resolved = resolve_helper_binary("NIMBUS_TEST_GVPROXY", "gvproxy", &[])
         .expect("helper dir override should resolve");
 
     assert_eq!(resolved, helper_gvproxy);
-}
-
-#[test]
-fn known_helper_candidates_mirror_podman_darwin_defaults() {
-    assert_eq!(
-        known_helper_candidates("gvproxy"),
-        vec![
-            PathBuf::from("/opt/homebrew/bin/gvproxy"),
-            PathBuf::from("/usr/local/bin/gvproxy"),
-            PathBuf::from("/usr/local/opt/podman/libexec/podman/gvproxy"),
-            PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"),
-            PathBuf::from("/opt/homebrew/libexec/podman/gvproxy"),
-            PathBuf::from("/usr/local/libexec/podman/gvproxy"),
-            PathBuf::from("/usr/local/lib/podman/gvproxy"),
-            PathBuf::from("/usr/libexec/podman/gvproxy"),
-            PathBuf::from("/usr/lib/podman/gvproxy"),
-        ]
-    );
-}
-
-#[test]
-fn homebrew_managed_helpers_outrank_podman_libexec() {
-    // The Nimbus cask declares its `krunkit` (and therefore `gvproxy`)
-    // dependency into the Homebrew prefix `bin`. That declared, version-pinned
-    // helper must win over a `gvproxy` an unrelated `podman` install happens to
-    // ship in its `libexec`, otherwise the cask's managed dependency is silently
-    // shadowed and the resolved helper depends on whatever else is installed.
-    let candidates = known_helper_candidates("gvproxy");
-    let homebrew_bin = candidates
-        .iter()
-        .position(|path| path == &PathBuf::from("/opt/homebrew/bin/gvproxy"))
-        .expect("Homebrew prefix bin must be a known candidate");
-    let podman_libexec = candidates
-        .iter()
-        .position(|path| path == &PathBuf::from("/opt/homebrew/opt/podman/libexec/podman/gvproxy"))
-        .expect("Podman libexec must remain a fallback candidate");
-
-    assert!(
-        homebrew_bin < podman_libexec,
-        "Homebrew-managed gvproxy ({homebrew_bin}) must outrank Podman libexec ({podman_libexec})"
-    );
 }
 
 #[test]
@@ -130,13 +66,13 @@ fn helper_resolution_does_not_fall_back_to_path() {
     write_helper_stub(&helper_gvproxy, "gvproxy");
     let _guard = MachineHelperEnvGuard::with_path_only(&helper_dir);
 
-    let error = resolve_helper_binary("NIMBUS_TEST_GVPROXY", "gvproxy", &[], &[])
+    let error = resolve_helper_binary("NIMBUS_TEST_GVPROXY", "gvproxy", &[])
         .expect_err("PATH-only helpers should be ignored");
 
     assert!(
         error
             .to_string()
-            .contains("supported packaged or Homebrew helper directory"),
+            .contains("required helper 'gvproxy' was not found; set NIMBUS_TEST_GVPROXY"),
         "{error}"
     );
 }

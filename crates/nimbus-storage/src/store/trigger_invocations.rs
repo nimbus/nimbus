@@ -1,7 +1,7 @@
 use nimbus_core::{
     Error, Result, TriggerDeliveryCursor, TriggerInvocationKey, TriggerInvocationRecord,
 };
-use redb::{ReadableTable, TableError};
+use redb::{ReadableDatabase, ReadableTable, TableError};
 
 use crate::keys::trigger_invocation_key;
 

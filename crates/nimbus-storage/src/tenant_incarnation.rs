@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result, TenantId};
-use redb::{ReadableTable, TableDefinition, TableError};
+use redb::{ReadableDatabase, ReadableTable, TableDefinition, TableError};
 
 use crate::UsageStore;
 use crate::store::map_redb_error;

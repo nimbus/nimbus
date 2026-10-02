@@ -421,19 +421,18 @@ echo ""
 echo "Checking macOS bundled-helper resolver parity..."
 
 # install.sh (download/install path) and verify-install.sh (post-install audit)
-# each carry a standalone copy of the bundled-first macOS helper resolver,
-# because both ship as single-file distributions (curl | sh, standalone verify)
-# and cannot source a shared library. This guard fails closed if the two copies
+# each carry a standalone copy of the bundled macOS helper resolver, because
+# both ship as single-file distributions (curl | sh, standalone verify) and
+# cannot source a shared library. This guard fails closed if the two copies
 # ever probe a different ordered sequence of resolution stages -- a drift that
-# would silently desync where Nimbus locates its pinned gvproxy/vfkit between
-# install time and verification time. It reduces each resolver body to a
-# canonical stage signature that ignores POSIX-vs-bash surface syntax
+# would silently desync where Nimbus locates its pinned krunkit/gvproxy/vfkit
+# between install time and verification time. It reduces each resolver body to
+# a canonical stage signature that ignores POSIX-vs-bash surface syntax
 # (`[ -x ]` vs `[[ -x ]]`, `${NIMBUS_PREFIX}` vs `${install_prefix}`) and
-# compares only the resolution-order semantics both copies must share. The S3
-# stage additionally asserts the *intra-stage* ordering: the Homebrew-prefix
-# candidate (`${brew_prefix}/bin/${helper_name}`) must be probed before the
-# `/usr/local/bin/${helper_name}` fallback on that shared `for candidate` line,
-# so a reordering that silently changed which install wins also trips the guard.
+# compares only the resolution-order semantics both copies must share. The
+# runtime resolves only an override or the bundled libexec, so the S3
+# (Homebrew prefix or /usr/local/bin) and S4 (PATH) detectors must stay silent:
+# a reintroduced fallback changes the signature and trips the guard.
 resolution_signature() {
   awk -v fn="$2" '
     $0 == (fn "() {") { inbody = 1; next }
@@ -442,17 +441,13 @@ resolution_signature() {
     {
       if (index($0, "-x ") && index($0, "/libexec/${helper_name}") && !index($0, "real_dir") && !s1) { printf "S1:prefix-libexec "; s1 = 1 }
       if (index($0, "-x ") && index($0, "real_dir}/libexec/${helper_name}") && !s2) { printf "S2:beside-binary "; s2 = 1 }
-      if (!s3 && index($0, "/usr/local/bin/${helper_name}")) {
-        brew_idx = index($0, "${brew_prefix}/bin/${helper_name}")
-        usrlocal_idx = index($0, "/usr/local/bin/${helper_name}")
-        if (brew_idx > 0 && brew_idx < usrlocal_idx) { printf "S3:brew-then-usrlocal "; s3 = 1 }
-      }
+      if (!s3 && (index($0, "${brew_prefix}/bin/${helper_name}") || index($0, "/usr/local/bin/${helper_name}"))) { printf "S3:brew-or-usrlocal "; s3 = 1 }
       if (index($0, "command -v \"${helper_name}\"") && !s4) { printf "S4:path "; s4 = 1 }
     }
   ' "$1"
 }
 
-expected_resolver_signature="S1:prefix-libexec S2:beside-binary S3:brew-then-usrlocal S4:path "
+expected_resolver_signature="S1:prefix-libexec S2:beside-binary "
 install_resolver_signature="$(resolution_signature "${repo_root}/scripts/install.sh" resolve_macos_bundled_helper)"
 verify_resolver_signature="$(resolution_signature "${repo_root}/scripts/verify-install.sh" resolve_macos_bundled_helper_path)"
 
@@ -614,9 +609,13 @@ if sh -c '
     DRY_RUN=""
     DOWNLOAD_LOG="$3"
     mkdir -p "${NIMBUS_PREFIX}/libexec" "${NIMBUS_PREFIX}/share/doc/nimbus"
-    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
-    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
-    chmod +x "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    for helper_name in $(macos_bundled_helper_names); do
+      printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/${helper_name}"
+      chmod +x "${NIMBUS_PREFIX}/libexec/${helper_name}"
+    done
+    for support_name in $(macos_bundled_support_names); do
+      printf "support\n" > "${NIMBUS_PREFIX}/libexec/${support_name}"
+    done
     printf "license\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
     printf "readme\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
     get_installed_nimbus_version() { printf "%s\n" "${NIMBUS_VERSION}"; }
@@ -647,16 +646,20 @@ cat > "${custom_prefix}/bin/nimbus" <<'EOF'
 #!/bin/sh
 printf 'nimbus 0.1.14\n'
 EOF
+printf '#!/bin/sh\n' > "${custom_prefix}/libexec/krunkit"
 printf '#!/bin/sh\n' > "${custom_prefix}/libexec/gvproxy"
 printf '#!/bin/sh\n' > "${custom_prefix}/libexec/vfkit"
 printf 'license\n' > "${custom_prefix}/share/doc/nimbus/LICENSE"
 printf 'readme\n' > "${custom_prefix}/share/doc/nimbus/README.md"
-chmod +x "${custom_prefix}/bin/nimbus" "${custom_prefix}/libexec/gvproxy" "${custom_prefix}/libexec/vfkit"
+chmod +x "${custom_prefix}/bin/nimbus" "${custom_prefix}/libexec/krunkit" \
+  "${custom_prefix}/libexec/gvproxy" "${custom_prefix}/libexec/vfkit"
 
 if PATH="${mock_macos_bin}:/usr/bin:/bin" NIMBUS_PREFIX="${custom_prefix}" \
     bash "${repo_root}/scripts/verify-install.sh" \
     > "${output_dir}/macos-custom-prefix-standalone.txt" 2>&1 &&
    grep -Fq "present path=${custom_prefix}/bin/nimbus version=nimbus 0.1.14" \
+     "${output_dir}/macos-custom-prefix-standalone.txt" &&
+   grep -Fq "present path=${custom_prefix}/libexec/krunkit" \
      "${output_dir}/macos-custom-prefix-standalone.txt"; then
   pass "macOS standalone verification accepts a direct custom-prefix payload"
 else
@@ -671,10 +674,43 @@ if PATH="${mock_macos_bin}:/usr/bin:/bin" sh -c '
   ' sh "${testable_install_sh}" "${custom_prefix}" \
     > "${output_dir}/macos-custom-prefix-inline.txt" 2>&1 &&
    grep -Fq "present path=${custom_prefix}/bin/nimbus" \
+     "${output_dir}/macos-custom-prefix-inline.txt" &&
+   grep -Fq "present path=${custom_prefix}/libexec/krunkit" \
      "${output_dir}/macos-custom-prefix-inline.txt"; then
   pass "macOS inline verification accepts a direct custom-prefix payload"
 else
   fail "macOS inline verification accepts a direct custom-prefix payload"
+fi
+
+# The runtime resolves krunkit only from an override or the bundled libexec, so
+# verification must not accept a Homebrew or PATH krunkit in its place.
+path_krunkit_prefix="${output_dir}/macos-path-krunkit-prefix"
+path_krunkit_bin="${output_dir}/macos-path-krunkit-bin"
+mkdir -p "${path_krunkit_prefix}/bin" "${path_krunkit_prefix}/libexec" "${path_krunkit_bin}"
+cp "${custom_prefix}/bin/nimbus" "${path_krunkit_prefix}/bin/nimbus"
+printf '#!/bin/sh\n' > "${path_krunkit_bin}/krunkit"
+chmod +x "${path_krunkit_bin}/krunkit"
+# The prefix has no release documents, so both verifiers exit non-zero. Only
+# the krunkit lines matter here.
+PATH="${mock_macos_bin}:${path_krunkit_bin}:/usr/bin:/bin" sh -c '
+    . "$1"
+    PLATFORM="darwin"
+    NIMBUS_PREFIX="$2"
+    verify_macos_inline
+  ' sh "${testable_install_sh}" "${path_krunkit_prefix}" \
+  > "${output_dir}/macos-path-krunkit-inline.txt" 2>&1 || true
+PATH="${mock_macos_bin}:${path_krunkit_bin}:/usr/bin:/bin" NIMBUS_PREFIX="${path_krunkit_prefix}" \
+  bash "${repo_root}/scripts/verify-install.sh" \
+  > "${output_dir}/macos-path-krunkit-standalone.txt" 2>&1 || true
+if grep -Fq "missing (expected bundled at ${path_krunkit_prefix}/libexec/krunkit)" \
+     "${output_dir}/macos-path-krunkit-inline.txt" &&
+   grep -Fq "missing (expected bundled in the release archive)" \
+     "${output_dir}/macos-path-krunkit-standalone.txt" &&
+   ! grep -Fq "${path_krunkit_bin}/krunkit" \
+     "${output_dir}/macos-path-krunkit-inline.txt" "${output_dir}/macos-path-krunkit-standalone.txt"; then
+  pass "macOS verification ignores a krunkit outside the bundled libexec"
+else
+  fail "macOS verification ignores a krunkit outside the bundled libexec"
 fi
 
 linux_package_prefix="${output_dir}/linux-package-prefix"
@@ -824,6 +860,7 @@ fi
 incomplete_prefix="${output_dir}/incomplete-prefix"
 mkdir -p "${incomplete_prefix}/bin" "${incomplete_prefix}/libexec"
 cp "${custom_prefix}/bin/nimbus" "${incomplete_prefix}/bin/nimbus"
+cp "${custom_prefix}/libexec/krunkit" "${incomplete_prefix}/libexec/krunkit"
 cp "${custom_prefix}/libexec/gvproxy" "${incomplete_prefix}/libexec/gvproxy"
 cp "${custom_prefix}/libexec/vfkit" "${incomplete_prefix}/libexec/vfkit"
 
@@ -890,17 +927,21 @@ if sh -c '
     DRY_RUN=""
     mkdir -p "${NIMBUS_PREFIX}/bin" "${NIMBUS_PREFIX}/libexec" "${NIMBUS_PREFIX}/share/doc/nimbus"
     printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/bin/nimbus"
-    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/gvproxy"
-    printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/vfkit"
-    chmod +x "${NIMBUS_PREFIX}/bin/nimbus" "${NIMBUS_PREFIX}/libexec/gvproxy" "${NIMBUS_PREFIX}/libexec/vfkit"
+    chmod +x "${NIMBUS_PREFIX}/bin/nimbus"
+    for helper_name in $(macos_bundled_helper_names); do
+      printf "#!/bin/sh\n" > "${NIMBUS_PREFIX}/libexec/${helper_name}"
+      chmod +x "${NIMBUS_PREFIX}/libexec/${helper_name}"
+    done
+    for support_name in $(macos_bundled_support_names); do
+      printf "support\n" > "${NIMBUS_PREFIX}/libexec/${support_name}"
+    done
     printf "license\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE"
     printf "readme\n" > "${NIMBUS_PREFIX}/share/doc/nimbus/README.md"
     check_cmd() { return 1; }
     maybe_sudo() { "$@"; }
     uninstall_macos
     [ ! -e "${NIMBUS_PREFIX}/bin/nimbus" ] &&
-      [ ! -e "${NIMBUS_PREFIX}/libexec/gvproxy" ] &&
-      [ ! -e "${NIMBUS_PREFIX}/libexec/vfkit" ] &&
+      [ ! -e "${NIMBUS_PREFIX}/libexec" ] &&
       [ ! -e "${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE" ] &&
       [ ! -e "${NIMBUS_PREFIX}/share/doc/nimbus/README.md" ]
   ' sh "${testable_install_sh}" "${macos_uninstall_prefix}" \
@@ -987,16 +1028,16 @@ case "${os_name}" in
     ;;
 
   Darwin)
-    if grep -q "Homebrew" "${output_dir}/dry-run.txt"; then
-      pass "macOS dry-run mentions Homebrew"
+    if grep -q "brew install libkrun/krun/krunkit" "${output_dir}/dry-run.txt"; then
+      fail "macOS dry-run does not install the Homebrew krunkit chain"
     else
-      fail "macOS dry-run mentions Homebrew"
+      pass "macOS dry-run does not install the Homebrew krunkit chain"
     fi
 
-    if grep -q "krunkit" "${output_dir}/dry-run.txt"; then
-      pass "macOS dry-run mentions krunkit"
+    if grep -q "libexec/krunkit" "${output_dir}/dry-run.txt"; then
+      pass "macOS dry-run shows the bundled krunkit"
     else
-      fail "macOS dry-run mentions krunkit"
+      fail "macOS dry-run shows the bundled krunkit"
     fi
 
     if grep -q "gvproxy" "${output_dir}/dry-run.txt"; then

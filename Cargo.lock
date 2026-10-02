@@ -5165,22 +5165,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-tls"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
-dependencies = [
- "bytes",
- "http-body-util",
- "hyper 1.10.1",
- "hyper-util",
- "native-tls",
- "tokio",
- "tokio-native-tls",
- "tower-service",
-]
-
-[[package]]
 name = "hyper-util"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6506,7 +6490,7 @@ dependencies = [
  "oci-client",
  "open",
  "rand 0.8.5",
- "reqwest 0.12.28",
+ "reqwest",
  "semver",
  "serde",
  "serde_json",
@@ -6613,7 +6597,7 @@ dependencies = [
  "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-testing",
- "reqwest 0.12.28",
+ "reqwest",
  "ring",
  "serde",
  "serde_json",
@@ -7127,7 +7111,7 @@ dependencies = [
  "pbkdf2",
  "prost 0.13.5",
  "prost-types",
- "reqwest 0.12.28",
+ "reqwest",
  "ring",
  "rustls-pki-types",
  "s3s",
@@ -7192,7 +7176,7 @@ dependencies = [
  "parking_lot",
  "rand 0.8.5",
  "redb",
- "reqwest 0.12.28",
+ "reqwest",
  "rmp",
  "rmp-serde",
  "rusqlite",
@@ -7268,7 +7252,7 @@ dependencies = [
  "nimbus-storage",
  "nimbus-tenant",
  "nimbus-workloads",
- "reqwest 0.12.28",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -7595,7 +7579,7 @@ dependencies = [
  "percent-encoding",
  "quick-xml 0.41.0",
  "rand 0.10.1",
- "reqwest 0.13.2",
+ "reqwest",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -7638,7 +7622,7 @@ dependencies = [
  "oci-spec",
  "olpc-cjson",
  "regex",
- "reqwest 0.13.2",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -9411,9 +9395,9 @@ checksum = "08ad765b21a08b1a8e5cdce052719188a23772bcbefb3c439f0baaf62c56ceac"
 
 [[package]]
 name = "redb"
-version = "2.6.3"
+version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+checksum = "fb338a6c67830a61bed824b78c2bb034ab1ff401a20616bd7957524f4fdc2f22"
 dependencies = [
  "libc",
 ]
@@ -9572,9 +9556,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reqwest"
-version = "0.12.28"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
+checksum = "ab3f43e3283ab1488b624b44b0e988d0acea0b3214e694730a055cb6b2efa801"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -9588,49 +9572,10 @@ dependencies = [
  "http-body-util",
  "hyper 1.10.1",
  "hyper-rustls",
- "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",
  "mime",
- "native-tls",
- "percent-encoding",
- "pin-project-lite",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tokio-native-tls",
- "tower 0.5.3",
- "tower-http",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "reqwest"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3f43e3283ab1488b624b44b0e988d0acea0b3214e694730a055cb6b2efa801"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures-core",
- "futures-util",
- "h2",
- "http 1.4.2",
- "http-body 1.1.0",
- "http-body-util",
- "hyper 1.10.1",
- "hyper-rustls",
- "hyper-util",
- "js-sys",
- "log",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -13651,7 +13596,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
- "reqwest 0.13.2",
+ "reqwest",
  "rustix 1.1.4",
  "rustls",
  "rustls-pki-types",

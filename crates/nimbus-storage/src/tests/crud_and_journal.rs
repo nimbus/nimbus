@@ -1178,7 +1178,7 @@ fn uses_shared_table_lifecycle_transition() {
 
 #[test]
 fn native_documents_and_indexes_are_physically_keyed_by_table_id() {
-    use redb::ReadableTable;
+    use redb::{ReadableDatabase, ReadableTable};
 
     let store = TenantStore::create_in_memory().expect("store should open");
     let document = sample_document("tasks_physical_identity", "Hello");
@@ -1322,7 +1322,7 @@ fn native_writes_reject_deleting_table_identity() {
 
 #[test]
 fn native_table_lifecycle_activates_hidden_identity_and_hard_deletes_old_data() {
-    use redb::ReadableTable;
+    use redb::{ReadableDatabase, ReadableTable};
 
     let store = TenantStore::create_in_memory().expect("store should open");
     let table = TableName::new("tasks_lifecycle").expect("table should parse");
