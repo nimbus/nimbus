@@ -19,7 +19,7 @@ use nimbus_storage::{
     ObjectPlacement, ObjectStorePlacementTarget, ObjectStoreProviderCredentials,
     ObjectStoreProviderKind, PlacementPolicy,
 };
-use rand::RngCore;
+use rand::Rng;
 
 use crate::config::{LocalLeg, ObjectStorageConfig};
 use crate::credentials::{NoObjectStoreCredentialResolver, ObjectStoreCredentialResolver};
@@ -348,7 +348,7 @@ fn ensure_object_master_key_file(path: &Path) -> Result<()> {
     }
 
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::rng().fill_bytes(&mut key);
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

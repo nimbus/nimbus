@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Args, ValueEnum};
-use rand::RngCore;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use zeroize::{Zeroize, Zeroizing};
 
 use nimbus::{
@@ -572,7 +574,7 @@ fn build_rotated_manifest(
 
 fn generate_rotation_dek() -> Zeroizing<[u8; 32]> {
     let mut dek = Zeroizing::new([0u8; 32]);
-    rand::rngs::OsRng.fill_bytes(&mut *dek);
+    UnwrapErr(SysRng).fill_bytes(&mut *dek);
     dek
 }
 
@@ -738,7 +740,7 @@ fn reencrypt_redb_pages(
         );
 
         let mut new_nonce_bytes = [0u8; 12];
-        rand::rngs::OsRng.fill_bytes(&mut new_nonce_bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut new_nonce_bytes);
         let new_nonce = Nonce::from_slice(&new_nonce_bytes);
 
         let new_ciphertext = new_cipher

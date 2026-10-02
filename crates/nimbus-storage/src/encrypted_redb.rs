@@ -9,7 +9,7 @@
 //! - Page position is included in the AAD to prevent page-swap attacks
 //! - The format version is included in the AAD for upgrade safety
 //! - The DEK is provided externally and managed through the key provider system
-//! - All nonces are generated from OS entropy (`OsRng`), never `thread_rng`
+//! - All nonces are generated from OS entropy (`SysRng`), never the thread-local `rand::rng()`
 //!
 //! # Physical Layout
 //!
@@ -36,8 +36,9 @@ use std::time::{Duration, Instant};
 use aes_gcm_siv::aead::{AeadInPlace, KeyInit};
 use aes_gcm_siv::{Aes256GcmSiv, Nonce, Tag};
 use parking_lot::Mutex;
-use rand::RngCore;
-use rand::rngs::OsRng;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use redb::StorageBackend;
 
 /// Format version for the encrypted page layout.
@@ -235,7 +236,7 @@ impl EncryptedFileBackend {
 
         // Generate random nonce from OS entropy
         let mut nonce_bytes = [0u8; NONCE_SIZE];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let aad = build_aad(page_index);
@@ -531,7 +532,7 @@ impl EncryptedMemoryBackend {
 
         // Generate random nonce from OS entropy
         let mut nonce_bytes = [0u8; NONCE_SIZE];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let aad = build_aad(page_index);
