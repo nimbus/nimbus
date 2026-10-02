@@ -18,8 +18,8 @@ use super::MachineRootLayout;
 #[allow(unused_imports)]
 pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
-    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineStateRecord,
-    write_json_file,
+    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineProvider,
+    MachineStateRecord, write_json_file,
 };
 use crate::machine::HostMachineNetworkAuthority;
 
@@ -52,6 +52,14 @@ pub(super) struct DesiredGuestNimbusBinaryStatus {
 pub(super) struct ObservedGuestNimbusBinaryStatus {
     pub(super) version: Option<String>,
     pub(super) hash: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct VmmBinaryStatus {
+    pub(super) provider: MachineProvider,
+    pub(super) path: Option<PathBuf>,
+    pub(super) version: Option<String>,
+    pub(super) error: Option<String>,
 }
 
 pub(super) fn start_machine(
@@ -178,6 +186,15 @@ pub(super) fn inspect_desired_guest_nimbus_binary(
         release_archive_path: None,
         release_archive_exists: None,
         release_url: None,
+        error: Some(unsupported_machine_host_error().to_string()),
+    }
+}
+
+pub(super) fn inspect_vmm_binary(provider: MachineProvider) -> VmmBinaryStatus {
+    VmmBinaryStatus {
+        provider,
+        path: None,
+        version: None,
         error: Some(unsupported_machine_host_error().to_string()),
     }
 }

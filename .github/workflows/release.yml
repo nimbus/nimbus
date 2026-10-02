@@ -15,24 +15,32 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   # Mirror Podman's macOS packaging model: ship pinned upstream machine
-  # helpers inside the darwin archive so the no-brew install is self-contained
-  # and the on-the-network-path binaries stay under Nimbus provenance control.
-  # These bundled artifacts are the AUTHORITATIVE fallback, resolved first;
-  # the krunkit Homebrew chain may also provide gvproxy and that is expected.
-  # Bundled and brew may differ by a patch — keep the bundled pins
-  # version-controlled and authoritative.
+  # helpers (krunkit with libkrun, gvproxy, vfkit) inside the darwin archive so
+  # the no-brew install is self-contained and every VMM and network-path binary
+  # stays under Nimbus provenance control. At runtime nimbus resolves only the
+  # NIMBUS_MACHINE_* override or this bundled libexec copy; it never falls back
+  # to a Homebrew or Podman install. Keep the pins version-controlled and
+  # authoritative.
+  # krunkit release whose `krunkit-podman-unsigned-<version>.tgz` asset carries
+  # krunkit, libkrun, its GPU dependencies (libvirglrenderer, libepoxy,
+  # MoltenVK), and the EFI firmware. Podman pins the same version.
+  KRUNKIT_VERSION: v1.3.2
+  # SHA-256 of the krunkit-podman-unsigned tarball for KRUNKIT_VERSION, matching
+  # the GitHub release asset digest. Bump together with the version pin above;
+  # the bundle step fails closed on any mismatch.
+  KRUNKIT_DARWIN_SHA256: de9ab62dd90461cd1df1e37b78e780690d75490f4bab1674cbb4a1f75b90c227
   GVPROXY_VERSION: v0.8.9
   # SHA-256 of the gvproxy-darwin asset for GVPROXY_VERSION, cross-checked
   # against the upstream `sha256sums` release asset. Bump together with the
   # version pin above; the bundle step fails closed on any mismatch so a
   # tampered or swapped binary never reaches the install network path.
   GVPROXY_DARWIN_SHA256: c6f7b4bc7f21bf810b5cf54e04d979b014c5d96472a03a9e97fe62a00940067c
-  VFKIT_VERSION: v0.6.3
+  VFKIT_VERSION: v0.6.4
   # SHA-256 of the codesigned vfkit asset for VFKIT_VERSION (crc-org publishes
   # no checksums file, so this is captured from the released binary). Bump
   # together with the version pin above; the bundle step fails closed on any
   # mismatch.
-  VFKIT_DARWIN_SHA256: 19d0695d40d996ec38529a22b73cdaa84ff67ba15f4b44927292e7fe885cee0e
+  VFKIT_DARWIN_SHA256: 0ed83fc8ca7aa708598835480dba1362406aa7cd1dab3b27464eb76327d9652d
   # Dedicated machine-os source ref used by the release graph. Nimbus stages
   # the bootc artifact as soon as the Linux arm64 binary exists, then dispatches
   # the machine-os repository to publish from its own package context after all
@@ -437,9 +445,51 @@ jobs:
         if: matrix.os == 'darwin'
         run: |
           # Self-contained, Nimbus-pinned machine helpers for the no-brew
-          # install path (Podman's packaging model). Resolved bundled-first at
-          # runtime; the krunkit Homebrew chain may also provide gvproxy.
+          # install path (Podman's packaging model). At runtime nimbus resolves
+          # only an explicit override or these bundled copies.
           mkdir -p dist/libexec
+          # krunkit is the default macOS VMM backend. The podman-unsigned
+          # tarball is arm64-only and lays out bin/krunkit, lib/*.dylib, and
+          # share/krunkit/KRUN_EFI.silent.fd. Verify the tarball before any
+          # byte of it is unpacked.
+          krunkit_tgz="${RUNNER_TEMP}/krunkit-podman-unsigned-${KRUNKIT_VERSION#v}.tgz"
+          curl --fail -sSL --retry 5 \
+            -o "${krunkit_tgz}" \
+            "https://github.com/containers/krunkit/releases/download/${KRUNKIT_VERSION}/krunkit-podman-unsigned-${KRUNKIT_VERSION#v}.tgz"
+          echo "${KRUNKIT_DARWIN_SHA256}  ${krunkit_tgz}" | shasum -a 256 -c -
+          krunkit_root="${RUNNER_TEMP}/krunkit"
+          mkdir -p "${krunkit_root}"
+          tar -xzf "${krunkit_tgz}" -C "${krunkit_root}"
+          # Flatten into libexec: install.sh copies libexec entries one level
+          # deep. libkrun hard-links libvirglrenderer and libepoxy, which link
+          # MoltenVK, so every lib/*.dylib is a load-time dependency. libkrun
+          # only dlopens libkrunfw when no firmware is set, and krunkit always
+          # sets one, so the tarball ships no libkrunfw. nimbus passes the
+          # sibling firmware with --firmware-path.
+          cp "${krunkit_root}/bin/krunkit" dist/libexec/krunkit
+          cp "${krunkit_root}"/lib/*.dylib dist/libexec/
+          cp "${krunkit_root}/share/krunkit/KRUN_EFI.silent.fd" dist/libexec/KRUN_EFI.silent.fd
+          chmod 0755 dist/libexec/krunkit dist/libexec/*.dylib
+          chmod 0644 dist/libexec/KRUN_EFI.silent.fd
+          # The upstream rpaths point at /opt/homebrew/lib and /opt/podman/lib,
+          # which would load another install's libkrun. Replace them with the
+          # bundle directory. install_name_tool fails if either rpath is
+          # missing, so an upstream layout change fails the step closed.
+          install_name_tool \
+            -delete_rpath /opt/homebrew/lib \
+            -delete_rpath /opt/podman/lib \
+            -add_rpath @executable_path \
+            dist/libexec/krunkit
+          # arm64 macOS refuses to run unsigned code. Ad hoc sign the dylibs,
+          # then krunkit with the hypervisor entitlement it needs for
+          # Hypervisor.framework.
+          for dylib in dist/libexec/*.dylib; do
+            codesign --force --sign - "${dylib}"
+          done
+          codesign --force --sign - \
+            --entitlements packaging/macos/krunkit.entitlements \
+            dist/libexec/krunkit
+          dist/libexec/krunkit --version
           curl --fail -sSL --retry 5 \
             -o dist/libexec/gvproxy \
             "https://github.com/containers/gvisor-tap-vsock/releases/download/${GVPROXY_VERSION}/gvproxy-darwin"
@@ -470,8 +520,9 @@ jobs:
           cp target/release/nimbus dist/nimbus
           cp README.md LICENSE dist/
           if [[ "${{ matrix.os }}" == "darwin" ]]; then
-            # darwin carries the bundled libexec machine helpers (gvproxy and
-            # vfkit) so the no-brew archive is self-contained.
+            # darwin carries the bundled libexec machine helpers (krunkit with
+            # libkrun and its firmware, gvproxy, and vfkit) so the no-brew
+            # archive is self-contained.
             tar czf nimbus_${{ matrix.os }}_${{ matrix.arch }}.tar.gz \
               -C dist nimbus libexec README.md LICENSE
           else

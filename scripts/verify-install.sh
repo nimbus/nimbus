@@ -347,21 +347,25 @@ verify_macos() {
   fi
   check_nimbus_release_documents
 
-  # krunkit — optional macOS-dev dependency for the `nimbus machine` flow,
-  # installed via the libkrun/krun Homebrew tap. The server runs without it.
-  check_command "krunkit" "krunkit" recommended
-
   # Optional Bun/JSC in-process runtime adapter
   check_macos_bun_jsc_adapter
 
-  # gvproxy is bundled + pinned in the macOS release archive and resolved
-  # bundled-first (mirroring resolve_macos_bundled_helper in install.sh and the
-  # Rust runtime resolver): the install prefix's libexec, then the Caskroom
-  # libexec beside the resolved nimbus binary, then the Homebrew prefix / PATH.
+  # krunkit (the default VMM backend for the `nimbus machine` flow) and gvproxy
+  # are bundled + pinned in the macOS release archive. They resolve like
+  # resolve_macos_bundled_helper in install.sh and the Rust runtime resolver:
+  # the install prefix's libexec, then the Caskroom libexec beside the resolved
+  # nimbus binary. The server runs without them, so a miss is a warning.
+  if krunkit_path="$(resolve_macos_bundled_helper_path "krunkit")"; then
+    print_line "krunkit" "present path=${krunkit_path}"
+  else
+    print_line "krunkit" "missing (expected bundled in the release archive)"
+    mark_warning
+  fi
+
   if gvproxy_path="$(resolve_macos_bundled_helper_path "gvproxy")"; then
     print_line "gvproxy" "present path=${gvproxy_path}"
   else
-    print_line "gvproxy" "missing (expected bundled in the release archive; or 'brew install libkrun/krun/krunkit')"
+    print_line "gvproxy" "missing (expected bundled in the release archive)"
     mark_warning
   fi
 
@@ -375,9 +379,10 @@ verify_macos() {
   fi
 }
 
-# Resolve a bundled-first macOS machine helper, mirroring install.sh's
-# resolve_macos_bundled_helper and the Rust runtime resolver. Prints the first
-# match to stdout and returns 0, or returns 1 when no candidate is found.
+# Resolve a bundled macOS machine helper, mirroring install.sh's
+# resolve_macos_bundled_helper and the Rust runtime resolver, which ignore
+# Homebrew and PATH copies. Prints the first match to stdout and returns 0, or
+# returns 1 when no candidate is found.
 resolve_macos_bundled_helper_path() {
   local helper_name="$1"
   local install_prefix="${NIMBUS_PREFIX:-/usr/local}"
@@ -401,22 +406,6 @@ resolve_macos_bundled_helper_path() {
       printf '%s\n' "${real_dir}/libexec/${helper_name}"
       return 0
     fi
-  fi
-
-  local brew_prefix=""
-  brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
-  local candidate=""
-  for candidate in "${brew_prefix}/bin/${helper_name}" "/usr/local/bin/${helper_name}"; do
-    if [[ -x "${candidate}" ]]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-
-  local path_helper=""
-  if path_helper="$(command -v "${helper_name}" 2>/dev/null)"; then
-    printf '%s\n' "${path_helper}"
-    return 0
   fi
 
   return 1
