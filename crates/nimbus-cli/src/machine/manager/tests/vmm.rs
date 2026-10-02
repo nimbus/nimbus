@@ -99,6 +99,14 @@ fn krunkit_backend_ignores_homebrew_and_podman_directories() {
 }
 
 fn build_krunkit_launch_command(vmm_binary: &Path) -> MachineCommandLine {
+    build_vmm_launch_command(&KrunkitVmmBackend, vmm_binary, false)
+}
+
+fn build_vmm_launch_command(
+    backend: &dyn MachineVmmBackend,
+    vmm_binary: &Path,
+    nested_virtualization: bool,
+) -> MachineCommandLine {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let image_path = temp_dir.path().join("disk.raw");
     let config = sample_config(&image_path);
@@ -113,10 +121,46 @@ fn build_krunkit_launch_command(vmm_binary: &Path) -> MachineCommandLine {
         rest_uri: &rest_uri,
         bootstrap_mode: MachineBootstrapMode::Ignition,
         machine_config_bundle_dir: None,
+        nested_virtualization,
     };
-    KrunkitVmmBackend
+    backend
         .build_launch_command(vmm_binary, &ctx)
         .expect("launch command should build")
+}
+
+#[test]
+fn krunkit_launch_passes_nested_on_a_supported_host() {
+    let command = build_vmm_launch_command(&KrunkitVmmBackend, Path::new("/opt/test/vmm"), true);
+
+    assert!(
+        command.args.iter().any(|arg| arg == "--nested"),
+        "{:?}",
+        command.args
+    );
+}
+
+#[test]
+fn krunkit_launch_omits_nested_on_an_unsupported_host() {
+    let command = build_vmm_launch_command(&KrunkitVmmBackend, Path::new("/opt/test/vmm"), false);
+
+    assert!(
+        !command.args.iter().any(|arg| arg == "--nested"),
+        "{:?}",
+        command.args
+    );
+}
+
+#[test]
+fn vfkit_launch_never_passes_nested() {
+    // vfkit has no `--nested` flag. A supported host must not change its
+    // command line.
+    let command = build_vmm_launch_command(&VfkitVmmBackend, Path::new("/opt/test/vmm"), true);
+
+    assert!(
+        !command.args.iter().any(|arg| arg == "--nested"),
+        "{:?}",
+        command.args
+    );
 }
 
 #[test]

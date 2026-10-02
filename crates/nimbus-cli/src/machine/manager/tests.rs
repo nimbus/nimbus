@@ -30,6 +30,7 @@ use super::image::{
 use super::launch::{
     MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg, build_virtiofs_arg,
 };
+use super::nested::{NESTED_VIRTUALIZATION_REQUIREMENT, NestedVirtualizationHost};
 use super::ports::managed_machine_port_range_contains;
 use super::readiness::{
     build_machine_api_forward_command, secure_machine_forwarder_services_socket_for_owner,
@@ -71,6 +72,7 @@ fn fixture_machine_ssh_listener_id(scope: &str) -> ListenerId {
 mod attestation;
 mod helper_resolution;
 mod launch_image;
+mod nested;
 mod ports_state;
 mod provider_bootstrap;
 mod readiness_startup;
