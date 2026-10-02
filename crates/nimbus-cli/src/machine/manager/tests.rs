@@ -20,8 +20,7 @@ use super::guest::{
 };
 use super::helper_env_guard::write_helper_stub;
 use super::helper_paths::{
-    bundled_helper_candidates_for_executable, known_helper_candidates, resolve_gvproxy_binary,
-    resolve_helper_binary,
+    bundled_helper_candidates_for_executable, resolve_gvproxy_binary, resolve_helper_binary,
 };
 use super::image::{
     attestation_repositories_for_reference, build_digest_reference, check_build_attestation,
@@ -43,7 +42,8 @@ use super::stop::{
     request_vmm_state_change, send_signal, stop_provider_machine, wait_for_pid_exit,
 };
 use super::vmm::{
-    KrunkitVmmBackend, MachineVmmBackend, VfkitVmmBackend, VmmLaunchContext, vmm_backend,
+    KrunkitVmmBackend, MachineVmmBackend, VfkitVmmBackend, VmmLaunchContext, inspect_vmm_binary,
+    vmm_backend,
 };
 use super::*;
 use crate::machine::bootstrap::GUEST_NIMBUS_SOCKET;
@@ -78,5 +78,6 @@ mod ssh_scp;
 mod start_collision;
 mod stop_cleanup;
 mod support;
+mod vmm;
 
 use self::support::*;

@@ -514,6 +514,12 @@ fn machine_info_renders_yaml_by_default() {
                 provider: Some(MachineProvider::Krunkit),
                 api_reachable: true,
             },
+            vmm: VmmBinaryStatus {
+                provider: MachineProvider::Krunkit,
+                path: Some(PathBuf::from("/opt/nimbus/libexec/krunkit")),
+                version: Some("krunkit 1.3.2".to_owned()),
+                error: None,
+            },
         },
     };
 
@@ -523,6 +529,8 @@ fn machine_info_renders_yaml_by_default() {
     assert!(rendered.contains("current_release: v0.1.20"));
     assert!(rendered.contains("default_machine_name: default"));
     assert!(rendered.contains("api_reachable: true"));
+    assert!(rendered.contains("path: /opt/nimbus/libexec/krunkit"));
+    assert!(rendered.contains("version: krunkit 1.3.2"));
 }
 
 #[test]
@@ -552,6 +560,12 @@ fn machine_info_renders_json_when_requested() {
                 provider: None,
                 api_reachable: false,
             },
+            vmm: VmmBinaryStatus {
+                provider: MachineProvider::Krunkit,
+                path: None,
+                version: None,
+                error: Some("required helper 'krunkit' was not found".to_owned()),
+            },
         },
     };
 
@@ -560,6 +574,7 @@ fn machine_info_renders_json_when_requested() {
     assert!(rendered.contains("\"version\": \"0.1.20\""));
     assert!(rendered.contains("\"current_release\": \"v0.1.20\""));
     assert!(rendered.contains("\"initialized\": false"));
+    assert!(rendered.contains("\"error\": \"required helper 'krunkit' was not found\""));
 }
 
 #[test]

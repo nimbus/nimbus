@@ -31,6 +31,11 @@ printf 'stub windows binary\n' > "${good_artifacts}/windows/nimbus.exe"
 printf 'readme\n' > "${good_artifacts}/darwin/README.md"
 printf 'license\n' > "${good_artifacts}/darwin/LICENSE"
 mkdir -p "${good_artifacts}/darwin/libexec"
+printf 'stub krunkit\n' > "${good_artifacts}/darwin/libexec/krunkit"
+for krunkit_support in libkrun.dylib libvirglrenderer.1.dylib libepoxy.0.dylib \
+  libMoltenVK.dylib KRUN_EFI.silent.fd; do
+  printf 'stub %s\n' "${krunkit_support}" > "${good_artifacts}/darwin/libexec/${krunkit_support}"
+done
 printf 'stub gvproxy\n' > "${good_artifacts}/darwin/libexec/gvproxy"
 printf 'stub vfkit\n' > "${good_artifacts}/darwin/libexec/vfkit"
 cp "${good_artifacts}/darwin/README.md" "${good_artifacts}/linux-x86_64/README.md"
@@ -43,6 +48,7 @@ cp "${good_artifacts}/darwin/LICENSE" "${good_artifacts}/windows/LICENSE"
 chmod 0755 "${good_artifacts}/darwin/nimbus" \
   "${good_artifacts}/linux-x86_64/nimbus" \
   "${good_artifacts}/linux-arm64/nimbus" \
+  "${good_artifacts}/darwin/libexec/krunkit" \
   "${good_artifacts}/darwin/libexec/gvproxy" \
   "${good_artifacts}/darwin/libexec/vfkit"
 
@@ -72,12 +78,12 @@ tar -czf "${bad_artifacts}/nimbus_darwin_arm64.tar.gz" \
 if bash "${repo_root}/scripts/verify-release-archive-layout.sh" \
   --artifacts-dir "${bad_artifacts}" \
   > "${output_dir}/bad.txt" 2>&1; then
-  echo "expected release archive layout verification to fail when macOS omits the bundled gvproxy helper" >&2
+  echo "expected release archive layout verification to fail when macOS omits the bundled libexec helpers" >&2
   exit 1
 fi
 
 grep -F "expected path missing: " "${output_dir}/bad.txt" >/dev/null
-grep -F "libexec/gvproxy" "${output_dir}/bad.txt" >/dev/null
+grep -F "libexec/krunkit" "${output_dir}/bad.txt" >/dev/null
 
 cp -R "${good_artifacts}" "${bad_license_artifacts}"
 rm -f "${bad_license_artifacts}/nimbus_linux_x86_64.tar.gz"
@@ -112,6 +118,27 @@ fi
 grep -F "expected path missing: " "${output_dir}/bad-vfkit.txt" >/dev/null
 grep -F "libexec/vfkit" "${output_dir}/bad-vfkit.txt" >/dev/null
 
+# Each bundled helper is required on its own, and the bundled krunkit is
+# useless without libkrun beside it.
+for krunkit_entry in krunkit libkrun.dylib gvproxy; do
+  bad_krunkit_artifacts="${output_dir}/bad-${krunkit_entry}"
+  cp -R "${good_artifacts}" "${bad_krunkit_artifacts}"
+  rm -f "${bad_krunkit_artifacts}/nimbus_darwin_arm64.tar.gz"
+  rm -f "${bad_krunkit_artifacts}/darwin/libexec/${krunkit_entry}"
+  tar -czf "${bad_krunkit_artifacts}/nimbus_darwin_arm64.tar.gz" \
+    -C "${bad_krunkit_artifacts}/darwin" nimbus libexec README.md LICENSE
+
+  if bash "${repo_root}/scripts/verify-release-archive-layout.sh" \
+    --artifacts-dir "${bad_krunkit_artifacts}" \
+    > "${output_dir}/bad-${krunkit_entry}.txt" 2>&1; then
+    echo "expected release archive layout verification to fail when macOS omits libexec/${krunkit_entry}" >&2
+    exit 1
+  fi
+
+  grep -F "expected path missing: " "${output_dir}/bad-${krunkit_entry}.txt" >/dev/null
+  grep -F "libexec/${krunkit_entry}" "${output_dir}/bad-${krunkit_entry}.txt" >/dev/null
+done
+
 # --skip-windows: windows zip must be ABSENT (pass) ...
 skipwin_artifacts="${output_dir}/skipwin"
 cp -R "${good_artifacts}" "${skipwin_artifacts}"
@@ -133,4 +160,4 @@ fi
 grep -F "unexpected path present: " "${output_dir}/skipwin-stale.txt" >/dev/null
 grep -F "nimbus_windows_x86_64.zip" "${output_dir}/skipwin-stale.txt" >/dev/null
 
-printf 'verified: release archive layout helper accepts the bundled macOS gvproxy + vfkit layout, rejects a missing gvproxy helper, missing vfkit helper, or missing LICENSE payloads, and enforces --skip-windows absent-zip semantics\n'
+printf 'verified: release archive layout helper accepts the bundled macOS krunkit + libkrun + gvproxy + vfkit layout, rejects a missing libexec, krunkit, libkrun.dylib, gvproxy, or vfkit, or missing LICENSE payloads, and enforces --skip-windows absent-zip semantics\n'
