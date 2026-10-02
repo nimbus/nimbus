@@ -13,16 +13,21 @@ Current contract:
   - nimbus
   - README.md
   - LICENSE
-  - libexec/gvproxy (bundled, pinned gvproxy@0.8.9; the authoritative macOS
-    networking helper resolved first, so the archive is self-contained without
-    Homebrew)
-  - libexec/vfkit (bundled, pinned vfkit@0.6.3; the opt-in macOS VMM backend,
+  - libexec/krunkit (bundled, pinned krunkit@1.3.2; the default macOS VMM
+    backend, resolved only from an override or this bundle)
+  - libexec/libkrun.dylib and the libkrun GPU load chain
+    (libexec/libvirglrenderer.1.dylib, libexec/libepoxy.0.dylib,
+    libexec/libMoltenVK.dylib)
+  - libexec/KRUN_EFI.silent.fd (the krunkit EFI firmware)
+  - libexec/gvproxy (bundled, pinned gvproxy@0.8.9; the macOS networking
+    helper, so the archive is self-contained without Homebrew)
+  - libexec/vfkit (bundled, pinned vfkit@0.6.4; the opt-in macOS VMM backend,
     NIMBUS_MACHINE_PROVIDER=vfkit, so the seam works without a brew install)
 - nimbus_linux_x86_64.tar.gz and nimbus_linux_arm64.tar.gz contain:
   - nimbus
   - README.md
   - LICENSE
-  - no libexec/gvproxy or libexec/vfkit helper
+  - no libexec/krunkit, libexec/gvproxy, or libexec/vfkit helper
 - nimbus_windows_x86_64.zip contains:
   - nimbus.exe
   - README.md
@@ -117,6 +122,12 @@ assert_present "${darwin_dir}/README.md"
 assert_present "${darwin_dir}/LICENSE"
 assert_present "${darwin_dir}/nimbus"
 assert_executable "${darwin_dir}/nimbus"
+assert_present "${darwin_dir}/libexec/krunkit"
+assert_executable "${darwin_dir}/libexec/krunkit"
+for krunkit_support in libkrun.dylib libvirglrenderer.1.dylib libepoxy.0.dylib \
+  libMoltenVK.dylib KRUN_EFI.silent.fd; do
+  assert_present "${darwin_dir}/libexec/${krunkit_support}"
+done
 assert_present "${darwin_dir}/libexec/gvproxy"
 assert_executable "${darwin_dir}/libexec/gvproxy"
 assert_present "${darwin_dir}/libexec/vfkit"
@@ -126,6 +137,7 @@ assert_present "${linux_x86_dir}/README.md"
 assert_present "${linux_x86_dir}/LICENSE"
 assert_present "${linux_x86_dir}/nimbus"
 assert_executable "${linux_x86_dir}/nimbus"
+assert_absent "${linux_x86_dir}/libexec/krunkit"
 assert_absent "${linux_x86_dir}/libexec/gvproxy"
 assert_absent "${linux_x86_dir}/libexec/vfkit"
 
@@ -133,6 +145,7 @@ assert_present "${linux_arm_dir}/README.md"
 assert_present "${linux_arm_dir}/LICENSE"
 assert_present "${linux_arm_dir}/nimbus"
 assert_executable "${linux_arm_dir}/nimbus"
+assert_absent "${linux_arm_dir}/libexec/krunkit"
 assert_absent "${linux_arm_dir}/libexec/gvproxy"
 assert_absent "${linux_arm_dir}/libexec/vfkit"
 

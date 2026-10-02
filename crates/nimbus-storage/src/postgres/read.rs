@@ -1,19 +1,33 @@
-use super::resource_paths::load_resource_path_bindings_from_session;
+use super::dialect::{PostgresHandle, PostgresSession};
 use super::*;
 use crate::IndexRangeBound;
 use crate::range_bound::{borrow_index_range_bound, clone_index_range_bound};
+use crate::sql::read_store::{
+    SqlReadSession, SqlReadStore, finish_durable_journal_page, has_scheduled_work_in_session,
+    load_durable_records_from_session, sql_read_store_facade, stream_durable_journal_from_session,
+};
+use crate::sql::resource_paths::load_resource_path_bindings_from_session;
 
-pub(super) async fn has_scheduled_work_from_provider(
-    provider: PostgresProvider,
-    schema_name: String,
-) -> Result<bool> {
-    let client = provider.client().await?;
-    Ok(
-        table_has_rows_in_session(&client, &schema_name, "scheduled_jobs").await?
-            || table_has_rows_in_session(&client, &schema_name, "running_scheduled_jobs").await?
-            || table_has_rows_in_session(&client, &schema_name, "cron_jobs").await?,
-    )
+impl<H: PostgresHandle> SqlReadSession for PostgresSession<H> {
+    async fn load_latest_sequence(&mut self, schema_name: &str) -> Result<SequenceNumber> {
+        load_latest_sequence_from_session(self.driver(), schema_name).await
+    }
+
+    async fn load_durable_journal_cursor_floor(
+        &mut self,
+        schema_name: &str,
+    ) -> Result<SequenceNumber> {
+        load_durable_journal_cursor_floor_from_session(self.driver(), schema_name).await
+    }
 }
+
+impl SqlReadStore for PostgresTenantStore {
+    fn validate_journal_stream_limit(limit: usize) -> Result<()> {
+        validate_durable_journal_stream_limit(limit)
+    }
+}
+
+sql_read_store_facade!(PostgresTenantStore);
 
 impl PostgresTenantStore {
     pub fn load_schema(&self) -> Result<Schema> {
@@ -106,8 +120,11 @@ impl PostgresTenantStore {
             let table_identities =
                 load_table_identities_from_session(&transaction, &schema_name).await?;
             let documents = load_documents_from_session(&transaction, &schema_name, None).await?;
-            let resource_path_bindings =
-                load_resource_path_bindings_from_session(&transaction, &schema_name).await?;
+            let resource_path_bindings = load_resource_path_bindings_from_session(
+                &mut PostgresSession(&transaction),
+                &schema_name,
+            )
+            .await?;
             let scheduled_execution_ids =
                 load_scheduled_execution_ids_from_session(&transaction, &schema_name).await?;
             let trigger_delivery_cursor = load_metadata_u64_from_session(
@@ -232,14 +249,6 @@ impl PostgresTenantStore {
         filter_documents_with_predicate(documents, &[], check_cancel, |_| Ok(true))
     }
 
-    pub fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {
-        Ok(self
-            .read_durable_journal_from(sequence)?
-            .into_iter()
-            .map(|record| record.as_commit_entry())
-            .collect())
-    }
-
     pub async fn read_commit_log_from_async(
         &self,
         sequence: SequenceNumber,
@@ -252,50 +261,12 @@ impl PostgresTenantStore {
             .collect())
     }
 
-    pub fn read_durable_journal_from(
-        &self,
-        sequence: SequenceNumber,
-    ) -> Result<Vec<TenantEventRecord>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_durable_records_from_session(&client, &schema_name, sequence).await
-        })
-    }
-
     pub async fn read_durable_journal_from_async(
         &self,
         sequence: SequenceNumber,
     ) -> Result<Vec<TenantEventRecord>> {
-        let client = self.provider.client().await?;
-        load_durable_records_from_session(&client, &self.schema_name, sequence).await
-    }
-
-    pub fn stream_durable_journal(
-        &self,
-        after: SequenceNumber,
-        limit: usize,
-    ) -> Result<DurableJournalPage> {
-        validate_durable_journal_stream_limit(limit)?;
-
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let mut page = self.block_on(async move {
-            let client = provider.client().await?;
-            stream_durable_journal_from_session(&client, &schema_name, after, limit).await
-        })?;
-        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
-        let authoritative_floor = self
-            .durable_journal_cursor_floor()?
-            .max(self.retention_floor.published_read_floors().journal);
-        crate::retention::validate_retention_after_page(
-            after,
-            authoritative_floor,
-            "durable journal page",
-        )?;
-        page.cursor_floor = page.cursor_floor.max(authoritative_floor);
-        Ok(page)
+        let mut session = PostgresSession(self.provider.client().await?);
+        load_durable_records_from_session(&mut session, &self.schema_name, sequence).await
     }
 
     pub async fn stream_durable_journal_async(
@@ -305,22 +276,18 @@ impl PostgresTenantStore {
     ) -> Result<DurableJournalPage> {
         validate_durable_journal_stream_limit(limit)?;
 
-        let client = self.provider.client().await?;
-        let mut page =
-            stream_durable_journal_from_session(&client, &self.schema_name, after, limit).await?;
+        let mut session = PostgresSession(self.provider.client().await?);
+        let page =
+            stream_durable_journal_from_session(&mut session, &self.schema_name, after, limit)
+                .await?;
         self.check_fault(crate::FaultPoint::RetentionReadAfterPage)?;
-        let remote_authoritative_floor =
-            load_durable_journal_cursor_floor_from_session(&client, &self.schema_name).await?;
-        drop(client);
+        let remote_authoritative_floor = session
+            .load_durable_journal_cursor_floor(&self.schema_name)
+            .await?;
+        drop(session);
         let authoritative_floor =
             remote_authoritative_floor.max(self.retention_floor.published_read_floors().journal);
-        crate::retention::validate_retention_after_page(
-            after,
-            authoritative_floor,
-            "durable journal page",
-        )?;
-        page.cursor_floor = page.cursor_floor.max(authoritative_floor);
-        Ok(page)
+        finish_durable_journal_page(page, after, authoritative_floor)
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
@@ -347,171 +314,9 @@ impl PostgresTenantStore {
         self.read_snapshot()?.export_materialized_journal_snapshot()
     }
 
-    pub fn scheduled_execution_exists(&self, execution_id: &str) -> Result<bool> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let execution_id = execution_id.to_string();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            let query = format!(
-                "SELECT 1 FROM {} WHERE execution_id = $1",
-                qualified_table(&schema_name, "scheduled_job_executions")
-            );
-            client
-                .query_opt(query.as_str(), &[&execution_id])
-                .await
-                .map(|row| row.is_some())
-                .map_err(map_postgres_error)
-        })
-    }
-
-    pub fn get_scheduled_job_result(
-        &self,
-        job_id: &DocumentId,
-    ) -> Result<Option<ScheduledJobResult>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let job_id = job_id.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_scheduled_job_result_from_session(&client, &schema_name, &job_id).await
-        })
-    }
-
-    pub fn list_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_scheduled_jobs_from_session(&client, &schema_name, "scheduled_jobs").await
-        })
-    }
-
-    pub fn get_pending_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
-        self.load_scheduler_job_by_id("scheduled_jobs", job_id)
-    }
-
-    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_scheduled_jobs_from_session(&client, &schema_name, "running_scheduled_jobs").await
-        })
-    }
-
-    pub fn get_running_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
-        self.load_scheduler_job_by_id("running_scheduled_jobs", job_id)
-    }
-
-    fn load_scheduler_job_by_id(
-        &self,
-        table_name: &str,
-        job_id: &DocumentId,
-    ) -> Result<Option<ScheduledJob>> {
-        debug_assert!(matches!(
-            table_name,
-            "scheduled_jobs" | "running_scheduled_jobs"
-        ));
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let table_name = table_name.to_string();
-        let job_id = job_id.to_string();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            let query = format!(
-                "SELECT data_json FROM {} WHERE id = $1",
-                qualified_table(&schema_name, &table_name)
-            );
-            client
-                .query_opt(query.as_str(), &[&job_id])
-                .await
-                .map_err(map_postgres_error)?
-                .map(|row| deserialize_json::<ScheduledJob>(row.get::<_, String>(0).as_str()))
-                .transpose()
-        })
-    }
-
-    pub fn peek_due_scheduled_jobs(
-        &self,
-        now: Timestamp,
-        max_jobs: usize,
-    ) -> Result<Vec<ScheduledJob>> {
-        if max_jobs == 0 {
-            return Ok(Vec::new());
-        }
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
-        self.block_on(async move {
-            let client = provider.client().await?;
-            let query = format!(
-                "SELECT data_json FROM {} WHERE run_at <= $1 ORDER BY run_at, id LIMIT $2",
-                qualified_table(&schema_name, "scheduled_jobs")
-            );
-            let run_at = claim_due_jobs_upper_bound(now);
-            client
-                .query(query.as_str(), &[&run_at, &max_jobs])
-                .await
-                .map_err(map_postgres_error)?
-                .into_iter()
-                .map(|row| deserialize_json::<ScheduledJob>(row.get::<_, String>(0).as_str()))
-                .collect()
-        })
-    }
-
-    pub fn load_cron_jobs(&self) -> Result<Vec<CronJob>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_cron_jobs_from_session(&client, &schema_name).await
-        })
-    }
-
-    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        let name = name.to_string();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            let query = format!(
-                "SELECT data_json FROM {} WHERE name = $1",
-                qualified_table(&schema_name, "cron_jobs")
-            );
-            client
-                .query_opt(query.as_str(), &[&name])
-                .await
-                .map_err(map_postgres_error)?
-                .map(|row| deserialize_json::<CronJob>(row.get::<_, String>(0).as_str()))
-                .transpose()
-        })
-    }
-
-    pub fn next_scheduled_work_at(&self) -> Result<Option<Timestamp>> {
-        let next_job_at = self.list_scheduled_jobs()?.first().map(|job| job.run_at);
-        let next_cron_at = self
-            .load_cron_jobs()?
-            .into_iter()
-            .filter(|cron| cron.enabled)
-            .map(|cron| cron.next_run)
-            .min();
-        Ok(match (next_job_at, next_cron_at) {
-            (Some(left), Some(right)) => Some(left.min(right)),
-            (Some(left), None) => Some(left),
-            (None, Some(right)) => Some(right),
-            (None, None) => None,
-        })
-    }
-
-    pub fn has_scheduled_work(&self) -> Result<bool> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move { has_scheduled_work_from_provider(provider, schema_name).await })
-    }
-
     pub async fn has_scheduled_work_async(&self) -> Result<bool> {
-        has_scheduled_work_from_provider(self.provider.clone(), self.schema_name.clone()).await
+        let mut session = PostgresSession(self.provider.client().await?);
+        has_scheduled_work_in_session(&mut session, &self.schema_name).await
     }
 
     pub fn index_scan_eq_cancellable(
@@ -650,14 +455,5 @@ impl PostgresTenantStore {
             borrow_index_range_bound(&end),
             check_cancel,
         )
-    }
-
-    fn durable_journal_cursor_floor(&self) -> Result<SequenceNumber> {
-        let provider = self.provider.clone();
-        let schema_name = self.schema_name.clone();
-        self.block_on(async move {
-            let client = provider.client().await?;
-            load_durable_journal_cursor_floor_from_session(&client, &schema_name).await
-        })
     }
 }
