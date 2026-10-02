@@ -8,7 +8,8 @@ use nimbus_sandbox::{
     SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant::TenantIsolationContextExt;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::{
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity, WorkloadSagaKey,
 };

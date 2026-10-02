@@ -7,7 +7,8 @@ use nimbus_compute::{
     WorkloadProvisionError,
 };
 use nimbus_core::Error;
-use nimbus_tenant::{TenantIsolationContext, TenantServiceAccessDecision};
+use nimbus_tenant::TenantServiceAccessDecision;
+use nimbus_tenant_context::TenantIsolationContext;
 
 pub(in crate::adapters::convex) type ConvexServiceProvisionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;

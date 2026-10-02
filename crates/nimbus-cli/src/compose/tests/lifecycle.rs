@@ -29,7 +29,7 @@ use nimbus_server::{ServerWorkloadComposition, ServerWorkloadProviders};
 use nimbus_services::{
     EmptyServiceDefinitionCatalog, ServiceDefinition, ServiceDefinitionObservation, ServiceManager,
 };
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::{
     NodeIdentity, TenantWorkloadUid, WorkloadDesiredDigest, WorkloadExecutionAttemptId,
     WorkloadExecutionId, WorkloadExecutionProviderId, WorkloadExecutionReference,

@@ -261,7 +261,7 @@ fn service_capable_bridge(
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     services: impl IntoIterator<Item = String>,
 ) -> ConvexHostBridge {
-    let isolation = nimbus_tenant::TenantIsolationContext::application(
+    let isolation = nimbus_tenant_context::TenantIsolationContext::application(
         tenant_id,
         nimbus_core::PrincipalContext::anonymous(),
         "convex_service_capability_test",
@@ -299,7 +299,7 @@ fn mutation_bridge(
     tenant_id: TenantId,
     principal: nimbus_core::PrincipalContext,
 ) -> ConvexHostBridge {
-    let isolation = nimbus_tenant::TenantIsolationContext::application(
+    let isolation = nimbus_tenant_context::TenantIsolationContext::application(
         tenant_id,
         principal.clone(),
         "convex_authorization_test",
@@ -563,7 +563,7 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
     )
     .expect("direct documents should encode as Convex JSON");
     let registry = Arc::new(ConvexRegistry::empty());
-    let isolation = nimbus_tenant::TenantIsolationContext::application(
+    let isolation = nimbus_tenant_context::TenantIsolationContext::application(
         tenant_id.clone(),
         normalize_principal_context(Some(&auth)),
         "convex_authorization_test",

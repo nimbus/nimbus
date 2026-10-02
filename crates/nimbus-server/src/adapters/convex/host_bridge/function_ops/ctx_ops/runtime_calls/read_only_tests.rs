@@ -11,10 +11,8 @@ use nimbus_runtime::{
     InvocationServices, NimbusRuntimeError,
 };
 use nimbus_services::RuntimeServiceRegistry;
-use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
-    admit_runtime_invocation_decision,
-};
+use nimbus_tenant::{RuntimeIsolationTier, TenantIsolationMode, admit_runtime_invocation_decision};
+use nimbus_tenant_context::TenantIsolationContext;
 use serde_json::{Value, json};
 use tempfile::tempdir;
 

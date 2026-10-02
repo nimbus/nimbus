@@ -10,7 +10,7 @@ use nimbus_node::{
     TenantWorkloadDiagnostics, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
     TenantWorkloadStatusPatch,
 };
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use super::*;
 

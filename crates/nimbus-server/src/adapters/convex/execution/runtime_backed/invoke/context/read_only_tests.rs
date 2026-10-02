@@ -6,7 +6,8 @@ use nimbus_core::{Error, TenantId};
 use nimbus_engine::Engine;
 use nimbus_runtime::{InvocationServiceBinding, InvocationServiceProtocol, InvocationServices};
 use nimbus_services::RuntimeServiceRegistry;
-use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
+use nimbus_tenant::TenantIsolationMode;
+use nimbus_tenant_context::TenantIsolationContext;
 use tempfile::tempdir;
 
 use super::RuntimeInvocationContext;

@@ -8,7 +8,7 @@ use super::{
     evidence::{canonical_evidence_reason_code, tenant_isolation_event_name},
 };
 #[cfg(test)]
-use super::{TenantIsolationContext, authority::TenantIsolationAuthority};
+use nimbus_tenant_context::{TenantIsolationAuthority, TenantIsolationContext};
 
 pub const TENANT_ISOLATION_EVENT_SCHEMA_VERSION: &str = "nimbus.tenant_isolation.event.v1";
 pub const TENANT_ISOLATION_OCSF_SCHEMA_VERSION: &str = "1.8.0";
@@ -256,9 +256,9 @@ impl TenantIsolationEvent {
     ) -> Self {
         Self::without_decision(
             TenantIsolationEventKind::Rejection,
-            context.tenant_id.as_str(),
-            context.surface,
-            authority_class(&context.authority),
+            context.tenant_id().as_str(),
+            context.surface(),
+            authority_class(context.authority()),
             TenantIsolationEventResult::Denied,
             reason_code,
         )
@@ -665,7 +665,7 @@ mod tests {
     use nimbus_sandbox::SandboxResourceCharge;
 
     use super::super::{
-        RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationContext,
+        RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationContextExt,
         TenantIsolationMode, TenantIsolationPolicyInput, TenantNetworkEndpointDecision,
         TenantNetworkPolicyDecision, TenantQuotaPolicyDecision, TenantRuntimePolicyAdmission,
         TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,

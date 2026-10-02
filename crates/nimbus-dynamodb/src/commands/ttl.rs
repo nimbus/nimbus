@@ -16,7 +16,7 @@ use extenddb_core::types::{
 };
 use nimbus_core::{DocumentId, StructuredQuery, TableName, WritePrecondition};
 use nimbus_engine::{Engine, MutationActor};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde_json::{Map, Value};
 
 use crate::attribute_value::fields_to_item;

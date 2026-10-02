@@ -14,7 +14,8 @@ use nimbus_sandbox::SandboxSpec;
 use nimbus_services::{
     SandboxResourceSnapshot, ServiceDefinition, ServiceDefinitionObservation, ServiceManager,
 };
-use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
+use nimbus_tenant::TenantIsolationContextExt;
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadNetworkForwardingBehavior, WorkloadProvisionSourceGeneration,
     WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaKey,

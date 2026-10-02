@@ -22,7 +22,7 @@ use std::sync::Arc;
 use extenddb_core::error::DynamoDbError;
 use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use crate::error::map_core_error;
 

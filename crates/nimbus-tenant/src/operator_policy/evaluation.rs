@@ -1,10 +1,11 @@
 use nimbus_core::{Result, TenantId};
 use nimbus_runtime::RuntimePolicy;
 use nimbus_sandbox::SandboxBackendKind;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde::Serialize;
 
 use crate::{
-    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationContext,
+    RuntimeIsolationTier, TenantAuditRedactionPolicy, TenantIsolationContextExt,
     TenantIsolationDecision, TenantIsolationMode, TenantQuotaPolicyDecision,
     TenantRuntimePolicyAdmission, TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision,
     TenantStoragePolicyDecision, TenantVolumePolicyDecision,

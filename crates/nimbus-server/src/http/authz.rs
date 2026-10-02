@@ -12,7 +12,7 @@ use crate::local_server::{
     LocalServerAuditEvent, LocalServerRouteFamily, LocalServerSecurityState, origin_from_headers,
 };
 use crate::state::AppState;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PrincipalClass {

@@ -21,7 +21,7 @@ use extenddb_core::types::{
 };
 use nimbus_core::{DocumentId, StructuredQuery, TableName};
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use crate::attribute_value::fields_to_item;
 use crate::commands::{control_plane, item};

@@ -21,7 +21,7 @@ use crate::state::{AppError, AppState, RequestCancellationGuard};
 use nimbus_compute::scheduling::{
     CronJobsResponse, ScheduleResponse, ScheduledJobResultResponse, ScheduledJobsResponse,
 };
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 mod authz;
 mod deploy;

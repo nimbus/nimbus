@@ -17,9 +17,8 @@ use nimbus_sandbox::{
     SandboxSpec,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
-use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
-};
+use nimbus_tenant::{TenantIsolationContextExt, TenantIsolationPolicyInput, WorkloadAttributes};
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadExecutionReference, WorkloadFailureEvidence,
     WorkloadNetworkForwardingBehavior, WorkloadOwnerEvidenceDigest,

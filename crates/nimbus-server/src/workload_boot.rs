@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use nimbus_compute::services::{ServiceLifecycleVerb, service_lifecycle};
 use nimbus_compute::state::{ComputeError, ComputeState};
 use nimbus_core::{Error, TenantId, WorkloadId};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 /// Ordered static services that a managed server starts during startup.
 #[derive(Debug, Clone, PartialEq, Eq)]

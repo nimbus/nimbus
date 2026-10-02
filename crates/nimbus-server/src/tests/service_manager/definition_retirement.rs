@@ -53,7 +53,8 @@ use nimbus_network::{
 };
 use nimbus_sandbox::{ProviderCommandAttemptJournal, SandboxPortBinding};
 use nimbus_services::{ServiceDefinitionSource, SessionLifecycleState, SessionTarget};
-use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
+use nimbus_tenant::TenantIsolationContextExt;
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutionProviderId,

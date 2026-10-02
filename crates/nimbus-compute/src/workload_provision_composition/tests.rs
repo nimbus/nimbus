@@ -12,9 +12,10 @@ use nimbus_sandbox::{
     SandboxRestartPolicy, SandboxRootSpec, SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
-    TenantServiceGrantPolicyDecision, WorkloadAttributes, WorkloadLocation,
+    TenantIsolationContextExt, TenantIsolationDecision, TenantIsolationPolicyInput,
+    TenantServiceGrantPolicyDecision, WorkloadAttributes,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::WorkloadRestartPolicy;
 
 use super::*;

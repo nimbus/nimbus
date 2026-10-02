@@ -195,10 +195,11 @@ mod tests {
     use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
     use nimbus_runtime::{EgressSubstrate, RuntimePolicy};
     use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+        RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationMode,
         TenantIsolationPolicyInput, TenantNetworkPolicyDecision, TenantStoragePolicyDecision,
         WorkloadAttributes,
     };
+    use nimbus_tenant_context::TenantIsolationContext;
 
     use super::*;
 

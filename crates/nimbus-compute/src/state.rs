@@ -1568,7 +1568,7 @@ mod tests {
             node_services: NodeServicesConfig::default().with_service_manager(services.clone()),
             runtime: RuntimeGovernorConfig::default(),
         });
-        let context = nimbus_tenant::TenantIsolationContext::system(
+        let context = nimbus_tenant_context::TenantIsolationContext::system(
             tenant_id.clone(),
             "service.definition.delete",
         );

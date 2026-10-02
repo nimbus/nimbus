@@ -4,7 +4,8 @@ use nimbus_auth::normalize_principal_context;
 use nimbus_compute::ComputeResourceProvisioner;
 use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
-use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
+use nimbus_tenant::TenantIsolationMode;
+use nimbus_tenant_context::TenantIsolationContext;
 
 // Single call site; every param is a distinctly-typed handle or subscription
 // value forwarded directly from the caller's locals with no natural

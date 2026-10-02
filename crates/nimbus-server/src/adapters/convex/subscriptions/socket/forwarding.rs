@@ -59,7 +59,7 @@ pub(super) async fn run_subscription_forwarder(
     runtime_service_registry: Arc<dyn nimbus_services::RuntimeServiceRegistry>,
     runtime_manager: Arc<nimbus_compute::runtime_manager::RuntimeManager>,
     service_provisioner: Option<nimbus_compute::ComputeResourceProvisioner>,
-    tenant_context: nimbus_tenant::TenantIsolationContext,
+    tenant_context: nimbus_tenant_context::TenantIsolationContext,
     subscription_statuses: SubscriptionStatuses,
     runtime_cancellation: HostCallCancellation,
     tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,

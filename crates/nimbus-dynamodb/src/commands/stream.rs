@@ -23,7 +23,7 @@ use nimbus_core::{
     TableName, Timestamp, WriteKey, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::{DocumentReadFilter, Engine, MutationActor};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 

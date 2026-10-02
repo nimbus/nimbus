@@ -6,11 +6,12 @@ use nimbus_egress::{CompiledEgressPolicy, EgressAuthorization, EgressPolicy, Egr
 use nimbus_network::EndpointProtocol;
 use nimbus_runtime::{RuntimePolicy, RuntimeTenantBudget};
 use nimbus_sandbox::{SandboxResourceCharge, SandboxSpec, validate_sandbox_mounts};
+use nimbus_tenant_context::TenantIsolationContext;
 use serde::Serialize;
 
 use super::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode, TenantRuntimePolicyDecision,
-    WorkloadAttributes,
+    RuntimeIsolationTier, RuntimePolicyAdmissionExt, TenantIsolationMode,
+    TenantRuntimePolicyDecision, WorkloadAttributes,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]

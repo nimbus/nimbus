@@ -48,7 +48,7 @@ use nimbus_server::{EngineWorkloadSagaStore, ServerWorkloadComposition, ServerWo
 use nimbus_services::{
     ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceManager,
 };
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::{
     WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadProvisionInspectionResult,
     WorkloadProvisionStep, WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence,

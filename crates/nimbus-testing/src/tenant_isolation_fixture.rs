@@ -10,10 +10,11 @@
 use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
+    RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationDecision, TenantIsolationMode,
     TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-    WorkloadAttributes, WorkloadLocation,
+    WorkloadAttributes,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::LocalEnforcementBinding;
 
 /// Builds a `PrincipalContext` carrying a single `tenant_id` claim: the shape

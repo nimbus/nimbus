@@ -19,6 +19,7 @@ nimbus-egress = { path = "../nimbus-egress" }
 nimbus-network = { path = "../nimbus-network" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 oci-client = "0.16"
 serde.workspace = true
 serde_json.workspace = true
