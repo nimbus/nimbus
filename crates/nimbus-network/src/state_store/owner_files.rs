@@ -2,11 +2,16 @@
 //!
 //! Every authority file and directory is private to the node user. This module
 //! owns their creation, permission checks, synchronization, atomic replacement,
-//! and the classification of advisory-lock contention.
+//! and the classification of advisory-lock contention. The crash-consistency
+//! protocols themselves live in `nimbus-durable-record`. This module maps them
+//! onto the authority error vocabulary.
 
+use std::convert::Infallible;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::Path;
+
+use nimbus_durable_record::{StagedWrite, WriteCheckpoint, WriteFailure, WriteStep};
 
 use super::NetworkStateStoreError;
 
@@ -39,7 +44,7 @@ pub(crate) fn create_dir_all_owner_only(path: &Path) -> Result<(), NetworkStateS
     for directory in missing.iter().rev() {
         set_owner_directory_permissions(directory)?;
         if let Some(parent) = directory.parent() {
-            sync_directory(parent)?;
+            sync_authority_directory(parent)?;
         }
     }
     set_owner_directory_permissions(path)
@@ -76,17 +81,9 @@ fn set_owner_directory_permissions(_path: &Path) -> Result<(), NetworkStateStore
     Ok(())
 }
 
-pub(crate) fn open_owner_file(
-    path: &Path,
-    create_new: bool,
-) -> Result<File, NetworkStateStoreError> {
+pub(crate) fn open_owner_file(path: &Path) -> Result<File, NetworkStateStoreError> {
     let mut options = OpenOptions::new();
-    options.read(true).write(true);
-    if create_new {
-        options.create_new(true);
-    } else {
-        options.create(true).truncate(false);
-    }
+    options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -153,52 +150,55 @@ pub(super) fn validate_owner_file_permissions(
     Ok(())
 }
 
-#[cfg(unix)]
-pub(super) fn sync_directory(path: &Path) -> Result<(), NetworkStateStoreError> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|source| NetworkStateStoreError::Io {
-            operation: "sync authority directory",
-            path: path.to_path_buf(),
-            source,
+pub(super) fn sync_authority_directory(path: &Path) -> Result<(), NetworkStateStoreError> {
+    nimbus_durable_record::sync_directory(path).map_err(|source| NetworkStateStoreError::Io {
+        operation: "sync authority directory",
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Operation names that one staged authority write reports for each step.
+pub(super) struct StagedWriteOperations {
+    pub(super) create: &'static str,
+    pub(super) write: &'static str,
+    pub(super) sync: &'static str,
+    pub(super) replace: &'static str,
+}
+
+/// Atomically replace `destination` with owner-only `bytes` through `stage`.
+///
+/// A failed write removes its stage where it can. Startup removes any stage
+/// that remains, so a cleanup failure does not hide the primary error.
+pub(super) fn replace_owner_file(
+    stage: &Path,
+    destination: &Path,
+    bytes: &[u8],
+    operations: &StagedWriteOperations,
+    observer: &mut dyn FnMut(WriteCheckpoint),
+) -> Result<(), NetworkStateStoreError> {
+    let mut observe = |checkpoint: WriteCheckpoint| {
+        observer(checkpoint);
+        Ok::<(), Infallible>(())
+    };
+    StagedWrite::new(stage, destination)
+        .owner_only()
+        .observer(&mut observe)
+        .write(bytes)
+        .map_err(|error| match error.failure {
+            WriteFailure::Io { step, path, source } => NetworkStateStoreError::Io {
+                operation: match step {
+                    WriteStep::CreateStage => operations.create,
+                    WriteStep::WriteStage => operations.write,
+                    WriteStep::SyncStage => operations.sync,
+                    WriteStep::Commit => operations.replace,
+                    WriteStep::SyncDirectory => "sync authority directory",
+                },
+                path,
+                source,
+            },
+            WriteFailure::Observer { error, .. } => match error {},
         })
-}
-
-#[cfg(not(unix))]
-pub(super) fn sync_directory(_path: &Path) -> Result<(), NetworkStateStoreError> {
-    Ok(())
-}
-
-#[cfg(not(windows))]
-pub(super) fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-pub(super) fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    };
-
-    let mut source_wide: Vec<u16> = source.as_os_str().encode_wide().collect();
-    source_wide.push(0);
-    let mut destination_wide: Vec<u16> = destination.as_os_str().encode_wide().collect();
-    destination_wide.push(0);
-    // SAFETY: both pointers address null-terminated buffers that remain alive
-    // for the duration of the synchronous call.
-    let result = unsafe {
-        MoveFileExW(
-            source_wide.as_ptr(),
-            destination_wide.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
 }
 
 pub(crate) fn is_lock_contended(source: &io::Error) -> bool {
