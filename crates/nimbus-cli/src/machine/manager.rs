@@ -18,6 +18,7 @@ mod helper_env_guard;
 mod helper_paths;
 mod image;
 mod launch;
+mod nested;
 mod ports;
 mod process_identity;
 mod readiness;

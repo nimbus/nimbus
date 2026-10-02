@@ -130,6 +130,7 @@ fn build_sample_launch_command(
         rest_uri: &rest_uri,
         bootstrap_mode: MachineBootstrapMode::Ignition,
         machine_config_bundle_dir: None,
+        nested_virtualization: false,
     };
     backend
         .build_launch_command(Path::new("/opt/test/vmm"), &ctx)

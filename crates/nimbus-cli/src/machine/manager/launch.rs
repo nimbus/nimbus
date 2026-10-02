@@ -11,11 +11,12 @@ use nimbus_network::{LocalPortLeaseAuthority, NetworkResourceGeneration};
 use super::super::bootstrap::resolve_ignition_file;
 use super::super::guest_config::render_machine_config_bundle;
 use super::super::{
-    MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord, MachineVolume,
-    describe_machine_image_source, machine_bootstrap_mode,
+    MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineProvider, MachineStateRecord,
+    MachineVolume, describe_machine_image_source, machine_bootstrap_mode,
 };
 use super::helper_paths::resolve_gvproxy_binary;
 use super::image::resolve_bootable_image_path;
+use super::nested::NestedVirtualizationHost;
 use super::ports::PreparedMachineSshPortLease;
 use super::vmm::{MachineVmmBackend, VmmLaunchContext, vmm_backend};
 use super::{MachineHelperBinaryPaths, MachineRuntimeState, READY_VSOCK_PORT, mount_tag};
@@ -174,6 +175,8 @@ impl MachineLaunchPlan {
                 rest_uri: &rest_uri,
                 bootstrap_mode,
                 machine_config_bundle_dir: machine_config_bundle_dir.as_deref(),
+                nested_virtualization: config.provider == MachineProvider::Krunkit
+                    && NestedVirtualizationHost::current().krunkit_nested_virtualization(),
             },
         )?;
 
