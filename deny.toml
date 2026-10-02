@@ -123,6 +123,7 @@ skip = [
     { crate = "spki@0.8.0", reason = "Deno crypto currently carries ed448-goldilocks on the RustCrypto 0.14 prerelease lane alongside the stable RustCrypto 0.13 lane." },
     { crate = "wasm-encoder@0.260.0", reason = "Wasmtime component tooling carries wasm-encoder 0.254 directly and wat/wast 0.260 transitively." },
     { crate = "webpki-roots@1.0.8", reason = "Nimbus-proxy's K11P upstream TLS verifier uses current webpki-roots while the pinned Deno TLS stack still carries webpki-roots 0.26." },
+    { crate = "toml@0.9.12+spec-1.1.0", reason = "2026-10-01: wasmtime-internal-cache 48.0.3 pins toml 0.9 while the workspace TOML users moved to toml 1.1." },
     { crate = "which@6.0.3", reason = "The rusty_v8 build stack carries which 6 while the current Deno permission stack uses which 8." },
     { crate = "winnow@0.6.26", reason = "The pinned Deno resolver YAML parser still carries winnow 0.6 while the workspace TOML parser uses winnow 0.7." },
     { crate = "yasna@0.6.0", reason = "Rcgen 0.14 for K11P leaf/CA certificate generation carries yasna 0.6 alongside the pinned Deno Node crypto yasna 0.5 lane." },

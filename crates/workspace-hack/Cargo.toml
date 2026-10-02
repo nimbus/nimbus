@@ -58,8 +58,8 @@ num-traits = { version = "0.2", features = ["i128"] }
 once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock"] }
 percent-encoding = { version = "2" }
-phf = { version = "0.13", features = ["macros"] }
-phf_shared-594e8ee84c453af0 = { package = "phf_shared", version = "0.13", default-features = false, features = ["std"] }
+phf = { version = "0.14", features = ["macros"] }
+phf_shared-582f2526e08bb6a0 = { package = "phf_shared", version = "0.14", default-features = false, features = ["std"] }
 phf_shared-a6292c17cd707f01 = { package = "phf_shared", version = "0.11", features = ["uncased"] }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 prost = { version = "0.14" }
@@ -80,7 +80,7 @@ serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
 simdutf8 = { version = "0.1" }
 slab = { version = "0.4" }
-smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union"] }
 stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
 strum = { version = "0.27", features = ["derive"] }
 subtle = { version = "2" }
@@ -89,6 +89,7 @@ tinystr = { version = "0.8", features = ["zerovec"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tokio-util = { version = "0.7", features = ["codec", "io-util", "rt"] }
+toml_datetime = { version = "1", features = ["serde"] }
 toml_parser = { version = "1" }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "log"] }
 tracing = { version = "0.1", features = ["log"] }
@@ -129,8 +130,8 @@ num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
 num-traits = { version = "0.2", features = ["i128"] }
 once_cell = { version = "1" }
-phf = { version = "0.13", features = ["macros"] }
-phf_shared-594e8ee84c453af0 = { package = "phf_shared", version = "0.13", default-features = false, features = ["std"] }
+phf = { version = "0.14", features = ["macros"] }
+phf_shared-582f2526e08bb6a0 = { package = "phf_shared", version = "0.14", default-features = false, features = ["std"] }
 phf_shared-a6292c17cd707f01 = { package = "phf_shared", version = "0.11", features = ["uncased"] }
 prettyplease = { version = "0.2", default-features = false, features = ["verbatim"] }
 proc-macro2 = { version = "1" }
@@ -144,11 +145,13 @@ regex-syntax = { version = "0.8" }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
-smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union"] }
 strum = { version = "0.27", features = ["derive"] }
 subtle = { version = "2" }
-syn = { version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", default-features = false, features = ["clone-impls", "full", "parsing", "printing", "proc-macro", "visit-mut"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 time-macros = { version = "0.2", default-features = false, features = ["formatting", "parsing", "serde"] }
+toml_datetime = { version = "1", features = ["serde"] }
 toml_parser = { version = "1" }
 typenum = { version = "1", default-features = false, features = ["const-generics"] }
 uncased = { version = "0.9" }
@@ -169,7 +172,7 @@ nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "i
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 rustix = { version = "1", features = ["fs", "net", "process", "stdio", "termios", "time"] }
-syn = { version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tokio = { version = "1", default-features = false, features = ["tracing"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs", "logging", "ring", "tls12"] }
 tower = { version = "0.5", default-features = false, features = ["retry", "timeout"] }
