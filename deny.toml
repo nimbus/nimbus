@@ -16,20 +16,18 @@ all-features = true
 unmaintained = "workspace"
 # Lint level for crates with unsound API
 unsound = "all"
-# Lint level for crates that have been yanked. Keep this at warn while the
-# pinned Deno crypto prerelease lane carries crypto-bigint 0.7.3 and local
-# execution policy blocks `cargo update -p crypto-bigint --precise 0.7.5`.
+# Lint level for crates that have been yanked.
 yanked = "warn"
 ignore = [
   # Requires `rand`'s `log` + `thread_rng` features plus a custom `log` logger
   # path. The remaining transitive `rand 0.8.5` lane in this workspace does
   # not enable `log`, and Nimbus uses `tracing_subscriber`.
-  { id = "RUSTSEC-2026-0097", reason = "Requires rand log + thread_rng features plus a custom log::Log path; Nimbus does not enable rand log and uses tracing_subscriber." },
-  { id = "RUSTSEC-2023-0071", reason = "RustCrypto rsa has no safe fixed release; exposure is limited to user-authored Deno/Node crypto operations, so keep the audit visible until upstream replaces the implementation." },
-  { id = "RUSTSEC-2026-0118", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork moves DNSSEC validation off the affected 0.25 API." },
-  { id = "RUSTSEC-2026-0119", reason = "Pinned nimbus/deno v2.9.0-nimbus.3 carries hickory-proto 0.25 through deno_net; keep visible until the Deno fork advances to hickory-proto >=0.26.1." },
-  { id = "RUSTSEC-2026-0285", reason = "rustls 0.23.40 TLS 1.3 handshake-level check (fixed in 0.23.45). deno_tls in the pinned nimbus/deno tag and upstream Deno main pin rustls =0.23.40, so this workspace cannot move it. Remove when the Deno fork carries rustls >=0.23.45 (tracked for the next v2.9.7-nimbus tag, 2026-10-01)." },
-  { id = "RUSTSEC-2026-0204", reason = "crossbeam-epoch 0.9.20 (the advisory's fix release) deterministically SIGABRTs the nimbus-server test binary on macOS (libc++ hardening: vector[] OOB; A/B/A-bisected 2026-07-08), so we hold 0.9.18 — banned below. The advisory itself is unsound fmt::Pointer/Display of invalid Atomic/Shared pointers, which no Nimbus path formats. Revisit on crossbeam-epoch >0.9.20." },
+  { id = "RUSTSEC-2026-0097", reason = "deno_crypto and other crates in the current nimbus/deno fork tag pin rand =0.8.5. This advisory requires rand log + thread_rng features and a custom log::Log path. Nimbus does not enable rand log and uses tracing_subscriber. Re-check 2026-10-23." },
+  { id = "RUSTSEC-2023-0071", reason = "deno_crypto and deno_node_crypto carry rsa 0.9.10, which has no safe fixed release. Exposure is limited to user-authored Deno/Node crypto operations. Keep the audit visible until upstream replaces the implementation. Re-check 2026-10-23." },
+  { id = "RUSTSEC-2026-0118", reason = "deno_net in the current nimbus/deno fork tag requires hickory-proto ^0.25.2. hickory-resolver 0.25.2 also requires hickory-proto ^0.25. Keep visible until the Deno fork moves DNSSEC validation off the affected 0.25 API. Re-check 2026-10-23." },
+  { id = "RUSTSEC-2026-0119", reason = "deno_net in the current nimbus/deno fork tag requires hickory-proto ^0.25.2. hickory-resolver 0.25.2 also requires hickory-proto ^0.25. These requirements exclude the fixed hickory-proto >=0.26.1 release. Re-check 2026-10-23." },
+  { id = "RUSTSEC-2026-0285", reason = "rustls 0.23.40 TLS 1.3 handshake-level check (fixed in 0.23.45). deno_tls in the pinned nimbus/deno tag and upstream Deno main pin rustls =0.23.40, so this workspace cannot move it. Remove when the Deno fork carries rustls >=0.23.45 (tracked for the next v2.9.7-nimbus tag, 2026-10-01). Re-check 2026-10-23." },
+  { id = "RUSTSEC-2026-0204", reason = "crossbeam-epoch 0.9.20 (the advisory's fix release) deterministically SIGABRTs the nimbus-server test binary on macOS (libc++ hardening: vector[] OOB; A/B/A-bisected 2026-07-08), so we hold 0.9.18 — banned below. The advisory itself is unsound fmt::Pointer/Display of invalid Atomic/Shared pointers, which no Nimbus path formats. Revisit on crossbeam-epoch >0.9.20. Re-check 2026-10-09." },
 ]
 
 [licenses]
