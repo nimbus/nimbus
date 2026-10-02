@@ -2,7 +2,7 @@ use std::path::Path;
 
 use nimbus_core::{Error, Result};
 use redb::backends::InMemoryBackend;
-use redb::{Database, ReadableTable, TableDefinition, TableError};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableError};
 use serde::{Deserialize, Serialize};
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime};
 
