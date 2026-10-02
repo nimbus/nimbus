@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use nimbus_core::TenantId;
+use nimbus_durable_record::sync_directory;
 use nimbus_network::{
     NetworkAttachmentId, NetworkProviderHandle, NetworkResourceGeneration, NetworkResourceId,
     NetworkResourceVersion, NetworkSegmentId, PortLeaseRequest,
@@ -43,7 +44,7 @@ use store::{
 };
 use store::{
     lock_publication, publish_record_locked, read_record, read_record_if_present,
-    remove_stale_stage, sync_directory,
+    remove_stale_stage,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

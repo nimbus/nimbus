@@ -7050,6 +7050,7 @@ dependencies = [
  "libc",
  "nimbus-blob",
  "nimbus-core",
+ "nimbus-durable-record",
  "nimbus-egress",
  "nimbus-network",
  "nimbus-process-harness",
