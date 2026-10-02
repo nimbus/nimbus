@@ -18,26 +18,29 @@
 //! auto-detection.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use nimbus::Error;
 
 use super::super::guest_config::GUEST_MACHINE_CONFIG_MOUNT_TAG;
 use super::super::{MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineProvider};
-use super::helper_paths::{
-    bundled_helper_candidates, known_helper_candidates, resolve_helper_binary,
-};
+use super::helper_paths::{bundled_helper_candidates, resolve_helper_binary};
 use super::launch::{
     MachineCommandLine, build_virtio_vsock_listen_arg, build_virtiofs_arg, build_virtiofs_args,
 };
 use super::{
     DEFAULT_KRUNKIT_BINARY, DEFAULT_MACHINE_MAC_ADDRESS, DEFAULT_VFKIT_BINARY, KRUNKIT_ENV,
-    READY_VSOCK_PORT, VFKIT_ENV,
+    READY_VSOCK_PORT, VFKIT_ENV, VmmBinaryStatus,
 };
 
 /// Ignition's well-known guest vsock port. The host serves the Ignition payload
 /// on a listening Unix socket and the guest dials this port to fetch it; both
 /// applehv backends wire the same device.
 const IGNITION_VSOCK_PORT: u32 = 1024;
+
+/// The EFI firmware that the macOS release bundles flat in `libexec` beside
+/// krunkit.
+const KRUNKIT_EFI_FIRMWARE: &str = "KRUN_EFI.silent.fd";
 
 /// Everything `MachineLaunchPlan::build` knows about a boot that a VMM backend
 /// needs to assemble its launch command. Borrowed for the duration of the build
@@ -57,8 +60,8 @@ pub(super) trait MachineVmmBackend {
     /// The provider this backend serves.
     fn provider(&self) -> MachineProvider;
 
-    /// Resolve the VMM binary, honoring the per-VMM env override first, then the
-    /// bundled/known helper directories.
+    /// Resolve the VMM binary: the per-VMM env override first, then the bundled
+    /// `libexec` copy, else an error that names both.
     fn resolve_vmm_binary(&self) -> Result<PathBuf, Error>;
 
     /// The gvproxy listen-mode arguments that pair with this VMM's net device.
@@ -91,6 +94,47 @@ pub(super) fn vmm_backend(provider: MachineProvider) -> Result<Box<dyn MachineVm
         MachineProvider::Vfkit => Ok(Box::new(VfkitVmmBackend)),
         MachineProvider::Wsl2 => Err(provider.unavailable_error()),
     }
+}
+
+/// Resolve the VMM binary for `provider` and read its `--version` output. A
+/// failure at either step lands in `error`, so `nimbus machine info` still
+/// renders on a host without the bundled helpers.
+pub(super) fn inspect_vmm_binary(provider: MachineProvider) -> VmmBinaryStatus {
+    let mut status = VmmBinaryStatus {
+        provider,
+        path: None,
+        version: None,
+        error: None,
+    };
+    let path = match vmm_backend(provider).and_then(|backend| backend.resolve_vmm_binary()) {
+        Ok(path) => path,
+        Err(error) => {
+            status.error = Some(error.to_string());
+            return status;
+        }
+    };
+    match read_vmm_version(&path) {
+        Ok(version) => status.version = Some(version),
+        Err(error) => status.error = Some(error),
+    }
+    status.path = Some(path);
+    status
+}
+
+fn read_vmm_version(vmm_binary: &Path) -> Result<String, String> {
+    let output = Command::new(vmm_binary)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("failed to run {} --version: {error}", vmm_binary.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{} --version exited with {}: {}",
+            vmm_binary.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// The gvproxy listen-mode arguments both applehv backends share. gvproxy
@@ -181,14 +225,13 @@ impl MachineVmmBackend for KrunkitVmmBackend {
     }
 
     fn resolve_vmm_binary(&self) -> Result<PathBuf, Error> {
-        // krunkit is not bundled in the Nimbus archive; it is installed by the
-        // cask's declared dependency, so resolution has no bundled candidates
-        // and falls through to the Homebrew/Podman known directories.
+        // The macOS archive bundles krunkit, libkrun, and its dylibs in
+        // `libexec` with pinned digests. A Homebrew or Podman krunkit runs only
+        // through the `NIMBUS_MACHINE_KRUNKIT` override.
         resolve_helper_binary(
             KRUNKIT_ENV,
             DEFAULT_KRUNKIT_BINARY,
-            &[],
-            &known_helper_candidates(DEFAULT_KRUNKIT_BINARY),
+            &bundled_helper_candidates(DEFAULT_KRUNKIT_BINARY),
         )
     }
 
@@ -204,6 +247,17 @@ impl MachineVmmBackend for KrunkitVmmBackend {
             "--log-file".to_owned(),
             paths.vmm_log_path.display().to_string(),
         ]);
+        // Pass the bundled firmware explicitly. krunkit's own lookup tries
+        // `<exe>/../share/krunkit` first, where a Homebrew krunkit's firmware
+        // can shadow the pinned copy. An overridden krunkit without a sibling
+        // firmware keeps its own lookup.
+        let firmware_path = vmm_binary.with_file_name(KRUNKIT_EFI_FIRMWARE);
+        if firmware_path.is_file() {
+            args.extend([
+                "--firmware-path".to_owned(),
+                firmware_path.display().to_string(),
+            ]);
+        }
         args.extend([
             "--device".to_owned(),
             format!("virtio-blk,path={},format=raw", ctx.image_path.display()),
@@ -241,15 +295,12 @@ impl MachineVmmBackend for VfkitVmmBackend {
     }
 
     fn resolve_vmm_binary(&self) -> Result<PathBuf, Error> {
-        // vfkit is bundled in the Nimbus archive (pinned, signed + notarized) and
-        // is also installable via `brew install vfkit`, so resolution prefers the
-        // bundled `libexec` copy (and the `NIMBUS_MACHINE_VFKIT` override) before
-        // falling back to the known Homebrew/Podman helper directories.
+        // vfkit is bundled in the Nimbus archive (pinned, signed + notarized). A
+        // Homebrew vfkit runs only through the `NIMBUS_MACHINE_VFKIT` override.
         resolve_helper_binary(
             VFKIT_ENV,
             DEFAULT_VFKIT_BINARY,
             &bundled_helper_candidates(DEFAULT_VFKIT_BINARY),
-            &known_helper_candidates(DEFAULT_VFKIT_BINARY),
         )
     }
 

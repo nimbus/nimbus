@@ -305,9 +305,10 @@ impl StorageBackend for EncryptedFileBackend {
         Ok(self.state.lock().logical_len)
     }
 
-    fn read(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+    fn read(&self, offset: u64, out: &mut [u8]) -> io::Result<()> {
+        let len = out.len();
         if len == 0 {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         if let Some(profile) = &self.read_profile {
@@ -326,9 +327,9 @@ impl StorageBackend for EncryptedFileBackend {
             ));
         }
 
-        let mut result = Vec::with_capacity(len);
         let start_page = offset / LOGICAL_PAGE_SIZE as u64;
         let end_page = (offset + len as u64 - 1) / LOGICAL_PAGE_SIZE as u64;
+        let mut out_offset = 0usize;
 
         for page_index in start_page..=end_page {
             let page_start = page_index * LOGICAL_PAGE_SIZE as u64;
@@ -347,10 +348,12 @@ impl StorageBackend for EncryptedFileBackend {
                 LOGICAL_PAGE_SIZE
             };
 
-            result.extend_from_slice(&plaintext[page_offset..page_end]);
+            let chunk = &plaintext[page_offset..page_end];
+            out[out_offset..out_offset + chunk.len()].copy_from_slice(chunk);
+            out_offset += chunk.len();
         }
 
-        Ok(result)
+        Ok(())
     }
 
     fn set_len(&self, len: u64) -> io::Result<()> {
@@ -393,7 +396,7 @@ impl StorageBackend for EncryptedFileBackend {
         Ok(())
     }
 
-    fn sync_data(&self, _eventual: bool) -> io::Result<()> {
+    fn sync_data(&self) -> io::Result<()> {
         self.state.lock().file.sync_data()
     }
 
@@ -601,9 +604,10 @@ impl StorageBackend for EncryptedMemoryBackend {
         Ok(self.state.lock().logical_len)
     }
 
-    fn read(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+    fn read(&self, offset: u64, out: &mut [u8]) -> io::Result<()> {
+        let len = out.len();
         if len == 0 {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         let state = self.state.lock();
@@ -615,9 +619,9 @@ impl StorageBackend for EncryptedMemoryBackend {
             ));
         }
 
-        let mut result = Vec::with_capacity(len);
         let start_page = offset / LOGICAL_PAGE_SIZE as u64;
         let end_page = (offset + len as u64 - 1) / LOGICAL_PAGE_SIZE as u64;
+        let mut out_offset = 0usize;
 
         for page_index in start_page..=end_page {
             let page_start = page_index * LOGICAL_PAGE_SIZE as u64;
@@ -636,10 +640,12 @@ impl StorageBackend for EncryptedMemoryBackend {
                 LOGICAL_PAGE_SIZE
             };
 
-            result.extend_from_slice(&plaintext[page_offset..page_end]);
+            let chunk = &plaintext[page_offset..page_end];
+            out[out_offset..out_offset + chunk.len()].copy_from_slice(chunk);
+            out_offset += chunk.len();
         }
 
-        Ok(result)
+        Ok(())
     }
 
     fn set_len(&self, len: u64) -> io::Result<()> {
@@ -676,7 +682,7 @@ impl StorageBackend for EncryptedMemoryBackend {
         Ok(())
     }
 
-    fn sync_data(&self, _eventual: bool) -> io::Result<()> {
+    fn sync_data(&self) -> io::Result<()> {
         Ok(())
     }
 
@@ -740,7 +746,14 @@ impl StorageBackend for EncryptedMemoryBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use redb::ReadableDatabase;
     use tempfile::tempdir;
+
+    fn read_vec(backend: &impl StorageBackend, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let mut out = vec![0u8; len];
+        backend.read(offset, &mut out)?;
+        Ok(out)
+    }
 
     #[test]
     fn encrypted_memory_backend_basic_operations() {
@@ -756,7 +769,7 @@ mod tests {
         backend.write(100, data).expect("write should work");
 
         // Read it back
-        let read = backend.read(100, data.len()).expect("read should work");
+        let read = read_vec(&backend, 100, data.len()).expect("read should work");
         assert_eq!(&read, data);
     }
 
@@ -776,7 +789,7 @@ mod tests {
         backend.write(offset, &data).expect("write should work");
 
         // Read it back
-        let read = backend.read(offset, data.len()).expect("read should work");
+        let read = read_vec(&backend, offset, data.len()).expect("read should work");
         assert_eq!(read, data);
     }
 
@@ -805,7 +818,7 @@ mod tests {
             .expect("grow set_len should work");
 
         // Bytes that were live before the shrink must survive the regrow.
-        let head = backend.read(0, 100).expect("head read should work");
+        let head = read_vec(&backend, 0, 100).expect("head read should work");
         assert_eq!(
             head,
             vec![0xAB; 100],
@@ -815,8 +828,7 @@ mod tests {
         // The newly re-exposed tail of the old partial page must decrypt cleanly
         // (no integrity error) and read back as zeros. If the grow path skips
         // zero-filling the partial-page tail, this surfaces the leaked 0xAB bytes.
-        let exposed_tail = backend
-            .read(100, LOGICAL_PAGE_SIZE - 100)
+        let exposed_tail = read_vec(&backend, 100, LOGICAL_PAGE_SIZE - 100)
             .expect("re-exposed tail must decrypt cleanly");
         assert_eq!(
             exposed_tail,
@@ -825,9 +837,8 @@ mod tests {
         );
 
         // The freshly created page beyond the old boundary is zero-filled too.
-        let new_page = backend
-            .read(LOGICAL_PAGE_SIZE as u64, 200)
-            .expect("new page read should work");
+        let new_page =
+            read_vec(&backend, LOGICAL_PAGE_SIZE as u64, 200).expect("new page read should work");
         assert_eq!(
             new_page,
             vec![0u8; 200],
@@ -858,7 +869,7 @@ mod tests {
         }
 
         // Reading should fail due to authentication
-        let result = backend2.read(0, 11);
+        let result = read_vec(&backend2, 0, 11);
         assert!(result.is_err());
     }
 
@@ -875,14 +886,14 @@ mod tests {
             backend
                 .write(0, b"persistent data")
                 .expect("write should work");
-            backend.sync_data(false).expect("sync should work");
+            backend.sync_data().expect("sync should work");
         }
 
         // Reopen and read
         {
             let backend = EncryptedFileBackend::open(&path, &dek).expect("backend should open");
             assert_eq!(backend.len().unwrap(), 8192);
-            let read = backend.read(0, 15).expect("read should work");
+            let read = read_vec(&backend, 0, 15).expect("read should work");
             assert_eq!(&read, b"persistent data");
         }
     }
@@ -913,9 +924,7 @@ mod tests {
         // returning too many bytes.
         let offset = 5usize;
         let len = LOGICAL_PAGE_SIZE * 2 + 17; // ends at logical byte 2*LP + 22
-        let read = backend
-            .read(offset as u64, len)
-            .expect("range read should work");
+        let read = read_vec(&backend, offset as u64, len).expect("range read should work");
 
         assert_eq!(
             read.len(),
@@ -1051,7 +1060,7 @@ mod tests {
         // Reading should fail because AAD includes page index: the swap
         // must be caught by AEAD authentication, not by an unrelated
         // bounds/IO error path.
-        let result = backend.read(0, 14);
+        let result = read_vec(&backend, 0, 14);
         assert_eq!(
             result.unwrap_err().kind(),
             io::ErrorKind::InvalidData,
@@ -1091,7 +1100,7 @@ mod tests {
         // The corruption evidence must remain: the write did not re-encrypt a
         // zeroed page over the tampered one.
         assert!(
-            backend.read(0, LOGICAL_PAGE_SIZE).is_err(),
+            read_vec(&backend, 0, LOGICAL_PAGE_SIZE).is_err(),
             "page must still be detectably corrupt after the rejected write"
         );
     }
@@ -1110,7 +1119,7 @@ mod tests {
         backend
             .write(0, &[0xAB; LOGICAL_PAGE_SIZE])
             .expect("initial write should work");
-        backend.sync_data(false).expect("sync should work");
+        backend.sync_data().expect("sync should work");
 
         // Tamper one ciphertext byte of page 0 directly in the physical slot.
         {

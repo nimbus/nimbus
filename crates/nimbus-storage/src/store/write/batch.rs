@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn batch_insert_skips_physical_entries_for_non_maintained_index() {
-        use redb::ReadableTable;
+        use redb::{ReadableDatabase, ReadableTable};
 
         let store = TenantStore::create_in_memory().expect("store should open");
         let table = TableName::new("tasks_index_state").expect("table should parse");

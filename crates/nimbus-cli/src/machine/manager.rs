@@ -36,8 +36,8 @@ use self::stop::{cleanup_runtime_artifacts, handle_start_machine_error, remove_f
 
 pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
-    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineStateRecord,
-    write_json_file,
+    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineProvider,
+    MachineStateRecord, write_json_file,
 };
 
 const DEFAULT_KRUNKIT_BINARY: &str = "krunkit";
@@ -79,31 +79,6 @@ const OCI_ANNOTATION_MACHINE_ATTESTATION_REPOSITORY: &str =
 const OCI_ANNOTATION_MACHINE_NIMBUS_VERSION: &str = "io.nimbus.machine.nimbus.version";
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
 pub(super) const MACHINE_API_FORWARD_USER: &str = "root";
-// The known (Homebrew/Podman) fallback tier of the macOS helper-binary search
-// for `krunkit` and `gvproxy`. This is *not* the whole search order:
-// `resolve_helper_binary` consults the per-helper env override and the bundled
-// `libexec` copies first, and only falls through to these directories when
-// neither resolves.
-//
-// Within this tier the Homebrew prefix `bin` directories rank first: that is
-// where the Nimbus cask's *declared* `krunkit` dependency (and its own
-// `gvproxy` dependency) land. Preferring them keeps the managed, version-pinned
-// helpers authoritative so an incidental `podman` install can never silently
-// shadow the dependency the cask actually declares. The Podman `libexec`
-// directories remain below them for hosts that only ship Podman's bundled
-// helpers.
-const PODMAN_DARWIN_HELPER_DIRECTORIES: &[&str] = &[
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/usr/local/opt/podman/libexec/podman",
-    "/opt/homebrew/opt/podman/libexec/podman",
-    "/opt/homebrew/libexec/podman",
-    "/usr/local/libexec/podman",
-    "/usr/local/lib/podman",
-    "/usr/libexec/podman",
-    "/usr/lib/podman",
-];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum GuestNimbusBinarySourceKind {
@@ -130,6 +105,16 @@ pub(super) struct DesiredGuestNimbusBinaryStatus {
 pub(super) struct ObservedGuestNimbusBinaryStatus {
     pub(super) version: Option<String>,
     pub(super) hash: Option<String>,
+}
+
+/// The VMM binary that `nimbus machine start` launches for a provider, with
+/// its `--version` output, as `nimbus machine info` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct VmmBinaryStatus {
+    pub(super) provider: MachineProvider,
+    pub(super) path: Option<PathBuf>,
+    pub(super) version: Option<String>,
+    pub(super) error: Option<String>,
 }
 
 struct StartupSignalMonitor {
@@ -581,6 +566,10 @@ pub(super) fn inspect_desired_guest_nimbus_binary(
     paths: &MachinePaths,
 ) -> DesiredGuestNimbusBinaryStatus {
     self::guest::inspect_desired_guest_nimbus_binary(paths)
+}
+
+pub(super) fn inspect_vmm_binary(provider: MachineProvider) -> VmmBinaryStatus {
+    self::vmm::inspect_vmm_binary(provider)
 }
 
 pub(super) fn inspect_observed_guest_nimbus_binary(

@@ -1,5 +1,5 @@
 use nimbus_core::{Result, Timestamp};
-use redb::{ReadTransaction, ReadableTable, TableError};
+use redb::{ReadTransaction, ReadableDatabase, ReadableTable, TableError};
 
 use crate::store::{
     CRON_JOBS, RUNNING_SCHEDULED_JOBS, SCHEDULED_JOBS, TenantStore, map_redb_error,

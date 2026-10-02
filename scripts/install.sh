@@ -877,24 +877,10 @@ print_install_plan() {
   elif [ "$PLATFORM" = "darwin" ]; then
     say "  nimbus:      ${NIMBUS_PREFIX}/bin/nimbus"
     say "  docs:        ${NIMBUS_PREFIX}/share/doc/nimbus"
+    say "  krunkit:     ${NIMBUS_PREFIX}/libexec/krunkit (bundled, pinned; default backend)"
+    say "  libkrun:     ${NIMBUS_PREFIX}/libexec/libkrun.dylib (bundled with krunkit)"
     say "  gvproxy:     ${NIMBUS_PREFIX}/libexec/gvproxy (bundled, pinned)"
     say "  vfkit:       ${NIMBUS_PREFIX}/libexec/vfkit (bundled, pinned; opt-in NIMBUS_MACHINE_PROVIDER=vfkit)"
-    say "  krunkit:     \$(brew --prefix)/bin/krunkit (default backend, via Homebrew libkrun/krun tap)"
-    say "  libkrun:     \$(brew --prefix)/lib (optional, krunkit Homebrew dependency)"
-  fi
-
-  if [ "$PLATFORM" = "darwin" ] && [ -z "$SKIP_DEPS" ]; then
-    say ""
-    say "Optional macOS microVM dependencies (only needed for 'nimbus machine'):"
-    if check_cmd brew; then
-      say "  Homebrew install: brew install libkrun/krun/krunkit (krunkit + gvproxy + libkrun)"
-    else
-      say "  Homebrew not found — 'nimbus' runs without it; install Homebrew (https://brew.sh)"
-      say "  then 'brew install libkrun/krun/krunkit' to enable the 'nimbus machine' dev flow"
-    fi
-    say "  vfkit backend (opt-in): NIMBUS_MACHINE_PROVIDER=vfkit uses the bundled"
-    say "  ${NIMBUS_PREFIX}/libexec/vfkit; 'brew install vfkit' is only needed if you"
-    say "  prefer the Homebrew copy. The default backend stays krunkit."
   fi
 
   if [ "$PLATFORM" = "linux" ] && [ -z "$SKIP_DEPS" ]; then
@@ -940,7 +926,7 @@ warn_ignored_args_for_platform() {
     say_warn "--crun-version is ignored on macOS (nimbus-crun is a Linux-only dependency)"
   fi
   if [ -n "$NIMBUS_LIBKRUN_VERSION" ]; then
-    say_warn "--libkrun-version is ignored on macOS — libkrun ships via the krunkit Homebrew formula"
+    say_warn "--libkrun-version is ignored on macOS — libkrun ships bundled with krunkit in the release archive"
   fi
   if [ -n "$INSTALL_BUN_JSC_ADAPTER" ]; then
     say_warn "--with-bun-jsc is not installed by the macOS path yet — use the nimbus-bun-jsc-adapter release asset or package lane for the same tag"
@@ -1008,17 +994,27 @@ ensure_workdir() {
 }
 
 # The machine helpers the macOS archive bundles inside its libexec/. These
-# travel under Nimbus provenance and the runtime resolves them bundled-first
-# (see resolve_macos_bundled_helper). Linux archives carry no libexec, so the
-# bundled set is empty there.
+# travel under Nimbus provenance and the runtime resolves only an explicit
+# override or these bundled copies (see resolve_macos_bundled_helper). Linux
+# archives carry no libexec, so the bundled set is empty there.
 macos_bundled_helper_names() {
-  printf '%s\n' "gvproxy" "vfkit"
+  printf '%s\n' "krunkit" "gvproxy" "vfkit"
 }
 
-# Succeed when every helper the install promises to bundle is already present in
-# the prefix's libexec. On non-macOS platforms there are no bundled helpers, so
-# the reconcile is vacuously satisfied. This predicate lets the same-version
-# fast path stay network-free while still healing a partial helper set.
+# The non-executable libexec payload that the bundled krunkit loads: libkrun,
+# its GPU dependency chain (the release workflow keeps every upstream lib/*.dylib
+# because libkrun links them at load time), and the EFI firmware. Keep this list
+# in step with the krunkit-podman-unsigned tarball pinned in release.yml.
+macos_bundled_support_names() {
+  printf '%s\n' "libkrun.dylib" "libepoxy.0.dylib" "libvirglrenderer.1.dylib" \
+    "libMoltenVK.dylib" "KRUN_EFI.silent.fd"
+}
+
+# Succeed when every helper and support file the install promises to bundle is
+# already present in the prefix's libexec. On non-macOS platforms there are no
+# bundled helpers, so the reconcile is vacuously satisfied. This predicate lets
+# the same-version fast path stay network-free while still healing a partial
+# helper set.
 bundled_helpers_present() {
   [ "$PLATFORM" = "darwin" ] || return 0
   # Intentional word-splitting over the fixed, space-free helper names so the
@@ -1026,6 +1022,10 @@ bundled_helpers_present() {
   # shellcheck disable=SC2046
   for helper_name in $(macos_bundled_helper_names); do
     [ -x "${NIMBUS_PREFIX}/libexec/${helper_name}" ] || return 1
+  done
+  # shellcheck disable=SC2046
+  for support_name in $(macos_bundled_support_names); do
+    [ -f "${NIMBUS_PREFIX}/libexec/${support_name}" ] || return 1
   done
   return 0
 }
@@ -1043,7 +1043,8 @@ nimbus_release_payload_present() {
 }
 
 # Install every bundled helper carried in <extracted_dir>/libexec into the
-# install prefix. macOS ships a self-contained libexec (gvproxy, vfkit); Linux
+# install prefix. macOS ships a self-contained libexec (krunkit with libkrun and
+# its firmware, gvproxy, vfkit); Linux
 # archives carry none, so this is a no-op there. Idempotent: re-installing an
 # existing helper refreshes it from the pinned, integrity-verified archive.
 install_bundled_helpers() {
@@ -1128,9 +1129,9 @@ download_and_install_nimbus() {
     say_info "Installed nimbus to ${NIMBUS_PREFIX}/bin/nimbus"
   fi
 
-  # macOS ships a self-contained libexec (gvproxy, vfkit); Linux archives carry
-  # none, so this is a no-op there. The runtime resolves these bundled-first via
-  # ${NIMBUS_PREFIX}/libexec/<helper>.
+  # macOS ships a self-contained libexec (krunkit with libkrun and its firmware,
+  # gvproxy, vfkit); Linux archives carry none, so this is a no-op there. The
+  # runtime resolves these from ${NIMBUS_PREFIX}/libexec/<helper>.
   install_bundled_helpers "$tmpdir"
   install_nimbus_release_documents "$tmpdir"
 
@@ -1139,7 +1140,7 @@ download_and_install_nimbus() {
   # archive's libexec actually contains, and the helpers-only reconcile path
   # above returns success even when it copied nothing, so a truncated or
   # malformed archive could otherwise leave the install "successful" with
-  # vfkit/gvproxy missing — the machine path would then fail opaquely at first
+  # krunkit/gvproxy/vfkit missing — the machine path would then fail opaquely at first
   # boot. Fail loudly here instead. Vacuously true on Linux (no bundled helpers),
   # and past the dry-run guard so it only fires on a real install.
   if ! bundled_helpers_present; then
@@ -1364,62 +1365,6 @@ print_getting_started_linux() {
 
 # --- macOS installation -----------------------------------------------------
 
-# The macOS `nimbus machine` dev flow boots a Linux outer VM through the krunkit
-# microVM chain (krunkit VMM + gvproxy network helper + libkrun). That chain is
-# published by the official libkrun/krun Homebrew tap. We install it as an
-# OPTIONAL fast-path: when Homebrew is present we tap + trust + install it, and
-# when it is absent we print guidance and continue. The nimbus binary itself is
-# already installed directly (curl|sh, like Linux) and the server runs without
-# the machine flow, so a missing Homebrew is never a hard failure on macOS.
-install_macos_microvm_deps() {
-  if [ -n "$SKIP_DEPS" ]; then
-    say_info "Skipping macOS microVM dependency installation (--skip-deps)"
-    say_info "Install the krunkit chain later with: brew install libkrun/krun/krunkit"
-    return 0
-  fi
-
-  if ! check_cmd brew; then
-    say_warn "Homebrew not found — skipping the optional macOS microVM dependency chain"
-    say_warn "The 'nimbus' server is installed and runs without it."
-    say_warn "The 'nimbus machine' dev flow needs krunkit, gvproxy, and libkrun."
-    say_warn "Install Homebrew (https://brew.sh), then run: brew trust libkrun/krun && brew install libkrun/krun/krunkit"
-    return 0
-  fi
-
-  if [ -n "$DRY_RUN" ]; then
-    say_info "[dry-run] Would install the macOS microVM chain via Homebrew: krunkit + gvproxy + libkrun (brew install libkrun/krun/krunkit)"
-    return 0
-  fi
-
-  say_info "Tapping libkrun/krun..."
-  brew tap libkrun/krun 2>/dev/null || true
-
-  # Homebrew won't load formulae from third-party taps until they are
-  # explicitly trusted (HOMEBREW_REQUIRE_TAP_TRUST, default true since 6.0). An
-  # untrusted tap is a hard error (UntrustedTapError) with no interactive
-  # prompt. `brew trust` is idempotent and records to trust.json whether or not
-  # the tap is yet tapped. Trust the whole tap, not the one formula: installing
-  # by full name auto-trusts only krunkit itself and then fails on
-  # libkrun/krun/gvproxy. One tap trust covers the whole microVM chain:
-  # krunkit -> libkrun + gvproxy -> virglrenderer/libepoxy/libkrunfw.
-  say_info "Trusting the libkrun/krun tap (Homebrew tap-trust gate)..."
-  brew trust --tap libkrun/krun || true
-
-  # The whole microVM chain is an optional fast-path. Under `set -eu` an install
-  # failure (network blip, tap trust declined, Rosetta/arch mismatch) would
-  # otherwise abort the entire installer even though `nimbus` itself is already
-  # installed and runs without it. Degrade to a warning and continue.
-  say_info "Installing the macOS microVM chain (krunkit + gvproxy + libkrun)..."
-  if brew install libkrun/krun/krunkit; then
-    say_info "Installed the macOS microVM chain via Homebrew"
-  else
-    say_warn "Could not install the krunkit chain via Homebrew (exit $?)"
-    say_warn "The 'nimbus' server is installed and runs without it."
-    say_warn "Retry later with: brew trust libkrun/krun && brew install libkrun/krun/krunkit"
-  fi
-  return 0
-}
-
 # Fail fast when the install prefix is not writable and we have no way to gain
 # privilege, instead of letting the first `maybe_sudo install` abort mid-run
 # with a bare "need sudo to install to system paths" after the user has already
@@ -1468,7 +1413,6 @@ install_macos() {
   preflight_prefix_access
   resolve_nimbus_version
   download_and_install_nimbus
-  install_macos_microvm_deps
   verify_installation
   print_getting_started_macos
 }
@@ -1557,8 +1501,8 @@ uninstall_macos() {
   #   curl | sh   -> ${NIMBUS_PREFIX}/bin/nimbus    (default /usr/local/bin)
   #   brew install -> $(brew --prefix)/bin/nimbus   (Homebrew-managed symlink)
   # This script only owns the curl|sh copy. If the Homebrew cask is installed we
-  # defer to `brew uninstall` so Homebrew's receipts and the optional krunkit
-  # dependency chain stay consistent instead of leaving a dangling symlink.
+  # defer to `brew uninstall` so Homebrew's receipts stay consistent instead of
+  # leaving a dangling symlink.
   cask_installed=""
   if check_cmd brew && brew list --cask nimbus >/dev/null 2>&1; then
     cask_installed=1
@@ -1568,7 +1512,7 @@ uninstall_macos() {
     say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/bin/nimbus"
     say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/share/doc/nimbus/LICENSE and README.md"
     # shellcheck disable=SC2046
-    for helper_name in $(macos_bundled_helper_names); do
+    for helper_name in $(macos_bundled_helper_names) $(macos_bundled_support_names); do
       say_info "[dry-run] Would remove ${NIMBUS_PREFIX}/libexec/${helper_name}"
     done
     if [ -n "$cask_installed" ]; then
@@ -1599,11 +1543,10 @@ uninstall_macos() {
     uninstall_nimbus_release_documents
   fi
 
-  # Remove only the direct-install helpers this script owns. The Homebrew
-  # krunkit/libkrun chain remains Homebrew-owned and is reported below.
+  # Remove only the direct-install helpers and support files this script owns.
   # shellcheck disable=SC2046
   if [ -z "$foreign_nimbus_symlink" ]; then
-    for helper_name in $(macos_bundled_helper_names); do
+    for helper_name in $(macos_bundled_helper_names) $(macos_bundled_support_names); do
       helper_path="${NIMBUS_PREFIX}/libexec/${helper_name}"
       if [ -f "$helper_path" ] || [ -L "$helper_path" ]; then
         maybe_sudo rm -f "$helper_path"
@@ -1614,10 +1557,6 @@ uninstall_macos() {
   if [ -z "$foreign_nimbus_symlink" ] && [ -d "${NIMBUS_PREFIX}/libexec" ]; then
     maybe_sudo rmdir "${NIMBUS_PREFIX}/libexec" 2>/dev/null || true
   fi
-
-  say ""
-  say "The macOS microVM chain (krunkit, gvproxy, libkrun) was not removed."
-  say "Run 'brew uninstall libkrun/krun/krunkit' (and 'brew autoremove') if no longer needed."
 }
 
 uninstall_nimbus_release_documents() {
@@ -1867,10 +1806,10 @@ verify_linux_inline() {
   inline_check_bun_jsc_adapter
 }
 
-# Resolve a bundled-first macOS machine helper. Mirrors the Rust runtime
-# resolver (bundled_helper_candidates_for_executable in machine/manager/helpers.rs):
-# the Nimbus-pinned helper shipped in the archive's libexec/ is AUTHORITATIVE
-# and resolved first, then the Homebrew prefix and PATH as fallbacks.
+# Resolve a bundled macOS machine helper. Mirrors the Rust runtime resolver
+# (bundled_helper_candidates_for_executable in machine/manager/helper_paths.rs):
+# only the Nimbus-pinned helper shipped in the archive's libexec/ counts. The
+# runtime ignores Homebrew and PATH copies, so this check does too.
 resolve_macos_bundled_helper() {
   helper_name="$1"
 
@@ -1895,21 +1834,11 @@ resolve_macos_bundled_helper() {
     fi
   fi
 
-  # 3) Homebrew prefix / standard bin fallbacks, then PATH.
-  brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
-  for candidate in "${brew_prefix}/bin/${helper_name}" "/usr/local/bin/${helper_name}"; do
-    if [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  if helper_path="$(command -v "${helper_name}" 2>/dev/null)"; then
-    printf '%s\n' "$helper_path"
-    return 0
-  fi
-
   return 1
+}
+
+resolve_macos_krunkit_path() {
+  resolve_macos_bundled_helper "krunkit"
 }
 
 resolve_macos_gvproxy_path() {
@@ -1930,8 +1859,16 @@ verify_macos_inline() {
     inline_mark_failure
   fi
   inline_check_nimbus_release_documents
-  inline_check_command "krunkit" "krunkit" recommended
   inline_check_macos_bun_jsc_adapter
+
+  # krunkit is the default macOS VMM backend for 'nimbus machine'. The server
+  # runs without it, so a missing krunkit is a warning.
+  if krunkit_path="$(resolve_macos_krunkit_path)"; then
+    inline_print_line "krunkit" "present path=$krunkit_path"
+  else
+    inline_print_line "krunkit" "missing (expected bundled at ${NIMBUS_PREFIX}/libexec/krunkit)"
+    inline_mark_warning
+  fi
 
   if gvproxy_path="$(resolve_macos_gvproxy_path)"; then
     inline_print_line "gvproxy" "present path=$gvproxy_path"

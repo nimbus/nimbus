@@ -145,13 +145,21 @@ create_release_fixture() {
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/linux-x86_64/nimbus"
   printf '#!/bin/sh\nprintf "nimbus 9.9.9\\n"\n' >"${layout}/linux-arm64/nimbus"
   printf 'windows fixture\n' >"${layout}/windows/nimbus.exe"
-  # The shipped darwin archive bundles the pinned VMM helpers under libexec, and
-  # verify-release-archive-layout.sh hard-requires both; mirror them here so the
-  # live OCI fixture matches the real release layout.
+  # The shipped darwin archive bundles the pinned VMM helpers and the krunkit
+  # support files under libexec, and verify-release-archive-layout.sh
+  # hard-requires them; mirror them here so the live OCI fixture matches the
+  # real release layout.
+  printf '#!/bin/sh\nprintf "krunkit fixture\\n"\n' >"${layout}/darwin/libexec/krunkit"
+  local krunkit_support=""
+  for krunkit_support in libkrun.dylib libvirglrenderer.1.dylib libepoxy.0.dylib \
+    libMoltenVK.dylib KRUN_EFI.silent.fd; do
+    printf '%s fixture\n' "${krunkit_support}" >"${layout}/darwin/libexec/${krunkit_support}"
+  done
   printf '#!/bin/sh\nprintf "gvproxy fixture\\n"\n' >"${layout}/darwin/libexec/gvproxy"
   printf '#!/bin/sh\nprintf "vfkit fixture\\n"\n' >"${layout}/darwin/libexec/vfkit"
   chmod 0755 \
     "${layout}/darwin/nimbus" \
+    "${layout}/darwin/libexec/krunkit" \
     "${layout}/darwin/libexec/gvproxy" \
     "${layout}/darwin/libexec/vfkit" \
     "${layout}/linux-x86_64/nimbus" \

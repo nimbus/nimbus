@@ -2,7 +2,7 @@ use nimbus_core::{
     Document, DocumentId, Error, Filter, Result, Schema, SequenceNumber, TableId, TableName,
     TableSchema, Timestamp,
 };
-use redb::{ReadableTable, TableError};
+use redb::{ReadableDatabase, ReadableTable, TableError};
 use std::time::{Duration, Instant};
 
 use crate::config::StorageProfileConfig;

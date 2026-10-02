@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::{Error, Result, SequenceNumber, TableId, TenantEventRecord, Timestamp};
-use redb::ReadableTable;
+use redb::{ReadableDatabase, ReadableTable};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
