@@ -106,28 +106,6 @@ impl WorkloadAttributes {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct WorkloadLocation {
-    node_id: Option<String>,
-    machine_id: Option<String>,
-}
-
-impl WorkloadLocation {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_node_id(mut self, node_id: impl Into<String>) -> Self {
-        self.node_id = Some(node_id.into());
-        self
-    }
-
-    pub fn with_machine_id(mut self, machine_id: impl Into<String>) -> Self {
-        self.machine_id = Some(machine_id.into());
-        self
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkloadIdentity {
     format_version: &'static str,
@@ -161,8 +139,8 @@ impl WorkloadIdentity {
             runtime_tier: decision.workload.runtime_tier(),
             runtime_backend,
             sandbox_backend: decision.workload.sandbox_backend(),
-            node_id: decision.location.node_id.clone(),
-            machine_id: decision.location.machine_id.clone(),
+            node_id: decision.location.node_id().map(str::to_owned),
+            machine_id: decision.location.machine_id().map(str::to_owned),
             sandbox_id: decision.workload.sandbox_id.clone(),
             invocation_id: decision.workload.invocation_id.clone(),
         }

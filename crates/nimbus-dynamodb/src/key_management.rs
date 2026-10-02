@@ -23,7 +23,7 @@ use std::sync::Arc;
 use extenddb_core::error::DynamoDbError;
 use nimbus_core::{DocumentId, StructuredQuery, TableName, TenantId};
 use nimbus_engine::{Engine, MutationActor};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

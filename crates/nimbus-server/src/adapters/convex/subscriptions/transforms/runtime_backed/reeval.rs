@@ -17,7 +17,8 @@ use nimbus_convex::subscriptions::{
     update_runtime_transform_read_set,
 };
 use nimbus_services::RuntimeServiceRegistry;
-use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
+use nimbus_tenant::TenantIsolationMode;
+use nimbus_tenant_context::TenantIsolationContext;
 
 pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a> {
     pub(in crate::adapters::convex::subscriptions) engine: &'a Arc<nimbus_engine::Engine>,

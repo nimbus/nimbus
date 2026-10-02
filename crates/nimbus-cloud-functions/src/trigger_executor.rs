@@ -7,9 +7,10 @@ use nimbus_engine::{Engine, TriggerInvocationExecution, TriggerInvocationExecuto
 use nimbus_runtime::{InvocationKind, InvocationRequest};
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+    RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationMode,
     admit_runtime_invocation_decision,
 };
+use nimbus_tenant_context::TenantIsolationContext;
 
 use crate::retry::execute_mutation_with_occ_retries;
 use crate::{

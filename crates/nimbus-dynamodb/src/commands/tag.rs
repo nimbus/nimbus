@@ -13,7 +13,7 @@ use extenddb_core::types::{
 };
 use nimbus_core::{DocumentId, TableName};
 use nimbus_engine::{Engine, MutationActor};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde_json::{Map, Value};
 
 use crate::commands::control_plane;

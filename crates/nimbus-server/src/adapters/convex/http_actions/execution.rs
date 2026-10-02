@@ -15,7 +15,7 @@ pub(super) fn execute_http_action(
 pub(super) async fn execute_http_action_async(
     service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
-    tenant_context: &nimbus_tenant::TenantIsolationContext,
+    tenant_context: &nimbus_tenant_context::TenantIsolationContext,
     plan: &ConvexHttpActionPlan,
     request: &ConvexHttpRequestContext,
     auth: Option<&InvocationAuth>,

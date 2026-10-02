@@ -31,6 +31,7 @@ nimbus-runtime = { path = "../nimbus-runtime" }
 # without pulling engine/server ownership backedges into this crate.
 nimbus-storage = { path = "../nimbus-storage", default-features = false }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 nimbus-workloads = { path = "../nimbus-workloads" }
 futures.workspace = true
 http.workspace = true

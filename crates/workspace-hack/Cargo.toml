@@ -15,6 +15,7 @@ publish = false
 
 ### BEGIN HAKARI SECTION
 [dependencies]
+ahash = { version = "0.8", features = ["compile-time-rng"] }
 allocator-api2 = { version = "0.2" }
 arrayvec = { version = "0.7" }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
@@ -84,6 +85,7 @@ smallvec = { version = "1", default-features = false, features = ["const_new", "
 stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
 strum = { version = "0.27", features = ["derive"] }
 subtle = { version = "2" }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 time = { version = "0.3", features = ["formatting", "macros", "parsing", "serde"] }
 tinystr = { version = "0.8", features = ["zerovec"] }
 tokio = { version = "1", features = ["full", "test-util"] }

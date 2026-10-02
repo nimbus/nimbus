@@ -22,9 +22,10 @@ use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_system::RunSpanRecorder;
 use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+    RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationMode,
     admit_runtime_invocation_decision,
 };
+use nimbus_tenant_context::TenantIsolationContext;
 
 use super::super::super::runtime_error_to_core;
 use crate::adapters::convex::host_bridge::ConvexServiceProvisionPort;

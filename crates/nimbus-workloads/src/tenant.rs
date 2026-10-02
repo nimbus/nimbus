@@ -554,9 +554,10 @@ impl TenantSystemEvidenceProjection {
 pub(crate) mod test_support {
     use super::*;
     use nimbus_tenant::{
-        TenantIsolationContext, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
-        TenantStoragePolicyDecision, WorkloadAttributes, WorkloadLocation,
+        TenantIsolationContextExt, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
+        TenantStoragePolicyDecision, WorkloadAttributes,
     };
+    use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 
     pub(crate) fn admitted_decision(
         workload_name: &str,

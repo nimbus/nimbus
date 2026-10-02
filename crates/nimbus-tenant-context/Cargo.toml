@@ -1,5 +1,5 @@
 [package]
-name = "nimbus-workloads"
+name = "nimbus-tenant-context"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -12,15 +12,10 @@ doctest = false
 [lints]
 workspace = true
 
+# Leaf crate: protocol adapters depend on the tenant isolation context without
+# building the runtime and sandbox stacks that `nimbus-tenant` admission needs.
 [dependencies]
 nimbus-core = { path = "../nimbus-core" }
-nimbus-network = { path = "../nimbus-network" }
-nimbus-tenant = { path = "../nimbus-tenant" }
-nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
-
-[dev-dependencies]
-futures.workspace = true

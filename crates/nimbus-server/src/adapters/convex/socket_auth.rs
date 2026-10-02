@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nimbus_auth::ApplicationAuthError;
 use nimbus_convex::{ConvexRegistry, ConvexSiloAuthAuthority};
 use nimbus_core::InvocationAuth;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 /// Complete trust and execution context admitted for a Convex WebSocket.
 ///

@@ -54,6 +54,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-storage` | Persistence providers (SQLite, redb, Postgres, MySQL, libSQL) plus commit log, indexes, and scheduler state. |
 | `nimbus-system` | System-tenant records, route inventory, and status projections. |
 | `nimbus-tenant` | Tenant isolation decisions, workload identity, and admission policy. |
+| `nimbus-tenant-context` | `TenantIsolationContext`, its authority, and its workload location. A leaf crate over `nimbus-core`, so data adapters do not build the runtime stack. |
 | `nimbus-testing` | Shared test fixtures and the deterministic verification harness. |
 | `nimbus-workload-identity` | Workload-identity issuance seam: provider-auth policy, admission-anchored mint authorization, node/machine identity and trust-domain config, and short-lived JWT/SPIFFE-SVID minting (SI0–SI4). Production cluster-membership identity stays unconstructible until HS1; the `WorkloadIdentity` projection stays in `nimbus-tenant`. |
 | `nimbus-workloads` | Portable workload desired state, durable saga vocabulary, admission, placement, and execution-control seams shared by compute, node reconciliation, and scheduling. |

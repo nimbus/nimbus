@@ -20,7 +20,7 @@ extenddb-core = { workspace = true }
 nimbus-core = { path = "../nimbus-core" }
 # Engine Service (table/document lifecycle) + tenant isolation context.
 nimbus-engine = { path = "../nimbus-engine" }
-nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 base64.workspace = true
 # Exact decimal parsing for the order-preserving Number sort-key projection.
 bigdecimal = "0.4"

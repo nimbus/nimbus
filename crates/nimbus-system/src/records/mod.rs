@@ -11,7 +11,7 @@ use nimbus_node::{
     ensure_status_matches_projection,
 };
 use nimbus_sandbox::{SandboxBackendKind, SandboxStatus};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::TenantSystemEvidenceProjection;
 use serde_json::{Map, Value, json};
 

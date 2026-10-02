@@ -22,9 +22,10 @@ use nimbus_sandbox::{
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
 use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
-    WorkloadAttributes, WorkloadLocation,
+    TenantIsolationContextExt, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
+    WorkloadAttributes,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     NodeIdentity, WorkloadActivationIntent, WorkloadExecutionProviderId,
     WorkloadNetworkForwardingBehavior, WorkloadProvisionInspectionResult,

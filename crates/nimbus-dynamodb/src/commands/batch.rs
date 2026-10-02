@@ -14,7 +14,7 @@ use extenddb_core::types::{
 };
 use nimbus_core::{DocumentId, TableName, WritePrecondition};
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use crate::attribute_value::{item_to_fields, validate_item};
 use crate::commands::item::{

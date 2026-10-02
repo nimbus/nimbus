@@ -25,7 +25,8 @@ use crate::{
     ServiceDefinition, ServiceDefinitionCatalog, ServiceInstanceObservation, SessionLifecycleState,
     SessionTarget,
 };
-use nimbus_tenant::{TenantIsolationContext, TenantVolumePolicyDecision};
+use nimbus_tenant::{TenantIsolationContextExt, TenantVolumePolicyDecision};
+use nimbus_tenant_context::TenantIsolationContext;
 
 use super::*;
 

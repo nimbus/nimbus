@@ -24,7 +24,8 @@ use nimbus_sandbox::{
 use nimbus_services::{
     EmptyServiceDefinitionCatalog, RuntimeServiceRegistry, ServiceBackend, ServiceManager,
 };
-use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
+use nimbus_tenant::TenantIsolationContextExt;
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     DesiredWorkloadState, TenantRetirementCommit, TenantRetirementExpected, TenantRetirementFuture,
     TenantRetirementPage, TenantRetirementPageRequest, TenantRetirementRecord,

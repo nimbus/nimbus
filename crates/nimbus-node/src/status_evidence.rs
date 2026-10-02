@@ -52,10 +52,11 @@ mod tests {
     use super::*;
     use crate::{LocalEnforcementBinding, TenantWorkloadPhase};
     use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
-        TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision,
-        WorkloadAttributes, WorkloadLocation,
+        RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationDecision,
+        TenantIsolationMode, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
+        TenantStoragePolicyDecision, WorkloadAttributes,
     };
+    use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 
     fn admitted_decision_for_location(
         workload_name: &str,

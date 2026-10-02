@@ -22,7 +22,7 @@ use extenddb_core::types::{
 };
 use nimbus_core::{Document, DocumentId, StructuredQuery, TableName, WritePrecondition};
 use nimbus_engine::{Engine, MutationActor};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde_json::Value;
 
 use crate::commands::{item, stream, tag, ttl};

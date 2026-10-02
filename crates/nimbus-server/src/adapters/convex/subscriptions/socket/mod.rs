@@ -89,7 +89,7 @@ fn write_subscription_statuses(
 pub(super) struct SocketSessionCtx<'a> {
     pub(super) state: &'a Arc<AppState>,
     pub(super) tenant_id: &'a TenantId,
-    pub(super) tenant_context: &'a nimbus_tenant::TenantIsolationContext,
+    pub(super) tenant_context: &'a nimbus_tenant_context::TenantIsolationContext,
     pub(super) convex_registry: &'a Arc<ConvexRegistry>,
     pub(super) auth_authority: &'a super::super::socket_auth::ConvexSocketAuthAuthority,
     pub(super) subscription_tx: &'a mpsc::Sender<SubscriptionUpdate>,

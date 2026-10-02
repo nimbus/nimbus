@@ -1,15 +1,15 @@
 use nimbus_core::{Error, Result, TenantId};
 use nimbus_runtime::RuntimeBundle;
 use nimbus_sandbox::{SandboxBackendKind, SandboxSpec};
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
     TenantAuditRedactionPolicy, TenantImagePolicyDecision, TenantIsolationAuthorityDecision,
-    TenantIsolationContext, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
-    TenantQuotaPolicyDecision, TenantRuntimePolicyDecision, TenantSecretPolicyDecision,
-    TenantServiceGrantPolicyDecision, TenantStoragePolicyDecision, TenantVolumePolicyDecision,
-    WorkloadAttributes, WorkloadIdentity, WorkloadLocation,
+    TenantIsolationPolicyInput, TenantNetworkPolicyDecision, TenantQuotaPolicyDecision,
+    TenantRuntimePolicyDecision, TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision,
+    TenantStoragePolicyDecision, TenantVolumePolicyDecision, WorkloadAttributes, WorkloadIdentity,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -106,11 +106,11 @@ impl TenantIsolationDecision {
         input.network.validate_for_admission(&input.services)?;
         let authority = TenantIsolationAuthorityDecision::from_context(context)?;
         let fingerprint = TenantIsolationDecisionFingerprint {
-            tenant_id: context.tenant_id.as_str(),
-            surface: context.surface,
+            tenant_id: context.tenant_id().as_str(),
+            surface: context.surface(),
             authority: &authority,
-            deployment_generation: context.deployment_generation,
-            location: &context.location,
+            deployment_generation: context.deployment_generation(),
+            location: context.location(),
             workload: &input.workload,
             runtime: &input.runtime,
             services: &input.services,
@@ -125,11 +125,11 @@ impl TenantIsolationDecision {
         let id = TenantIsolationDecisionId::for_fingerprint(&fingerprint)?;
         Ok(Self {
             id,
-            tenant_id: context.tenant_id.clone(),
-            surface: context.surface,
+            tenant_id: context.tenant_id().clone(),
+            surface: context.surface(),
             authority,
-            deployment_generation: context.deployment_generation,
-            location: context.location.clone(),
+            deployment_generation: context.deployment_generation(),
+            location: context.location().clone(),
             workload: input.workload,
             runtime: input.runtime,
             services: input.services,

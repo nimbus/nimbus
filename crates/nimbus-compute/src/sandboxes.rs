@@ -10,7 +10,7 @@ use std::sync::Arc;
 use nimbus_core::TenantId;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_services::{SandboxResourceSnapshot, ServiceManager};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -123,7 +123,7 @@ struct SandboxConditionResponse {
 
 pub async fn create_sandbox(
     compute: &ComputeState,
-    tenant_context: &nimbus_tenant::TenantIsolationContext,
+    tenant_context: &nimbus_tenant_context::TenantIsolationContext,
     request: SandboxCreateRequest,
 ) -> Result<SandboxResourceResponse, ComputeError> {
     let spec = request.spec.into_spec(tenant_context.tenant_id(), None)?;

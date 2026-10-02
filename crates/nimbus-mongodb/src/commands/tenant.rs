@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use nimbus_core::{PrincipalContext, TenantId};
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use super::super::error::{MongoError, UNAUTHORIZED};
 

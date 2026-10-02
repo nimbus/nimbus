@@ -222,10 +222,11 @@ mod tests {
         EgressRequest as RuntimeEgressRequest, EgressSubstrate, InvocationKind, RuntimePolicy,
     };
     use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
-        TenantIsolationPolicyInput, TenantNetworkPolicyDecision, TenantStoragePolicyDecision,
-        WorkloadAttributes,
+        RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationDecision,
+        TenantIsolationMode, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
+        TenantStoragePolicyDecision, WorkloadAttributes,
     };
+    use nimbus_tenant_context::TenantIsolationContext;
     use tempfile::{TempDir, tempdir};
 
     use nimbus_bridge::egress::EgressGatewayEnforcementReadiness;

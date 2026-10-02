@@ -42,9 +42,8 @@ mod tests {
     use nimbus_runtime::{RuntimeGrants, RuntimeLimits, RuntimePolicy};
 
     use super::*;
-    use nimbus_tenant::{
-        TenantIsolationContext, TenantIsolationMode, admit_runtime_invocation_decision,
-    };
+    use nimbus_tenant::{TenantIsolationMode, admit_runtime_invocation_decision};
+    use nimbus_tenant_context::TenantIsolationContext;
 
     fn test_context() -> TenantIsolationContext {
         TenantIsolationContext::application(

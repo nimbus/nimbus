@@ -55,6 +55,7 @@ nimbus-services = { path = "../nimbus-services" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 nimbus-workloads = { path = "../nimbus-workloads" }
 open = "5.3"
 rand.workspace = true

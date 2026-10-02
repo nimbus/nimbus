@@ -15,7 +15,7 @@ use nimbus_services::{
     SandboxResourceSnapshot, ServiceBackend, ServiceDefinition, ServiceDefinitionSource,
     ServiceManager, WorkloadSourceRetirementClaim, WorkloadSourceRetirementOperation,
 };
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::{
     DesiredWorkloadState, WorkloadActivationIntent, WorkloadExecutionReference, WorkloadGeneration,
     WorkloadNetworkIntent, WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadRestartPolicy,

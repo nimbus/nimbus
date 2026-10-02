@@ -23,6 +23,7 @@ nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

@@ -16,10 +16,8 @@ use nimbus_compute::execution::invocations::{
 };
 use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
-use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
-    admit_runtime_invocation_decision,
-};
+use nimbus_tenant::{RuntimeIsolationTier, TenantIsolationMode, admit_runtime_invocation_decision};
+use nimbus_tenant_context::TenantIsolationContext;
 
 use super::super::super::runtime_error_to_core;
 use super::super::{

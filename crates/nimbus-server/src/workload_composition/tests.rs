@@ -40,9 +40,10 @@ use nimbus_sandbox::{
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceManager};
 use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
-    TenantServiceGrantPolicyDecision, WorkloadAttributes, WorkloadLocation,
+    TenantIsolationContextExt, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
+    TenantServiceGrantPolicyDecision, WorkloadAttributes,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     ProposedWorkloadTeardownTransition, TenantRetirementExpected, TenantRetirementPhase,
