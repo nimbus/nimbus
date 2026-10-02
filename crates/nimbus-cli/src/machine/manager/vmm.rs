@@ -53,6 +53,9 @@ pub(super) struct VmmLaunchContext<'a> {
     pub(super) rest_uri: &'a str,
     pub(super) bootstrap_mode: MachineBootstrapMode,
     pub(super) machine_config_bundle_dir: Option<&'a Path>,
+    /// Whether the host supports nested virtualization for the guest. See
+    /// [`NestedVirtualizationHost`](super::nested::NestedVirtualizationHost).
+    pub(super) nested_virtualization: bool,
 }
 
 /// The per-provider VMM contract. One implementation per macOS micro-VM monitor.
@@ -257,6 +260,13 @@ impl MachineVmmBackend for KrunkitVmmBackend {
                 "--firmware-path".to_owned(),
                 firmware_path.display().to_string(),
             ]);
+        }
+        // Nested virtualization gives the guest `/dev/kvm` for the krun
+        // sandbox backend. Podman passes the flag on every host and krunkit
+        // ignores it where Hypervisor.framework has no EL2 support. Nimbus
+        // passes it only where the host supports it.
+        if ctx.nested_virtualization {
+            args.push("--nested".to_owned());
         }
         args.extend([
             "--device".to_owned(),
