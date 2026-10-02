@@ -2,6 +2,8 @@ use nimbus_core::{Document, Result, TableName};
 use serde_json::Value;
 
 use crate::IndexRangeBound;
+use redb::ReadableDatabase;
+
 use crate::store::{TenantReadSnapshot, TenantStore, map_redb_error};
 
 use super::exact::index_scan_eq_in_read_txn;

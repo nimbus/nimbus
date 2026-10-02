@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result, TenantId};
-use redb::{ReadableTable, TableDefinition, TableError};
+use redb::{ReadableDatabase, ReadableTable, TableDefinition, TableError};
 use serde::{Deserialize, Serialize};
 
 use crate::UsageStore;
