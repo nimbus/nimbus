@@ -11,7 +11,7 @@ use nimbus::{
     object_blob_root,
 };
 use nimbus_core::StorageErrorKind;
-use rand::RngCore;
+use rand::Rng;
 use serde::Serialize;
 
 use crate::cli_ux;
@@ -768,7 +768,7 @@ pub(crate) fn bootstrap_object_master_key(path: &Path) -> Result<(), Box<dyn Err
         set_private_dir_permissions(parent)?;
     }
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::rng().fill_bytes(&mut key);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

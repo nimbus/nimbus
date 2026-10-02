@@ -1,232 +1,66 @@
+use super::dialect::{MySqlHandle, MySqlSession};
 use super::document_versions::get_document_version_at_from_session;
 use super::index_entries::IndexTupleMutation;
 use super::*;
-use crate::diagnostics::IndexVersionStorageDiagnostic;
-use crate::index::history_scan::HistoricalIndexDocumentEntry;
-use crate::sql::index_history::{SqlHistoricalIndexStore, sql_historical_index_facade};
-use crate::{
-    CURRENT_INDEX_VERSION_STORAGE_FORMAT, INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
-    StorageFormatVersion, storage_format_version_from_u64, validate_index_version_storage_format,
+use crate::sql::index_history::sql_historical_index_facade;
+use crate::sql::index_versions::{
+    SqlIndexVersionSession, SqlIndexVersionStore, ensure_index_version_storage_format_in_session,
+    sql_index_version_facade,
 };
 
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexVersionInterval {
-    pub document_id: DocumentId,
-    pub visible_from: SequenceNumber,
-    pub visible_until: Option<SequenceNumber>,
-}
-
-impl MySqlTenantStore {
-    pub fn index_version_storage_diagnostic(&self) -> Result<IndexVersionStorageDiagnostic> {
-        let provider = self.provider.clone();
-        let database_name = self.database_name.clone();
-        self.block_on(async move {
-            let mut conn = provider.conn().await?;
-            index_version_storage_diagnostic_from_session(&mut conn, &database_name).await
-        })
+impl<H: MySqlHandle> SqlIndexVersionSession for MySqlSession<H> {
+    async fn load_metadata_u64(&mut self, database_name: &str, key: &str) -> Result<Option<u64>> {
+        load_metadata_u64_from_session(self.driver(), database_name, key).await
     }
 
-    #[cfg(test)]
-    pub(crate) fn index_version_intervals_for_testing(
-        &self,
-        table_id: &TableId,
-        index_id: &nimbus_core::IndexId,
-    ) -> Result<Vec<IndexVersionInterval>> {
-        let provider = self.provider.clone();
-        let database_name = self.database_name.clone();
-        let table_id = table_id.clone();
-        let index_id = index_id.clone();
-        self.block_on(async move {
-            let mut conn = provider.conn().await?;
-            index_version_intervals_from_session(&mut conn, &database_name, &table_id, &index_id)
-                .await
-        })
-    }
-}
-
-// The historical index-scan family is pure plan-then-page orchestration and
-// lives once in `crate::sql::index_history`; only the entry load below is
-// dialect-specific.
-impl SqlHistoricalIndexStore for MySqlTenantStore {
-    fn retention_read_floors(&self) -> Result<crate::RetentionReadFloors> {
-        let provider = self.provider.clone();
-        let database_name = self.database_name.clone();
-        self.block_on(async move {
-            let mut conn = provider.conn().await?;
-            load_retention_read_floors_from_session(&mut conn, &database_name).await
-        })
-        .map(|floors| floors.max(self.retention_floor.published_read_floors()))
-    }
-
-    fn check_retention_read_page(&self) -> Result<()> {
-        self.check_fault(crate::FaultPoint::RetentionReadAfterPage)
-    }
-
-    fn visible_historical_index_entries(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index: &IndexDefinition,
-        match_prefix: &[u8],
-        start_key: Option<&[u8]>,
-        end_key: Option<&[u8]>,
-    ) -> Result<Vec<HistoricalIndexDocumentEntry>> {
-        let provider = self.provider.clone();
-        let database_name = self.database_name.clone();
-        let read_shape_for_query = read_shape.clone();
-        let index_for_query = index.clone();
-        let match_prefix = match_prefix.to_vec();
-        let start_key = start_key.map(<[u8]>::to_vec);
-        let end_key = end_key.map(<[u8]>::to_vec);
-        self.block_on(async move {
-            let mut conn = provider.conn().await?;
-            visible_historical_index_entries_for_tuple_bounds(
-                &mut conn,
-                &database_name,
-                &read_shape_for_query,
-                &index_for_query,
-                &match_prefix,
-                start_key.as_deref(),
-                end_key.as_deref(),
-            )
+    async fn upsert_metadata_u64(
+        &mut self,
+        database_name: &str,
+        key: &str,
+        value: u64,
+    ) -> Result<()> {
+        let query = format!(
+            "INSERT INTO {} (key_name, value_u64) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE value_u64 = VALUES(value_u64)",
+            qualified_table(database_name, "metadata")
+        );
+        self.driver()
+            .exec_drop(query, (key, value))
             .await
-        })
+            .map_err(map_mysql_error)
     }
-}
 
-sql_historical_index_facade!(MySqlTenantStore);
+    async fn load_retention_read_floors(
+        &mut self,
+        database_name: &str,
+    ) -> Result<crate::RetentionReadFloors> {
+        load_retention_read_floors_from_session(self.driver(), database_name).await
+    }
 
-async fn visible_historical_index_entries_for_tuple_bounds<C>(
-    session: &mut C,
-    database_name: &str,
-    read_shape: &HistoricalReadShape,
-    index: &IndexDefinition,
-    match_prefix: &[u8],
-    start_key: Option<&[u8]>,
-    end_key: Option<&[u8]>,
-) -> Result<Vec<HistoricalIndexDocumentEntry>>
-where
-    C: Queryable,
-{
-    validate_index_version_storage_format_in_session(session, database_name).await?;
-    let read_sequence = read_shape.read_snapshot().sequence().sequence();
-    let mut query = format!(
-        "SELECT encoded_tuple, document_id, visible_from, visible_until
-         FROM {}
-         WHERE table_id = ? AND index_id = ?",
-        qualified_table(database_name, "index_versions")
-    );
-    let mut params = vec![
-        MySqlValue::Bytes(read_shape.table_id().as_str().as_bytes().to_vec()),
-        MySqlValue::Bytes(index.id.as_str().as_bytes().to_vec()),
-    ];
-    if let Some(start_key) = start_key.filter(|key| !key.is_empty()) {
-        query.push_str(" AND encoded_tuple >= ?");
-        params.push(MySqlValue::Bytes(start_key.to_vec()));
-    }
-    if let Some(end_key) = end_key {
-        query.push_str(" AND encoded_tuple < ?");
-        params.push(MySqlValue::Bytes(end_key.to_vec()));
-    }
-    query.push_str(" ORDER BY encoded_tuple, document_id, visible_from");
-    let rows = session
-        .exec::<Row, _, _>(query, Params::Positional(params))
-        .await
-        .map_err(map_mysql_error)?;
-    let mut entries = Vec::new();
-    for row in rows {
-        let (encoded_tuple, document_id, visible_from, visible_until): (
-            Vec<u8>,
-            String,
-            u64,
-            Option<u64>,
-        ) = mysql_async::from_row(row);
-        if !encoded_tuple.starts_with(match_prefix) {
-            if !match_prefix.is_empty() {
-                break;
-            }
-            continue;
-        }
-        let value = MySqlIndexVersionValue {
-            document_id,
-            visible_from,
-            visible_until,
-        };
-        maybe_push_visible_historical_entry(
-            session,
+    async fn document_version_at(
+        &mut self,
+        database_name: &str,
+        table: &TableName,
+        table_id: &TableId,
+        document_id: &DocumentId,
+        sequence: SequenceNumber,
+    ) -> Result<Option<Document>> {
+        get_document_version_at_from_session(
+            self.driver(),
             database_name,
-            read_shape,
-            index,
-            read_sequence,
-            value,
-            &mut entries,
+            table,
+            table_id,
+            document_id,
+            sequence,
         )
-        .await?;
+        .await
     }
-    Ok(entries)
 }
 
-struct MySqlIndexVersionValue {
-    document_id: String,
-    visible_from: u64,
-    visible_until: Option<u64>,
-}
+impl SqlIndexVersionStore for MySqlTenantStore {}
 
-async fn maybe_push_visible_historical_entry<C>(
-    session: &mut C,
-    database_name: &str,
-    read_shape: &HistoricalReadShape,
-    index: &IndexDefinition,
-    read_sequence: SequenceNumber,
-    value: MySqlIndexVersionValue,
-    entries: &mut Vec<HistoricalIndexDocumentEntry>,
-) -> Result<()>
-where
-    C: Queryable,
-{
-    if !mysql_index_version_visible_at(&value, read_sequence) {
-        return Ok(());
-    }
-    let document_id = DocumentId::from_key(value.document_id.as_str())?;
-    let Some(document) = get_document_version_at_from_session(
-        session,
-        database_name,
-        read_shape.table(),
-        read_shape.table_id(),
-        &document_id,
-        read_sequence,
-    )
-    .await?
-    else {
-        return Err(Error::storage(
-            StorageErrorKind::Corruption,
-            format!(
-                "visible historical MySQL index row for document {} has no document version at sequence {}",
-                document_id, read_sequence.0
-            ),
-        ));
-    };
-    let tuple = HistoricalIndexTuple::from_document(&document, index)?.ok_or_else(|| {
-        Error::storage(
-            StorageErrorKind::Corruption,
-            format!(
-                "visible historical MySQL index row for document {} has no tuple for index {}",
-                document.id, index.name
-            ),
-        )
-    })?;
-    entries.push(HistoricalIndexDocumentEntry { tuple, document });
-    Ok(())
-}
-
-fn mysql_index_version_visible_at(
-    value: &MySqlIndexVersionValue,
-    sequence: SequenceNumber,
-) -> bool {
-    let visible_from = SequenceNumber(value.visible_from);
-    let visible_until = value.visible_until.map(SequenceNumber);
-    visible_from <= sequence && visible_until.is_none_or(|until| sequence < until)
-}
+sql_index_version_facade!(MySqlTenantStore);
+sql_historical_index_facade!(MySqlTenantStore);
 
 /// Closes and opens visibility intervals for the tuple mutations of one write
 /// batch. The caller computes the mutations once in
@@ -245,7 +79,8 @@ where
         return Ok(());
     }
 
-    ensure_index_version_storage_format_in_session(session, database_name).await?;
+    ensure_index_version_storage_format_in_session(&mut MySqlSession(&mut *session), database_name)
+        .await?;
     let close_query = format!(
         "UPDATE {}
          SET visible_until = ?
@@ -307,209 +142,6 @@ where
         }
     }
     Ok(())
-}
-
-pub(super) async fn prune_index_versions_before_in_session<C>(
-    session: &mut C,
-    database_name: &str,
-    prune_before: SequenceNumber,
-) -> Result<u64>
-where
-    C: Queryable,
-{
-    if prune_before.0 == 0 {
-        return Ok(0);
-    }
-    validate_index_version_storage_format_in_session(session, database_name).await?;
-    let query = format!(
-        "DELETE FROM {}
-         WHERE visible_until IS NOT NULL AND visible_until <= ?",
-        qualified_table(database_name, "index_versions")
-    );
-    session
-        .exec_drop(query, (prune_before.0,))
-        .await
-        .map_err(map_mysql_error)?;
-    let row = session
-        .query_first::<Row, _>("SELECT ROW_COUNT()")
-        .await
-        .map_err(map_mysql_error)?
-        .ok_or_else(|| {
-            Error::storage(
-                StorageErrorKind::Corruption,
-                "MySQL index-version prune count query returned no row",
-            )
-        })?;
-    let (deleted,): (i64,) = mysql_async::from_row(row);
-    u64::try_from(deleted).map_err(|_| {
-        Error::storage(
-            StorageErrorKind::Corruption,
-            "MySQL index-version prune count is negative",
-        )
-    })
-}
-
-#[cfg(test)]
-async fn index_version_intervals_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-    table_id: &TableId,
-    index_id: &nimbus_core::IndexId,
-) -> Result<Vec<IndexVersionInterval>>
-where
-    C: Queryable,
-{
-    validate_index_version_storage_format_in_session(session, database_name).await?;
-    let query = format!(
-        "SELECT document_id, visible_from, visible_until
-         FROM {}
-         WHERE table_id = ? AND index_id = ?
-         ORDER BY encoded_tuple, document_id, visible_from",
-        qualified_table(database_name, "index_versions")
-    );
-    let rows = session
-        .exec::<Row, _, _>(query, (table_id.as_str(), index_id.as_str()))
-        .await
-        .map_err(map_mysql_error)?;
-    rows.into_iter()
-        .map(|row| {
-            let (document_id, visible_from, visible_until): (String, u64, Option<u64>) =
-                mysql_async::from_row(row);
-            Ok(IndexVersionInterval {
-                document_id: DocumentId::from_key(document_id)?,
-                visible_from: SequenceNumber(visible_from),
-                visible_until: visible_until.map(SequenceNumber),
-            })
-        })
-        .collect()
-}
-
-async fn validate_index_version_storage_format_in_session<C>(
-    session: &mut C,
-    database_name: &str,
-) -> Result<()>
-where
-    C: Queryable,
-{
-    let format_version =
-        load_index_version_storage_format_from_session(session, database_name).await?;
-    let has_versions = match format_version {
-        Some(format_version) => {
-            validate_index_version_storage_format(format_version)?;
-            false
-        }
-        None => index_versions_have_rows_in_session(session, database_name).await?,
-    };
-    crate::validate_index_version_storage_format_state(format_version, has_versions)
-}
-
-async fn index_version_storage_diagnostic_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-) -> Result<IndexVersionStorageDiagnostic>
-where
-    C: Queryable,
-{
-    let format_version =
-        load_index_version_storage_format_from_session(session, database_name).await?;
-    let query = format!(
-        "SELECT COUNT(*), MIN(visible_from), MAX(GREATEST(visible_from, COALESCE(visible_until, visible_from))) FROM {}",
-        qualified_table(database_name, "index_versions")
-    );
-    let row = session
-        .query_first::<Row, _>(query)
-        .await
-        .map_err(map_mysql_error)?
-        .ok_or_else(|| {
-            Error::storage(
-                StorageErrorKind::Corruption,
-                "MySQL index version aggregate query returned no row",
-            )
-        })?;
-    let (version_count, min_sequence, max_sequence): (u64, Option<u64>, Option<u64>) =
-        mysql_async::from_row(row);
-    crate::validate_index_version_storage_format_state(format_version, version_count > 0)?;
-
-    Ok(IndexVersionStorageDiagnostic {
-        format_version,
-        version_count,
-        min_sequence: min_sequence.map(SequenceNumber),
-        max_sequence: max_sequence.map(SequenceNumber),
-    })
-}
-
-async fn ensure_index_version_storage_format_in_session<C>(
-    session: &mut C,
-    database_name: &str,
-) -> Result<()>
-where
-    C: Queryable,
-{
-    if let Some(format_version) =
-        load_index_version_storage_format_from_session(session, database_name).await?
-    {
-        validate_index_version_storage_format(format_version)?;
-        return Ok(());
-    }
-
-    let query = format!(
-        "INSERT INTO {} (key_name, value_u64) VALUES (?, ?)
-         ON DUPLICATE KEY UPDATE value_u64 = VALUES(value_u64)",
-        qualified_table(database_name, "metadata")
-    );
-    session
-        .exec_drop(
-            query,
-            (
-                INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
-                u64::from(CURRENT_INDEX_VERSION_STORAGE_FORMAT.0),
-            ),
-        )
-        .await
-        .map_err(map_mysql_error)?;
-    Ok(())
-}
-
-async fn load_index_version_storage_format_from_session<C>(
-    session: &mut C,
-    database_name: &str,
-) -> Result<Option<StorageFormatVersion>>
-where
-    C: Queryable,
-{
-    load_metadata_u64_from_session(
-        session,
-        database_name,
-        INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
-    )
-    .await?
-    .map(storage_format_version_from_u64)
-    .transpose()
-}
-
-async fn index_versions_have_rows_in_session<C>(
-    session: &mut C,
-    database_name: &str,
-) -> Result<bool>
-where
-    C: Queryable,
-{
-    let query = format!(
-        "SELECT EXISTS(SELECT 1 FROM {} LIMIT 1)",
-        qualified_table(database_name, "index_versions")
-    );
-    let row = session
-        .query_first::<Row, _>(query)
-        .await
-        .map_err(map_mysql_error)?
-        .ok_or_else(|| {
-            Error::storage(
-                StorageErrorKind::Corruption,
-                "MySQL index version existence query returned no row",
-            )
-        })?;
-    let (exists,): (u8,) = mysql_async::from_row(row);
-    Ok(exists != 0)
 }
 
 fn encoded_tuple_hash(encoded_tuple: &[u8]) -> Vec<u8> {

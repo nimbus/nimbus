@@ -132,7 +132,7 @@ parking_lot = "0.12"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
 prost = "0.14"
 prost-types = "0.14"
-rand = "0.8"
+rand = "0.10"
 redb = "4"
 redis = "1.3.0"
 redis-protocol = "6.0.0"
