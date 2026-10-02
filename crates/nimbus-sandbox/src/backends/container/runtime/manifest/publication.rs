@@ -5,10 +5,13 @@
 //! canonical manifest or by a later complete publication.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write as _;
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use nimbus_durable_record::{
+    CleanupError, CleanupStep, StagedWrite, WriteError, WriteFailure, WriteStep, sync_directory,
+};
 
 use crate::error::{Result, SandboxError};
 
@@ -104,64 +107,71 @@ where
     reconcile_exact_stage_files(container_state_dir)?;
 
     let staged_path = container_state_dir.join(MANIFEST_PUBLICATION_STAGE_FILE);
-    let publication = (|| -> Result<()> {
-        let mut staged = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staged_path)
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to create staged sandbox manifest {}: {error}",
-                    staged_path.display()
-                ),
-            })?;
-        staged
-            .write_all(rendered)
-            .and_then(|()| staged.sync_all())
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to durably stage sandbox manifest {}: {error}",
-                    staged_path.display()
-                ),
-            })?;
-        fs::rename(&staged_path, manifest_path).map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to atomically publish sandbox manifest {}: {error}",
-                manifest_path.display()
-            ),
-        })?;
-        directory_sync(container_state_dir).map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "sandbox manifest {} reached its commit point but the parent-directory sync \
-                     failed; publication outcome is ambiguous: {error}",
-                manifest_path.display()
-            ),
-        })
-    })();
+    StagedWrite::new(&staged_path, manifest_path)
+        .directory_sync(&mut directory_sync)
+        .write(rendered)
+        .map_err(|error| publication_error(&staged_path, manifest_path, error))
+}
 
-    if let Err(primary) = publication {
-        let cleanup = remove_regular_stage_if_present(&staged_path).and_then(|removed| {
-            if removed {
-                directory_sync(container_state_dir).map_err(|error| SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to durably remove staged sandbox manifest {}: {error}",
-                        staged_path.display()
-                    ),
-                })
-            } else {
-                Ok(())
-            }
-        });
-        return match cleanup {
-            Ok(_) => Err(primary),
-            Err(cleanup) => Err(SandboxError::OperationFailed {
-                message: format!(
-                    "{primary}; staged sandbox manifest cleanup also failed: {cleanup}"
-                ),
-            }),
-        };
-    }
-    Ok(())
+fn publication_error(staged_path: &Path, manifest_path: &Path, error: WriteError) -> SandboxError {
+    let primary = match error.failure {
+        WriteFailure::Io {
+            step: WriteStep::CreateStage,
+            source,
+            ..
+        } => format!(
+            "failed to create staged sandbox manifest {}: {source}",
+            staged_path.display()
+        ),
+        WriteFailure::Io {
+            step: WriteStep::WriteStage | WriteStep::SyncStage,
+            source,
+            ..
+        } => format!(
+            "failed to durably stage sandbox manifest {}: {source}",
+            staged_path.display()
+        ),
+        WriteFailure::Io {
+            step: WriteStep::Commit,
+            source,
+            ..
+        } => format!(
+            "failed to atomically publish sandbox manifest {}: {source}",
+            manifest_path.display()
+        ),
+        WriteFailure::Io {
+            step: WriteStep::SyncDirectory,
+            source,
+            ..
+        } => format!(
+            "sandbox manifest {} reached its commit point but the parent-directory sync failed; \
+             publication outcome is ambiguous: {source}",
+            manifest_path.display()
+        ),
+        WriteFailure::Observer { error, .. } => match error {},
+    };
+    let message = match error.cleanup {
+        None => primary,
+        Some(CleanupError {
+            step: CleanupStep::RemoveStage,
+            source,
+            ..
+        }) => format!(
+            "{primary}; staged sandbox manifest cleanup also failed: failed to remove staged \
+             sandbox manifest {}: {source}",
+            staged_path.display()
+        ),
+        Some(CleanupError {
+            step: CleanupStep::SyncDirectory,
+            source,
+            ..
+        }) => format!(
+            "{primary}; staged sandbox manifest cleanup also failed: failed to durably remove \
+             staged sandbox manifest {}: {source}",
+            staged_path.display()
+        ),
+    };
+    SandboxError::OperationFailed { message }
 }
 
 pub(in crate::backends::container::runtime) fn establish_durable_manifest_directory_chain_with<F>(
@@ -358,10 +368,6 @@ fn non_regular_publication_entry(path: &Path) -> SandboxError {
             path.display()
         ),
     }
-}
-
-fn sync_directory(path: &Path) -> std::io::Result<()> {
-    File::open(path)?.sync_all()
 }
 
 struct ManifestPublicationGuard {

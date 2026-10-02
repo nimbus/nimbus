@@ -118,7 +118,7 @@ pub(super) fn finish_build(
         }
     })?;
     write_build_receipt(staging_dir, &receipt)?;
-    sync_directory(staging_dir)?;
+    sync_artifact_directory(staging_dir)?;
     fs::rename(staging_dir, &final_artifact).map_err(|error| {
         SandboxError::OperationFailed {
             message: format!(
@@ -128,7 +128,7 @@ pub(super) fn finish_build(
         }
     })?;
     if let Some(parent) = final_artifact.parent() {
-        sync_directory(parent)?;
+        sync_artifact_directory(parent)?;
     }
 
     finish_built_launch(built_image_reference, final_rootfs, image_config, process)
@@ -237,15 +237,13 @@ fn write_build_receipt(artifact_dir: &Path, receipt: &BuildReceipt) -> Result<()
         })
 }
 
-fn sync_directory(path: &Path) -> Result<()> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to durably sync directory {}: {error}",
-                path.display()
-            ),
-        })
+fn sync_artifact_directory(path: &Path) -> Result<()> {
+    nimbus_durable_record::sync_directory(path).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to durably sync directory {}: {error}",
+            path.display()
+        ),
+    })
 }
 
 fn compute_file_sha256(path: &Path) -> Result<String> {

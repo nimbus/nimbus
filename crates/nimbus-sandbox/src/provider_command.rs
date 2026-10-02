@@ -6,11 +6,11 @@
 //! order and durable desired state.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nimbus_durable_record::{StagedWrite, WriteError, WriteFailure, WriteStep};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -1452,7 +1452,7 @@ impl ProviderCommandAttemptJournal {
             &self.state_root,
             directory,
             "provider command attempt journal",
-            sync_directory,
+            nimbus_durable_record::sync_directory,
         )
         .map_err(|error| ProviderCommandJournalError::Store {
             message: error.to_string(),
@@ -1566,49 +1566,52 @@ fn publish(
         }
     })?;
     bytes.push(b'\n');
-    let result = (|| {
-        let mut stage = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&paths.stage)
-            .map_err(|error| ProviderCommandJournalError::Store {
-                message: format!(
-                    "failed to create journal stage {}: {error}",
-                    paths.stage.display()
-                ),
-            })?;
-        stage
-            .write_all(&bytes)
-            .and_then(|()| stage.sync_all())
-            .map_err(|error| ProviderCommandJournalError::Store {
-                message: format!(
-                    "failed to durably write journal stage {}: {error}",
-                    paths.stage.display()
-                ),
-            })?;
-        fs::rename(&paths.stage, &paths.record).map_err(|error| {
-            ProviderCommandJournalError::Store {
-                message: format!(
-                    "failed to atomically publish journal {}: {error}",
-                    paths.record.display()
-                ),
-            }
-        })?;
-        sync_directory(&paths.directory).map_err(|error| ProviderCommandJournalError::Store {
-            message: format!(
-                "journal {} reached its commit point but directory sync failed; outcome is ambiguous: {error}",
-                paths.record.display()
-            ),
-        })
-    })();
-    match (result, remove_stale_stage(&paths.stage)) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(primary), Ok(())) => Err(primary),
-        (Ok(()), Err(cleanup)) => Err(cleanup),
-        (Err(primary), Err(cleanup)) => Err(ProviderCommandJournalError::Store {
-            message: format!("{primary}; staged journal cleanup also failed: {cleanup}"),
-        }),
-    }
+    StagedWrite::new(&paths.stage, &paths.record)
+        .write(&bytes)
+        .map_err(|error| publish_error(paths, error))
+}
+
+fn publish_error(paths: &JournalPaths, error: WriteError) -> ProviderCommandJournalError {
+    let primary = match error.failure {
+        WriteFailure::Io {
+            step: WriteStep::CreateStage,
+            source,
+            ..
+        } => format!(
+            "failed to create journal stage {}: {source}",
+            paths.stage.display()
+        ),
+        WriteFailure::Io {
+            step: WriteStep::WriteStage | WriteStep::SyncStage,
+            source,
+            ..
+        } => format!(
+            "failed to durably write journal stage {}: {source}",
+            paths.stage.display()
+        ),
+        WriteFailure::Io {
+            step: WriteStep::Commit,
+            source,
+            ..
+        } => format!(
+            "failed to atomically publish journal {}: {source}",
+            paths.record.display()
+        ),
+        WriteFailure::Io {
+            step: WriteStep::SyncDirectory,
+            source,
+            ..
+        } => format!(
+            "journal {} reached its commit point but directory sync failed; outcome is ambiguous: {source}",
+            paths.record.display()
+        ),
+        WriteFailure::Observer { error, .. } => match error {},
+    };
+    let message = match error.cleanup {
+        None => primary,
+        Some(cleanup) => format!("{primary}; staged journal cleanup also failed: {cleanup}"),
+    };
+    ProviderCommandJournalError::Store { message }
 }
 
 fn read_if_present(
@@ -1819,10 +1822,6 @@ fn observation_sha256(
             message: format!("failed to authenticate provider observation: {error}"),
         })?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
-}
-
-fn sync_directory(path: &Path) -> std::io::Result<()> {
-    File::open(path)?.sync_all()
 }
 
 #[derive(Debug)]
