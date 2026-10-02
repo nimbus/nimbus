@@ -13,6 +13,7 @@ members = [
     "crates/nimbus-compute",
     "crates/nimbus-convex",
     "crates/nimbus-crypto",
+    "crates/nimbus-durable-record",
     "crates/nimbus-dynamodb",
     "crates/nimbus-firebase",
     "crates/nimbus-fs",

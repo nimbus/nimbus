@@ -25,13 +25,14 @@ use std::collections::BTreeMap;
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use nimbus_core::TenantId;
+use nimbus_durable_record::WriteCheckpoint;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,8 +43,11 @@ mod filesystem_kind;
 mod owner_files;
 
 use filesystem_kind::{detect_filesystem_kind, ensure_supported_filesystem};
+use owner_files::{
+    StagedWriteOperations, replace_owner_file, sync_authority_directory,
+    validate_owner_file_permissions,
+};
 pub(crate) use owner_files::{create_dir_all_owner_only, is_lock_contended, open_owner_file};
-use owner_files::{replace_file, sync_directory, validate_owner_file_permissions};
 
 const STORE_DIRECTORY: &str = "control-plane";
 const STORE_FILE: &str = "state.json";
@@ -386,7 +390,7 @@ impl LocalNetworkStateStore {
                 Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
             }
         };
-        let file = open_owner_file(&self.lock_path, false)?;
+        let file = open_owner_file(&self.lock_path)?;
         loop {
             match file.try_lock().map_err(std::io::Error::from) {
                 Ok(()) => {
@@ -519,7 +523,7 @@ impl LocalNetworkStateStore {
             }
         }
         if removed {
-            sync_directory(&self.store_root)?;
+            sync_authority_directory(&self.store_root)?;
         }
         Ok(())
     }
@@ -528,38 +532,22 @@ impl LocalNetworkStateStore {
         let token = Ulid::new();
         let source = self.store_root.join(format!("{PROBE_PREFIX}{token}.stage"));
         let destination = self.store_root.join(format!("{PROBE_PREFIX}{token}.done"));
-        let probe_result = (|| {
-            let mut file = open_owner_file(&source, true)?;
-            file.write_all(b"nimbus-network-durability-probe")
-                .map_err(|source_error| NetworkStateStoreError::Io {
-                    operation: "write durability probe",
-                    path: source.clone(),
-                    source: source_error,
-                })?;
-            file.sync_all()
-                .map_err(|source_error| NetworkStateStoreError::Io {
-                    operation: "sync durability probe",
-                    path: source.clone(),
-                    source: source_error,
-                })?;
-            drop(file);
-            replace_file(&source, &destination).map_err(|source_error| {
-                NetworkStateStoreError::Io {
-                    operation: "replace durability probe",
-                    path: destination.clone(),
-                    source: source_error,
-                }
-            })?;
-            sync_directory(&self.store_root)?;
+        let probe_result = replace_owner_file(
+            &source,
+            &destination,
+            b"nimbus-network-durability-probe",
+            &PROBE_OPERATIONS,
+            &mut |_| {},
+        )
+        .and_then(|()| {
             fs::remove_file(&destination).map_err(|source_error| NetworkStateStoreError::Io {
                 operation: "remove durability probe",
                 path: destination.clone(),
                 source: source_error,
             })?;
-            sync_directory(&self.store_root)
-        })();
+            sync_authority_directory(&self.store_root)
+        });
         if probe_result.is_err() {
-            let _ = fs::remove_file(&source);
             let _ = fs::remove_file(&destination);
         }
         probe_result
@@ -612,6 +600,20 @@ enum DurabilityEvent {
     ParentDirectorySynced,
 }
 
+const STATE_OPERATIONS: StagedWriteOperations = StagedWriteOperations {
+    create: "open owner-only authority file",
+    write: "write staged authority state",
+    sync: "sync staged authority state",
+    replace: "atomically replace authority state",
+};
+
+const PROBE_OPERATIONS: StagedWriteOperations = StagedWriteOperations {
+    create: "open owner-only authority file",
+    write: "write durability probe",
+    sync: "sync durability probe",
+    replace: "replace durability probe",
+};
+
 fn durable_replace(
     parent: &Path,
     destination: &Path,
@@ -620,36 +622,20 @@ fn durable_replace(
     observer: &dyn Fn(DurabilityEvent),
 ) -> Result<(), NetworkStateStoreError> {
     let stage = parent.join(format!("{temp_prefix}{}.stage", Ulid::new()));
-    let result = (|| {
-        let mut file = open_owner_file(&stage, true)?;
-        file.write_all(bytes)
-            .map_err(|source| NetworkStateStoreError::Io {
-                operation: "write staged authority state",
-                path: stage.clone(),
-                source,
-            })?;
-        file.sync_all()
-            .map_err(|source| NetworkStateStoreError::Io {
-                operation: "sync staged authority state",
-                path: stage.clone(),
-                source,
-            })?;
-        observer(DurabilityEvent::StateFileSynced);
-        drop(file);
-        replace_file(&stage, destination).map_err(|source| NetworkStateStoreError::Io {
-            operation: "atomically replace authority state",
-            path: destination.to_path_buf(),
-            source,
-        })?;
-        observer(DurabilityEvent::StateReplaced);
-        sync_directory(parent)?;
-        observer(DurabilityEvent::ParentDirectorySynced);
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&stage);
-    }
-    result
+    replace_owner_file(
+        &stage,
+        destination,
+        bytes,
+        &STATE_OPERATIONS,
+        &mut |checkpoint| {
+            observer(match checkpoint {
+                WriteCheckpoint::StageDurable => DurabilityEvent::StateFileSynced,
+                WriteCheckpoint::Committed => DurabilityEvent::StateReplaced,
+            });
+        },
+    )?;
+    observer(DurabilityEvent::ParentDirectorySynced);
+    Ok(())
 }
 
 fn validate_options(options: LocalNetworkStateStoreOptions) -> Result<(), NetworkStateStoreError> {

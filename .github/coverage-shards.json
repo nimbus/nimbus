@@ -52,6 +52,7 @@
         "nimbus-blob",
         "nimbus-kv",
         "nimbus-crypto",
+        "nimbus-durable-record",
         "nimbus-fs",
         "nimbus-artifacts",
         "nimbus-provenance",

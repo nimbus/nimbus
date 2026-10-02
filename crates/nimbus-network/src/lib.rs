@@ -5,8 +5,9 @@
 //! binding, packet forwarding, namespaces, bridges, firewalls, TLS
 //! termination, and protocol parsing remain in their effect-owning crates.
 //!
-//! `nimbus-core` is this crate's only workspace dependency. Upper-layer crates
-//! inject provider capabilities without creating reverse dependencies.
+//! Its only workspace dependencies are `nimbus-core` and the leaf
+//! `nimbus-durable-record`. Upper-layer crates inject provider capabilities
+//! without creating reverse dependencies.
 
 mod attachment_handle;
 mod attachment_state;

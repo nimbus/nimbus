@@ -6651,6 +6651,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-durable-record"
+version = "0.1.48"
+dependencies = [
+ "crc32fast",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "nimbus-dynamodb"
 version = "0.1.48"
 dependencies = [
@@ -6840,6 +6849,7 @@ version = "0.1.48"
 dependencies = [
  "libc",
  "nimbus-core",
+ "nimbus-durable-record",
  "proptest",
  "serde",
  "serde_json",
@@ -6907,6 +6917,7 @@ dependencies = [
 name = "nimbus-process-harness"
 version = "0.1.48"
 dependencies = [
+ "nimbus-durable-record",
  "tempfile",
 ]
 
