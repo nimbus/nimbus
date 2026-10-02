@@ -8,12 +8,12 @@ use deadpool_postgres::{
     Runtime,
 };
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexTuple,
-    HistoricalReadShape, IdSource, IndexDefinition, ResourcePathBinding, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
-    SystemIdSource, SystemWallClock, TableId, TableLifecycleEvent, TableName, TableSchema,
-    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, IdSource,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
+    SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp,
+    WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,6 +40,7 @@ use crate::store::{
 mod backend;
 mod committer_lease;
 mod config;
+mod dialect;
 mod document_versions;
 mod index_versions;
 mod notifications;

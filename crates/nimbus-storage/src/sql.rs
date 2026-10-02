@@ -9,6 +9,11 @@
 //! above it ([`store_core`]). Dialect-load-bearing logic (placeholder style,
 //! lock/retry order, notifications) stays in each backend's own `write.rs`.
 //!
+//! Statements that differ only in quoting, bind markers, and wire types go
+//! through the [`dialect`] seam instead. Each provider implements it once, and
+//! [`table_lifecycle`], [`resource_paths`], [`index_versions`], and
+//! [`read_store`] write their statements once against it.
+//!
 //! # Feature gating
 //!
 //! The whole module compiles only when at least one remote provider feature is
@@ -29,13 +34,21 @@
 
 pub(crate) mod commit_effects;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) mod dialect;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod index_history;
 #[cfg(feature = "mysql")]
 pub(crate) mod index_keyspace;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) mod index_versions;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod predicate;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod read_snapshot;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) mod read_store;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) mod resource_paths;
 pub(crate) mod retention;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod row;
@@ -44,6 +57,8 @@ pub(crate) mod scheduler_core;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod schema_events;
 pub(crate) mod store_core;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) mod table_lifecycle;
 pub(crate) mod write_core;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) mod write_pipeline;
