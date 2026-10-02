@@ -232,8 +232,7 @@ mod tests {
     fn bind_saturates_bounds_and_rejects_oversized_sequences() {
         assert!(PostgresDialect::bind(SqlValue::Bound(u64::MAX)).is_ok());
         let error = PostgresDialect::bind(SqlValue::Sequence(SequenceNumber(u64::MAX)))
-            .err()
-            .expect("an oversized sequence must not bind");
+            .expect_err("an oversized sequence must not bind");
         assert!(matches!(error, Error::InvalidInput(_)));
     }
 }
