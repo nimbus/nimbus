@@ -25,7 +25,7 @@ use extenddb_core::error::DynamoDbError;
 use http::HeaderMap;
 use nimbus_core::TenantId;
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde_json::Value;
 
 use crate::auth::sigv4::parse::{ParsedAuthorization, parse_authorization};

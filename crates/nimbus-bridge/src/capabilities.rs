@@ -412,9 +412,9 @@ mod tests {
     };
     use nimbus_runtime::{InvocationKind, RuntimeLimits, RuntimePolicy};
     use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
-        admit_runtime_invocation_decision,
+        RuntimeIsolationTier, TenantIsolationMode, admit_runtime_invocation_decision,
     };
+    use nimbus_tenant_context::TenantIsolationContext;
     use serde_json::json;
 
     use super::*;

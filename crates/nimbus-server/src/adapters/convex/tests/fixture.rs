@@ -25,7 +25,7 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture_for_invocation(
     let invocation_lease = runtime_manager
         .acquire_invocation_lease_blocking(&tenant_id, 0)
         .expect("fixture runtime authority should build");
-    let isolation = nimbus_tenant::TenantIsolationContext::application(
+    let isolation = nimbus_tenant_context::TenantIsolationContext::application(
         tenant_id.clone(),
         nimbus_core::PrincipalContext::anonymous(),
         "convex_fixture",

@@ -11,12 +11,13 @@ use nimbus_workloads::{
 
 use super::*;
 use nimbus_tenant::{
-    RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationContext,
+    RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationContextExt,
     TenantIsolationDecision, TenantIsolationEventKind, TenantIsolationMode,
     TenantIsolationPolicyInput, TenantNetworkEndpointDecision, TenantNetworkPolicyDecision,
     TenantQuotaPolicyDecision, TenantSecretPolicyDecision, TenantServiceGrantPolicyDecision,
-    TenantStoragePolicyDecision, TenantVolumePolicyDecision, WorkloadAttributes, WorkloadLocation,
+    TenantStoragePolicyDecision, TenantVolumePolicyDecision, WorkloadAttributes,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 
 fn principal_with_tenant_claim(tenant: &str) -> PrincipalContext {
     PrincipalContext {

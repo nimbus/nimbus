@@ -2,7 +2,7 @@ use super::*;
 use crate::application_auth::verify_optional_convex_auth_from_headers;
 use crate::local_server::authorize_standard_server_access;
 use nimbus_auth::normalize_principal_context;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 struct ResolvedConvexRequest {
     registry: Arc<ConvexRegistry>,

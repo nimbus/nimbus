@@ -1,31 +1,8 @@
-use nimbus_core::{PrincipalContext, Result};
+use nimbus_core::Result;
+use nimbus_tenant_context::{
+    TenantIsolationAuthority, TenantIsolationContext, principal_tenant_claim,
+};
 use serde::{Deserialize, Serialize};
-
-use super::context::{TenantIsolationContext, principal_tenant_claim};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TenantIsolationAuthority {
-    Operator,
-    Application { principal: PrincipalContext },
-    System,
-}
-
-impl TenantIsolationAuthority {
-    pub(super) fn describe(&self) -> String {
-        match self {
-            Self::Operator => "operator".to_string(),
-            Self::System => "system".to_string(),
-            Self::Application { principal } if principal.authenticated => {
-                "application(authenticated)".to_string()
-            }
-            Self::Application { .. } => "application(anonymous)".to_string(),
-        }
-    }
-
-    pub(super) fn is_system_or_operator(&self) -> bool {
-        matches!(self, Self::Operator | Self::System)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,7 +35,7 @@ pub enum TenantIsolationAuthorityDecision {
 
 impl TenantIsolationAuthorityDecision {
     pub(super) fn from_context(context: &TenantIsolationContext) -> Result<Self> {
-        match &context.authority {
+        match context.authority() {
             TenantIsolationAuthority::Operator => Ok(Self::Operator),
             TenantIsolationAuthority::System => Ok(Self::System),
             TenantIsolationAuthority::Application { principal } => {

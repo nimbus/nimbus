@@ -35,10 +35,11 @@ mod tests {
     };
     use nimbus_services::ServiceInstanceBindingRegistry;
     use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
-        TenantIsolationPolicyInput, TenantNetworkPolicyDecision, TenantStoragePolicyDecision,
-        WorkloadAttributes,
+        RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationDecision,
+        TenantIsolationMode, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
+        TenantStoragePolicyDecision, WorkloadAttributes,
     };
+    use nimbus_tenant_context::TenantIsolationContext;
     use tempfile::{TempDir, tempdir};
 
     use crate::adapters::convex::{

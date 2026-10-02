@@ -8,7 +8,7 @@ use nimbus_core::{
 };
 use nimbus_core::{locator_for_document_path, storage_table_for_collection_path};
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use crate::project_tenant_registry::{
     ProjectTenantRegistry, firebase_project_from_verified_principal,

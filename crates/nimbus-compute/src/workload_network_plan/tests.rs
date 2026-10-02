@@ -19,10 +19,11 @@ use nimbus_sandbox::{
     SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
+    TenantIsolationContextExt, TenantIsolationDecision, TenantIsolationPolicyInput,
     TenantNetworkEndpointDecision, TenantNetworkPolicyDecision, TenantServiceGrantPolicyDecision,
-    WorkloadAttributes, WorkloadKind, WorkloadLocation,
+    WorkloadAttributes, WorkloadKind,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, WorkloadActivationIntent, WorkloadNetworkForwardingBehavior,
     WorkloadPublicationIntent,

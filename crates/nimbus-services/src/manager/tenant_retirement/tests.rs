@@ -11,7 +11,8 @@ use nimbus_network::{
     NetworkResourceGeneration, NetworkSovereigntyRequirements, PortProtocol,
 };
 use nimbus_sandbox::SandboxBackend;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant::TenantIsolationContextExt;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutableEncoding,

@@ -9,7 +9,8 @@ use nimbus_compute::runtime_manager::{RuntimeInvocationAuthority, RuntimeManager
 use nimbus_runtime::RuntimeLimits;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_system::{OpenSpan, RunSpanRecorder, span_kind_for_operation};
-use nimbus_tenant::{TenantIsolationContext, TenantIsolationDecision, TenantStorageAccessDecision};
+use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::LocalEnforcementBinding;
 
 use super::egress_gateway::EgressGatewayEnforcementReadiness;

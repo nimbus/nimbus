@@ -13,7 +13,7 @@ use nimbus_services::{
     ExternalAuthPolicy, HealthCheckPolicy, ServiceBackend, ServiceDefinition,
     ServiceDefinitionSource, ServiceManager,
 };
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::{
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity, WorkloadSagaKey,
     WorkloadSagaStoreError,

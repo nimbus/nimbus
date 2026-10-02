@@ -544,9 +544,10 @@ mod tests {
         HostCallCancellation, InvocationKind, NimbusRuntimeError, RuntimeLimits, RuntimePolicy,
     };
     use nimbus_tenant::{
-        RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
-        TenantStorageAccessDecision, admit_runtime_invocation_decision,
+        RuntimeIsolationTier, TenantIsolationMode, TenantStorageAccessDecision,
+        admit_runtime_invocation_decision,
     };
+    use nimbus_tenant_context::TenantIsolationContext;
     use serde_json::{Value, json};
     use tempfile::TempDir;
 

@@ -21,4 +21,5 @@ zeroize.workspace = true
 
 [dev-dependencies]
 nimbus-runtime = { path = "../nimbus-runtime" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 ring.workspace = true

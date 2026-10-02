@@ -39,9 +39,10 @@ its own module docs: it "must not depend on `nimbus-server` or `axum`"
 discipline holds across the set, with two refinements:
 
 - Adapters that resolve a foreign namespace to a tenant
-  (`nimbus-firebase`, `nimbus-mongodb`, `nimbus-dynamodb`,
-  `nimbus-cloud-functions`) also depend on `nimbus-tenant` for
-  isolation context.
+  (`nimbus-firebase`, `nimbus-mongodb`, `nimbus-dynamodb`) also depend
+  on `nimbus-tenant-context` for isolation context. That leaf crate
+  depends only on `nimbus-core`. `nimbus-cloud-functions` depends on
+  `nimbus-tenant` instead, because it admits runtime invocations.
 - Adapters that execute user JavaScript — `nimbus-convex` and
   `nimbus-cloud-functions` — additionally depend on `nimbus-runtime`
   (the V8 surface) and on `nimbus-bridge` (below). The three pure

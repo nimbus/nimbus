@@ -16,9 +16,10 @@ use nimbus_crypto::{
 };
 use nimbus_runtime::{RuntimeGrants, RuntimeLimits, RuntimePolicy};
 use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationDecision, TenantIsolationMode,
-    TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
+    RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationDecision, TenantIsolationMode,
+    TenantIsolationPolicyInput, WorkloadAttributes,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workload_identity::{
     CredentialFormat, CredentialKind, CredentialMintError, DenyAllIssuer, IdentityAuditOutcome,
     IdentityIssueError, IdentityIssuer, IdentityMintError, IdentityMintRequest,

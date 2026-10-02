@@ -20,7 +20,7 @@ use nimbus_core::{
     TransactionSessionMode, TransactionSessionToken, WriteKey, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use crate::attribute_value::{fields_to_item, item_to_fields};
 use crate::commands::item::primary_key_id;

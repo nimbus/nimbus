@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use nimbus_core::{PrincipalContext, TransactionSessionMode, TransactionSessionToken};
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 
 use super::super::connection::ConnectionState;
 use super::super::error::{BAD_VALUE, MongoError, TOO_MANY_LOGICAL_SESSIONS, WRITE_CONFLICT};

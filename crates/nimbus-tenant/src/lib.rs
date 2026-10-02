@@ -28,12 +28,13 @@ pub use audit_events::{
     TenantIsolationEventResult, TenantIsolationEventValue,
 };
 pub use authority::{TenantIsolationAuthorityDecision, TenantIsolationMode};
-pub use context::{TenantIsolationContext, admit_runtime_invocation_decision};
+pub(crate) use context::RuntimePolicyAdmissionExt;
+pub use context::{TenantIsolationContextExt, admit_runtime_invocation_decision};
 pub use decision::{
     TenantIsolationAuditRecord, TenantIsolationDecision, TenantIsolationDecisionId,
     TenantServiceAccessDecision, TenantStorageAccessDecision,
 };
-pub use identity::{WorkloadAttributes, WorkloadIdentity, WorkloadKind, WorkloadLocation};
+pub use identity::{WorkloadAttributes, WorkloadIdentity, WorkloadKind};
 pub use image_admission::{
     TenantImageAdmission, TenantImageAdmissionSource, TenantImageAttestationEvidence,
     TenantImageProvenanceRequirement, TenantImageSignatureEvidence,

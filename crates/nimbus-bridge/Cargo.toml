@@ -19,6 +19,7 @@ nimbus-egress = { path = "../nimbus-egress" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
 nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
 serde_json.workspace = true

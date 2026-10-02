@@ -8,9 +8,10 @@ use nimbus_engine::Engine;
 use nimbus_runtime::{InvocationKind, InvocationRequest};
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
-    RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
+    RuntimeIsolationTier, TenantIsolationContextExt, TenantIsolationMode,
     admit_runtime_invocation_decision,
 };
+use nimbus_tenant_context::TenantIsolationContext;
 use serde_json::Value;
 
 use super::response::{CloudFunctionsHttpResponseParts, build_http_response_parts};

@@ -9,7 +9,7 @@ use nimbus_compute::{
 };
 use nimbus_server::{EngineWorkloadSagaStore, ServerForegroundWorkloadRuntime};
 use nimbus_services::{ServiceDefinition, ServiceDefinitionObservation};
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use serde::Serialize;
 
 use super::provision::PreparedComposeProvision;

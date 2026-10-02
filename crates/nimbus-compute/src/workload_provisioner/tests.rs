@@ -13,9 +13,10 @@ use nimbus_sandbox::{
     sandbox_network_plan_requirements,
 };
 use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
-    WorkloadAttributes, WorkloadLocation,
+    TenantIsolationContextExt, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
+    WorkloadAttributes,
 };
+use nimbus_tenant_context::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     WorkloadOwnerEvidenceDigest, WorkloadProvisionCommandMode, WorkloadProvisionInspectionResult,
     WorkloadProvisionSourceEvidence, WorkloadProvisionSourceIdentity, WorkloadSagaCommit,

@@ -12,7 +12,7 @@ use nimbus_core::{
     SystemMonotonicClock, Timestamp, TypedFieldMap, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::Engine;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use prost_types::Timestamp as ProstTimestamp;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use tokio::sync::Mutex as AsyncMutex;

@@ -69,6 +69,7 @@
         "nimbus-proxy",
         "nimbus-services",
         "nimbus-tenant",
+        "nimbus-tenant-context",
         "nimbus-egress",
         "nimbus-workload-identity",
         "nimbus-assets",

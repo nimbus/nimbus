@@ -12,7 +12,7 @@ use nimbus_compute::state::ComputeError;
 use nimbus_compute::workload_saga::WorkloadTeardownCancellationToken;
 use nimbus_compute::{ComputeResourceRetirementError, WorkloadTeardownDisposition};
 use nimbus_server::EngineWorkloadSagaStore;
-use nimbus_tenant::TenantIsolationContext;
+use nimbus_tenant_context::TenantIsolationContext;
 use nimbus_workloads::WorkloadExecutionReference;
 
 use crate::cli_ux;
