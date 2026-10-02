@@ -1,8 +1,7 @@
 use super::*;
-use crate::adapters::convex::execution::RuntimeInvocationContext;
-use crate::adapters::convex::runtime_auth_payload;
 use crate::latency::{LatencySegment, budgeted_segment};
 use nimbus_auth::normalize_principal_context;
+use nimbus_convex_host::{RuntimeInvocationContext, runtime_auth_payload};
 
 pub(crate) async fn query(
     State(state): State<Arc<AppState>>,

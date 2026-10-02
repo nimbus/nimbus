@@ -223,7 +223,7 @@ check_durable_object_boundary() {
       --glob '!**/benches/**' \
       --glob '!**/tests.rs' \
       --glob '!**/*_tests.rs' \
-      --glob '!**/adapters/cloudflare/durable_objects/mod.rs' \
+      --glob '!**/nimbus-cloudflare/src/durable_objects.rs' \
       || true
   )"
   if [[ -n "${violations}" ]]; then

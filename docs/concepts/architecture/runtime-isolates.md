@@ -60,7 +60,7 @@ function calls, service lookups. There is no second channel.
 
 On the server side, each adapter's bridge implements the trait over the
 engine. The Convex bridge lives at
-`crates/nimbus-server/src/adapters/convex/host_bridge/` and holds an
+`crates/nimbus-convex-host/src/host_bridge/` and holds an
 `Arc<Engine>`; the Cloud Functions bridge is
 `crates/nimbus-cloud-functions/src/host_bridge.rs`. Shared plumbing —
 host-call dispatch, admission, capability checks, read tracking — lives in
@@ -80,7 +80,7 @@ isolate (user code)
    ▼
 HostBridge trait            crates/nimbus-runtime  (defines)
    ▼
-adapter host bridge         crates/nimbus-server, crates/nimbus-bridge  (implements)
+adapter host bridge         crates/nimbus-convex-host, crates/nimbus-bridge  (implements)
    ▼
 Engine                      crates/nimbus-engine  (authorizes + applies)
 ```

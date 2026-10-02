@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use nimbus_cloudflare::CloudflareConfig;
 use nimbus_engine::Engine;
 use nimbus_network::{
     LocalNetworkAuthority, NetworkCondition, NetworkConditionKind, NetworkConditionState,
@@ -11,7 +12,6 @@ use nimbus_runtime::{
 };
 
 use crate::adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
-use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::{ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::dynamodb::DynamoDbConfig;
 use crate::adapters::firebase::FirebaseConfig;

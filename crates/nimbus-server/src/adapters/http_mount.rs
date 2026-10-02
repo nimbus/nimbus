@@ -21,9 +21,10 @@ use axum::Router;
 use axum::extract::OriginalUri;
 use axum::http::Method;
 use axum::routing::any;
+use nimbus_cloudflare::CloudflareConfig;
 
 use crate::adapters::cloud_functions;
-use crate::adapters::cloudflare::{self, CloudflareConfig};
+use crate::adapters::cloudflare;
 use crate::state::{AppError, AppState};
 
 /// The one answer to a request that matched no route on this listener.

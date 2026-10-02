@@ -5,6 +5,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{any, delete, get, post};
 use axum::{Extension, Router};
+use nimbus_cloudflare::CloudflareConfig;
 use nimbus_compute::config::control_plane::ControlPlaneConfig;
 use nimbus_compute::config::deployment::DeploymentConfig;
 use nimbus_compute::config::node_services::NodeServicesConfig;
@@ -19,7 +20,6 @@ use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
 
 use crate::adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
-use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::{self, ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::{self, FirebaseConfig};
 use crate::adapters::http_mount::{
