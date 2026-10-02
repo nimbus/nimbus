@@ -1,7 +1,4 @@
-use super::table_lifecycle::{
-    activate_hidden_table_identity_in_session, hard_delete_table_identity_in_session,
-    mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
-};
+use super::dialect::PostgresSession;
 use super::*;
 use crate::keys::prefix_end;
 use crate::postgres::document_versions::{
@@ -10,7 +7,13 @@ use crate::postgres::document_versions::{
 use crate::postgres::index_versions::{
     record_index_versions_for_events_in_session, record_index_versions_for_writes_in_session,
 };
-use crate::retention::{validate_contiguous_journal_page, validate_retention_after_page};
+use crate::sql::resource_paths::{
+    remove_resource_path_binding_in_session, upsert_resource_path_binding_in_session,
+};
+use crate::sql::table_lifecycle::{
+    activate_hidden_table_identity_in_session, hard_delete_table_identity_in_session,
+    mark_table_deleting_in_session, stage_hidden_table_identity_in_session,
+};
 
 // Dialect-independent row serialization lives once in `crate::sql::row`; the
 // PostgreSQL module re-exports it so existing call sites stay unchanged.
@@ -419,130 +422,6 @@ where
         .collect())
 }
 
-pub(super) async fn load_scheduled_jobs_from_session<C>(
-    session: &C,
-    schema_name: &str,
-    table_name: &str,
-) -> Result<Vec<ScheduledJob>>
-where
-    C: GenericClient + Sync,
-{
-    let order_by = if table_name == "scheduled_jobs" {
-        "run_at, id"
-    } else {
-        "id"
-    };
-    let query = format!(
-        "SELECT data_json FROM {} ORDER BY {order_by}",
-        qualified_table(schema_name, table_name)
-    );
-    let rows = session
-        .query(query.as_str(), &[])
-        .await
-        .map_err(map_postgres_error)?;
-    rows.into_iter()
-        .map(|row| deserialize_json::<ScheduledJob>(row.get::<_, String>(0).as_str()))
-        .collect()
-}
-
-pub(super) async fn load_scheduled_job_result_from_session<C>(
-    session: &C,
-    schema_name: &str,
-    job_id: &DocumentId,
-) -> Result<Option<ScheduledJobResult>>
-where
-    C: GenericClient + Sync,
-{
-    let query = format!(
-        "SELECT data_json FROM {} WHERE job_id = $1",
-        qualified_table(schema_name, "scheduled_job_results")
-    );
-    session
-        .query_opt(query.as_str(), &[&job_id.to_string()])
-        .await
-        .map_err(map_postgres_error)?
-        .map(|row| deserialize_json::<ScheduledJobResult>(row.get::<_, String>(0).as_str()))
-        .transpose()
-}
-
-pub(super) async fn load_cron_jobs_from_session<C>(
-    session: &C,
-    schema_name: &str,
-) -> Result<Vec<CronJob>>
-where
-    C: GenericClient + Sync,
-{
-    let query = format!(
-        "SELECT data_json FROM {} ORDER BY name",
-        qualified_table(schema_name, "cron_jobs")
-    );
-    let rows = session
-        .query(query.as_str(), &[])
-        .await
-        .map_err(map_postgres_error)?;
-    rows.into_iter()
-        .map(|row| deserialize_json::<CronJob>(row.get::<_, String>(0).as_str()))
-        .collect()
-}
-
-pub(super) async fn table_has_rows_in_session<C>(
-    session: &C,
-    schema_name: &str,
-    table_name: &str,
-) -> Result<bool>
-where
-    C: GenericClient + Sync,
-{
-    let query = format!(
-        "SELECT 1 FROM {} LIMIT 1",
-        qualified_table(schema_name, table_name)
-    );
-    session
-        .query_opt(query.as_str(), &[])
-        .await
-        .map(|row| row.is_some())
-        .map_err(map_postgres_error)
-}
-
-pub(super) async fn load_durable_records_from_session<C>(
-    session: &C,
-    schema_name: &str,
-    sequence: SequenceNumber,
-) -> Result<Vec<TenantEventRecord>>
-where
-    C: GenericClient + Sync,
-{
-    let latest_sequence = load_latest_sequence_from_session(session, schema_name).await?;
-    let cursor_floor = load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
-    let suffix_after = SequenceNumber(sequence.0.saturating_sub(1)).max(cursor_floor);
-    let from = i64_from_sequence(SequenceNumber(suffix_after.0.saturating_add(1)))?;
-    let query = format!(
-        "SELECT record_blob FROM {} WHERE sequence >= $1 ORDER BY sequence",
-        qualified_table(schema_name, "commit_log")
-    );
-    let rows = session
-        .query(query.as_str(), &[&from])
-        .await
-        .map_err(map_postgres_error)?;
-    let records = rows
-        .into_iter()
-        .map(|row| {
-            let payload: Vec<u8> = row.get(0);
-            deserialize_tenant_event_record(payload.as_slice())
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let latest_sequence = records
-        .last()
-        .map(|record| record.sequence)
-        .unwrap_or_default()
-        .max(latest_sequence);
-    let authoritative_floor =
-        load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
-    validate_retention_after_page(suffix_after, authoritative_floor, "durable journal suffix")?;
-    validate_contiguous_journal_page(suffix_after, records.as_slice(), latest_sequence, false)?;
-    Ok(records)
-}
-
 pub(super) async fn load_durable_journal_cursor_floor_from_session<C>(
     session: &C,
     schema_name: &str,
@@ -602,68 +481,6 @@ where
         }
     }
     Ok(read_floors)
-}
-
-pub(super) async fn stream_durable_journal_from_session<C>(
-    session: &C,
-    schema_name: &str,
-    after: SequenceNumber,
-    limit: usize,
-) -> Result<DurableJournalPage>
-where
-    C: GenericClient + Sync,
-{
-    let latest_sequence = load_latest_sequence_from_session(session, schema_name).await?;
-    let cursor_floor = load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
-    validate_retention_after_page(after, cursor_floor, "durable journal cursor")?;
-    if after.0 > latest_sequence.0 {
-        return Err(Error::InvalidInput(format!(
-            "journal cursor {} is ahead of the latest durable sequence {}",
-            after.0, latest_sequence.0
-        )));
-    }
-
-    let after_i64 = i64_from_sequence(after)?;
-    let limit_i64 = i64::try_from(limit.saturating_add(1))
-        .map_err(|_| Error::InvalidInput("journal stream limit overflow".to_string()))?;
-    let query = format!(
-        "SELECT record_blob FROM {} WHERE sequence > $1 ORDER BY sequence LIMIT $2",
-        qualified_table(schema_name, "commit_log")
-    );
-    let rows = session
-        .query(query.as_str(), &[&after_i64, &limit_i64])
-        .await
-        .map_err(map_postgres_error)?;
-    let mut records = Vec::with_capacity(limit);
-    let mut has_more = false;
-    let mut observed_latest_sequence = latest_sequence;
-    for row in rows {
-        let payload: Vec<u8> = row.get(0);
-        let record = deserialize_tenant_event_record(payload.as_slice())?;
-        observed_latest_sequence = observed_latest_sequence.max(record.sequence);
-        if records.len() == limit {
-            has_more = true;
-            break;
-        }
-        records.push(record);
-    }
-    let latest_sequence = observed_latest_sequence;
-
-    let next_cursor = records
-        .last()
-        .map(|record| record.sequence)
-        .unwrap_or(after);
-    let authoritative_floor =
-        load_durable_journal_cursor_floor_from_session(session, schema_name).await?;
-    validate_retention_after_page(after, authoritative_floor, "durable journal page")?;
-    validate_contiguous_journal_page(after, records.as_slice(), latest_sequence, has_more)?;
-    Ok(DurableJournalPage {
-        records,
-        next_cursor,
-        latest_sequence,
-        cursor_floor: authoritative_floor,
-        has_more,
-    })
 }
 
 pub(super) async fn load_metadata_u64_from_session<C>(
@@ -1037,16 +854,16 @@ where
         }
         match (&write.current, write.resource_path_binding.as_ref()) {
             (Some(_), Some(binding)) => {
-                super::resource_paths::upsert_resource_path_binding_in_session(
-                    session,
+                upsert_resource_path_binding_in_session(
+                    &mut PostgresSession(session),
                     schema_name,
                     binding,
                 )
                 .await?;
             }
             (None, _) => {
-                super::resource_paths::remove_resource_path_binding_in_session(
-                    session,
+                remove_resource_path_binding_in_session(
+                    &mut PostgresSession(session),
                     schema_name,
                     &nimbus_core::DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
                 )
@@ -1117,24 +934,36 @@ async fn apply_table_lifecycle_in_session<C>(
 where
     C: GenericClient + Sync,
 {
+    let mut lifecycle_session = PostgresSession(session);
     match lifecycle {
         TableLifecycleEvent::StageHidden { table, table_id } => {
-            stage_hidden_table_identity_in_session(session, schema_name, table, table_id).await
+            stage_hidden_table_identity_in_session(
+                &mut lifecycle_session,
+                schema_name,
+                table,
+                table_id,
+            )
+            .await
         }
         TableLifecycleEvent::ActivateHidden {
             table, table_id, ..
         } => {
-            let _ =
-                activate_hidden_table_identity_in_session(session, schema_name, table, table_id)
-                    .await?;
+            let _ = activate_hidden_table_identity_in_session(
+                &mut lifecycle_session,
+                schema_name,
+                table,
+                table_id,
+            )
+            .await?;
             Ok(())
         }
         TableLifecycleEvent::MarkDeleting { table, .. } => {
-            let _ = mark_table_deleting_in_session(session, schema_name, table).await?;
+            let _ =
+                mark_table_deleting_in_session(&mut lifecycle_session, schema_name, table).await?;
             Ok(())
         }
         TableLifecycleEvent::HardDelete { table, table_id } => {
-            if hard_delete_table_identity_in_session(session, schema_name, table_id)
+            if hard_delete_table_identity_in_session(&mut lifecycle_session, schema_name, table_id)
                 .await?
                 .is_some()
                 && load_table_id_from_session(session, schema_name, table)

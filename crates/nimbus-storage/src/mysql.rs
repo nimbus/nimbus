@@ -9,12 +9,11 @@ use mysql_async::{
     Conn, Opts, OptsBuilder, Params, Pool, PoolConstraints, Row, Value as MySqlValue,
 };
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, Error, Filter, HistoricalIndexTuple,
-    HistoricalReadShape, IdSource, IndexDefinition, ResourcePathBinding, Result, ScheduledJob,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
-    SystemIdSource, SystemWallClock, TableId, TableLifecycleEvent, TableName, TableSchema,
-    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, Filter, IdSource, IndexDefinition,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
+    SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TenantEventKind, TenantEventRecord, TenantId,
+    Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -28,12 +27,12 @@ use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 use crate::store::{
-    DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
-    TenantWriteCommit,
+    DurableJournalBootstrap, JournalProgress, MaterializedJournalSnapshot, TenantWriteCommit,
 };
 
 mod backend;
 mod committer_lease;
+mod dialect;
 mod document_versions;
 pub(crate) mod index_entries;
 mod index_versions;

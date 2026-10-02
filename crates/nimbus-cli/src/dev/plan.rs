@@ -1,7 +1,9 @@
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use rand::RngCore;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 
 use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 use crate::dirs;
@@ -322,7 +324,7 @@ fn canonicalize_dir(path: &Path) -> io::Result<PathBuf> {
 
 fn generate_dev_deploy_token() -> String {
     let mut bytes = [0_u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
     let mut token = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         use std::fmt::Write as _;

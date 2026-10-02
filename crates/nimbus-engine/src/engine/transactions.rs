@@ -9,7 +9,9 @@ use nimbus_core::{
     Error, PrincipalContext, Query, Result, StructuredQuery, TableName, TenantId, Timestamp,
     TransactionSession, TransactionSessionMode, TransactionSessionToken,
 };
-use rand::RngCore;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 
 use super::Engine;
 use super::MutationExecutionUnit;
@@ -319,7 +321,7 @@ impl Engine {
 
 fn generate_transaction_session_token() -> Result<TransactionSessionToken> {
     let mut bytes = [0_u8; TRANSACTION_SESSION_TOKEN_BYTES];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
     TransactionSessionToken::new(format!(
         "{TRANSACTION_SESSION_TOKEN_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(bytes)

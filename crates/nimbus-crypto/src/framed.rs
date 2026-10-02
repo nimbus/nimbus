@@ -12,8 +12,9 @@ use std::sync::Arc;
 use aes_gcm_siv::aead::{Aead, KeyInit};
 use aes_gcm_siv::{Aes256GcmSiv, Nonce};
 use nimbus_core::{Error, Result, StorageErrorKind};
-use rand::RngCore;
-use rand::rngs::OsRng;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 
 use super::key::DataEncryptionKey;
 
@@ -586,7 +587,7 @@ pub fn open_framed_span(
 
 pub fn random_framed_salt() -> [u8; KEY_SEED_LEN] {
     let mut salt = [0u8; KEY_SEED_LEN];
-    OsRng.fill_bytes(&mut salt);
+    UnwrapErr(SysRng).fill_bytes(&mut salt);
     salt
 }
 

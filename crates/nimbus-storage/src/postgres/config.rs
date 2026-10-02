@@ -1,4 +1,6 @@
+use super::dialect::PostgresDialect;
 use super::*;
+use crate::sql::dialect::Dialect;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostgresProviderConfig {
@@ -136,16 +138,7 @@ pub(super) fn validate_identifier_input(value: &str, label: &str) -> Result<()> 
 }
 
 pub(super) fn quote_identifier(identifier: &str) -> String {
-    let mut quoted = String::with_capacity(identifier.len() + 2);
-    quoted.push('"');
-    for character in identifier.chars() {
-        if character == '"' {
-            quoted.push('"');
-        }
-        quoted.push(character);
-    }
-    quoted.push('"');
-    quoted
+    PostgresDialect::quote_identifier(identifier)
 }
 
 pub(super) fn quote_literal(value: &str) -> String {
@@ -162,11 +155,7 @@ pub(super) fn quote_literal(value: &str) -> String {
 }
 
 pub(super) fn qualified_table(schema_name: &str, table_name: &str) -> String {
-    format!(
-        "{}.{}",
-        quote_identifier(schema_name),
-        quote_identifier(table_name)
-    )
+    PostgresDialect::qualified_table(schema_name, table_name)
 }
 
 pub(super) fn tenant_init_sql(schema_name: &str) -> String {

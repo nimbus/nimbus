@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nimbus_core::{TenantId, refuse_non_loopback_bind};
-use rand::{RngCore, rngs::OsRng};
+use rand::{Rng, rand_core::UnwrapErr, rngs::SysRng};
 use redis_protocol::error::RedisProtocolError;
 use redis_protocol::resp2::{
     decode as resp2_decode, encode as resp2_encode,
@@ -1045,7 +1045,7 @@ fn resp3_blob(data: &str) -> Resp3Frame {
 
 fn generate_dev_password() -> String {
     let mut bytes = [0_u8; 24];
-    OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
 

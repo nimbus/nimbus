@@ -9,8 +9,9 @@ use std::path::PathBuf;
 
 use aes_gcm_siv::aead::{Aead, KeyInit};
 use aes_gcm_siv::{Aes256GcmSiv, Nonce};
-use rand::RngCore;
-use rand::rngs::OsRng;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::key::{DataEncryptionKey, GeneratedDataKey, WrappedDataKey, WrappingCipher};
@@ -114,7 +115,7 @@ impl KeyDirectoryProvider {
 
         // Generate a random 12-byte nonce
         let mut nonce_bytes = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         // Use header AAD for authenticated encryption
@@ -226,7 +227,7 @@ impl LocalKeyProvider for KeyDirectoryProvider {
     ) -> KeyProviderResult<GeneratedDataKey> {
         // Generate a random 256-bit DEK from OS entropy
         let mut plaintext = Zeroizing::new([0u8; 32]);
-        OsRng.fill_bytes(&mut plaintext[..]);
+        UnwrapErr(SysRng).fill_bytes(&mut plaintext[..]);
 
         let wrapped = self.wrap_key(subject, &plaintext, header)?;
 

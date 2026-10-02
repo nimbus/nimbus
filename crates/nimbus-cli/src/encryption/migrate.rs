@@ -395,7 +395,9 @@ fn encrypt_plaintext_redb(source: &Path, target: &Path, dek: &[u8; 32]) -> Resul
 
     use aes_gcm_siv::aead::{Aead, KeyInit, Payload};
     use aes_gcm_siv::{Aes256GcmSiv, Nonce};
-    use rand::RngCore;
+    use rand::Rng;
+    use rand::rand_core::UnwrapErr;
+    use rand::rngs::SysRng;
 
     let mut source_file = std::fs::File::open(source)
         .map_err(|e| Error::Internal(format!("failed to open source: {e}")))?;
@@ -430,7 +432,7 @@ fn encrypt_plaintext_redb(source: &Path, target: &Path, dek: &[u8; 32]) -> Resul
             .map_err(|e| Error::Internal(format!("read failed at page {page_idx}: {e}")))?;
 
         let mut nonce_bytes = [0u8; 12];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let mut aad = Vec::with_capacity(16);

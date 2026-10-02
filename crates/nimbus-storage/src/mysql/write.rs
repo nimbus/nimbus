@@ -1,3 +1,4 @@
+use super::dialect::MySqlSession;
 use super::document_versions::{
     prune_document_versions_before_in_session, record_document_versions_for_events_in_session,
 };
@@ -5,8 +6,9 @@ use super::index_entries::{
     purge_index_entries_for_table_in_session, reconcile_index_entries_for_table_schema_in_session,
     record_index_effects_for_events_in_session,
 };
-use super::index_versions::prune_index_versions_before_in_session;
 use super::*;
+use crate::sql::index_versions::prune_index_versions_before_in_session;
+use crate::sql::read_store::load_scheduled_jobs_from_session;
 use crate::sql::schema_events::{
     durable_record_changes_schema_cache, sql_record_schema_set_events,
 };
@@ -446,9 +448,12 @@ impl MySqlWriteTransaction {
                 document_prune_before,
             )
             .await?;
-            let index_versions_pruned =
-                prune_index_versions_before_in_session(conn, &database_name, index_prune_before)
-                    .await?;
+            let index_versions_pruned = prune_index_versions_before_in_session(
+                &mut MySqlSession(&mut *conn),
+                &database_name,
+                index_prune_before,
+            )
+            .await?;
             Ok((document_versions_pruned, index_versions_pruned))
         })
     }
@@ -1260,7 +1265,12 @@ impl MySqlWriteTransaction {
         let database_name = self.database_name.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            load_scheduled_jobs_from_session(conn, &database_name, "running_scheduled_jobs").await
+            load_scheduled_jobs_from_session(
+                &mut MySqlSession(conn),
+                &database_name,
+                "running_scheduled_jobs",
+            )
+            .await
         })
     }
 

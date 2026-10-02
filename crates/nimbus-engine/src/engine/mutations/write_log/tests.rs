@@ -9,7 +9,7 @@ use nimbus_core::{
 };
 use nimbus_storage::{MemoryTenantStore, NoopFaultInjector};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use serde_json::json;
 
 use super::*;
@@ -569,16 +569,16 @@ fn window_vs_storage_scan_differential() {
         let mut history = Vec::<CommitEntry>::new();
 
         for operation_index in 0..CASES_PER_HISTORY {
-            let choose_insert = active.is_empty() || rng.gen_bool(0.45);
+            let choose_insert = active.is_empty() || rng.random_bool(0.45);
             let commit = if choose_insert {
                 let document = document(
                     history_index * 1_000 + operation_index,
-                    if rng.gen_bool(0.5) {
+                    if rng.random_bool(0.5) {
                         "active"
                     } else {
                         "archived"
                     },
-                    rng.gen_range(0..100),
+                    rng.random_range(0..100),
                 );
                 let commit = store
                     .insert(&document)
@@ -586,8 +586,8 @@ fn window_vs_storage_scan_differential() {
                 active.push(document);
                 commit
             } else {
-                let target = rng.gen_range(0..active.len());
-                if active.len() > 1 && rng.gen_bool(0.25) {
+                let target = rng.random_range(0..active.len());
+                if active.len() > 1 && rng.random_bool(0.25) {
                     let document = active.swap_remove(target);
                     store
                         .delete_validated_returning_document(&document.table, &document.id, |_| {
@@ -597,12 +597,12 @@ fn window_vs_storage_scan_differential() {
                         .0
                 } else {
                     let document = &mut active[target];
-                    let status = if rng.gen_bool(0.5) {
+                    let status = if rng.random_bool(0.5) {
                         "active"
                     } else {
                         "archived"
                     };
-                    let rank = rng.gen_range(0..100);
+                    let rank = rng.random_range(0..100);
                     let patch = serde_json::Map::from_iter([
                         ("status".to_string(), json!(status)),
                         ("rank".to_string(), json!(rank)),
@@ -625,8 +625,8 @@ fn window_vs_storage_scan_differential() {
             .expect("generated history should be non-empty")
             .sequence;
         for _ in 0..CASES_PER_HISTORY {
-            let snapshot = SequenceNumber(rng.gen_range(0..head.0));
-            let target = &history[rng.gen_range(0..history.len())];
+            let snapshot = SequenceNumber(rng.random_range(0..head.0));
+            let target = &history[rng.random_range(0..history.len())];
             let dependencies = generated_dependencies(&mut rng, target);
             let storage_conflict = store
                 .read_commit_log_from(SequenceNumber(snapshot.0.saturating_add(1)))
@@ -675,7 +675,7 @@ fn document(slot: usize, status: &str, rank: u64) -> Document {
 fn generated_dependencies(rng: &mut StdRng, commit: &CommitEntry) -> DependencySet {
     let write = &commit.writes[0];
     let mut dependencies = DependencySet::default();
-    match rng.gen_range(0..8) {
+    match rng.random_range(0..8) {
         0 => dependencies.record_table(&write.table, &write.table_id),
         1 => dependencies.record_document(&write.table, &write.table_id, write.doc_id.clone()),
         2 => dependencies.record_missing_table(&write.table),
@@ -685,7 +685,7 @@ fn generated_dependencies(rng: &mut StdRng, commit: &CommitEntry) -> DependencyS
             filters: vec![Filter {
                 field: "status".to_string(),
                 op: FilterOp::Eq,
-                value: json!(if rng.gen_bool(0.5) {
+                value: json!(if rng.random_bool(0.5) {
                     "active"
                 } else {
                     "archived"
@@ -701,7 +701,7 @@ fn generated_dependencies(rng: &mut StdRng, commit: &CommitEntry) -> DependencyS
             start_doc_id: None,
             end_sort_values: Vec::new(),
             end_doc_id: None,
-            result_count: rng.gen_range(0..4),
+            result_count: rng.random_range(0..4),
             page_size: 4,
         }),
         5 => dependencies.record_index_range(IndexRangeDependency {
@@ -710,15 +710,15 @@ fn generated_dependencies(rng: &mut StdRng, commit: &CommitEntry) -> DependencyS
             index_id: IndexId::new(),
             index_name: "by_rank".to_string(),
             field: "rank".to_string(),
-            start: Some(json!(rng.gen_range(0..50))),
-            end: Some(json!(rng.gen_range(50..100))),
-            start_inclusive: rng.gen_bool(0.5),
-            end_inclusive: rng.gen_bool(0.5),
+            start: Some(json!(rng.random_range(0..50))),
+            end: Some(json!(rng.random_range(50..100))),
+            start_inclusive: rng.random_bool(0.5),
+            end_inclusive: rng.random_bool(0.5),
         }),
         6 => dependencies.record_document(
             &write.table,
             &write.table_id,
-            DocumentId::from_key(format!("absent-{}", rng.r#gen::<u64>()))
+            DocumentId::from_key(format!("absent-{}", rng.random::<u64>()))
                 .expect("absent id should be valid"),
         ),
         _ => dependencies.record_table(&write.table, &TableId::new()),
