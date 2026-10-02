@@ -11,7 +11,7 @@ fn main() -> io::Result<()> {
         std::env::set_var("PROTOC", protoc);
     }
 
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
         .generate_default_stubs(true)
