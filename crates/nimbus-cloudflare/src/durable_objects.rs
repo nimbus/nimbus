@@ -1061,12 +1061,14 @@ mod tests {
 
         let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
             .map(PathBuf::from)
-            .expect("Cargo/nextest should expose the nimbus-server manifest directory at runtime");
+            .expect(
+                "Cargo/nextest should expose the nimbus-cloudflare manifest directory at runtime",
+            );
         let repo_root = manifest_dir
             .parent()
             .and_then(Path::parent)
-            .expect("server crate should live under repo/crates");
-        let concept_module = manifest_dir.join("src/adapters/cloudflare/durable_objects/mod.rs");
+            .expect("cloudflare crate should live under repo/crates");
+        let concept_module = manifest_dir.join("src/durable_objects.rs");
         let mut files = Vec::new();
         collect_production_rust(&repo_root.join("crates"), &mut files);
 
