@@ -252,6 +252,10 @@ runs:
           echo "::error::V8_FROM_SOURCE must be unset for fail-closed prebuilt rusty_v8 consumption."
           exit 64
         fi
+        if ! python3 -c 'import tomllib' >/dev/null 2>&1; then
+          echo "::error::python3 >= 3.11 (tomllib) is required to parse the prebuilt rusty_v8 pins; run actions/setup-python before this action on runners whose system python3 is older (ubuntu-22.04 ships 3.10)."
+          exit 64
+        fi
 
         python3 - <<'PY' > "${RUNNER_TEMP}/prebuilt-v8-pins.env"
         import re

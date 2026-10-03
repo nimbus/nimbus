@@ -52,7 +52,9 @@ env:
   MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os
   MACHINE_OS_STAGED_ARTIFACT: nimbus-machine-os-arm64-staged
   MACHINE_OS_RELEASE_ARTIFACT: machine-os-arm64-release
-  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:9b270569fa5d66ed0b0fb6692b2a7431fb17c774df8fa7819722420194a6f8eb
+  # The Fedora bootc registry prunes a manifest soon after its tag moves on.
+  # Re-pin from the current `44` index digest before each release tag.
+  MACHINE_OS_FEDORA_BOOTC_IMAGE: quay.io/fedora/fedora-bootc@sha256:5ab8ee5189bb0f3870279723f5343474df002d8d6f46564702b3ad3ba7382d98
   MACHINE_OS_BOOTC_IMAGE_BUILDER: ghcr.io/osbuild/bootc-image-builder@sha256:26c9ebd8ba43596ffa266749d9745dcf97d60df1a3c7c577a97ebf95f35278da
   NIMBUS_IMAGE_PACKAGE: ghcr.io/nimbus/nimbus
   TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c
@@ -259,7 +261,9 @@ jobs:
     # The darwin binary embeds the digest of the Linux arm64 guest archive.
     needs: [verify-release-contract, ui-artifacts, build-linux-arm64]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # A cold-cache darwin build runs past 90 minutes (v0.1.47 took 86 with a
+    # warm cache; the first v0.1.49 attempt was cancelled at 90).
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -311,6 +315,15 @@ jobs:
         if: matrix.os == 'windows'
         shell: bash
         run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+
+      # The Linux entry runs on ubuntu-22.04, whose system python3 is 3.10.
+      # The composite action parses the prebuilt rusty_v8 pins with tomllib
+      # (3.11+) and fails closed without it.
+      - name: Set up Python for the prebuilt rusty_v8 pin parser
+        if: matrix.os == 'linux'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
 
       # CA4: Centralize toolchain + sccache + Swatinem cache + googlesource
       # bootstrap through the composite action. The composite's mold step is
