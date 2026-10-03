@@ -203,6 +203,8 @@ require_in_section publish-machine-os "${publish_machine_os_section}" 'repositor
 require_in_section publish-machine-os "${publish_machine_os_section}" 'run-id: ${{ steps.machine_os_publish.outputs.run_id }}'
 require_in_section publish-machine-os "${publish_machine_os_section}" "bash scripts/verify-machine-os-release-default-gate.sh"
 require_in_section publish-machine-os "${publish_machine_os_section}" "--require-ghcr-public"
+require_in_section publish-machine-os "${publish_machine_os_section}" "--image-asset-out artifacts/nimbus_machine_os_image.txt"
+require_in_section publish-machine-os "${publish_machine_os_section}" "name: nimbus_machine_os_image"
 reject_in_section publish-machine-os "${publish_machine_os_section}" "packages: write"
 reject_in_section publish-machine-os "${publish_machine_os_section}" "id-token: write"
 reject_in_section publish-machine-os "${publish_machine_os_section}" "attestations: write"
@@ -215,6 +217,8 @@ reject_in_section publish-machine-os "${publish_machine_os_section}" 'NIMBUS_MAC
 
 require_in_section release "${release_section}" "needs:"
 require_in_section release "${release_section}" "publish-machine-os"
+require_in_section release "${release_section}" "pattern: nimbus_*"
+require_in_section release "${release_section}" '$2 == "nimbus_machine_os_image.txt"'
 require_match_in_section release "${release_section}" "uses: actions/create-github-app-token@[0-9a-f]{40} # v3\\.2\\.0$"
 reject_in_section release "${release_section}" "build-machine-os"
 

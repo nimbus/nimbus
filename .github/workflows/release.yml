@@ -44,7 +44,9 @@ env:
   # Dedicated machine-os source ref used by the release graph. Nimbus stages
   # the bootc artifact as soon as the Linux arm64 binary exists, then dispatches
   # the machine-os repository to publish from its own package context after all
-  # CLI release targets pass.
+  # CLI release targets pass. Every CLI boots MACHINE_OS_PACKAGE:<its own tag>,
+  # so the tag push alone builds and publishes the matching guest image, and
+  # publish-machine-os fails before the release when that tag does not resolve.
   MACHINE_OS_SOURCE_REF: main
   MACHINE_OS_REPOSITORY: nimbus/machine-os
   MACHINE_OS_PACKAGE: ghcr.io/nimbus/machine-os
@@ -803,7 +805,19 @@ jobs:
           bash scripts/verify-machine-os-release-default-gate.sh \
             --release-dir "${RUNNER_TEMP}/machine-os-release" \
             --expected-tag "${{ github.ref_name }}" \
-            --require-ghcr-public
+            --require-ghcr-public \
+            --image-asset-out artifacts/nimbus_machine_os_image.txt
+
+      # The CLI carries no digest. The release job checksums and attests this
+      # asset with the other nimbus_* assets, so the published release records
+      # which digest its default guest tag resolved to.
+      - name: Upload machine-os image release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nimbus_machine_os_image
+          if-no-files-found: error
+          path: artifacts/nimbus_machine_os_image.txt
+          compression-level: 0
 
       - name: Upload machine-os release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -1194,6 +1208,25 @@ jobs:
           mkdir -p darwin-binary
           tar -xzf artifacts/nimbus_darwin_arm64.tar.gz -C darwin-binary nimbus
           LC_ALL=C grep -a -q -F "${guest_sha256}" darwin-binary/nimbus
+
+      - name: Verify machine-os image asset against the checksum manifest
+        shell: bash
+        run: |
+          asset=artifacts/nimbus_machine_os_image.txt
+          tag="$(awk -F= '$1 == "tag" { print substr($0, length($1) + 2) }' "${asset}")"
+          digest="$(awk -F= '$1 == "digest" { print substr($0, length($1) + 2) }' "${asset}")"
+          if [[ "${tag}" != "${{ github.ref_name }}" ]]; then
+            echo "::error::${asset} records tag '${tag}', expected ${{ github.ref_name }}"
+            exit 1
+          fi
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::${asset} has no sha256 digest"
+            exit 1
+          fi
+          if ! awk '$2 == "nimbus_machine_os_image.txt" { found = 1 } END { exit !found }' artifacts/checksums-sha256.txt; then
+            echo "::error::checksums-sha256.txt has no nimbus_machine_os_image.txt entry"
+            exit 1
+          fi
 
       - name: Verify optional Bun/JSC adapter checksums
         run: |
