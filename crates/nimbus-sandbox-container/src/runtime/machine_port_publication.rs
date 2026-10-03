@@ -38,9 +38,7 @@ mod store;
 #[cfg(test)]
 use store::{
     MACHINE_PORT_EVIDENCE_FILE, MACHINE_PORT_EVIDENCE_LOCK_FILE, MACHINE_PORT_EVIDENCE_STAGE_FILE,
-    MachinePortEvidenceLockError, MachinePortEvidenceStoreCheckpoint,
-    MachinePortEvidenceStoreObserver, lock_publication_for_test, publish_record,
-    publish_record_with_observer,
+    acquire_lock, entry_error, publish_record, publish_record_with_observer,
 };
 use store::{
     lock_publication, publish_record_locked, read_record, read_record_if_present,

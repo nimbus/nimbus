@@ -10,7 +10,8 @@
 //! 3. `fsync` the directory so that the commit survives a crash.
 //!
 //! A failed write removes its own stage and syncs the directory. Callers must
-//! never promote a leftover stage after a crash. They delete it instead.
+//! never promote a leftover stage after a crash. They delete it with
+//! [`remove_stale_stage`] instead.
 
 use std::convert::Infallible;
 use std::fmt;
@@ -19,6 +20,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::directory::sync_directory;
+use crate::lock::EntryError;
 
 #[cfg(unix)]
 const OWNER_FILE_MODE: u32 = 0o600;
@@ -137,12 +139,18 @@ pub struct WriteError<E = Infallible> {
 impl<E: fmt::Display> fmt::Display for WriteError<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.failure {
-            WriteFailure::Io { step, path, source } => write!(
-                formatter,
-                "failed to {} {}: {source}",
-                step.describe(),
-                path.display()
-            )?,
+            WriteFailure::Io { step, path, source } => {
+                write!(
+                    formatter,
+                    "failed to {} {}: {source}",
+                    step.describe(),
+                    path.display()
+                )?;
+                if *step == WriteStep::SyncDirectory {
+                    formatter
+                        .write_str("; the commit is visible but its durability is ambiguous")?;
+                }
+            }
             WriteFailure::Observer { checkpoint, error } => {
                 write!(formatter, "observer rejected {checkpoint:?}: {error}")?;
             }
@@ -331,6 +339,34 @@ impl<'a, E> StagedWrite<'a, E> {
             }),
         }
     }
+}
+
+/// Delete a stage that an interrupted write left behind, and sync its
+/// directory. The caller must hold the record lock.
+///
+/// Returns `false` when no stage exists. An entry that is not a regular file
+/// is refused and kept for inspection: no write creates one.
+pub fn remove_stale_stage(stage: &Path) -> Result<bool, EntryError> {
+    match fs::symlink_metadata(stage) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(EntryError::NotRegular {
+                path: stage.to_path_buf(),
+            });
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(EntryError::io("inspect stale stage", stage)(error)),
+    }
+    fs::remove_file(stage).map_err(EntryError::io("remove stale stage", stage))?;
+    let directory = match stage.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    sync_directory(directory).map_err(EntryError::io(
+        "sync directory after stale stage removal",
+        directory,
+    ))?;
+    Ok(true)
 }
 
 fn create_stage(path: &Path, owner_only: bool, created: &mut bool) -> io::Result<File> {
@@ -543,6 +579,31 @@ mod tests {
         );
         assert_eq!(fs::read(&destination).expect("record should read"), b"new");
         assert!(error.to_string().contains("failed to sync directory"));
+    }
+
+    #[test]
+    fn stale_stage_removal_reports_absence_and_removes_a_regular_stage() {
+        let root = tempfile::tempdir().expect("temporary directory should exist");
+        let stage = root.path().join("record.stage");
+
+        assert!(!remove_stale_stage(&stage).expect("absent stage should succeed"));
+        fs::write(&stage, b"torn").expect("stale stage should write");
+        assert!(remove_stale_stage(&stage).expect("regular stage should remove"));
+        assert!(entries(root.path()).is_empty());
+    }
+
+    #[test]
+    fn stale_stage_removal_refuses_and_keeps_a_non_regular_entry() {
+        let root = tempfile::tempdir().expect("temporary directory should exist");
+        let stage = root.path().join("record.stage");
+        fs::create_dir(&stage).expect("directory entry should exist");
+
+        let error = remove_stale_stage(&stage).expect_err("directory stage must fail");
+        assert!(matches!(error, EntryError::NotRegular { .. }), "{error:?}");
+        assert!(
+            stage.is_dir(),
+            "the refused entry must remain for inspection"
+        );
     }
 
     #[test]
