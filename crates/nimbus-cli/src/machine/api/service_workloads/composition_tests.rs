@@ -9,9 +9,8 @@ use nimbus_node::{
     SystemdStopUnitResponse, SystemdTransientCapabilities, SystemdTransientUnitBackend,
     SystemdUnitStatus, UnavailableSystemdDbusClient,
 };
-use nimbus_sandbox_container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, OciMachinePortForwarderConfig,
-};
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 
 use super::*;
 use crate::machine::api::capabilities::machine_api_capability_response;

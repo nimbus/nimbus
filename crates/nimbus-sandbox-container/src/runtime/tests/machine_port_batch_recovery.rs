@@ -10,7 +10,7 @@ use std::time::Duration;
 use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
 };
-use nimbus_sandbox::backends::oci::network::{AttachmentBackendKind, oci_attachment_plan};
+use nimbus_sandbox_host::network::{AttachmentBackendKind, oci_attachment_plan};
 
 const TEST_IO_TIMEOUT: Duration = Duration::from_secs(2);
 type WithdrawBatchResult = (

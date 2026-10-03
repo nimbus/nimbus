@@ -9,16 +9,16 @@ use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::conmon::lifecycle::read_exit_receipt;
-use crate::conmon::runtime_process::{
-    RuntimeProcessIdentityObservation, RuntimeProcessSignal, RuntimeProcessSignalOutcome,
-};
 use nimbus_sandbox::{
     ProviderCommandClaim, ProviderCommandCurrentExecution, ProviderCommandExecutionClaim,
     ProviderCommandJournalError, ProviderCommandObservation, ProviderCommandObservationKind,
     ProviderCommandOperation, SandboxError, SandboxExecutionAttemptId,
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
     SandboxExecutionTeardownOperation, SandboxId,
+};
+use nimbus_sandbox_host::conmon::lifecycle::read_exit_receipt;
+use nimbus_sandbox_host::conmon::runtime_process::{
+    RuntimeProcessIdentityObservation, RuntimeProcessSignal, RuntimeProcessSignalOutcome,
 };
 
 use super::manifest::{ContainerCreatorHandoffState, ContainerSandboxManifest};
@@ -991,11 +991,12 @@ impl ContainerSandboxBackend {
             return self.persist_execution_stopped(claim, manifest, "terminal_before_signal");
         }
         let process = runtime.capture_process(manifest)?;
-        let signal =
-            RuntimeProcessSignal::parse(&crate::conmon::lifecycle::configured_stop_signal(
+        let signal = RuntimeProcessSignal::parse(
+            &nimbus_sandbox_host::conmon::lifecycle::configured_stop_signal(
                 manifest.image_metadata.stop_signal.as_deref(),
-            ))?;
-        let timeout = crate::conmon::lifecycle::configured_stop_timeout(
+            ),
+        )?;
+        let timeout = nimbus_sandbox_host::conmon::lifecycle::configured_stop_timeout(
             &manifest.spec,
             self.config.stop_timeout,
         );

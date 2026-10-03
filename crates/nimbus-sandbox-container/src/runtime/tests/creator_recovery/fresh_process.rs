@@ -7,8 +7,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::conmon::creator::CreatorAttemptReceipt;
 use nimbus_sandbox::backends::poll::poll_until_deadline;
+use nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt;
 
 const CRASH_CHILD_TEST: &str = "runtime::tests::creator_recovery::\
 fresh_process::creator_birth_crash_child";

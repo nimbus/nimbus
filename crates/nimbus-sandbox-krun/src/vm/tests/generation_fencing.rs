@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::support::*;
 use crate::vm::lifecycle::NetworkArtifactTeardownMode;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, RecordingSegmentAllocator,
     allocate_container_ips, deallocate_container_ips_after_confirmed_detach,
 };
@@ -52,7 +52,7 @@ fn stale_krun_cleanup_cannot_mutate_replacement_network_generation() {
     .expect("first generation should release exact IPAM");
     let mut replacement_config = stale_config.clone();
     replacement_config.reservation_claim =
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
+        nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
             .expect("replacement claim should mint");
     allocate_container_ips(
         &backend.ipam_authority,

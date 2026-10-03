@@ -63,7 +63,7 @@ use nimbus_network::{
     NetworkResourceGeneration, PortBindClaim, PortBindingProvenance, PortBoundEndpoint,
     PortLeaseBinding, PortLeasePhase,
 };
-use nimbus_sandbox_container::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 
 fn fixture_machine_ssh_listener_id(scope: &str) -> ListenerId {
     ListenerId::for_workload_listener("nimbus-cli-machine-test", scope)

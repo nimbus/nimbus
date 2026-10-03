@@ -3,9 +3,9 @@
 //! New plans snapshot current configuration into their manifest. Every later
 //! effect reconstructs this adapter from that persisted launch-time context.
 
-use nimbus_sandbox::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
-use nimbus_sandbox::backends::oci::{conmon::OciConmonLayout, network::OciNetworkLayout};
 use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::port_lifecycle::OciPortLeaseCoordinator;
+use nimbus_sandbox_host::{conmon::OciConmonLayout, network::OciNetworkLayout};
 
 use super::{
     ContainerRunnerExecutionConfig, ContainerSandboxBackend, ContainerSandboxBackendConfig,

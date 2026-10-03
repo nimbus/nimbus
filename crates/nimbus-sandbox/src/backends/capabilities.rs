@@ -24,7 +24,7 @@ pub const CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY: &str =
 pub const KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY: &str =
     "nimbus-sandbox.krun.host-managed-attachment";
 /// Stable identity key for the sandbox-owned egress PEP listener composition.
-pub(crate) const SANDBOX_EGRESS_PEP_PROVIDER_KEY: &str = "nimbus-sandbox.egress-pep";
+pub const SANDBOX_EGRESS_PEP_PROVIDER_KEY: &str = "nimbus-sandbox.egress-pep";
 /// Stable source-owned name for the sandbox egress PEP readiness dependency.
 pub(crate) const SANDBOX_EGRESS_PEP_LISTENER_NAME: &str = "egress-pep";
 
@@ -266,11 +266,6 @@ mod tests {
             "backend-specific attachment registrations must retain distinct identities"
         );
         assert_eq!(container.pep_provider_id(), krun.pep_provider_id());
-        assert_eq!(
-            container.pep_provider_id(),
-            &crate::backends::oci::port_lease::OciPortProvider::EgressPep.provider_id(),
-            "the public source projection and lease adapter must share one PEP provider identity"
-        );
         assert!(container.requires_pep_readiness());
         assert!(krun.requires_pep_readiness());
 

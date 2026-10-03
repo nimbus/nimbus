@@ -16,9 +16,10 @@ use nimbus_machine::api::{
     MachineApiWorkloadTeardownPhaseResponse, MachineApiWorkloadTeardownPhaseResult,
 };
 use nimbus_network::{NetworkProviderHandle, NetworkResourceGeneration, PortLeasePhase};
-use nimbus_sandbox::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortForwardingRetirement,
-    MachinePortForwardingRetirementObservation, SandboxId, SandboxPortBinding,
+use nimbus_sandbox::{SandboxId, SandboxPortBinding};
+use nimbus_sandbox_host::{
+    network::MachinePortForwardOutcome, network::MachinePortForwardReceipt,
+    network::MachinePortForwardingRetirement, network::MachinePortForwardingRetirementObservation,
 };
 use nimbus_workloads::{
     DesiredWorkloadState, WorkloadActivationIntent, WorkloadOwnerEvidenceDigest,

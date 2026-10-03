@@ -1231,7 +1231,7 @@ fn container_cleanup_retains_network_authority_until_runtime_absence_is_observed
         "the adopted attachment must remain fenced beneath an observed live runtime"
     );
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
@@ -1316,7 +1316,7 @@ fn container_cleanup_rejects_unknown_runtime_observation_and_retains_authority()
         "unknown runtime state must retain the adopted attachment"
     );
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
@@ -1420,7 +1420,7 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
         "fixture must exercise a claimed publication"
     );
     drop(lifetimes);
-    nimbus_sandbox::backends::oci::network::begin_netavark_setup_without_ack_for_test(
+    nimbus_sandbox_host::network::begin_netavark_setup_without_ack_for_test(
         &backend.ipam_authority,
         &manifest.network_layout,
         manifest
@@ -1441,7 +1441,7 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
     std::fs::write(&manifest.network_layout.netns_path, b"ambiguous-netns\n")
         .expect("ambiguous provider boundary should retain the netns handle");
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
@@ -1483,7 +1483,7 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
         "exact detach reconciliation must release the complete launch batch: {first_records:?}"
     );
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,

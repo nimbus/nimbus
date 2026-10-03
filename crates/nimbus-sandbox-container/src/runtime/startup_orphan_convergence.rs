@@ -5,7 +5,7 @@ use nimbus_network::NetworkAttachmentReservationState;
 use super::manifest::{reconcile_startup_manifest_publications, retained_startup_manifest_paths};
 use super::teardown::state::ContainerStopProgress;
 use super::*;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentAuxiliaryDisposition, AttachmentBackendKind, AttachmentTeardownMode,
     OciNetworkConfig, OciOrphanCleanupContext, OciOrphanCleanupDisposition, OciOrphanCleanupKind,
     OciOrphanCleanupSubject, ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity,
@@ -49,7 +49,7 @@ impl ContainerSandboxBackend {
                 || snapshot.conmon_layout.manifest_path != path
                 || snapshot.start_mode != ContainerStartMode::Execute
                 || snapshot.network_teardown.release_phase()
-                    != nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                    != nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
                 || snapshot.has_terminal_network_finality()
             {
                 continue;
@@ -73,7 +73,7 @@ impl ContainerSandboxBackend {
                 continue;
             }
             if current.network_teardown.release_phase()
-                != nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                != nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
                 || !matches!(
                     current.execution_teardown.stop(),
                     ContainerStopProgress::ExecutionStopped { .. }
@@ -225,7 +225,9 @@ impl ContainerSandboxBackend {
                 "exit-status receipt",
             ),
         ] {
-            if crate::conmon::lifecycle::inspect_runtime_artifact_presence(path, label)? {
+            if nimbus_sandbox_host::conmon::lifecycle::inspect_runtime_artifact_presence(
+                path, label,
+            )? {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "Container orphan {} retains {label}; runtime absence is not proven",

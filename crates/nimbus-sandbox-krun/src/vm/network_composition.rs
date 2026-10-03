@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 #[cfg(test)]
-use nimbus_sandbox::backends::oci::egress::EgressProxyRegistry;
-use nimbus_sandbox::backends::oci::network::{OciNetworkProcess, OciNetworkProcessError};
+use nimbus_sandbox_host::egress::EgressProxyRegistry;
+use nimbus_sandbox_host::network::{OciNetworkProcess, OciNetworkProcessError};
 #[cfg(test)]
-use nimbus_sandbox::backends::oci::port_lifecycle::NetavarkPortLifetimeRegistry;
+use nimbus_sandbox_host::port_lifecycle::NetavarkPortLifetimeRegistry;
 
 use super::{KrunSandboxBackend, KrunSandboxBackendConfig};
 
@@ -14,7 +14,7 @@ impl KrunSandboxBackend {
     #[cfg(test)]
     pub(crate) fn segment_allocator_handle_for_test(
         &self,
-    ) -> Arc<nimbus_sandbox::backends::oci::network::OciSegmentAllocator> {
+    ) -> Arc<nimbus_sandbox_host::network::OciSegmentAllocator> {
         Arc::clone(&self.segment_allocator)
     }
 

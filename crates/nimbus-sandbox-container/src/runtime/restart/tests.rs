@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use nimbus_process_harness::PortWindow;
 
-use crate::conmon::creator::{CreatorAttemptReceipt, OwnedConmonCreator};
 use nimbus_sandbox::SandboxProvisionPhaseObservation;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider;
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::creator::{CreatorAttemptReceipt, OwnedConmonCreator};
+use nimbus_sandbox_host::network::FixedOciEgressPinProvider;
 
 use super::super::support::{
     sample_execution_attempt_id, sample_forwarder, sample_provision_network_plan, sample_spec,
@@ -266,7 +266,7 @@ impl MachineRestartFixture {
         }
     }
 
-    fn provider(&self) -> nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig {
+    fn provider(&self) -> nimbus_sandbox_host::network::OciMachinePortForwarderConfig {
         self.config
             .machine_port_forwarder
             .clone()

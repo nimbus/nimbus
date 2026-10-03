@@ -11,10 +11,8 @@ use nimbus_machine::api::{
     MachineApiWorkloadTeardownRequestDigest,
 };
 use nimbus_network::{PortLeasePhase, PortLeaseRecord};
-use nimbus_sandbox::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, ProviderCommandClaim,
-    ProviderCommandOperation,
-};
+use nimbus_sandbox::{ProviderCommandClaim, ProviderCommandOperation};
+use nimbus_sandbox_host::{network::MachinePortForwardOutcome, network::MachinePortForwardReceipt};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, WorkloadExecutionReference, WorkloadOwnerEvidenceDigest,
     WorkloadProvisionSourceEvidence, WorkloadSagaRevision, WorkloadSagaTransitionId,

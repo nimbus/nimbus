@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::conmon::runtime_process::RuntimeProcessIdentity;
 use nimbus_sandbox::{
     ProviderCommandClaim, ProviderCommandObservation, ProviderCommandObservationKind,
     ProviderCommandOperation,
 };
+use nimbus_sandbox_host::conmon::runtime_process::RuntimeProcessIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::runtime) enum ContainerNetworkStopRequirementError {

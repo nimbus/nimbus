@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nimbus::{Error, SandboxBackend};
-use nimbus_sandbox_container::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 
 use super::{MachineApiCommand, MachineRootLayout};
 

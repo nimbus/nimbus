@@ -12,7 +12,7 @@ use nimbus_network::{
 use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
 };
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentBackendKind, OciNetavarkOperation, OciSegmentAllocator, RecordingSegmentAllocator,
     ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity, default_network_attachment_id,
     oci_attachment_plan, release_reserved_network_launch_after_ports_with_terminal_publication,

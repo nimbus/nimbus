@@ -4,8 +4,8 @@
 //! materialized trust anchor is cleaned here alongside rootfs artifacts.
 
 use super::*;
-use nimbus_sandbox::backends::oci::buildah::BuildahCli;
-use nimbus_sandbox::backends::oci::egress::remove_unactivated_egress_trust_anchor;
+use nimbus_sandbox_host::buildah::BuildahCli;
+use nimbus_sandbox_host::egress::remove_unactivated_egress_trust_anchor;
 
 impl ContainerSandboxBackend {
     /// Release every launch resource after a failure proven to precede all

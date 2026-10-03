@@ -231,7 +231,7 @@ fn unsupported_machine_host_error() -> Error {
 mod tests {
     use nimbus_machine::{MachineForwarderAuthority, MachineNetworkAuthorityRecord};
     use nimbus_network::{ListenerId, LocalNetworkStateStore, NetworkResourceGeneration};
-    use nimbus_sandbox_container::OciMachinePortForwarderConfig;
+    use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
     use tempfile::TempDir;
 
     use super::*;

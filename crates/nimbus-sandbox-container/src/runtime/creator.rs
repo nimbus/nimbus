@@ -1,11 +1,11 @@
 //! Durable container creator-attempt orchestration and recovery.
 
-use crate::conmon::creator::{
+use nimbus_sandbox_host::conmon::creator::{
     CreatorAttemptReceipt, CreatorContainmentObservation, CreatorQuiescenceProof,
     OwnedConmonCreator, confirm_dead_conmon_receipt, observe_creator_containment,
     publish_creator_attempt_annotation,
 };
-use crate::conmon::lifecycle::{
+use nimbus_sandbox_host::conmon::lifecycle::{
     RuntimeStateObservation, runtime_state_for_creator_attempt,
     wait_for_runtime_state_for_creator_attempt,
 };

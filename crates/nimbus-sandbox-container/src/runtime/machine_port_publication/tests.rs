@@ -10,12 +10,12 @@ use nimbus_sandbox::SandboxBackendKind;
 use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
 };
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentBackendKind, CurrentMachinePortForwardingObservation, MachinePortMutationDiagnostic,
-    default_network_attachment_id, oci_attachment_plan,
-};
 use nimbus_sandbox::{
     SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
+};
+use nimbus_sandbox_host::network::{
+    AttachmentBackendKind, CurrentMachinePortForwardingObservation, MachinePortMutationDiagnostic,
+    default_network_attachment_id, oci_attachment_plan,
 };
 
 mod fault_matrix;

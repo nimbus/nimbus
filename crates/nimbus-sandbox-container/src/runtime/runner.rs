@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::conmon::lifecycle::read_exit_receipt;
 use nimbus_sandbox::backends::poll::poll_until_deadline;
 use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::conmon::lifecycle::read_exit_receipt;
 
 use super::config::ContainerStartMode;
 use super::manifest::{ContainerLifecycleCoordinator, ContainerSandboxManifest, RunnerHandoffId};
@@ -75,7 +75,7 @@ struct RunnerHandoffDecisionRecord {
     prepared_manifest_sha256: String,
     pre_effect_authority_sha256: String,
     execution_identity_sha256: String,
-    #[serde(deserialize_with = "nimbus_sandbox::backends::oci::deserialize_required_option")]
+    #[serde(deserialize_with = "nimbus_sandbox_host::deserialize_required_option")]
     effect_receipt: Option<RunnerEffectReceipt>,
 }
 

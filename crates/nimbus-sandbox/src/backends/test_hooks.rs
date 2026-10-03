@@ -3,9 +3,7 @@
 pub use crate::provider_command::{
     ProviderCommandLockTestProbe, with_provider_command_lock_test_probe,
 };
-pub use crate::provision::test_support::{
-    legacy_start_attachment_network_plan_fixture, sandbox_provision_network_plan_fixture,
-};
+pub use crate::provision::test_support::sandbox_provision_network_plan_fixture;
 
 use crate::{
     ProviderCommandClaim, ProviderCommandOperation, SandboxBackendKind,

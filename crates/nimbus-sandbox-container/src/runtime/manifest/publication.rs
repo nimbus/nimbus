@@ -180,7 +180,7 @@ pub(in crate::runtime) fn establish_durable_manifest_directory_chain_with<F>(
 where
     F: FnMut(&Path) -> std::io::Result<()>,
 {
-    nimbus_sandbox::backends::oci::durable_directory::establish_durable_directory_chain_with(
+    nimbus_sandbox::durable_directory::establish_durable_directory_chain_with(
         state_root,
         container_state_dir,
         "container manifest",

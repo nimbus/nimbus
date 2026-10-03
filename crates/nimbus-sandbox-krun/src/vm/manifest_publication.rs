@@ -39,7 +39,7 @@ impl KrunSandboxBackend {
     where
         F: FnMut(&Path) -> std::io::Result<()>,
     {
-        nimbus_sandbox::backends::oci::durable_directory::establish_durable_directory_chain_with(
+        nimbus_sandbox::durable_directory::establish_durable_directory_chain_with(
             &self.config.workload_state_root,
             &manifest.conmon_layout.container_state_dir,
             "krun manifest",

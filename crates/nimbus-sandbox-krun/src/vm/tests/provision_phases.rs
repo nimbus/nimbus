@@ -2,11 +2,9 @@ use super::support::*;
 use nimbus_network::{LocalPortLeaseAuthority, PortLeaseEffectScope, PortLeasePhase};
 use nimbus_process_harness::PortWindow;
 use nimbus_sandbox::SandboxError;
-use nimbus_sandbox::backends::oci::network::default_network_attachment_id;
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAttachAuthority, FixedOciEgressPinProvider,
-};
-use nimbus_sandbox::backends::oci::port_lease::{
+use nimbus_sandbox_host::network::default_network_attachment_id;
+use nimbus_sandbox_host::network::{AttachmentAttachAuthority, FixedOciEgressPinProvider};
+use nimbus_sandbox_host::port_lease::{
     OciPortProvider, claim_bind_plan_member_attempt_with_lifetime,
 };
 use std::sync::Arc;
@@ -761,7 +759,7 @@ fn krun_attach_uses_compiler_planned_pep_authority() {
     config.published_port_range = pep_port..=pep_port;
     let network_root = config.network_state_root.clone();
     let backend = KrunSandboxBackend::new(config).with_egress_pin_provider(Arc::new(
-        nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider::ready(),
+        nimbus_sandbox_host::network::FixedOciEgressPinProvider::ready(),
     ));
     let id = SandboxId::new("krun-planned-pep-authority");
     let spec = sample_spec_for_tenant("krun-planned-pep", "api");

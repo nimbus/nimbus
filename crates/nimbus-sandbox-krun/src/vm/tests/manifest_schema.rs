@@ -163,7 +163,7 @@ fn manifest_deserialization_defaults_lifecycle_for_pre_restart_manifests() {
                 "phase": "not_requested"
             }
         },
-        "network_teardown": nimbus_sandbox::backends::oci::network::HostManagedAttachmentTeardownState::initial(),
+        "network_teardown": nimbus_sandbox_host::network::HostManagedAttachmentTeardownState::initial(),
         "egress_proxy": null,
         "conmon_launch": {
             "create_command": {

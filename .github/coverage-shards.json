@@ -19,7 +19,7 @@
     },
     {
       "shard": "engine",
-      "packages": ["nimbus-engine", "nimbus-sandbox", "nimbus-sandbox-container", "nimbus-sandbox-krun", "nimbus-machine"]
+      "packages": ["nimbus-engine", "nimbus-sandbox", "nimbus-sandbox-host", "nimbus-sandbox-container", "nimbus-sandbox-krun", "nimbus-machine"]
     },
     {
       "shard": "cli",

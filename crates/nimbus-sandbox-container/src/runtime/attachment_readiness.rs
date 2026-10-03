@@ -1,10 +1,10 @@
 //! Container composition of common OCI attachment and publication readiness.
 
-use nimbus_sandbox::backends::oci::egress::EgressReadinessState;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::egress::EgressReadinessState;
+use nimbus_sandbox_host::network::{
     OciAttachmentBaseReadinessState, OciAttachmentReadinessState, OciMachinePortForwarderConfig,
 };
-use nimbus_sandbox::{Result, SandboxError};
 
 use super::{ContainerSandboxBackend, ContainerSandboxManifest, hostname_for};
 

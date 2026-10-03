@@ -7,12 +7,10 @@ use super::start::hostname_for;
 use super::*;
 
 use crate::ingress::private_tsi_readiness_endpoints;
-use nimbus_sandbox::backends::oci::network::OciAttachmentBaseReadinessState;
+use nimbus_sandbox_host::conmon::lifecycle::RuntimeStateObservation;
+use nimbus_sandbox_host::network::OciAttachmentBaseReadinessState;
 #[cfg(test)]
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAuxiliaryDisposition, AttachmentTeardownMode,
-};
-use nimbus_sandbox_container::conmon::lifecycle::RuntimeStateObservation;
+use nimbus_sandbox_host::network::{AttachmentAuxiliaryDisposition, AttachmentTeardownMode};
 
 #[cfg(test)]
 pub(super) type NetworkArtifactTeardownMode = AttachmentTeardownMode;
@@ -790,9 +788,9 @@ impl KrunSandboxBackend {
             manifest,
             match reservation_claim {
                 Some(claim) => {
-                    nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority::FreshLaunch(claim)
+                    nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority::FreshLaunch(claim)
                 }
-                None => nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority::Retain,
+                None => nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority::Retain,
             },
         )?;
         // Fail-closed readiness gate: the last checkpoint before crun spawns the
@@ -867,7 +865,7 @@ impl KrunSandboxBackend {
         &self,
         manifest: &KrunSandboxManifest,
         network_config: &OciNetworkConfig,
-        batch: nimbus_sandbox::backends::oci::port_lease::OciPortBindLifetimeBatch,
+        batch: nimbus_sandbox_host::port_lease::OciPortBindLifetimeBatch,
         primary: SandboxError,
     ) -> SandboxError {
         let ports = self.port_lease_coordinator();
@@ -1039,11 +1037,9 @@ impl KrunSandboxBackend {
     pub(super) fn ensure_egress_proxy_running_with_release_authority(
         &self,
         manifest: &KrunSandboxManifest,
-        release_authority: nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority<
-            '_,
-        >,
+        release_authority: nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority<'_>,
     ) -> Result<()> {
-        nimbus_sandbox::backends::oci::egress::ensure_egress_proxy_running_with_release_authority(
+        nimbus_sandbox_host::egress::ensure_egress_proxy_running_with_release_authority(
             &self.egress_proxies,
             &manifest.spec.tenant_id,
             &manifest.handle.id,

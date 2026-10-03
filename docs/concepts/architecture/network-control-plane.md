@@ -35,7 +35,7 @@ Netavark, nftables, gvproxy, Iroh, or a cloud SDK. Its crate-level contract in
 owners:
 
 - `nimbus-server` and `nimbus-kv` own protocol listeners and socket effects.
-- `nimbus-sandbox` owns namespaces, bridges, IPAM adapters, firewalls, and
+- `nimbus-sandbox-host` owns namespaces, bridges, IPAM adapters, firewalls, and
   sandbox-network effects.
 - `nimbus-machine`, `nimbus-proxy`, and `nimbus-node` own their provider and
   forwarding effects.

@@ -3,12 +3,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider;
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxExecutionTeardownCommand, SandboxNetworkTeardownCommand,
     SandboxOwnerSpec, SandboxProcessSpec, SandboxProvisionNetworkPlan, SandboxRootSpec,
     SandboxSpec,
 };
+use nimbus_sandbox_host::network::FixedOciEgressPinProvider;
 
 use super::teardown::state::ContainerStopProgress;
 use super::{ContainerSandboxBackend, ContainerSandboxBackendConfig};

@@ -50,8 +50,9 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-proxy` | Pingora-based egress proxy: policy enforcement, DNS/CONNECT handling, TLS interception, connection pooling, and fairness for tenant egress traffic. |
 | `nimbus-runtime` | V8 execution via `deno_core`; defines the runtime surface and the `HostBridge` trait. Zero workspace dependencies. |
 | `nimbus-s3` | S3-compatible object surface over the Nimbus blob and metadata planes (Seam D). |
-| `nimbus-sandbox` | Backend-agnostic sandbox and isolation lifecycle contracts plus concrete Netavark, namespace, IPAM, nftables, gvproxy, and guest-network effects. |
-| `nimbus-sandbox-container` | Container sandbox backend: crun and conmon lifecycle, OCI bundle and state, machine port publication, and restart recovery. |
+| `nimbus-sandbox` | Backend-agnostic sandbox and isolation lifecycle contracts, provider-command idempotency, and durable directory creation. |
+| `nimbus-sandbox-host` | Shared OCI host services for the sandbox backends: image build and materialization, Netavark, namespace, IPAM, nftables, gvproxy, and guest-network effects, port leases, the egress PEP, conmon supervision, and resource quotas. |
+| `nimbus-sandbox-container` | Container sandbox backend: crun runtime lifecycle, OCI bundle and state, machine port publication, and restart recovery. |
 | `nimbus-sandbox-krun` | Krun microVM sandbox backend: bundle assembly, VM lifecycle, guest user switch, and cross-backend network composition tests. |
 | `nimbus-server` | HTTP/WebSocket transport: axum router, adapter transport shims, embedded UI, local-server security. |
 | `nimbus-services` | Logical service naming, readiness, registry, and service-manager primitives. |
@@ -203,8 +204,9 @@ them to the engine.
 ### Sandbox & machines
 
 `nimbus-sandbox` defines backend-agnostic sandbox and isolation lifecycle
-contracts; `nimbus-sandbox-container` implements the container backend on
-them, and `nimbus-sandbox-krun` implements the Krun microVM backend;
+contracts; `nimbus-sandbox-host` provides the shared OCI host services;
+`nimbus-sandbox-container` implements the container backend on them, and
+`nimbus-sandbox-krun` implements the Krun microVM backend;
 `nimbus-machine` owns the machine record model and provider
 contracts shared by the CLI and the server control plane.
 → <https://nimbusdocs.com/concepts/architecture/sandbox-machines/>
@@ -216,7 +218,7 @@ owns stable attachment, segment, endpoint, route, listener, and port identity;
 portable plans; durable node-local lease/state machines; provider capability
 evidence; and reconciliation contracts. It does not bind sockets, parse
 protocols, create namespaces, forward packets, select tenant policy, or own
-logical service names. Those effects stay in `nimbus-sandbox`,
+logical service names. Those effects stay in `nimbus-sandbox-host`,
 `nimbus-server`, `nimbus-kv`, `nimbus-machine`, `nimbus-proxy`, and
 `nimbus-node`; compute remains the sole workload lifecycle coordinator,
 services retains naming/readiness, and system tables remain observed

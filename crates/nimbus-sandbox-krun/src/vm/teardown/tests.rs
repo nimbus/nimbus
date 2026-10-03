@@ -11,9 +11,6 @@ use std::time::{Duration, Instant};
 
 use nimbus_core::TenantId;
 
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::egress::EgressProxyAssignment;
-use nimbus_sandbox::backends::oci::materializer::MaterializedImageRootfs;
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
     ProviderCommandClaimInput, ProviderCommandObservationKind, ProviderCommandOperation,
@@ -22,11 +19,14 @@ use nimbus_sandbox::{
     SandboxId, SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAttemptFence, SandboxRootSpec,
     SandboxRootfsSpec, SandboxSpec, SandboxStatus,
 };
-use nimbus_sandbox_container::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
-use nimbus_sandbox_container::conmon::runtime_process::{
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
+use nimbus_sandbox_host::conmon::runtime_process::{
     RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
     RuntimeProcessSignalOutcome,
 };
+use nimbus_sandbox_host::egress::EgressProxyAssignment;
+use nimbus_sandbox_host::materializer::MaterializedImageRootfs;
 
 use super::super::{
     KrunBundleLayout, KrunCreatorHandoffState, KrunImageMetadata, KrunLaunchArtifact,
@@ -668,9 +668,8 @@ fn krun_execution_drain_persists_barrier_and_keeps_exact_runtime_running() {
 fn krun_pre_activation_stop_closes_admission_without_a_drain_command() {
     let fixture = TeardownFixture::new("pre-activation-stop");
     let mut manifest = fixture.manifest();
-    let reservation_claim =
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
-            .expect("pre-activation reservation claim should validate");
+    let reservation_claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
+        .expect("pre-activation reservation claim should validate");
     manifest.launch_authority = KrunLaunchAuthority::Adopted { reservation_claim };
     manifest.creator_handoff = KrunCreatorHandoffState::NotSpawned;
     manifest.status = SandboxStatus::Starting;

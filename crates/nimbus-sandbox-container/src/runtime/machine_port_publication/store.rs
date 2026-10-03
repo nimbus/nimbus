@@ -103,7 +103,7 @@ pub(super) fn publish_record(
     state_dir: &Path,
     record: MachinePortPublicationRecord,
 ) -> Result<()> {
-    nimbus_sandbox::backends::oci::durable_directory::establish_durable_directory_chain_with(
+    nimbus_sandbox::durable_directory::establish_durable_directory_chain_with(
         state_root,
         state_dir,
         "machine port publication",
@@ -121,7 +121,7 @@ pub(super) fn publish_record_with_observer(
     record: MachinePortPublicationRecord,
     observer: &mut impl MachinePortEvidenceStoreObserver,
 ) -> Result<()> {
-    nimbus_sandbox::backends::oci::durable_directory::establish_durable_directory_chain_with(
+    nimbus_sandbox::durable_directory::establish_durable_directory_chain_with(
         state_root,
         state_dir,
         "machine port publication",

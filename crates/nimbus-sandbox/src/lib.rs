@@ -1,15 +1,15 @@
 //! Generic sandbox and isolation contracts for Nimbus.
 //!
 //! This crate intentionally owns only stable, backend-agnostic lifecycle nouns.
-//! Concrete implementations such as a krun-backed sandbox or future
-//! Firecracker support should live behind backend-owned module paths in this
-//! crate rather than leaking their implementation vocabulary into the rest of
-//! the workspace.
+//! Concrete implementations live in backend crates that depend on it:
+//! `nimbus-sandbox-host` for shared OCI host services, and
+//! `nimbus-sandbox-container` and `nimbus-sandbox-krun` for the backends.
 
 pub mod backends;
 
 pub mod artifact_paths;
 mod backend;
+pub mod durable_directory;
 mod error;
 mod execution_attempt;
 mod inspection;
@@ -21,12 +21,6 @@ mod spec;
 mod teardown;
 pub mod volume;
 
-pub use crate::backends::oci::network::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortForwardingRetirement,
-    MachinePortForwardingRetirementObservation, OciMachinePortForwarderConfig,
-    OciMachinePortForwardingRetirement,
-};
-pub use crate::backends::oci::network::{OciNetworkProcess, OciNetworkProcessError};
 pub use crate::backends::{SandboxNetworkPlanRequirements, sandbox_network_plan_requirements};
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use error::{Result, SandboxError};

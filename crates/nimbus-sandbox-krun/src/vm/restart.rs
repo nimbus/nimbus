@@ -12,18 +12,14 @@ use serde::{Deserialize, Serialize};
 
 use nimbus_sandbox::SandboxProvisionPhaseObservation;
 use nimbus_sandbox::SandboxRestartAttemptFence;
-use nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority;
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAttachAuthority, OciAttachmentBaseReadinessState,
-};
 use nimbus_sandbox::{Result, SandboxError};
 use nimbus_sandbox::{SandboxId, SandboxStatus};
-use nimbus_sandbox_container::conmon::creator::{
-    CreatorQuiescenceProof, confirm_dead_conmon_receipt,
-};
-use nimbus_sandbox_container::conmon::lifecycle::{
+use nimbus_sandbox_host::conmon::creator::{CreatorQuiescenceProof, confirm_dead_conmon_receipt};
+use nimbus_sandbox_host::conmon::lifecycle::{
     RuntimeStateObservation, remove_if_exists, runtime_state,
 };
+use nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority;
+use nimbus_sandbox_host::network::{AttachmentAttachAuthority, OciAttachmentBaseReadinessState};
 
 use super::readiness::synchronize_handle_status;
 use super::start::hostname_for;

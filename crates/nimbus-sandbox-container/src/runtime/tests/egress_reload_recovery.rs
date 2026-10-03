@@ -17,8 +17,8 @@ use tempfile::TempDir;
 
 use super::support::*;
 use super::*;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority;
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority;
 
 const CRASH_CHILD_TEST: &str = "runtime::tests::egress_reload_recovery::egress_reload_crash_child";
 const RECOVERY_CHILD_TEST: &str =
@@ -742,7 +742,7 @@ fn reload_egress_policy_updates_running_container_proxy() {
         )
         .expect("egress proxy should start on loopback test subnet");
     manifest.creator_handoff = ContainerCreatorHandoffState::RuntimeObserved {
-        receipt: crate::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
             "live-reload-runtime-observed",
         ),
     };

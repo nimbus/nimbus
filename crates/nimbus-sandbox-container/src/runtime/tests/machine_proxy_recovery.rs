@@ -789,12 +789,11 @@ fn absent_machine_registry_accepts_only_an_entire_terminal_no_effect_batch() {
         SandboxPortBinding::tcp("released", first_port, 8080),
         SandboxPortBinding::tcp("failed", second_port, 8081),
     ];
-    let reservation_claim =
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
-            .expect("terminal batch launch claim should mint");
+    let reservation_claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
+        .expect("terminal batch launch claim should mint");
     let mut reservations = manager
         .reserve_launch_ports_for_sandbox(
-            nimbus_sandbox::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
+            nimbus_sandbox_host::port_lifecycle::SandboxLaunchPortPlan::new(
                 &tenant,
                 &id,
                 &bindings,

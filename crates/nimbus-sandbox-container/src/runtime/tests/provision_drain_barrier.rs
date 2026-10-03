@@ -36,7 +36,7 @@ impl ExecuteProvisionFixture {
         config.node_network_supernet = "127.0.0.0/24".to_owned();
         config.published_port_range = pep_port..=pep_port;
         let backend = ContainerSandboxBackend::new(config).with_egress_pin_provider(Arc::new(
-            nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider::ready(),
+            nimbus_sandbox_host::network::FixedOciEgressPinProvider::ready(),
         ));
         let id = SandboxId::new(format!("provision-barrier-{label}"));
         let spec = sample_spec_for_tenant(
@@ -80,7 +80,7 @@ struct MachinePublicationFixture {
     id: SandboxId,
     attempt: nimbus_sandbox::SandboxExecutionAttemptId,
     plan: nimbus_sandbox::SandboxProvisionNetworkPlan,
-    forwarder: nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig,
+    forwarder: nimbus_sandbox_host::network::OciMachinePortForwarderConfig,
     _published_reservation: TcpListener,
     _forwarder_listener: TcpListener,
     _port_window: PortWindow,
@@ -110,7 +110,7 @@ impl MachinePublicationFixture {
         config.published_port_range = pep_port..=pep_port;
         config.machine_port_forwarder = Some(forwarder.clone());
         let backend = ContainerSandboxBackend::new(config).with_egress_pin_provider(Arc::new(
-            nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider::ready(),
+            nimbus_sandbox_host::network::FixedOciEgressPinProvider::ready(),
         ));
         let id = SandboxId::new(format!("machine-publication-barrier-{label}"));
         let spec = sample_spec_for_tenant(

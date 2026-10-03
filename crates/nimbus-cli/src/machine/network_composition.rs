@@ -16,7 +16,7 @@ use nimbus_network::{
     NetworkProviderId,
 };
 use nimbus_operator::LocalNodeNetworkRoot;
-use nimbus_sandbox_container::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 use ulid::Ulid;
 
 /// Process-lifetime owner of the direct CLI's fail-closed parent composition.

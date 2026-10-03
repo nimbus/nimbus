@@ -20,7 +20,7 @@ mod support;
 use support::*;
 
 use nimbus_network::LocalPortLeaseAuthority;
-use nimbus_sandbox::backends::oci::network::AttachmentAttachAuthority;
+use nimbus_sandbox_host::network::AttachmentAttachAuthority;
 
 pub(super) fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
     config["process"]["env"]
@@ -1078,7 +1078,7 @@ fn execute_manifest_without_attachment_config_fails_before_network_effects() {
         KrunStartMode::Execute,
     );
     manifest.network_config = None;
-    let claim = nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
+    let claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
         .expect("missing-config test claim should mint");
 
     let error = backend

@@ -1448,7 +1448,7 @@ impl ProviderCommandAttemptJournal {
     }
 
     fn establish_directory(&self, directory: &Path) -> Result<(), ProviderCommandJournalError> {
-        crate::backends::oci::durable_directory::establish_durable_directory_chain_with(
+        crate::durable_directory::establish_durable_directory_chain_with(
             &self.state_root,
             directory,
             "provider command attempt journal",

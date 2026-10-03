@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
 use nimbus_network::LocalPortLeaseAuthority;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     OciMachinePortForwarderConfig, OciNetworkDirectEgress, OciSegmentAllocator,
     RecordingSegmentAllocator, SegmentAllocatorOperation,
 };
@@ -1181,13 +1181,12 @@ fn runner_handoff_rereserves_previewed_automatic_ports_as_ranges() {
         "the canonical operator input remains distinct from the image-derived preview"
     );
 
-    let reservation_claim =
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
-            .expect("competing launch claim should mint");
+    let reservation_claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
+        .expect("competing launch claim should mint");
     backend
         .port_lease_coordinator()
         .reserve_launch_ports_for_sandbox(
-            nimbus_sandbox::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
+            nimbus_sandbox_host::port_lifecycle::SandboxLaunchPortPlan::new(
                 &sample_spec().tenant_id,
                 &SandboxId::new("other-sandbox"),
                 &[SandboxPortBinding::tcp("occupied", 15000, 9090)
@@ -1230,13 +1229,12 @@ fn execute_plan_hides_preview_and_projects_only_selected_durable_endpoint_when_r
     config.start_mode = ContainerStartMode::Execute;
     config.published_port_range = 15000..=15002;
     let backend = ContainerSandboxBackend::new(config);
-    let reservation_claim =
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
-            .expect("competing launch claim should mint");
+    let reservation_claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
+        .expect("competing launch claim should mint");
     backend
         .port_lease_coordinator()
         .reserve_launch_ports_for_sandbox(
-            nimbus_sandbox::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
+            nimbus_sandbox_host::port_lifecycle::SandboxLaunchPortPlan::new(
                 &sample_spec().tenant_id,
                 &SandboxId::new("execute-preview-competitor"),
                 &[SandboxPortBinding::tcp("occupied", 15000, 9090)

@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use nimbus_process_harness::PortWindow;
 
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::conmon::OciConmonLayout;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::OciConmonLayout;
+use nimbus_sandbox_host::conmon::creator::OwnedConmonCreator;
+use nimbus_sandbox_host::network::{
     AttachmentAttachAuthority, FixedOciEgressPinProvider, OciNetworkLayout,
 };
-use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
-use nimbus_sandbox_container::conmon::creator::OwnedConmonCreator;
 
 use super::support::*;
 

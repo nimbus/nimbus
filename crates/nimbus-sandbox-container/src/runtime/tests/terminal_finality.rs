@@ -35,7 +35,7 @@ fn terminal_manifest_publication_rejects_each_local_authority_until_released() {
     retained_cleanup.network_cleanup_complete = false;
     let mut retained_claim = terminal.clone();
     retained_claim.launch_reservation_claim = Some(
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
+        nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
             .expect("retained claim should validate"),
     );
     let mut retained_artifact = terminal.clone();
@@ -116,11 +116,11 @@ fn terminal_manifest_publication_rejects_a_retained_port_lease() {
     // lower attachment/IPAM owner accepts only the explicit result supplied by
     // its caller, so terminal publication must independently reject the
     // surviving port authority.
-    nimbus_sandbox::backends::oci::network::release_reserved_network_launch_after_ports(
-        nimbus_sandbox::backends::oci::network::ReservedNetworkLaunchAuthority::new(
+    nimbus_sandbox_host::network::release_reserved_network_launch_after_ports(
+        nimbus_sandbox_host::network::ReservedNetworkLaunchAuthority::new(
             backend.segment_allocator.as_ref(),
             &backend.ipam_authority,
-            nimbus_sandbox::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+            nimbus_sandbox_host::network::ReservedNetworkLaunchIdentity::new(
                 &manifest.network_layout,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,

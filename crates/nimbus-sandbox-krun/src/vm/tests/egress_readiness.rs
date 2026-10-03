@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use nimbus_process_harness::PortWindow;
 
-use nimbus_sandbox::backends::oci::egress::{
+use nimbus_sandbox_host::egress::{
     PepPreAdoptionReleaseAuthority, ensure_egress_proxy_running_with_release_authority,
 };
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentAttachAuthority, FixedOciEgressPinProvider, default_network_attachment_id,
 };
 
@@ -93,7 +93,7 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
     .expect("fixture should start the exact desired egress PEP");
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved {
-        receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
             "krun-pep-readiness-live-runtime",
         ),
     };

@@ -34,57 +34,55 @@ pub(crate) use test_hooks::{prepare_network_teardown_fixture, reopen_network_tea
 use super::bundle::{
     ContainerBundleLayout, ContainerBundleMount, ContainerBundleOptions, write_bundle_config,
 };
-#[cfg(test)]
-use crate::conmon::lifecycle::RestartLaunchTestProbe;
-#[cfg(test)]
-use crate::conmon::lifecycle::{
-    RuntimeStatusProbe, detect_runtime_status as detect_conmon_runtime_status,
-};
-use crate::conmon::lifecycle::{ensure_linux_host, run_status_checked};
 use nimbus_egress::EgressPolicy;
 use nimbus_sandbox::SandboxProvisionNetworkPlan;
 use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationError, SandboxAttachmentRegistrationKind,
     host_managed_attachment_registration,
 };
-use nimbus_sandbox::backends::oci::buildah::OciImageLaunchDefaults;
-use nimbus_sandbox::backends::oci::builder::OciDockerfileBuilder;
-use nimbus_sandbox::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
-#[cfg(test)]
-use nimbus_sandbox::backends::oci::egress::egress_trust_anchor_root;
-use nimbus_sandbox::backends::oci::egress::{
-    EgressProxyAssignment, EgressProxyRegistry, EgressReadinessState,
-    PepPreAdoptionReleaseAuthority, egress_listener_reservation, egress_proxy_assignment,
-    egress_trust_anchor_mount, ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
-    ensure_egress_proxy_running_with_release_authority,
-};
-use nimbus_sandbox::backends::oci::materializer::{
-    OciImageMaterializer, PreparedMaterializedImageLaunch,
-};
-#[cfg(test)]
-use nimbus_sandbox::backends::oci::network::HostManagedAttachmentCheckpointTestProbe;
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAttachAuthority, MachinePortPreparationReleaseAuthority,
-    MachinePortProxyLifetimeRegistry, OciEgressPinProvider, OciIpamAuthority, OciNetworkLayout,
-    OciNetworkProcess, OciSegmentAllocator, default_network_attachment_id,
-};
-#[cfg(test)]
-use nimbus_sandbox::backends::oci::network::{
-    MachinePortProxyEntry, MachinePortProxyRegistration, OciNetavarkOperation,
-    authenticate_container_network_generation_for_cleanup, setup_container_network,
-};
-use nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim;
-use nimbus_sandbox::backends::oci::port_lifecycle::{
-    NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator, ReservedLaunchPorts,
-    SandboxLaunchPortPlan,
-};
-use nimbus_sandbox::backends::oci::resource_quota::ResourceQuotaManager;
 use nimbus_sandbox::backends::readiness_probe::ReadinessProbeProvider;
 use nimbus_sandbox::{Result, SandboxError};
 use nimbus_sandbox::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
 use nimbus_sandbox::{SandboxHandle, SandboxId, SandboxStatus};
 use nimbus_sandbox::{SandboxOciImageSource, SandboxRootSpec, SandboxSpec};
+use nimbus_sandbox_host::buildah::OciImageLaunchDefaults;
+use nimbus_sandbox_host::builder::OciDockerfileBuilder;
+#[cfg(test)]
+use nimbus_sandbox_host::conmon::lifecycle::RestartLaunchTestProbe;
+#[cfg(test)]
+use nimbus_sandbox_host::conmon::lifecycle::{
+    RuntimeStatusProbe, detect_runtime_status as detect_conmon_runtime_status,
+};
+use nimbus_sandbox_host::conmon::lifecycle::{ensure_linux_host, run_status_checked};
+use nimbus_sandbox_host::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
+#[cfg(test)]
+use nimbus_sandbox_host::egress::egress_trust_anchor_root;
+use nimbus_sandbox_host::egress::{
+    EgressProxyAssignment, EgressProxyRegistry, EgressReadinessState,
+    PepPreAdoptionReleaseAuthority, egress_listener_reservation, egress_proxy_assignment,
+    egress_trust_anchor_mount, ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
+    ensure_egress_proxy_running_with_release_authority,
+};
+use nimbus_sandbox_host::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
+#[cfg(test)]
+use nimbus_sandbox_host::network::HostManagedAttachmentCheckpointTestProbe;
+use nimbus_sandbox_host::network::{
+    AttachmentAttachAuthority, MachinePortPreparationReleaseAuthority,
+    MachinePortProxyLifetimeRegistry, OciEgressPinProvider, OciIpamAuthority, OciNetworkLayout,
+    OciNetworkProcess, OciSegmentAllocator, default_network_attachment_id,
+};
+#[cfg(test)]
+use nimbus_sandbox_host::network::{
+    MachinePortProxyEntry, MachinePortProxyRegistration, OciNetavarkOperation,
+    authenticate_container_network_generation_for_cleanup, setup_container_network,
+};
+use nimbus_sandbox_host::port_lease::new_launch_reservation_claim;
+use nimbus_sandbox_host::port_lifecycle::{
+    NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator, ReservedLaunchPorts,
+    SandboxLaunchPortPlan,
+};
+use nimbus_sandbox_host::resource_quota::ResourceQuotaManager;
 
 pub use config::{ContainerSandboxBackendConfig, ContainerStartMode};
 use launch::{hostname_for, next_sandbox_id, resolve_start_spec};
@@ -902,8 +900,8 @@ impl ContainerSandboxBackend {
                 port_leases: Vec::new(),
                 launch_reservation_claim: None,
                 egress_proxy: None,
-                egress_policy_reload:
-                    nimbus_sandbox::backends::oci::egress::EgressPolicyReloadState::initial(),
+                egress_policy_reload: nimbus_sandbox_host::egress::EgressPolicyReloadState::initial(
+                ),
                 conmon_launch,
                 runner_config: ContainerRunnerExecutionConfig::from_backend_config(&self.config),
                 last_exit_code: None,
@@ -1014,7 +1012,7 @@ impl ContainerSandboxBackend {
             #[cfg(test)]
             if network_config.network_plan.is_none() {
                 network_config.network_plan = Some(
-                    nimbus_sandbox::backends::test_hooks::legacy_start_attachment_network_plan_fixture(
+                    nimbus_sandbox_host::test_hooks::legacy_start_attachment_network_plan_fixture(
                         &manifest.spec,
                         &sandbox_id,
                         "container-coarse-start",

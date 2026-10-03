@@ -6,9 +6,10 @@ use nimbus_machine::api::{
     MachineApiWorkloadTeardownPhaseRequest, MachineApiWorkloadTeardownPhaseResponse,
 };
 use nimbus_network::{PortLeasePhase, PortLeaseRecord};
-use nimbus_sandbox::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortForwardingRetirement,
-    MachinePortForwardingRetirementObservation, ProviderCommandObservationKind,
+use nimbus_sandbox::ProviderCommandObservationKind;
+use nimbus_sandbox_host::{
+    network::MachinePortForwardOutcome, network::MachinePortForwardReceipt,
+    network::MachinePortForwardingRetirement, network::MachinePortForwardingRetirementObservation,
 };
 use serde::Serialize;
 

@@ -10,7 +10,7 @@ use nimbus_network::{LocalNetworkManager, PortLeasePhase};
 use nimbus_process_harness::PortWindow;
 use tempfile::TempDir;
 
-use nimbus_sandbox::backends::oci::network::OciNetworkProcess;
+use nimbus_sandbox_host::network::OciNetworkProcess;
 
 #[test]
 fn oci_network_process_contract_container_backends_share_real_machine_proxy_lifetime_authority() {
@@ -170,7 +170,7 @@ fn oci_network_process_contract_container_backends_share_real_machine_proxy_life
 fn machine_backend_config(
     workload_root: &std::path::Path,
     network_root: &std::path::Path,
-    forwarder: nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig,
+    forwarder: nimbus_sandbox_host::network::OciMachinePortForwarderConfig,
     published_pool: std::ops::RangeInclusive<u16>,
 ) -> ContainerSandboxBackendConfig {
     let mut config = ContainerSandboxBackendConfig::under_root(workload_root)

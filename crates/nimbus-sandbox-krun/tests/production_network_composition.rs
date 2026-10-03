@@ -18,15 +18,15 @@ use nimbus_sandbox::backends::{
     SandboxAttachmentRegistrationError,
 };
 use nimbus_sandbox::{
-    OciNetworkProcess, OciNetworkProcessError, SandboxBackendKind, SandboxExecutionAttemptId,
-    SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
-    SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
-    SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
-    sandbox_network_plan_requirements,
+    SandboxBackendKind, SandboxExecutionAttemptId, SandboxHandle, SandboxId, SandboxOwnerSpec,
+    SandboxPortBinding, SandboxProcessSpec, SandboxProvisionDependencyListener,
+    SandboxProvisionEndpointIdentity, SandboxProvisionListener, SandboxProvisionNetworkPlan,
+    SandboxRootSpec, SandboxRootfsSpec, SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_sandbox_container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
+use nimbus_sandbox_host::{network::OciNetworkProcess, network::OciNetworkProcessError};
 use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use serde_json::Value;
 use tempfile::tempdir;

@@ -5,18 +5,16 @@ use std::cell::RefCell;
 use nimbus_network::NetworkAttachmentReservationState;
 
 use nimbus_sandbox::backends::KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAuxiliaryDisposition, HostManagedAttachmentCommandInspection,
-    HostManagedAttachmentCommandInspectionError, HostManagedAttachmentTeardownState,
-};
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandExecutionClaim, ProviderCommandJournalError,
     ProviderCommandObservation, ProviderCommandObservationKind, SandboxError,
     SandboxNetworkTeardownCommand, SandboxNetworkTeardownObservation,
     SandboxNetworkTeardownOperation,
 };
-use nimbus_sandbox_container::conmon::lifecycle::{
-    inspect_runtime_artifact_presence, remove_if_exists,
+use nimbus_sandbox_host::conmon::lifecycle::{inspect_runtime_artifact_presence, remove_if_exists};
+use nimbus_sandbox_host::network::{
+    AttachmentAuxiliaryDisposition, HostManagedAttachmentCommandInspection,
+    HostManagedAttachmentCommandInspectionError, HostManagedAttachmentTeardownState,
 };
 
 use super::teardown::state::KrunNetworkStopRequirementError;
@@ -354,7 +352,7 @@ impl KrunSandboxBackend {
     ) -> nimbus_sandbox::Result<()> {
         manifest.network_teardown.validate()?;
         if manifest.network_teardown.release_phase()
-            != nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+            != nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
         {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -457,11 +455,11 @@ impl KrunSandboxBackend {
                 let not_started = match command.operation() {
                     SandboxNetworkTeardownOperation::Detach => {
                         manifest.network_teardown.detach_phase()
-                            == nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase::NotStarted
+                            == nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase::NotStarted
                     }
                     SandboxNetworkTeardownOperation::Release => {
                         manifest.network_teardown.release_phase()
-                            == nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::NotStarted
+                            == nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::NotStarted
                     }
                 };
                 match (provider_observation.kind(), not_started) {
@@ -659,7 +657,7 @@ fn read_prior_detach_success(
         .validate()
         .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
     if state.detach_phase()
-        != nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase::Detached
+        != nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase::Detached
     {
         return Err(NetworkTeardownAdapterError::order_invalid(
             "ReleaseNetwork requires completed retained detach progress",
@@ -692,7 +690,7 @@ fn require_prior_detach_success_evidence(
         .validate()
         .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
     if state.detach_phase()
-        != nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase::Detached
+        != nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase::Detached
     {
         return Err(NetworkTeardownAdapterError::order_invalid(
             "ReleaseNetwork requires completed retained detach progress",

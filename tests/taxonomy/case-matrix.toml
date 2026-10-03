@@ -51,9 +51,9 @@ surface = "egress_pep"
 mission_critical = true
 cases = [
   { class = "smoke", tests = ["tests::forward_http::egress_proxy_allows_matching_http_request"] },
-  { class = "main", tests = ["tests::policy_lifecycle::egress_proxy_global_ceiling_narrows_sandbox_policy_end_to_end", "backends::oci::egress::tests::ensure_egress_proxy_running_starts_pep_for_assignment"] },
+  { class = "main", tests = ["tests::policy_lifecycle::egress_proxy_global_ceiling_narrows_sandbox_policy_end_to_end", "egress::tests::ensure_egress_proxy_running_starts_pep_for_assignment"] },
   { class = "edge", tests = ["tests::dns_resolution::egress_proxy_dns_budget_times_out_closed_without_disturbing_sibling", "tests::connect_tunnel::egress_proxy_canonicalizes_connect_authority_case_and_trailing_dot"] },
-  { class = "error", tests = ["tests::policy_lifecycle::egress_proxy_denies_default_policy_without_contacting_upstream", "backends::oci::egress::tests::ensure_egress_proxy_running_denies_when_assignment_absent"] },
+  { class = "error", tests = ["tests::policy_lifecycle::egress_proxy_denies_default_policy_without_contacting_upstream", "egress::tests::ensure_egress_proxy_running_denies_when_assignment_absent"] },
   { class = "recovery", tests = ["tests::policy_lifecycle::egress_proxy_invalid_reload_preserves_last_known_good_generation", "tests::substrate_shutdown::dropping_proxy_terminates_in_flight_work_without_disturbing_sibling"] },
   { class = "real_world", tests = ["tests::https_intercept::egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption", "outbound::tests::cross_substrate_egress_parity_one_deny_blocks_all"] },
 ]

@@ -9,15 +9,15 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::conmon::lifecycle::{
+use nimbus_sandbox::SandboxStatus;
+use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::conmon::lifecycle::{
     RuntimeStateObservation, runtime_state, runtime_state_for_creator_attempt,
 };
-use nimbus_sandbox::SandboxStatus;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     MachinePortPreparationReleaseAuthority, authenticate_container_network_generation,
 };
-use nimbus_sandbox::backends::oci::port_lifecycle::LaunchPortBatchState;
-use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::port_lifecycle::LaunchPortBatchState;
 
 use super::super::manifest::ContainerCreatorHandoffState;
 use super::identity::result_manifest_sha256;

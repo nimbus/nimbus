@@ -5,7 +5,7 @@ use nimbus_network::NetworkAttachmentReservationState;
 use super::start::hostname_for;
 use super::teardown::state::KrunStopProgress;
 use super::*;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentAuxiliaryDisposition, AttachmentTeardownMode, OciOrphanCleanupContext,
     OciOrphanCleanupDisposition, OciOrphanCleanupKind, OciOrphanCleanupSubject,
     OciRetainedManifestEvidence, ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity,
@@ -45,7 +45,7 @@ impl KrunSandboxBackend {
                 || snapshot.conmon_layout.manifest_path != path
                 || snapshot.start_mode != KrunStartMode::Execute
                 || snapshot.network_teardown.release_phase()
-                    != nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                    != nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
                 || snapshot.has_terminal_network_finality()
             {
                 continue;
@@ -64,7 +64,7 @@ impl KrunSandboxBackend {
                 continue;
             }
             if current.network_teardown.release_phase()
-                != nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                != nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
                 || !matches!(
                     current.execution_teardown.stop(),
                     KrunStopProgress::ExecutionStopped { .. }
@@ -235,7 +235,7 @@ impl KrunSandboxBackend {
                 "exit-status receipt",
             ),
         ] {
-            if nimbus_sandbox_container::conmon::lifecycle::inspect_runtime_artifact_presence(
+            if nimbus_sandbox_host::conmon::lifecycle::inspect_runtime_artifact_presence(
                 path, label,
             )? {
                 return Err(SandboxError::OperationFailed {

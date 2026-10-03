@@ -17,7 +17,7 @@ use nimbus_network::{
     NetworkCapabilityBundle, NetworkCapabilityRequirements, NetworkCapabilitySelection,
     NetworkManagementMode, NetworkSovereigntyRequirements,
 };
-use nimbus_sandbox_container::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 use nimbus_workloads::{NodeIdentity, WorkloadExecutionProviderId};
 
 use super::DEFAULT_MACHINE_NAME;

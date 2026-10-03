@@ -5,7 +5,7 @@ use super::support::*;
 use std::sync::Arc;
 
 use nimbus_sandbox::SandboxError;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     OciSegmentAllocator, RecordingSegmentAllocator, default_network_attachment_id,
 };
 
@@ -217,8 +217,8 @@ fn provider_failure_runtime_absence_checkpoint_replays_delete_and_inspect() {
     let (config, mut manifest) =
         persisted_not_spawned_provider_fixture(&temp_dir, "krun-runtime-checkpoint-replay");
     manifest.creator_handoff = KrunCreatorHandoffState::Quiesced {
-        proof: nimbus_sandbox_container::conmon::creator::CreatorQuiescenceProof::dead_contained(
-            nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
+        proof: nimbus_sandbox_host::conmon::creator::CreatorQuiescenceProof::dead_contained(
+            nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
                 "runtime-checkpoint-attempt",
             ),
         ),

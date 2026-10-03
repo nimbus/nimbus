@@ -12,7 +12,7 @@ use nimbus_sandbox::{
     ProviderCommandObservationKind, ProviderCommandOperation, SandboxExecutionTeardownCommand,
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
 };
-use nimbus_sandbox_container::conmon::runtime_process::{
+use nimbus_sandbox_host::conmon::runtime_process::{
     RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
     RuntimeProcessSignalOutcome,
 };

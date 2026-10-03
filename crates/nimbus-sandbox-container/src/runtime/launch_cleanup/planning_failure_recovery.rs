@@ -41,7 +41,7 @@ fn direct_planning_cleanup_failure_retains_claim_across_restart() {
         "cleanup-pending planning authority must not be published as terminal"
     );
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &first.ipam_authority,
             &fenced.network_layout,
             &id,
@@ -85,7 +85,7 @@ fn direct_planning_cleanup_failure_retains_claim_across_restart() {
         "successful exact retry must retire the retained claim"
     );
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &recovery.ipam_authority,
             &stopped.network_layout,
             &id,
@@ -135,7 +135,7 @@ fn runner_planning_cleanup_failure_retains_claim_across_restart() {
         "failed runner cleanup must retain exact compensation authority"
     );
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &first.ipam_authority,
             &fenced.network_layout,
             &id,
@@ -164,7 +164,7 @@ fn runner_planning_cleanup_failure_retains_claim_across_restart() {
     assert_eq!(stopped.status, SandboxStatus::Stopped);
     assert!(stopped.launch_reservation_claim.is_none());
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &recovery.ipam_authority,
             &stopped.network_layout,
             &id,

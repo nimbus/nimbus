@@ -28,18 +28,10 @@ pub(super) use super::super::{
     published_endpoints, running_status, slugify, visible_published_endpoints,
 };
 pub(super) use nimbus_network::EndpointProtocol;
-pub(super) use nimbus_sandbox::backends::oci::buildah::{
-    ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
-};
-pub(super) use nimbus_sandbox::backends::oci::command::CommandSpec;
-pub(super) use nimbus_sandbox::backends::oci::materializer::{
-    MaterializedImageRootfs, PreparedMaterializedImageLaunch,
-};
 pub(super) use nimbus_sandbox::backends::readiness_probe::{
     FixedReadinessProbeProvider, ReadinessProbeObservation, ReadinessProbeTarget,
     readiness_probe_target,
 };
-use nimbus_sandbox::backends::test_hooks::legacy_start_attachment_network_plan_fixture;
 pub(super) use nimbus_sandbox::backends::test_hooks::sandbox_provision_network_plan_fixture as sample_provision_network_plan;
 pub(super) use nimbus_sandbox::{SandboxBackend, SandboxBackendKind};
 pub(super) use nimbus_sandbox::{
@@ -52,7 +44,15 @@ pub(super) use nimbus_sandbox::{
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxResourceQuotaPolicy,
     SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
-pub(super) use nimbus_sandbox_container::conmon::lifecycle::RestartLaunchTestProbe;
+pub(super) use nimbus_sandbox_host::buildah::{
+    ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
+};
+pub(super) use nimbus_sandbox_host::command::CommandSpec;
+pub(super) use nimbus_sandbox_host::conmon::lifecycle::RestartLaunchTestProbe;
+pub(super) use nimbus_sandbox_host::materializer::{
+    MaterializedImageRootfs, PreparedMaterializedImageLaunch,
+};
+use nimbus_sandbox_host::test_hooks::legacy_start_attachment_network_plan_fixture;
 pub(super) fn sample_spec() -> SandboxSpec {
     sample_spec_with_rootfs(Path::new("/srv/rootfs"))
 }
@@ -215,7 +215,7 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
     let network_config = attachment_network_plan.as_ref().map(|plan| {
         let mut config = super::super::OciNetworkConfig::default();
         config.attachment_id =
-            nimbus_sandbox::backends::oci::network::default_network_attachment_id(&sandbox_id);
+            nimbus_sandbox_host::network::default_network_attachment_id(&sandbox_id);
         config.network_plan = Some(plan.clone());
         config
     });
@@ -248,7 +248,7 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
         creator_handoff: match start_mode {
             KrunStartMode::PlanOnly => KrunCreatorHandoffState::NotSpawned,
             KrunStartMode::Execute => KrunCreatorHandoffState::RuntimeObserved {
-                receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
+                receipt: nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
                     "test-runtime-observed",
                 ),
             },

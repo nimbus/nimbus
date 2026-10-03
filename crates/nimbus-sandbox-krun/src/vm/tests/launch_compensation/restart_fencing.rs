@@ -55,20 +55,18 @@ fn assert_restart_cleanup_is_fenced(
         .expect("execute manifest should reserve network and listener authority")
         .manifest;
     let launch_claim = adopt_launch_network(&backend, &mut manifest);
-    nimbus_sandbox::backends::oci::egress::ensure_egress_proxy_running_with_release_authority(
+    nimbus_sandbox_host::egress::ensure_egress_proxy_running_with_release_authority(
         &backend.egress_proxies,
         &manifest.spec.tenant_id,
         &manifest.handle.id,
         manifest.egress_proxy.as_ref(),
         &manifest.spec.egress,
-        nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority::FreshLaunch(
-            &launch_claim,
-        ),
+        nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority::FreshLaunch(&launch_claim),
     )
     .expect("fixture PEP should own its exact listener");
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved {
-        receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
             "runtime-observed-fixture",
         ),
     };
@@ -81,9 +79,9 @@ fn assert_restart_cleanup_is_fenced(
             &manifest.port_leases,
         )
         .expect("fixture should claim the published listener");
-    nimbus_sandbox::backends::oci::network::setup_container_network(
+    nimbus_sandbox_host::network::setup_container_network(
         &backend.ipam_authority,
-        &nimbus_sandbox::backends::oci::network::OciNetavarkOperation::new(
+        &nimbus_sandbox_host::network::OciNetavarkOperation::new(
             &manifest.network_layout,
             manifest
                 .require_network_config()

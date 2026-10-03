@@ -7,11 +7,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use nimbus_sandbox::SandboxResourceQuotaPolicy;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_TENANT_PREFIX,
     OciMachinePortForwarderConfig,
 };
-use nimbus_sandbox::backends::oci::port_lifecycle::DEFAULT_MAX_PORTS_PER_TENANT;
+use nimbus_sandbox_host::port_lifecycle::DEFAULT_MAX_PORTS_PER_TENANT;
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
 const DEFAULT_CONMON_PATH: &str = "conmon";
@@ -110,11 +110,9 @@ impl Default for ContainerSandboxBackendConfig {
             published_port_range: DEFAULT_PUBLISHED_PORT_START..=DEFAULT_PUBLISHED_PORT_END,
             max_published_ports_per_tenant: Some(DEFAULT_MAX_PORTS_PER_TENANT),
             resource_quota_policy: SandboxResourceQuotaPolicy::default(),
-            network_name: nimbus_sandbox::backends::oci::network::DEFAULT_NETWORK_NAME.to_owned(),
-            network_interface: nimbus_sandbox::backends::oci::network::DEFAULT_NETWORK_INTERFACE
-                .to_owned(),
-            network_subnet: nimbus_sandbox::backends::oci::network::DEFAULT_NETWORK_SUBNET
-                .to_owned(),
+            network_name: nimbus_sandbox_host::network::DEFAULT_NETWORK_NAME.to_owned(),
+            network_interface: nimbus_sandbox_host::network::DEFAULT_NETWORK_INTERFACE.to_owned(),
+            network_subnet: nimbus_sandbox_host::network::DEFAULT_NETWORK_SUBNET.to_owned(),
             node_network_supernet: "10.0.0.0/16".to_owned(),
             node_tenant_subnet_prefix: DEFAULT_TENANT_PREFIX,
             machine_port_forwarder: None,

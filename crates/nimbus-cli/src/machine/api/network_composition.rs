@@ -11,10 +11,9 @@ use std::sync::Arc;
 use nimbus_core::Cidr;
 use nimbus_machine::{MachineBootAuthorityEvidence, MachineForwarderAuthority};
 use nimbus_network::{LocalNetworkManager, LocalNetworkManagerError, NetworkCapabilityRegistry};
-use nimbus_sandbox::backends::OciNetworkProcess;
-use nimbus_sandbox_container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, OciMachinePortForwarderConfig,
-};
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciNetworkProcess;
 
 use nimbus::Error;
 

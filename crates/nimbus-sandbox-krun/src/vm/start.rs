@@ -513,7 +513,7 @@ impl KrunSandboxBackend {
         #[cfg(test)]
         if network_config.network_plan.is_none() {
             network_config.network_plan = Some(
-                nimbus_sandbox::backends::test_hooks::legacy_start_attachment_network_plan_fixture(
+                nimbus_sandbox_host::test_hooks::legacy_start_attachment_network_plan_fixture(
                     &manifest.spec,
                     &manifest.handle.id,
                     "krun-coarse-start",
@@ -643,7 +643,7 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         spec: &SandboxSpec,
     ) -> Result<EgressProxyAssignment> {
-        nimbus_sandbox::backends::oci::egress::allocate_egress_proxy(
+        nimbus_sandbox_host::egress::allocate_egress_proxy(
             network_config,
             &self.port_lease_coordinator(),
             &spec.tenant_id,

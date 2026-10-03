@@ -6,7 +6,7 @@ use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS
 use nimbus_network::NetworkSegmentAllocator;
 
 use super::{env_from_config, support::*};
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentBackendKind, OciSegmentAllocator, RecordingSegmentAllocator,
     SegmentAllocatorOperation, allocate_container_ips, oci_attachment_plan,
 };
@@ -24,7 +24,7 @@ fn launch_network_config_denies_direct_bridge_egress() {
         .expect("network config should resolve");
     assert_eq!(
         network_config.direct_egress,
-        nimbus_sandbox::backends::oci::network::OciNetworkDirectEgress::Deny,
+        nimbus_sandbox_host::network::OciNetworkDirectEgress::Deny,
         "krun VMMs must run inside a deny-by-default bridge with no ambient egress route"
     );
     assert_eq!(
@@ -238,13 +238,12 @@ fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
 
     let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp("extra", 15000, 8080));
     let sandbox_id = SandboxId::new("egress-port-order");
-    let reservation_claim =
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
-            .expect("published binding launch claim should mint");
+    let reservation_claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
+        .expect("published binding launch claim should mint");
     backend
         .port_lease_coordinator()
         .reserve_launch_ports_for_sandbox(
-            nimbus_sandbox::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
+            nimbus_sandbox_host::port_lifecycle::SandboxLaunchPortPlan::new(
                 &spec.tenant_id,
                 &sandbox_id,
                 &spec.port_bindings,

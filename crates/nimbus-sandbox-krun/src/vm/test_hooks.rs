@@ -3,14 +3,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAttachAuthority, FixedOciEgressPinProvider,
-};
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxExecutionTeardownCommand, SandboxNetworkTeardownCommand,
     SandboxOwnerSpec, SandboxProcessSpec, SandboxProvisionNetworkPlan, SandboxRootSpec,
     SandboxSpec, SandboxStatus,
 };
+use nimbus_sandbox_host::network::{AttachmentAttachAuthority, FixedOciEgressPinProvider};
 
 use super::teardown::state::KrunStopProgress;
 use super::{KrunLaunchAuthority, KrunSandboxBackend, KrunSandboxBackendConfig};

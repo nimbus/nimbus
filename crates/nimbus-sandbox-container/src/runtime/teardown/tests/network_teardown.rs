@@ -8,7 +8,6 @@ use std::time::Duration;
 use nimbus_network::{NetworkCapabilitySourceDigest, NetworkResourcePhase, PortLeasePhase};
 
 use super::*;
-use crate::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use crate::runtime::machine_port_publication::{
     MachinePortPublicationAction, MachinePortPublicationCheckpoint, MachinePortPublicationObserver,
 };
@@ -26,6 +25,7 @@ use nimbus_sandbox::{
     SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
     SandboxNetworkTeardownOperation, SandboxStatus,
 };
+use nimbus_sandbox_host::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 
 #[path = "network_teardown/fresh_process.rs"]
 mod fresh_process;
@@ -38,7 +38,7 @@ enum NetworkContenderRole {
 
 struct ForwardedNetworkFixture {
     fixture: TeardownFixture,
-    forwarder: nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig,
+    forwarder: nimbus_sandbox_host::network::OciMachinePortForwarderConfig,
     forwarder_listener: Option<TcpListener>,
 }
 
@@ -324,7 +324,7 @@ fn execute_forwarded_network(
     backend: &ContainerSandboxBackend,
     command: &SandboxNetworkTeardownCommand,
     prior_observation: &ProviderCommandObservation,
-    forwarder: &nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig,
+    forwarder: &nimbus_sandbox_host::network::OciMachinePortForwarderConfig,
 ) -> ProviderCommandObservation {
     let journal = backend
         .attempt_idempotency_journal()
@@ -414,9 +414,9 @@ fn claim_forwarded_detach_for_inspection(
 fn persist_forwarded_detach_phase(
     forwarded: &ForwardedNetworkFixture,
     command: &SandboxNetworkTeardownCommand,
-    target: nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase,
+    target: nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase,
 ) {
-    use nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase;
+    use nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase;
 
     let mut manifest = forwarded.fixture.manifest();
     for phase in [
@@ -665,7 +665,7 @@ fn forwarded_container_attachment_teardown_accepts_composite_stop_then_releases_
         .expect("terminal forwarded manifest should exist");
     assert_eq!(
         terminal.network_teardown.release_phase(),
-        nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+        nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
     );
     let released_ports = reopened
         .port_lease_coordinator_for_manifest(&terminal)
@@ -712,7 +712,7 @@ fn forwarded_container_attachment_teardown_zero_listener_still_detaches_and_rele
     assert!(terminal.port_leases.is_empty());
     assert_eq!(
         terminal.network_teardown.release_phase(),
-        nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+        nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
     );
 }
 
@@ -765,7 +765,7 @@ fn forwarded_container_attachment_teardown_claimed_inspection_is_read_only_befor
 
 #[test]
 fn forwarded_container_attachment_teardown_early_present_inspection_is_in_progress_and_read_only() {
-    use nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase;
+    use nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase;
 
     let forwarded = ForwardedNetworkFixture::attached("early-present-inspection", true);
     let (composite_stop, detach, claimed) =
@@ -796,7 +796,7 @@ fn forwarded_container_attachment_teardown_early_present_inspection_is_in_progre
 
 #[test]
 fn forwarded_container_attachment_teardown_late_present_inspection_is_ambiguous_and_read_only() {
-    use nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase;
+    use nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase;
 
     let forwarded = ForwardedNetworkFixture::attached("late-present-inspection", true);
     let (composite_stop, detach, claimed) =
@@ -828,7 +828,7 @@ fn forwarded_container_attachment_teardown_late_present_inspection_is_ambiguous_
 #[test]
 fn forwarded_container_attachment_teardown_partial_publication_inspection_is_ambiguous_and_read_only()
  {
-    use nimbus_sandbox::backends::oci::network::HostManagedAttachmentDetachPhase;
+    use nimbus_sandbox_host::network::HostManagedAttachmentDetachPhase;
 
     let forwarded = ForwardedNetworkFixture::attached("partial-publication-inspection", true);
     let (composite_stop, detach, claimed) =
@@ -1053,7 +1053,7 @@ fn container_network_teardown_detaches_retained_then_releases_in_order() {
     let terminal = fixture.manifest();
     assert_eq!(
         terminal.network_teardown.release_phase(),
-        nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+        nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
     );
     let attachment = fixture
         .backend
@@ -1142,8 +1142,8 @@ fn container_network_detach_recovers_pep_after_process_owner_death() {
     assert!(record.active_lifetime().is_none());
     assert!(record.confirmed_stopped_binding().is_some());
     assert!(
-        !nimbus_sandbox::backends::oci::egress::egress_trust_anchor_path(
-            &nimbus_sandbox::backends::oci::egress::egress_trust_anchor_root(
+        !nimbus_sandbox_host::egress::egress_trust_anchor_path(
+            &nimbus_sandbox_host::egress::egress_trust_anchor_root(
                 &reopened.config.network_state_root,
             ),
             &manifest.spec.tenant_id,
@@ -1209,7 +1209,7 @@ fn container_network_two_thread_contenders_have_one_detach_and_release_winner() 
     let released = fixture.manifest();
     assert_eq!(
         released.network_teardown.release_phase(),
-        nimbus_sandbox::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+        nimbus_sandbox_host::network::HostManagedAttachmentReleasePhase::Released
     );
     assert_eq!(runtime_authority(&released), stopped_runtime);
     assert!(runtime.signals().is_empty());

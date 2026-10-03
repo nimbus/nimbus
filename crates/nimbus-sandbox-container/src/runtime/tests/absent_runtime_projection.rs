@@ -23,7 +23,7 @@ fn explicitly_absent_container_runtime_without_receipts_withdraws_ready_projecti
         .manifest;
     manifest.launch_reservation_claim = None;
     manifest.creator_handoff = ContainerCreatorHandoffState::RuntimeObserved {
-        receipt: crate::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
             "runtime-observed-fixture",
         ),
     };

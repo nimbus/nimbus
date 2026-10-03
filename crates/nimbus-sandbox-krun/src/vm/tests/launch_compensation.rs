@@ -10,11 +10,11 @@ use nimbus_network::{
 use std::sync::Arc;
 
 use nimbus_sandbox::SandboxError;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentAttachAuthority, OciSegmentAllocator, RecordingSegmentAllocator,
     default_network_attachment_id,
 };
-use nimbus_sandbox::backends::oci::port_lease::{OciPortProvider, claim_bind_attempts};
+use nimbus_sandbox_host::port_lease::{OciPortProvider, claim_bind_attempts};
 
 mod restart_fencing;
 
@@ -595,9 +595,9 @@ fn failed_restart_teardown_retains_exact_active_netavark_evidence() {
         .clone()
         .expect("fixture should retain network config");
     setup_config.netavark_path = PathBuf::from("/usr/bin/true");
-    nimbus_sandbox::backends::oci::network::setup_container_network(
+    nimbus_sandbox_host::network::setup_container_network(
         &backend.ipam_authority,
-        &nimbus_sandbox::backends::oci::network::OciNetavarkOperation::new(
+        &nimbus_sandbox_host::network::OciNetavarkOperation::new(
             &manifest.network_layout,
             &setup_config,
             &manifest.handle.id,
@@ -699,9 +699,9 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         .clone()
         .expect("fixture should retain network config");
     setup_config.netavark_path = PathBuf::from("/usr/bin/true");
-    nimbus_sandbox::backends::oci::network::setup_container_network(
+    nimbus_sandbox_host::network::setup_container_network(
         &backend.ipam_authority,
-        &nimbus_sandbox::backends::oci::network::OciNetavarkOperation::new(
+        &nimbus_sandbox_host::network::OciNetavarkOperation::new(
             &manifest.network_layout,
             &setup_config,
             &manifest.handle.id,
@@ -1582,7 +1582,7 @@ fn ambiguous_placement_failure_retains_reserved_authority_for_restart_cleanup() 
     assert!(
         recorder.operations().iter().any(|operation| matches!(
             operation,
-            nimbus_sandbox::backends::oci::network::SegmentAllocatorOperation::ReleaseReservedAttachment(
+            nimbus_sandbox_host::network::SegmentAllocatorOperation::ReleaseReservedAttachment(
                 tenant,
                 attachment
             ) if tenant == &spec.tenant_id
