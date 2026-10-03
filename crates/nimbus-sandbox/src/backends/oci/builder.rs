@@ -17,7 +17,7 @@ const DEFAULT_SHELL: &[&str] = &["/bin/sh", "-c"];
 mod artifact;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OciDockerfileBuilder {
+pub struct OciDockerfileBuilder {
     materializer: OciImageMaterializer,
 }
 
@@ -29,7 +29,7 @@ impl OciDockerfileBuilder {
         }
     }
 
-    pub(crate) fn for_tenant_sandbox(
+    pub fn for_tenant_sandbox(
         state_root: impl Into<PathBuf>,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -41,7 +41,7 @@ impl OciDockerfileBuilder {
         }
     }
 
-    pub(crate) fn prepare_built_image_launch(
+    pub fn prepare_built_image_launch(
         &self,
         sandbox_id: &SandboxId,
         image_name: &str,

@@ -116,7 +116,7 @@ pub enum SandboxAttachmentRegistrationError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SandboxAttachmentRegistrationKind {
+pub enum SandboxAttachmentRegistrationKind {
     Container,
     Krun,
 }
@@ -161,7 +161,7 @@ fn host_managed_lifecycle_capabilities() -> NetworkLifecycleCapabilitySet {
     ])
 }
 
-pub(crate) fn host_managed_attachment_provider_id(
+pub fn host_managed_attachment_provider_id(
     kind: SandboxAttachmentRegistrationKind,
 ) -> NetworkProviderId {
     NetworkProviderId::for_registration_key(kind.provider_key())
@@ -169,7 +169,7 @@ pub(crate) fn host_managed_attachment_provider_id(
 
 /// Provider-neutral desired requirements corresponding to one admitted
 /// host-managed attachment registration.
-pub(crate) fn host_managed_attachment_requirements(
+pub fn host_managed_attachment_requirements(
     kind: SandboxAttachmentRegistrationKind,
 ) -> NetworkCapabilityRequirements {
     NetworkCapabilityRequirements::new(
@@ -185,7 +185,7 @@ pub(crate) fn host_managed_attachment_requirements(
     )
 }
 
-pub(crate) fn host_managed_attachment_registration(
+pub fn host_managed_attachment_registration(
     kind: SandboxAttachmentRegistrationKind,
     execute_mode: bool,
     machine_port_forwarder_configured: bool,

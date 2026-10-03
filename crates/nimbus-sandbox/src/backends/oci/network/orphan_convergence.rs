@@ -27,7 +27,7 @@ use crate::instance::SandboxId;
 
 /// Immutable identity offered only after exact quarantine is durable.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OciOrphanCleanupSubject {
+pub struct OciOrphanCleanupSubject {
     tenant_id: TenantId,
     sandbox_id: SandboxId,
     attachment_id: NetworkAttachmentId,
@@ -40,46 +40,46 @@ pub(crate) struct OciOrphanCleanupSubject {
 
 /// Closed cleanup work selected only from one already fenced evidence row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OciOrphanCleanupKind {
+pub enum OciOrphanCleanupKind {
     NeverEffected,
     Effectful,
     TerminalPublication,
 }
 
 impl OciOrphanCleanupSubject {
-    pub(crate) fn tenant_id(&self) -> &TenantId {
+    pub fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
     }
 
-    pub(crate) fn sandbox_id(&self) -> &SandboxId {
+    pub fn sandbox_id(&self) -> &SandboxId {
         &self.sandbox_id
     }
 
-    pub(crate) fn attachment_id(&self) -> &NetworkAttachmentId {
+    pub fn attachment_id(&self) -> &NetworkAttachmentId {
         &self.attachment_id
     }
 
-    pub(crate) fn segment_id(&self) -> &NetworkSegmentId {
+    pub fn segment_id(&self) -> &NetworkSegmentId {
         &self.segment_id
     }
 
-    pub(crate) fn reservation_claim(&self) -> &NetworkReservationClaim {
+    pub fn reservation_claim(&self) -> &NetworkReservationClaim {
         &self.reservation_claim
     }
 
-    pub(crate) fn desired(&self) -> Option<&DurableNetworkAttachmentState> {
+    pub fn desired(&self) -> Option<&DurableNetworkAttachmentState> {
         self.desired.as_ref()
     }
 
-    pub(crate) fn backend(&self) -> AttachmentBackendKind {
+    pub fn backend(&self) -> AttachmentBackendKind {
         self.backend
     }
 
-    pub(crate) fn kind(&self) -> OciOrphanCleanupKind {
+    pub fn kind(&self) -> OciOrphanCleanupKind {
         self.kind
     }
 
-    pub(crate) fn authenticates_network_config(&self, config: &OciNetworkConfig) -> bool {
+    pub fn authenticates_network_config(&self, config: &OciNetworkConfig) -> bool {
         config.attachment_id == self.attachment_id
             && config.reservation_claim == self.reservation_claim
             && config.segment_id == self.segment_id.as_str()
@@ -95,7 +95,7 @@ impl OciOrphanCleanupSubject {
 
 /// Result from one backend-owned cleanup-context adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OciOrphanCleanupDisposition {
+pub enum OciOrphanCleanupDisposition {
     /// Exact context is incomplete or still live. Keep every quarantine fence.
     Retain,
     /// The existing provider/IPAM/port/segment lifecycle reached terminal state.
@@ -104,7 +104,7 @@ pub(crate) enum OciOrphanCleanupDisposition {
 
 /// Small backend capability for authenticating cleanup context and composing
 /// the existing OCI lifecycle. Implementations cannot select their subject.
-pub(crate) trait OciOrphanCleanupContext {
+pub trait OciOrphanCleanupContext {
     fn converge_quarantined_orphan(
         &self,
         subject: &OciOrphanCleanupSubject,

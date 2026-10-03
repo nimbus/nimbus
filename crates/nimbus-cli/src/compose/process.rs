@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nimbus::{Error, SandboxStatus, TenantId};
-use nimbus_sandbox::backends::krun::KrunSandboxStateView;
+use nimbus_sandbox_krun::KrunSandboxStateView;
 use serde::Serialize;
 
 use crate::compose::discovery::ResolvedComposeSelection;

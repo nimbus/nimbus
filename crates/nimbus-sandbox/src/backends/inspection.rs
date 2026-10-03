@@ -3,13 +3,13 @@ use crate::inspection::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RestartAssessmentInput {
-    pub(crate) exit_code: i32,
-    pub(crate) shutdown_requested: bool,
-    pub(crate) blocker: Option<SandboxRestartBlocker>,
+pub struct RestartAssessmentInput {
+    pub exit_code: i32,
+    pub shutdown_requested: bool,
+    pub blocker: Option<SandboxRestartBlocker>,
 }
 
-pub(crate) fn assess_restart(input: RestartAssessmentInput) -> SandboxRestartAssessment {
+pub fn assess_restart(input: RestartAssessmentInput) -> SandboxRestartAssessment {
     if input.shutdown_requested {
         return SandboxRestartAssessment::Ineligible {
             reason: SandboxRestartIneligibility::ShutdownRequested,

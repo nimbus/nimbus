@@ -20,7 +20,7 @@ use super::ipam::{
 use super::{OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator};
 
 /// Immutable workload evidence authenticated before terminal publication.
-pub(crate) struct TerminalNetworkFinalityEvidence<'a> {
+pub struct TerminalNetworkFinalityEvidence<'a> {
     tenant_id: &'a TenantId,
     sandbox_id: &'a SandboxId,
     layout: &'a OciNetworkLayout,
@@ -30,7 +30,7 @@ pub(crate) struct TerminalNetworkFinalityEvidence<'a> {
 }
 
 impl<'a> TerminalNetworkFinalityEvidence<'a> {
-    pub(crate) fn new(
+    pub fn new(
         tenant_id: &'a TenantId,
         sandbox_id: &'a SandboxId,
         layout: &'a OciNetworkLayout,
@@ -50,7 +50,7 @@ impl<'a> TerminalNetworkFinalityEvidence<'a> {
 }
 
 /// Exact authority set that must be terminal before workload terminal status.
-pub(crate) struct TerminalNetworkAuthoritySet<'a> {
+pub struct TerminalNetworkAuthoritySet<'a> {
     allocator: &'a OciSegmentAllocator,
     ipam_authority: &'a OciIpamAuthority,
     port_authority: &'a LocalPortLeaseAuthority,
@@ -58,7 +58,7 @@ pub(crate) struct TerminalNetworkAuthoritySet<'a> {
 }
 
 impl<'a> TerminalNetworkAuthoritySet<'a> {
-    pub(crate) fn new(
+    pub fn new(
         allocator: &'a OciSegmentAllocator,
         ipam_authority: &'a OciIpamAuthority,
         port_authority: &'a LocalPortLeaseAuthority,
@@ -77,7 +77,7 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
     /// This method is deliberately observation-only. Cleanup owners must first
     /// drive their own state machines to terminal evidence, then retry manifest
     /// publication against the same immutable identities and fences.
-    pub(crate) fn require_released(&self) -> Result<()> {
+    pub fn require_released(&self) -> Result<()> {
         for request in self
             .evidence
             .published_port_leases

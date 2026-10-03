@@ -258,7 +258,7 @@ impl SandboxProcessSpec {
     }
 }
 
-pub(crate) fn resolve_process_without_image_defaults(
+pub fn resolve_process_without_image_defaults(
     process: &SandboxProcessSpec,
 ) -> Result<SandboxProcessSpec> {
     let mut resolved = process.clone();

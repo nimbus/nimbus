@@ -40,7 +40,7 @@ impl SandboxExecutionAttemptId {
         &self.0
     }
 
-    pub(crate) fn provider_initial() -> Self {
+    pub fn provider_initial() -> Self {
         Self(format!(
             "sandbox-initial-{}",
             ulid::Ulid::new().to_string().to_ascii_lowercase()

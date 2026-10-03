@@ -29,8 +29,8 @@ mod attempt_annotation;
 #[path = "creator/recovery.rs"]
 mod recovery;
 
-pub(crate) use attempt_annotation::publish_creator_attempt_annotation;
-pub(crate) use recovery::{
+pub use attempt_annotation::publish_creator_attempt_annotation;
+pub use recovery::{
     CreatorAttemptReceipt, CreatorContainmentObservation, CreatorQuiescenceProof,
     confirm_dead_conmon_receipt, observe_creator_containment,
 };
@@ -50,7 +50,7 @@ enum CreatorContainmentPhase {
 }
 
 /// Exact process ownership for one live conmon creator attempt.
-pub(crate) struct OwnedConmonCreator {
+pub struct OwnedConmonCreator {
     child: Child,
     /// Exact provider receipt prepared before this creator attempt. Cleanup
     /// may consume only this path; accepting an arbitrary dead-PID file would
@@ -73,8 +73,8 @@ pub(crate) struct OwnedConmonCreator {
 }
 
 impl OwnedConmonCreator {
-    #[cfg(test)]
-    pub(crate) fn spawn(command: &CommandSpec) -> Result<Self> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn spawn(command: &CommandSpec) -> Result<Self> {
         let receipt =
             std::env::temp_dir().join(format!("nimbus-conmon-test-receipt-{}", ulid::Ulid::new()));
         Self::spawn_with_pid_receipt(command, &receipt)
@@ -84,7 +84,7 @@ impl OwnedConmonCreator {
     ///
     /// Production creator orchestration must use
     /// [`Self::spawn_gated_with_pid_receipt`].
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn spawn_with_pid_receipt(
         command: &CommandSpec,
         conmon_pidfile: &Path,
@@ -98,7 +98,7 @@ impl OwnedConmonCreator {
     /// then call [`Self::release_after_receipt_persisted`]. If the Nimbus
     /// process exits first, pipe closure makes the wrapper exit without
     /// executing the provider command.
-    pub(crate) fn spawn_gated_with_pid_receipt(
+    pub fn spawn_gated_with_pid_receipt(
         command: &CommandSpec,
         conmon_pidfile: &Path,
     ) -> Result<Self> {
@@ -200,7 +200,7 @@ impl OwnedConmonCreator {
     }
 
     /// Release the exact creator only after its durable pending receipt exists.
-    pub(crate) fn release_after_receipt_persisted(&mut self) -> Result<()> {
+    pub fn release_after_receipt_persisted(&mut self) -> Result<()> {
         #[cfg(unix)]
         {
             let gate = self
@@ -233,7 +233,7 @@ impl OwnedConmonCreator {
     /// No conmon receipt is required: the wrapper could not execute the
     /// provider command, so authenticated containment quiescence is exact
     /// no-effect evidence for this attempt.
-    pub(crate) fn cancel_before_gate_release_and_confirm_quiesced(&mut self) -> Result<()> {
+    pub fn cancel_before_gate_release_and_confirm_quiesced(&mut self) -> Result<()> {
         #[cfg(unix)]
         if self.launch_gate.is_none() {
             return Err(SandboxError::OperationFailed {
@@ -250,7 +250,7 @@ impl OwnedConmonCreator {
 
     /// Capture the stable OS birth and containment identity for this exact
     /// retained child before its logical attempt is published as pending.
-    pub(crate) fn attempt_receipt(&self, attempt_id: &str) -> Result<CreatorAttemptReceipt> {
+    pub fn attempt_receipt(&self, attempt_id: &str) -> Result<CreatorAttemptReceipt> {
         recovery::capture_creator_attempt(
             attempt_id,
             self.child.id(),
@@ -261,7 +261,7 @@ impl OwnedConmonCreator {
 
     /// Cancel the exact creator containment, reap it, and authenticate the
     /// daemon receipt before cleanup authority can advance.
-    pub(crate) fn cancel_and_confirm_quiesced(&mut self) -> Result<()> {
+    pub fn cancel_and_confirm_quiesced(&mut self) -> Result<()> {
         let conmon_pidfile = self.conmon_pidfile.clone();
         let mut errors = Vec::new();
         let containment_confirmed = match self.cancel_containment_and_reap() {
@@ -316,7 +316,7 @@ impl OwnedConmonCreator {
     }
 
     #[cfg(unix)]
-    pub(crate) fn cancel_containment_and_reap(&mut self) -> Result<()> {
+    pub fn cancel_containment_and_reap(&mut self) -> Result<()> {
         if self.containment_phase == CreatorContainmentPhase::Quiesced {
             return Ok(());
         }
@@ -395,7 +395,7 @@ impl OwnedConmonCreator {
         }
     }
 
-    pub(crate) fn reap_after_runtime_observed(&mut self, timeout: Duration) -> Result<()> {
+    pub fn reap_after_runtime_observed(&mut self, timeout: Duration) -> Result<()> {
         let status = self.reap_child_until(timeout, "runtime-observed sandbox creator")?;
         let mut errors = Vec::new();
         if !status.success() {

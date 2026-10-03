@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use nimbus::Error;
-use nimbus_sandbox::backends::krun::KrunSandboxStateView;
+use nimbus_sandbox_krun::KrunSandboxStateView;
 
 use crate::cli_ux;
 use crate::compose::discovery::ResolvedComposeSelection;

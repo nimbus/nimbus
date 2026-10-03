@@ -1,7 +1,7 @@
 //! Durable PEP assignment shape and bridge-gateway registration composition.
 
 use std::net::{IpAddr, SocketAddr};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::num::NonZeroU16;
 
 use nimbus_core::TenantId;
@@ -14,11 +14,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::backends::oci::network::{OciNetworkConfig, bridge_gateway_addr};
 use crate::backends::oci::port_lease::target_for_ip;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::backends::oci::port_lease::{
     OciPortLeaseIntent, port_lease_request, reserve_provider_assigned,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::backends::oci::port_lifecycle::{InternalListenerReservation, ReservedInternalListener};
 use crate::error::{Result, SandboxError};
@@ -35,14 +35,14 @@ use crate::backends::capabilities::SANDBOX_EGRESS_PEP_PROVIDER_KEY;
 /// Every sandbox backend persists this same shape and renders the guest-facing
 /// proxy URL through [`EgressProxyAssignment::proxy_url`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct EgressProxyAssignment {
-    pub(crate) host: String,
-    pub(crate) port: u16,
-    pub(crate) port_lease: PortLeaseRequest,
+pub struct EgressProxyAssignment {
+    pub host: String,
+    pub port: u16,
+    pub port_lease: PortLeaseRequest,
 }
 
 impl EgressProxyAssignment {
-    pub(crate) fn compiled_plan_members(
+    pub fn compiled_plan_members(
         &self,
         plan: &SandboxProvisionNetworkPlan,
     ) -> Vec<PortLeaseRequest> {
@@ -53,7 +53,7 @@ impl EgressProxyAssignment {
 
     /// Authenticate this concrete assignment against the compiler-issued PEP
     /// listener identity and network-plan fence.
-    pub(crate) fn require_compiled_plan_authority(
+    pub fn require_compiled_plan_authority(
         &self,
         tenant_id: &TenantId,
         plan: &SandboxProvisionNetworkPlan,
@@ -99,8 +99,8 @@ impl EgressProxyAssignment {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_test(host: &str, port: u16) -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test(host: &str, port: u16) -> Self {
         let tenant_id = TenantId::new("egress-assignment-test").expect("static tenant id");
         let sandbox_id = SandboxId::new(format!("egress-assignment-{port}"));
         let ip = host
@@ -128,7 +128,7 @@ impl EgressProxyAssignment {
 
     /// Bind address the PEP listens on. The host must be an IP literal (the
     /// bridge gateway), so a non-IP value fails closed as an invalid spec.
-    pub(crate) fn bind_addr(&self) -> Result<SocketAddr> {
+    pub fn bind_addr(&self) -> Result<SocketAddr> {
         let host = self
             .host
             .parse::<IpAddr>()
@@ -140,14 +140,14 @@ impl EgressProxyAssignment {
 
     /// Container-shape proxy URL the guest env is pointed at. Rendering through
     /// [`SocketAddr`] brackets IPv6 gateways correctly.
-    pub(crate) fn proxy_url(&self) -> Result<String> {
+    pub fn proxy_url(&self) -> Result<String> {
         Ok(format!("http://{}", self.bind_addr()?))
     }
 }
 
 /// Assign a test PEP on the bridge gateway through the legacy test manager.
-#[cfg(test)]
-pub(crate) fn allocate_egress_proxy(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn allocate_egress_proxy(
     network_config: &OciNetworkConfig,
     port_lease_coordinator: &OciPortLeaseCoordinator,
     tenant_id: &TenantId,
@@ -169,7 +169,7 @@ pub(crate) fn allocate_egress_proxy(
 }
 
 /// Portable egress-listener intent to include in one sandbox launch batch.
-pub(crate) fn egress_listener_reservation(
+pub fn egress_listener_reservation(
     network_config: &OciNetworkConfig,
 ) -> Result<InternalListenerReservation> {
     let gateway = bridge_gateway_addr(network_config)?;
@@ -181,7 +181,7 @@ pub(crate) fn egress_listener_reservation(
 }
 
 /// Convert one atomically reserved internal listener into persisted PEP state.
-pub(crate) fn egress_proxy_assignment(
+pub fn egress_proxy_assignment(
     network_config: &OciNetworkConfig,
     reservation: ReservedInternalListener,
 ) -> Result<EgressProxyAssignment> {
@@ -194,8 +194,8 @@ pub(crate) fn egress_proxy_assignment(
 
 /// Build an exact persisted assignment from a real reserved listener while
 /// allowing a loopback bind on non-Linux test hosts.
-#[cfg(test)]
-pub(crate) fn egress_proxy_assignment_for_test(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn egress_proxy_assignment_for_test(
     host: IpAddr,
     reservation: ReservedInternalListener,
 ) -> EgressProxyAssignment {
@@ -207,7 +207,7 @@ pub(crate) fn egress_proxy_assignment_for_test(
 }
 
 /// Start the PEP or authenticate the already-running exact assignment.
-pub(crate) fn ensure_egress_proxy_running(
+pub fn ensure_egress_proxy_running(
     registry: &EgressProxyRegistry,
     tenant_id: &TenantId,
     id: &SandboxId,
@@ -224,7 +224,7 @@ pub(crate) fn ensure_egress_proxy_running(
     )
 }
 
-pub(crate) fn ensure_egress_proxy_running_with_release_authority(
+pub fn ensure_egress_proxy_running_with_release_authority(
     registry: &EgressProxyRegistry,
     tenant_id: &TenantId,
     id: &SandboxId,
@@ -238,7 +238,7 @@ pub(crate) fn ensure_egress_proxy_running_with_release_authority(
         });
     };
     let bind_addr = assignment.bind_addr()?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let test_port_lease = if assignment.port == 0 {
         let request = port_lease_request(
             tenant_id,
@@ -257,9 +257,9 @@ pub(crate) fn ensure_egress_proxy_running_with_release_authority(
     } else {
         None
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let port_lease = test_port_lease.as_ref().unwrap_or(&assignment.port_lease);
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     let port_lease = &assignment.port_lease;
     registry.ensure_running_with_lease_and_release_authority(
         tenant_id,

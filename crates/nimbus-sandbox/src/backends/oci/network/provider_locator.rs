@@ -22,7 +22,7 @@ const ARTIFACT_REALM_PREFIX: &str = "oci-artifact-realm-v2-sha256:";
 /// OCI attachment provider family that owns the located artifacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum OciAttachmentProviderKind {
+pub enum OciAttachmentProviderKind {
     Container,
     Krun,
 }

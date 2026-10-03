@@ -9,42 +9,42 @@ use serde::Serialize;
 
 use crate::instance::SandboxStatus;
 
-pub(crate) const DEFAULT_READINESS_PROBE_TIMEOUT: Duration = Duration::from_millis(1_000);
+pub const DEFAULT_READINESS_PROBE_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub(crate) enum ReadinessProbeTarget {
+pub enum ReadinessProbeTarget {
     Tcp(SocketAddr),
     Http(SocketAddr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) enum ReadinessProbeObservation {
+pub enum ReadinessProbeObservation {
     Ready,
     NotReady { reason: String },
     Unknown { reason: String },
 }
 
-pub(crate) trait ReadinessProbeProvider: Send + Sync {
+pub trait ReadinessProbeProvider: Send + Sync {
     fn probe(&self, target: ReadinessProbeTarget, timeout: Duration) -> ReadinessProbeObservation;
 }
 
 /// Exact application-readiness provider evidence used by one status
 /// projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct ApplicationReadinessEvidence {
+pub struct ApplicationReadinessEvidence {
     target: Option<ReadinessProbeTarget>,
     observation: Option<ReadinessProbeObservation>,
     status: SandboxStatus,
 }
 
 impl ApplicationReadinessEvidence {
-    pub(crate) fn status(&self) -> SandboxStatus {
+    pub fn status(&self) -> SandboxStatus {
         self.status
     }
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct SocketReadinessProbeProvider;
+pub struct SocketReadinessProbeProvider;
 
 impl ReadinessProbeProvider for SocketReadinessProbeProvider {
     fn probe(&self, target: ReadinessProbeTarget, timeout: Duration) -> ReadinessProbeObservation {
@@ -60,8 +60,8 @@ impl ReadinessProbeProvider for SocketReadinessProbeProvider {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn application_readiness_status(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn application_readiness_status(
     current: SandboxStatus,
     endpoints: &[PublishedEndpoint],
     timeout: Duration,
@@ -70,7 +70,7 @@ pub(crate) fn application_readiness_status(
     inspect_application_readiness(current, endpoints, timeout, provider).status()
 }
 
-pub(crate) fn inspect_application_readiness(
+pub fn inspect_application_readiness(
     current: SandboxStatus,
     endpoints: &[PublishedEndpoint],
     timeout: Duration,
@@ -96,9 +96,7 @@ pub(crate) fn inspect_application_readiness(
     }
 }
 
-pub(crate) fn readiness_probe_target(
-    endpoints: &[PublishedEndpoint],
-) -> Option<ReadinessProbeTarget> {
+pub fn readiness_probe_target(endpoints: &[PublishedEndpoint]) -> Option<ReadinessProbeTarget> {
     endpoints
         .iter()
         .find_map(|endpoint| match endpoint.protocol {
@@ -205,42 +203,42 @@ fn unknown(reason: impl Into<String>) -> ReadinessProbeObservation {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug)]
-pub(crate) struct FixedReadinessProbeProvider {
+pub struct FixedReadinessProbeProvider {
     observation: std::sync::Mutex<ReadinessProbeObservation>,
     calls: std::sync::Mutex<Vec<(ReadinessProbeTarget, Duration)>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl FixedReadinessProbeProvider {
-    pub(crate) fn new(observation: ReadinessProbeObservation) -> Self {
+    pub fn new(observation: ReadinessProbeObservation) -> Self {
         Self {
             observation: std::sync::Mutex::new(observation),
             calls: std::sync::Mutex::new(Vec::new()),
         }
     }
 
-    pub(crate) fn ready() -> Self {
+    pub fn ready() -> Self {
         Self::new(ReadinessProbeObservation::Ready)
     }
 
-    pub(crate) fn not_ready(reason: impl Into<String>) -> Self {
+    pub fn not_ready(reason: impl Into<String>) -> Self {
         Self::new(not_ready(reason))
     }
 
-    pub(crate) fn unknown(reason: impl Into<String>) -> Self {
+    pub fn unknown(reason: impl Into<String>) -> Self {
         Self::new(unknown(reason))
     }
 
-    pub(crate) fn set_observation(&self, observation: ReadinessProbeObservation) {
+    pub fn set_observation(&self, observation: ReadinessProbeObservation) {
         *self
             .observation
             .lock()
             .expect("fixed readiness observation lock should not be poisoned") = observation;
     }
 
-    pub(crate) fn calls(&self) -> Vec<(ReadinessProbeTarget, Duration)> {
+    pub fn calls(&self) -> Vec<(ReadinessProbeTarget, Duration)> {
         self.calls
             .lock()
             .expect("fixed readiness calls lock should not be poisoned")
@@ -248,7 +246,7 @@ impl FixedReadinessProbeProvider {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl ReadinessProbeProvider for FixedReadinessProbeProvider {
     fn probe(&self, target: ReadinessProbeTarget, timeout: Duration) -> ReadinessProbeObservation {
         self.calls

@@ -8,7 +8,7 @@ use nimbus::{
     TenantId,
 };
 use nimbus_network::NetworkAttachmentProviderRegistration;
-use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
+use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxStateView};
 
 use crate::compose::discovery::ResolvedComposeSelection;
 #[cfg(test)]

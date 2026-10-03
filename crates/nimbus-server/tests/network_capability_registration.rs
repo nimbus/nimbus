@@ -16,7 +16,7 @@ use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 #[cfg(target_os = "linux")]
-use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
+use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_server::nimbus_owned_workload_ingress_registration;
 #[cfg(target_os = "linux")]
 use tempfile::tempdir;

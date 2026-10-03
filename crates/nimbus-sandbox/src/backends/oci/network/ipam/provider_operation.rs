@@ -203,8 +203,8 @@ pub(in crate::backends::oci::network) fn begin_netavark_setup_execution(
     })
 }
 
-#[cfg(test)]
-pub(crate) fn begin_netavark_setup_without_ack_for_test(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn begin_netavark_setup_without_ack_for_test(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,

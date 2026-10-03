@@ -10,7 +10,7 @@ type NetavarkLifetimeKey = (TenantId, SandboxId);
 
 /// Process-local ownership of active Netavark publication lease generations.
 #[derive(Clone, Default)]
-pub(crate) struct NetavarkPortLifetimeRegistry {
+pub struct NetavarkPortLifetimeRegistry {
     inner: Arc<Mutex<HashMap<NetavarkLifetimeKey, OciPortBindLifetimeBatch>>>,
 }
 
@@ -26,7 +26,7 @@ pub(crate) struct NetavarkPortCleanup {
 }
 
 impl NetavarkPortLifetimeRegistry {
-    pub(crate) fn insert(
+    pub fn insert(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -59,7 +59,7 @@ impl NetavarkPortLifetimeRegistry {
         Ok(())
     }
 
-    pub(crate) fn take(
+    pub fn take(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,

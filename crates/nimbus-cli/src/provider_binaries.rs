@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use nimbus_sandbox::backends::krun::KrunSandboxBackendConfig;
+use nimbus_sandbox_krun::KrunSandboxBackendConfig;
 
 const DEFAULT_CONTAINER_PROVIDER_BINARY_DIRS: &[&str] = &[
     "/usr/local/libexec/podman",

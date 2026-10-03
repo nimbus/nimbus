@@ -7,13 +7,13 @@ mod detached_release;
 mod progress;
 mod retained_detach;
 
-pub(crate) use detached_release::AttachmentReleaseActions;
+pub use detached_release::AttachmentReleaseActions;
 
-#[cfg(test)]
-pub(crate) use progress::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use progress::{
     HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentTeardownCheckpoint,
 };
-pub(crate) use progress::{
+pub use progress::{
     HostManagedAttachmentCommandInspection, HostManagedAttachmentCommandInspectionError,
     HostManagedAttachmentDetachPhase, HostManagedAttachmentReleasePhase,
     HostManagedAttachmentTeardownState, RetainedAttachmentPublicationEvidence,

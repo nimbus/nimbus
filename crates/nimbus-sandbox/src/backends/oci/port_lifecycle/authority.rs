@@ -24,10 +24,7 @@ impl OciPortLeaseCoordinator {
     }
 
     /// Reconstruct once at an explicitly selected direct-adapter boundary.
-    pub(crate) fn reconstruct_direct(
-        state_root: impl AsRef<Path>,
-        range: RangeInclusive<u16>,
-    ) -> Self {
+    pub fn reconstruct_direct(state_root: impl AsRef<Path>, range: RangeInclusive<u16>) -> Self {
         Self::from_reconstructed_authority("direct adapter", state_root.as_ref(), range)
     }
 
@@ -63,7 +60,7 @@ impl OciPortLeaseCoordinator {
         }
     }
 
-    pub(crate) fn authority(&self) -> Result<&LocalPortLeaseAuthority> {
+    pub fn authority(&self) -> Result<&LocalPortLeaseAuthority> {
         self.authority
             .as_ref()
             .map_err(|reason| SandboxError::OperationFailed {
@@ -71,9 +68,7 @@ impl OciPortLeaseCoordinator {
             })
     }
 
-    pub(crate) fn cloned_authority(
-        &self,
-    ) -> std::result::Result<LocalPortLeaseAuthority, Arc<str>> {
+    pub fn cloned_authority(&self) -> std::result::Result<LocalPortLeaseAuthority, Arc<str>> {
         self.authority.clone()
     }
 }

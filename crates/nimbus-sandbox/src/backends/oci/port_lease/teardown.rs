@@ -12,7 +12,7 @@ use super::{inspect_exact, port_lease_error};
 use crate::error::{Result, SandboxError};
 
 /// Convert an exact dead process-bound effect into a restart-retained slot.
-pub(crate) fn prepare_process_bound_rebind_after_owner_death(
+pub fn prepare_process_bound_rebind_after_owner_death(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
@@ -46,7 +46,7 @@ pub(crate) fn prepare_process_bound_rebind_after_owner_death(
 }
 
 /// Convert one exact dead process-bound plan member into a retained rebind slot.
-pub(crate) fn prepare_process_bound_plan_member_rebind_after_owner_death(
+pub fn prepare_process_bound_plan_member_rebind_after_owner_death(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     request: &PortLeaseRequest,
@@ -75,7 +75,7 @@ pub(crate) fn prepare_process_bound_plan_member_rebind_after_owner_death(
 }
 
 /// Fence new use before the provider effect is stopped or detached.
-pub(crate) fn withdraw(
+pub fn withdraw(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
@@ -90,7 +90,7 @@ pub(crate) fn withdraw(
 }
 
 /// Retain an exact port for rebind after this process confirmed provider stop.
-pub(crate) fn prepare_rebind_after_confirmed_stop(
+pub fn prepare_rebind_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     expected_binding: &PortLeaseBinding,
@@ -101,7 +101,7 @@ pub(crate) fn prepare_rebind_after_confirmed_stop(
 }
 
 /// Retain one exact live-owner listener after acknowledged provider stop.
-pub(crate) fn prepare_rebind_after_confirmed_stop_with_lifetime(
+pub fn prepare_rebind_after_confirmed_stop_with_lifetime(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     expected_binding: &PortLeaseBinding,
@@ -147,7 +147,7 @@ pub(crate) fn prepare_rebind_batch_after_confirmed_stop(
 }
 
 /// Retain a live-owner batch after exact provider stop.
-pub(crate) fn prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
+pub fn prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     expected_bindings: &[PortLeaseBinding],
@@ -172,7 +172,7 @@ pub(crate) fn prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
         .map_err(port_lease_error)
 }
 
-pub(crate) fn prepare_provider_managed_plan_members_after_confirmed_stop_with_lifetimes(
+pub fn prepare_provider_managed_plan_members_after_confirmed_stop_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],
@@ -199,7 +199,7 @@ pub(crate) fn prepare_provider_managed_plan_members_after_confirmed_stop_with_li
 }
 
 /// Atomically release a live provider batch after exact provider stop.
-pub(crate) fn release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
+pub fn release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     expected_bindings: &[PortLeaseBinding],
@@ -228,7 +228,7 @@ pub(crate) fn release_provider_managed_batch_after_confirmed_stop_with_lifetimes
 ///
 /// This operation proves only owner death. The returned guards must remain
 /// held while the OCI adapter inspects or removes the provider effect.
-pub(crate) fn recover_provider_managed_batch_after_owner_death(
+pub fn recover_provider_managed_batch_after_owner_death(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
 ) -> Result<Vec<PortLeaseRecoveryGuard>> {
@@ -266,7 +266,7 @@ pub(crate) fn recover_provider_managed_batch_after_owner_death(
     Ok(recoveries)
 }
 
-pub(crate) fn recover_provider_managed_plan_members_after_owner_death(
+pub fn recover_provider_managed_plan_members_after_owner_death(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],
@@ -277,7 +277,7 @@ pub(crate) fn recover_provider_managed_plan_members_after_owner_death(
 }
 
 /// Retain a recovered provider batch after the adapter confirms exact absence.
-pub(crate) fn prepare_provider_managed_batch_after_confirmed_stop(
+pub fn prepare_provider_managed_batch_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     expected_bindings: &[PortLeaseBinding],
@@ -302,7 +302,7 @@ pub(crate) fn prepare_provider_managed_batch_after_confirmed_stop(
         .map_err(port_lease_error)
 }
 
-pub(crate) fn prepare_provider_managed_plan_members_after_confirmed_stop(
+pub fn prepare_provider_managed_plan_members_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],
@@ -332,7 +332,7 @@ pub(crate) fn prepare_provider_managed_plan_members_after_confirmed_stop(
 }
 
 /// Retire a recovered provider-claim batch while retaining its exact slots.
-pub(crate) fn prepare_provider_managed_claim_batch_after_confirmed_stop(
+pub fn prepare_provider_managed_claim_batch_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     recoveries: &[PortLeaseRecoveryGuard],
@@ -342,7 +342,7 @@ pub(crate) fn prepare_provider_managed_claim_batch_after_confirmed_stop(
         .map_err(port_lease_error)
 }
 
-pub(crate) fn prepare_provider_managed_plan_claims_after_confirmed_stop(
+pub fn prepare_provider_managed_plan_claims_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],
@@ -358,7 +358,7 @@ pub(crate) fn prepare_provider_managed_plan_claims_after_confirmed_stop(
 }
 
 /// Release a recovered provider batch after the adapter confirms exact absence.
-pub(crate) fn release_provider_managed_batch_after_confirmed_stop(
+pub fn release_provider_managed_batch_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     recoveries: &[PortLeaseRecoveryGuard],
@@ -369,7 +369,7 @@ pub(crate) fn release_provider_managed_batch_after_confirmed_stop(
 }
 
 /// Release the numeric slot only after provider effect removal is confirmed.
-pub(crate) fn release(
+pub fn release(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
@@ -384,7 +384,7 @@ pub(crate) fn release(
 }
 
 /// Release a live-owner slot after the adapter confirms exact effect absence.
-pub(crate) fn release_with_lifetime(
+pub fn release_with_lifetime(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     lifetime: &PortLeaseLifetimeGuard,
@@ -395,7 +395,7 @@ pub(crate) fn release_with_lifetime(
 }
 
 /// Release a restart-retained slot using its exact durable stopped-binding receipt.
-pub(crate) fn release_after_confirmed_stop(
+pub fn release_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
@@ -405,7 +405,7 @@ pub(crate) fn release_after_confirmed_stop(
 }
 
 /// Atomically release a complete restart-retained listener batch.
-pub(crate) fn release_batch_after_confirmed_stop(
+pub fn release_batch_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
 ) -> Result<Vec<PortLeaseRecord>> {

@@ -9,20 +9,20 @@ use crate::instance::SandboxStatus;
 use crate::spec::{SandboxResourceCharge, SandboxResourceQuotaPolicy, SandboxSpec};
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResourceQuotaManager {
+pub struct ResourceQuotaManager {
     state_root: PathBuf,
     policy: SandboxResourceQuotaPolicy,
 }
 
 impl ResourceQuotaManager {
-    pub(crate) fn new(state_root: impl Into<PathBuf>, policy: SandboxResourceQuotaPolicy) -> Self {
+    pub fn new(state_root: impl Into<PathBuf>, policy: SandboxResourceQuotaPolicy) -> Self {
         Self {
             state_root: state_root.into(),
             policy,
         }
     }
 
-    pub(crate) fn ensure_launch_quota(&self, spec: &SandboxSpec) -> Result<()> {
+    pub fn ensure_launch_quota(&self, spec: &SandboxSpec) -> Result<()> {
         let existing = self.read_reserved_resource_charge_for_tenant(&spec.tenant_id)?;
         let launch = self.policy.charge_for(&spec.resources);
         self.ensure_within_policy(&spec.tenant_id, existing.plus(launch))

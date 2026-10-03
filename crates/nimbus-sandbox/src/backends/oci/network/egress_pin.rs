@@ -47,14 +47,14 @@ const NFT_CT_STATE_RELATED: u64 = 1 << 2;
 
 /// Honest observation of the exact deny-by-default namespace pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum OciEgressPinObservation {
+pub enum OciEgressPinObservation {
     Ready,
     NotReady { reason: String },
     Unknown { reason: String },
 }
 
 /// Read-only capability consumed by complete attachment readiness.
-pub(crate) trait OciEgressPinObserver: Send + Sync {
+pub trait OciEgressPinObserver: Send + Sync {
     fn inspect(
         &self,
         layout: &OciNetworkLayout,
@@ -63,12 +63,12 @@ pub(crate) trait OciEgressPinObserver: Send + Sync {
 }
 
 /// Mutating capability retained by attachment reconciliation.
-pub(crate) trait OciEgressPinProvider: OciEgressPinObserver {
+pub trait OciEgressPinProvider: OciEgressPinObserver {
     fn apply(&self, layout: &OciNetworkLayout, proxy: &EgressProxyAssignment) -> Result<()>;
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct RealOciEgressPinProvider;
+pub struct RealOciEgressPinProvider;
 
 impl OciEgressPinObserver for RealOciEgressPinProvider {
     fn inspect(
@@ -103,7 +103,7 @@ impl OciEgressPinProvider for RealOciEgressPinProvider {
 /// privilege.
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug)]
-pub(crate) struct FixedOciEgressPinProvider {
+pub struct FixedOciEgressPinProvider {
     observation: Mutex<OciEgressPinObservation>,
     apply_count: AtomicUsize,
 }
@@ -117,7 +117,7 @@ impl FixedOciEgressPinProvider {
         }
     }
 
-    pub(crate) fn ready() -> Self {
+    pub fn ready() -> Self {
         Self::new(OciEgressPinObservation::Ready)
     }
 
@@ -129,8 +129,8 @@ impl FixedOciEgressPinProvider {
             .expect("fixed egress-pin observation lock should not be poisoned") = observation;
     }
 
-    #[cfg(test)]
-    pub(crate) fn apply_count(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn apply_count(&self) -> usize {
         self.apply_count.load(Ordering::SeqCst)
     }
 }

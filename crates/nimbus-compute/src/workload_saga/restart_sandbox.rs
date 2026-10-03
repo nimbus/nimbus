@@ -10,7 +10,7 @@ use nimbus_sandbox::{
 };
 
 use nimbus_sandbox::backends::container::ContainerSandboxBackend;
-use nimbus_sandbox::backends::krun::KrunSandboxBackend;
+use nimbus_sandbox_krun::KrunSandboxBackend;
 
 use super::provision_provider::ProviderProvisionEffectObservation;
 use super::provision_sandbox::{sandbox_execution_provider_id, sandbox_network_plan_for};

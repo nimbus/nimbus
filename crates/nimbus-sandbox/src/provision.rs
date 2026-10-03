@@ -23,7 +23,7 @@ use thiserror::Error;
 use crate::{SandboxNetworkStatus, SandboxNetworkStatusError, SandboxPortBinding};
 
 mod activation;
-pub(crate) use activation::{
+pub use activation::{
     ProvisionActivationObservationKind, ProvisionActivationRuntimeState,
     classify_provision_activation,
 };
@@ -422,7 +422,7 @@ impl SandboxProvisionIngressTargets {
         )
     }
 
-    pub(crate) fn from_private_attachment_with_upstream_port(
+    pub fn from_private_attachment_with_upstream_port(
         plan: &SandboxProvisionNetworkPlan,
         actual_spec: &crate::SandboxSpec,
         actual_network_plan: &NetworkPlan,
@@ -659,7 +659,7 @@ pub enum SandboxProvisionPhaseObservation {
     Ambiguous { evidence: Vec<u8> },
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) mod test_support;
 
 #[cfg(test)]

@@ -49,6 +49,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-runtime` | V8 execution via `deno_core`; defines the runtime surface and the `HostBridge` trait. Zero workspace dependencies. |
 | `nimbus-s3` | S3-compatible object surface over the Nimbus blob and metadata planes (Seam D). |
 | `nimbus-sandbox` | Backend-agnostic sandbox and isolation lifecycle contracts plus concrete Netavark, namespace, IPAM, nftables, gvproxy, and guest-network effects. |
+| `nimbus-sandbox-krun` | Krun microVM sandbox backend: bundle assembly, VM lifecycle, guest user switch, and cross-backend network composition tests. |
 | `nimbus-server` | HTTP/WebSocket transport: axum router, adapter transport shims, embedded UI, local-server security. |
 | `nimbus-services` | Logical service naming, readiness, registry, and service-manager primitives. |
 | `nimbus-storage` | Persistence providers (SQLite, redb, Postgres, MySQL, libSQL) plus commit log, indexes, and scheduler state. |
@@ -196,7 +197,8 @@ them to the engine.
 ### Sandbox & machines
 
 `nimbus-sandbox` defines backend-agnostic sandbox and isolation lifecycle
-contracts; `nimbus-machine` owns the machine record model and provider
+contracts; `nimbus-sandbox-krun` implements the Krun microVM backend on them;
+`nimbus-machine` owns the machine record model and provider
 contracts shared by the CLI and the server control plane.
 → <https://nimbusdocs.com/concepts/architecture/sandbox-machines/>
 

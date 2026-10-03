@@ -118,7 +118,7 @@ impl OciArtifactKind {
 /// terminal identity proves that a released desired attachment whose provider
 /// retry witness was already retired belongs to this exact generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OciRetainedManifestEvidence {
+pub struct OciRetainedManifestEvidence {
     path: PathBuf,
     terminal: Option<OciRetainedTerminalAttachment>,
 }
@@ -132,14 +132,14 @@ struct OciRetainedTerminalAttachment {
 }
 
 impl OciRetainedManifestEvidence {
-    pub(crate) fn claim_only(path: PathBuf) -> Self {
+    pub fn claim_only(path: PathBuf) -> Self {
         Self {
             path,
             terminal: None,
         }
     }
 
-    pub(crate) fn terminal(
+    pub fn terminal(
         path: PathBuf,
         tenant_id: TenantId,
         attachment_id: NetworkAttachmentId,

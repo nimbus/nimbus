@@ -10,7 +10,7 @@ use std::path::{Component, Path};
 
 use crate::error::{Result, SandboxError};
 
-pub(crate) fn establish_durable_directory_chain_with<F>(
+pub fn establish_durable_directory_chain_with<F>(
     state_root: &Path,
     owned_directory: &Path,
     resource_label: &str,

@@ -29,25 +29,25 @@ pub(crate) fn tenant_sandbox_root(
         .join(sandbox_id.as_str())
 }
 
-pub(crate) fn bundle_dir(root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
+pub fn bundle_dir(root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
     tenant_sandbox_root(root, tenant_id, sandbox_id).join(BUNDLE_DIR)
 }
 
-pub(crate) fn state_root(root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
+pub fn state_root(root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
     tenant_sandbox_root(root, tenant_id, sandbox_id).join(STATE_DIR)
 }
 
-pub(crate) fn rootfs_root(root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
+pub fn rootfs_root(root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
     tenant_sandbox_root(root, tenant_id, sandbox_id).join(ROOTFS_DIR)
 }
 
-pub(crate) fn tenant_volume_dir(root: &Path, tenant_id: &TenantId, volume_name: &str) -> PathBuf {
+pub fn tenant_volume_dir(root: &Path, tenant_id: &TenantId, volume_name: &str) -> PathBuf {
     tenant_root(root, tenant_id)
         .join(VOLUMES_DIR)
         .join(volume_name)
 }
 
-pub(crate) fn remove_tenant_root(root: &Path, tenant_id: &TenantId) -> io::Result<()> {
+pub fn remove_tenant_root(root: &Path, tenant_id: &TenantId) -> io::Result<()> {
     let path = tenant_root(root, tenant_id);
     if try_path_exists(&path, "tenant artifact root")? {
         fs::remove_dir_all(path)?;
@@ -55,18 +55,14 @@ pub(crate) fn remove_tenant_root(root: &Path, tenant_id: &TenantId) -> io::Resul
     Ok(())
 }
 
-pub(crate) fn manifest_path(
-    state_root: &Path,
-    tenant_id: &TenantId,
-    sandbox_id: &SandboxId,
-) -> PathBuf {
+pub fn manifest_path(state_root: &Path, tenant_id: &TenantId, sandbox_id: &SandboxId) -> PathBuf {
     self::state_root(state_root, tenant_id, sandbox_id)
         .join(CONTAINERS_DIR)
         .join(sandbox_id.as_str())
         .join(MANIFEST_FILE)
 }
 
-pub(crate) fn all_manifest_paths(state_root: &Path) -> io::Result<Vec<PathBuf>> {
+pub fn all_manifest_paths(state_root: &Path) -> io::Result<Vec<PathBuf>> {
     manifest_paths_from_container_state_dirs(all_container_state_dirs(state_root)?)
 }
 
@@ -96,7 +92,7 @@ pub(crate) fn manifest_paths_for_tenant(
     Ok(paths)
 }
 
-pub(crate) fn manifest_path_for_sandbox_id(
+pub fn manifest_path_for_sandbox_id(
     state_root: &Path,
     sandbox_id: &SandboxId,
 ) -> io::Result<Option<PathBuf>> {

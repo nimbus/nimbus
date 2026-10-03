@@ -28,7 +28,7 @@ mod tests;
 /// must reopen a pidfd and reauthenticate every durable field before signal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub(crate) struct RuntimeProcessIdentity {
+pub struct RuntimeProcessIdentity {
     runtime_id: String,
     creator_attempt_id: String,
     pid: u32,
@@ -36,23 +36,23 @@ pub(crate) struct RuntimeProcessIdentity {
 }
 
 impl RuntimeProcessIdentity {
-    #[cfg(test)]
-    pub(crate) fn runtime_id(&self) -> &str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn runtime_id(&self) -> &str {
         &self.runtime_id
     }
 
-    #[cfg(test)]
-    pub(crate) fn creator_attempt_id(&self) -> &str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn creator_attempt_id(&self) -> &str {
         &self.creator_attempt_id
     }
 
-    #[cfg(test)]
-    pub(crate) const fn pid(&self) -> u32 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn pid(&self) -> u32 {
         self.pid
     }
 
-    #[cfg(test)]
-    pub(crate) fn fixture(runtime_id: &str, creator_attempt_id: &str, pid: u32) -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fixture(runtime_id: &str, creator_attempt_id: &str, pid: u32) -> Self {
         Self {
             runtime_id: runtime_id.to_owned(),
             creator_attempt_id: creator_attempt_id.to_owned(),
@@ -85,7 +85,7 @@ enum RuntimeProcessBirth {
 
 /// Exact read-only observation of a persisted runtime process identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeProcessIdentityObservation {
+pub enum RuntimeProcessIdentityObservation {
     ExactLive,
     ExplicitlyAbsent,
 }
@@ -94,12 +94,12 @@ pub(crate) enum RuntimeProcessIdentityObservation {
 ///
 /// Numeric real-time and libc-reserved signals are deliberately rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RuntimeProcessSignal {
+pub struct RuntimeProcessSignal {
     number: i32,
 }
 
 impl RuntimeProcessSignal {
-    pub(crate) fn parse(value: &str) -> Result<Self> {
+    pub fn parse(value: &str) -> Result<Self> {
         let canonical = value.trim().to_ascii_uppercase();
         let name = canonical.strip_prefix("SIG").unwrap_or(&canonical);
         let number = name
@@ -115,14 +115,14 @@ impl RuntimeProcessSignal {
         Ok(Self { number })
     }
 
-    pub(crate) fn kill() -> Self {
+    pub fn kill() -> Self {
         Self {
             number: kill_signal_number(),
         }
     }
 
-    #[cfg(any(target_os = "linux", test))]
-    pub(crate) const fn number(self) -> i32 {
+    #[cfg(any(target_os = "linux", test, feature = "test-hooks"))]
+    pub const fn number(self) -> i32 {
         self.number
     }
 }
@@ -149,14 +149,14 @@ const fn kill_signal_number() -> i32 {
         reason = "non-Linux signalling always fails before an outcome"
     )
 )]
-pub(crate) enum RuntimeProcessSignalOutcome {
+pub enum RuntimeProcessSignalOutcome {
     Delivered,
     AlreadyAbsent,
 }
 
 /// Capture a durable process identity only from mutually consistent provider,
 /// pidfile, and operating-system evidence.
-pub(crate) fn capture_runtime_process_identity(
+pub fn capture_runtime_process_identity(
     state_command: &CommandSpec,
     runtime_id: &str,
     creator_attempt_id: &str,
@@ -212,7 +212,7 @@ pub(crate) fn capture_runtime_process_identity(
 }
 
 /// Reauthenticate a persisted runtime process without performing an effect.
-pub(crate) fn inspect_runtime_process_identity(
+pub fn inspect_runtime_process_identity(
     identity: &RuntimeProcessIdentity,
     state_command: &CommandSpec,
     pidfile: &Path,
@@ -283,7 +283,7 @@ pub(crate) fn inspect_runtime_process_identity(
 /// The caller must durably persist that this signal may exist before calling
 /// this function. No provider-command or workload state is written here.
 #[cfg(target_os = "linux")]
-pub(crate) fn signal_authenticated_runtime_process(
+pub fn signal_authenticated_runtime_process(
     identity: &RuntimeProcessIdentity,
     state_command: &CommandSpec,
     pidfile: &Path,
@@ -357,7 +357,7 @@ pub(crate) fn signal_authenticated_runtime_process(
 
 /// Non-Linux hosts cannot provide the pidfd identity guarantee.
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn signal_authenticated_runtime_process(
+pub fn signal_authenticated_runtime_process(
     identity: &RuntimeProcessIdentity,
     _state_command: &CommandSpec,
     _pidfile: &Path,

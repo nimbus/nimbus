@@ -73,7 +73,7 @@ impl OciImageMaterializer {
         }
     }
 
-    pub(crate) fn for_tenant_sandbox(
+    pub fn for_tenant_sandbox(
         state_root: impl Into<PathBuf>,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -190,7 +190,7 @@ impl OciImageMaterializer {
     /// the sibling provenance receipt is part of the same publication and must
     /// be retired with it. Re-derive the artifact directory from the owner
     /// instead of trusting a serialized parent path.
-    pub(crate) fn remove_owned_artifact(
+    pub fn remove_owned_artifact(
         &self,
         sandbox_id: &SandboxId,
         artifact: &MaterializedImageRootfs,

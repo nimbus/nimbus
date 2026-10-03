@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use nimbus::{Error, SandboxBackendKind, TenantId};
-use nimbus_sandbox::backends::krun::KrunSandboxBackendConfig;
+use nimbus_sandbox_krun::KrunSandboxBackendConfig;
 use sha2::{Digest, Sha256};
 
 use crate::compose::discovery::ResolvedComposeSelection;

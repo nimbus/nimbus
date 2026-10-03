@@ -14,10 +14,7 @@ use crate::error::{Result, SandboxError};
 /// This write completes before the launch-gated wrapper is spawned. Runtime
 /// `state` responses can therefore authenticate that a same-ID runtime belongs
 /// to this attempt rather than a stale predecessor.
-pub(crate) fn publish_creator_attempt_annotation(
-    config_path: &Path,
-    attempt_id: &str,
-) -> Result<()> {
+pub fn publish_creator_attempt_annotation(config_path: &Path, attempt_id: &str) -> Result<()> {
     if attempt_id.trim().is_empty() {
         return Err(SandboxError::OperationFailed {
             message: "creator attempt annotation must not be empty".to_owned(),

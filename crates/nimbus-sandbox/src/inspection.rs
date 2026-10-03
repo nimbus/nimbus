@@ -39,7 +39,7 @@ impl SandboxInspection {
         )
     }
 
-    pub(crate) fn exact_with_network_status(
+    pub fn exact_with_network_status(
         handle: SandboxHandle,
         network_status: Option<SandboxNetworkStatus>,
         execution_attempt: SandboxExecutionAttemptObservation,

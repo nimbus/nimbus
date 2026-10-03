@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 /// OCI default-spec `linux.maskedPaths`: sensitive host-kernel surfaces that
 /// must read as empty/inaccessible inside the workload mount namespace.
-pub(crate) const DEFAULT_MASKED_PATHS: &[&str] = &[
+pub const DEFAULT_MASKED_PATHS: &[&str] = &[
     "/proc/acpi",
     "/proc/asound",
     "/proc/kcore",
@@ -39,7 +39,7 @@ pub(crate) const DEFAULT_MASKED_PATHS: &[&str] = &[
 
 /// OCI default-spec `linux.readonlyPaths`: `/proc` control surfaces that must
 /// be read-only inside the workload mount namespace.
-pub(crate) const DEFAULT_READONLY_PATHS: &[&str] = &[
+pub const DEFAULT_READONLY_PATHS: &[&str] = &[
     "/proc/bus",
     "/proc/fs",
     "/proc/irq",
@@ -48,12 +48,12 @@ pub(crate) const DEFAULT_READONLY_PATHS: &[&str] = &[
 ];
 
 /// `linux.maskedPaths` value for an OCI bundle.
-pub(crate) fn masked_paths_json() -> Value {
+pub fn masked_paths_json() -> Value {
     json!(DEFAULT_MASKED_PATHS)
 }
 
 /// `linux.readonlyPaths` value for an OCI bundle.
-pub(crate) fn readonly_paths_json() -> Value {
+pub fn readonly_paths_json() -> Value {
     json!(DEFAULT_READONLY_PATHS)
 }
 

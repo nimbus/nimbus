@@ -25,7 +25,7 @@ use super::{EgressProxyAssignment, EgressProxyRegistry};
 /// acknowledgement and can be reconciled by exact PEP inspection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct EgressPolicyReloadState {
+pub struct EgressPolicyReloadState {
     desired_generation: NonZeroU64,
     latest_attempt_generation: u64,
     phase: EgressPolicyReloadPhase,

@@ -35,7 +35,7 @@ use crate::spec::SandboxPortBinding;
 
 /// Real OCI backend adapter consuming the shared attachment contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AttachmentBackendKind {
+pub enum AttachmentBackendKind {
     Container,
     Krun,
 }
@@ -108,18 +108,18 @@ mod plan;
 mod recovery;
 mod state;
 
-pub(crate) use host_teardown::{
+pub use host_teardown::{
     AttachmentReleaseActions, HostManagedAttachmentCommandInspection,
     HostManagedAttachmentCommandInspectionError, HostManagedAttachmentDetachPhase,
     HostManagedAttachmentReleasePhase, HostManagedAttachmentTeardownState,
     RetainedAttachmentPublicationEvidence,
 };
-#[cfg(test)]
-pub(crate) use host_teardown::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use host_teardown::{
     HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentTeardownCheckpoint,
 };
 
-pub(crate) use plan::oci_attachment_plan;
+pub use plan::oci_attachment_plan;
 #[cfg(test)]
 pub(in crate::backends::oci::network) use plan::oci_attachment_provider_handle;
 pub(in crate::backends::oci::network) use plan::oci_attachment_provider_handle_for_identity;
@@ -129,15 +129,13 @@ mod test_api;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use attachment_readiness::OciAttachmentReadinessFailure;
-pub(crate) use attachment_readiness::{
-    OciAttachmentBaseReadinessState, OciAttachmentReadinessState,
-};
+pub use attachment_readiness::OciAttachmentReadinessFailure;
+pub use attachment_readiness::{OciAttachmentBaseReadinessState, OciAttachmentReadinessState};
 use host::{AttachmentHostEffects, RealAttachmentHostEffects};
 
 /// Explicit authority disposition for one confirmed provider detach.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AttachmentTeardownMode {
+pub enum AttachmentTeardownMode {
     /// Retain the exact generation, IPAM, segment, and publication authority.
     Restart,
     /// Release authority only after provider and persistent-netns absence.
@@ -149,7 +147,7 @@ pub(crate) enum AttachmentTeardownMode {
 /// Callers select this from their already-authenticated launch branch rather
 /// than inferring it from an optional manifest field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AttachmentAttachAuthority<'a> {
+pub enum AttachmentAttachAuthority<'a> {
     FreshLaunch(&'a NetworkReservationClaim),
     RestartRetained,
 }
@@ -157,7 +155,7 @@ pub(crate) enum AttachmentAttachAuthority<'a> {
 /// Authenticated process-local disposition of the attachment's auxiliary
 /// listener provider (currently the egress PEP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AttachmentAuxiliaryDisposition {
+pub enum AttachmentAuxiliaryDisposition {
     ProviderOwned,
     NoEffect,
     Unknown,
@@ -170,14 +168,14 @@ pub(crate) enum AttachmentAuxiliaryDisposition {
 /// cleanup that reached the provider/authority phase may remove independent
 /// launch artifacts without claiming network convergence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AttachmentDetachFailureStage {
+pub enum AttachmentDetachFailureStage {
     BeforeProviderDetach,
     CleanupPending,
 }
 
 /// A failed detach plus the exact progress boundary needed by thin adapters.
 #[derive(Debug)]
-pub(crate) struct AttachmentDetachFailure {
+pub struct AttachmentDetachFailure {
     stage: AttachmentDetachFailureStage,
     error: SandboxError,
 }
@@ -201,7 +199,7 @@ impl From<AttachmentDetachFailure> for SandboxError {
 pub(crate) type AttachmentDetachResult = std::result::Result<(), AttachmentDetachFailure>;
 
 impl AttachmentTeardownMode {
-    pub(crate) fn releases_authority(self) -> bool {
+    pub fn releases_authority(self) -> bool {
         matches!(self, Self::Final)
     }
 }
@@ -231,18 +229,18 @@ struct OciAttachmentContext<'a> {
 /// The concrete adapter constructors below add the backend kind, provider
 /// label, and supported publication mode. Production callers cannot assemble
 /// those discriminants independently.
-pub(crate) struct OciAttachmentInput<'a> {
-    pub(crate) workload_state_root: &'a Path,
-    pub(crate) tenant_id: &'a TenantId,
-    pub(crate) sandbox_id: &'a SandboxId,
-    pub(crate) display_name: &'a str,
-    pub(crate) hostname: &'a str,
-    pub(crate) bindings: &'a [SandboxPortBinding],
-    pub(crate) leases: &'a [PortLeaseRequest],
-    pub(crate) auxiliary_listener: Option<OciAttachmentAuxiliaryListener<'a>>,
-    pub(crate) layout: &'a OciNetworkLayout,
-    pub(crate) config: &'a OciNetworkConfig,
-    pub(crate) launch_claim: Option<&'a NetworkReservationClaim>,
+pub struct OciAttachmentInput<'a> {
+    pub workload_state_root: &'a Path,
+    pub tenant_id: &'a TenantId,
+    pub sandbox_id: &'a SandboxId,
+    pub display_name: &'a str,
+    pub hostname: &'a str,
+    pub bindings: &'a [SandboxPortBinding],
+    pub leases: &'a [PortLeaseRequest],
+    pub auxiliary_listener: Option<OciAttachmentAuxiliaryListener<'a>>,
+    pub layout: &'a OciNetworkLayout,
+    pub config: &'a OciNetworkConfig,
+    pub launch_claim: Option<&'a NetworkReservationClaim>,
 }
 
 /// Concrete container/krun adapter into the one OCI attachment lifecycle.
@@ -250,7 +248,7 @@ pub(crate) struct OciAttachmentInput<'a> {
 /// This is deliberately not a provider trait: it seals construction and
 /// routing for the two real backends while provider effects remain in their
 /// current owners.
-pub(crate) struct OciAttachmentAdapter<'a> {
+pub struct OciAttachmentAdapter<'a> {
     context: OciAttachmentContext<'a>,
 }
 
@@ -280,7 +278,7 @@ impl<'a> OciAttachmentAdapter<'a> {
         }
     }
 
-    pub(crate) fn attach(
+    pub fn attach(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         authority: AttachmentAttachAuthority<'_>,
@@ -289,7 +287,7 @@ impl<'a> OciAttachmentAdapter<'a> {
         lifecycle.attach(&self.context, authority, after_provider_setup)
     }
 
-    pub(crate) fn inspect_host_managed_readiness(
+    pub fn inspect_host_managed_readiness(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         pin_provider: &dyn super::OciEgressPinObserver,
@@ -321,7 +319,7 @@ impl<'a> OciAttachmentAdapter<'a> {
         )
     }
 
-    pub(crate) fn inspect_non_routable_readiness(
+    pub fn inspect_non_routable_readiness(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         pin_provider: &dyn super::OciEgressPinObserver,
@@ -345,7 +343,7 @@ impl<'a> OciAttachmentAdapter<'a> {
         attachment_readiness::complete_machine_forwarded_readiness(&self.context, base, publication)
     }
 
-    pub(crate) fn detach_host_managed(
+    pub fn detach_host_managed(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         mode: AttachmentTeardownMode,
@@ -377,14 +375,14 @@ impl<'a> OciAttachmentAdapter<'a> {
 /// can authenticate tenant, sandbox, listener, target, and selected port before
 /// any filesystem or provider effect.
 #[derive(Clone, Copy)]
-pub(crate) struct OciAttachmentAuxiliaryListener<'a> {
+pub struct OciAttachmentAuxiliaryListener<'a> {
     request: &'a PortLeaseRequest,
     host: &'a str,
     port: u16,
 }
 
 impl<'a> OciAttachmentAuxiliaryListener<'a> {
-    pub(crate) fn egress_pep(request: &'a PortLeaseRequest, host: &'a str, port: u16) -> Self {
+    pub fn egress_pep(request: &'a PortLeaseRequest, host: &'a str, port: u16) -> Self {
         Self {
             request,
             host,
@@ -412,13 +410,13 @@ impl<'a> OciAttachmentAuxiliaryListener<'a> {
 /// The adapter constructor stays private to this owner. Production callers and
 /// the shared contract therefore exercise the same type-bound route rather
 /// than manufacturing a test profile.
-pub(crate) struct OciAttachmentProviderPaths {
+pub struct OciAttachmentProviderPaths {
     netavark: PathBuf,
     aardvark_dns: PathBuf,
 }
 
 impl OciAttachmentProviderPaths {
-    pub(crate) fn new(netavark: PathBuf, aardvark_dns: PathBuf) -> Self {
+    pub fn new(netavark: PathBuf, aardvark_dns: PathBuf) -> Self {
         Self {
             netavark,
             aardvark_dns,
@@ -426,7 +424,7 @@ impl OciAttachmentProviderPaths {
     }
 }
 
-pub(crate) trait OciHostManagedAttachmentBackend {
+pub trait OciHostManagedAttachmentBackend {
     const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind;
 
     fn reserve_attachment_config(
@@ -480,9 +478,7 @@ struct OciAttachmentProviderConfig {
 }
 
 /// Machine-forwarded publication is a container-only backend capability.
-pub(crate) trait OciMachineForwardedAttachmentBackend:
-    OciHostManagedAttachmentBackend
-{
+pub trait OciMachineForwardedAttachmentBackend: OciHostManagedAttachmentBackend {
     fn machine_forwarded_attachment_adapter<'a>(
         input: OciAttachmentInput<'a>,
         forwarder: &'a OciMachinePortForwarderConfig,
@@ -601,7 +597,7 @@ impl AttachmentDetachPhaseObserver for NoopAttachmentDetachPhaseObserver {
 }
 
 /// Deep OCI attachment composition over the already-earned local authorities.
-pub(crate) struct OciAttachmentLifecycle<'a> {
+pub struct OciAttachmentLifecycle<'a> {
     allocator: &'a OciSegmentAllocator,
     attachments: Option<&'a LocalNetworkAttachmentAuthority>,
     ipam: &'a OciIpamAuthority,
@@ -610,7 +606,7 @@ pub(crate) struct OciAttachmentLifecycle<'a> {
 }
 
 impl<'a> OciAttachmentLifecycle<'a> {
-    pub(crate) fn new(
+    pub fn new(
         allocator: &'a OciSegmentAllocator,
         attachments: Option<&'a LocalNetworkAttachmentAuthority>,
         ipam: &'a OciIpamAuthority,
@@ -628,7 +624,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
 
     /// Build provider-local realization without leaking it into the portable
     /// allocation contract.
-    pub(crate) fn config_from_segment(
+    pub fn config_from_segment(
         backend: AttachmentBackendKind,
         netavark_path: PathBuf,
         aardvark_dns_path: PathBuf,
@@ -710,7 +706,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
     }
 
     /// Release an exact launch reservation before any provider effect.
-    pub(crate) fn release_reserved(
+    pub fn release_reserved(
         &self,
         backend: AttachmentBackendKind,
         identity: ReservedNetworkLaunchIdentity<'_>,

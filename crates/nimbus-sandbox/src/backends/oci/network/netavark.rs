@@ -57,7 +57,7 @@ mod tests;
 
 /// Authenticate the immutable attachment generation before any provider,
 /// namespace, status-projection, port, or segment mutation.
-pub(crate) fn authenticate_container_network_generation(
+pub fn authenticate_container_network_generation(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
@@ -69,7 +69,7 @@ pub(crate) fn authenticate_container_network_generation(
 /// Authenticate cleanup against either the exact live allocation or its
 /// terminal tombstone. A terminal witness authorizes idempotent continuation
 /// of the owning cleanup saga but never provider setup.
-pub(crate) fn authenticate_container_network_generation_for_cleanup(
+pub fn authenticate_container_network_generation_for_cleanup(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
@@ -79,7 +79,7 @@ pub(crate) fn authenticate_container_network_generation_for_cleanup(
 }
 
 /// Immutable input for one exact Netavark provider operation.
-pub(crate) struct OciNetavarkOperation<'a> {
+pub struct OciNetavarkOperation<'a> {
     layout: &'a OciNetworkLayout,
     config: &'a OciNetworkConfig,
     sandbox_id: &'a SandboxId,
@@ -90,7 +90,7 @@ pub(crate) struct OciNetavarkOperation<'a> {
 }
 
 impl<'a> OciNetavarkOperation<'a> {
-    pub(crate) fn new(
+    pub fn new(
         layout: &'a OciNetworkLayout,
         config: &'a OciNetworkConfig,
         sandbox_id: &'a SandboxId,
@@ -189,7 +189,7 @@ fn execute_prepared_container_network_teardown_with_runner(
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn execute_prepared_container_network_teardown_for_test(
+pub fn execute_prepared_container_network_teardown_for_test(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     prepared: PreparedNetavarkTeardown,
@@ -202,7 +202,7 @@ pub(super) fn execute_prepared_container_network_teardown_for_test(
     )
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute_prepared_container_network_teardown_ambiguously_for_test(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
@@ -221,8 +221,8 @@ pub(super) fn execute_prepared_container_network_teardown_ambiguously_for_test(
     )
 }
 
-#[cfg(test)]
-pub(crate) fn setup_container_network(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn setup_container_network(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
 ) -> Result<Vec<Ipv4Addr>> {
@@ -246,7 +246,7 @@ pub(super) fn execute_prepared_container_network_setup(
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn execute_prepared_container_network_setup_for_test(
+pub fn execute_prepared_container_network_setup_for_test(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
     prepared: PreparedNetavarkSetup,
@@ -261,8 +261,8 @@ pub(super) fn execute_prepared_container_network_setup_for_test(
     )
 }
 
-#[cfg(test)]
-pub(crate) fn setup_host_managed_network_for_test(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn setup_host_managed_network_for_test(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
 ) -> Result<Vec<Ipv4Addr>> {
@@ -271,8 +271,8 @@ pub(crate) fn setup_host_managed_network_for_test(
 }
 
 /// Cross the teardown pre-effect fence without publishing a provider result.
-#[cfg(test)]
-pub(crate) fn begin_host_managed_teardown_without_ack_for_test(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn begin_host_managed_teardown_without_ack_for_test(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
 ) -> Result<()> {
@@ -378,8 +378,8 @@ fn setup_container_network_with_runner(
     )
 }
 
-#[cfg(test)]
-pub(crate) fn teardown_container_network(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn teardown_container_network(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
 ) -> Result<()> {

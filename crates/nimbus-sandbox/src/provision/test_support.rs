@@ -20,7 +20,7 @@ use crate::spec::SandboxSpec;
 
 /// Build a fully authenticated upper-compiled input with identities that differ
 /// from the legacy sandbox-derived defaults.
-pub(crate) fn sandbox_provision_network_plan_fixture(
+pub fn sandbox_provision_network_plan_fixture(
     spec: &SandboxSpec,
     sandbox_id: &SandboxId,
     label: &str,
@@ -38,7 +38,7 @@ pub(crate) fn sandbox_provision_network_plan_fixture(
 
 /// Supply test-only coarse-start fixtures with explicit attachment desired
 /// state without changing their legacy port-reservation identities.
-pub(crate) fn legacy_start_attachment_network_plan_fixture(
+pub fn legacy_start_attachment_network_plan_fixture(
     spec: &SandboxSpec,
     sandbox_id: &SandboxId,
     _label: &str,

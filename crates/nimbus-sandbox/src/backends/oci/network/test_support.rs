@@ -13,12 +13,12 @@ use crate::error::SandboxError;
 
 use super::{OciIpamAuthority, OciNetworkLayout, OciSegmentRealization};
 
-pub(crate) fn direct_test_ipam_authority(layout: &OciNetworkLayout) -> OciIpamAuthority {
+pub fn direct_test_ipam_authority(layout: &OciNetworkLayout) -> OciIpamAuthority {
     OciIpamAuthority::reconstruct_for_direct_test(layout)
         .expect("direct test IPAM authority should open")
 }
 
-pub(crate) fn direct_test_port_authority(
+pub fn direct_test_port_authority(
     state_root: impl AsRef<std::path::Path>,
 ) -> LocalPortLeaseAuthority {
     LocalPortLeaseAuthority::open(state_root).expect("direct test port authority should open")
@@ -30,7 +30,7 @@ type AdoptAttachmentObserver =
     dyn Fn(&NetworkReservationClaim) -> Result<(), SandboxError> + Send + Sync;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SegmentAllocatorOperation {
+pub enum SegmentAllocatorOperation {
     SegmentFor(TenantId),
     SegmentsFor(TenantId),
     InspectSegments(TenantId),
@@ -56,7 +56,7 @@ struct RecordingAttachmentReservation {
 
 /// Behavior-recording substitute for proving OCI backends consume only the
 /// portable allocator capability.
-pub(crate) struct RecordingSegmentAllocator {
+pub struct RecordingSegmentAllocator {
     segment: OciSegmentRealization,
     operations: Arc<Mutex<Vec<SegmentAllocatorOperation>>>,
     quarantine_failure: Arc<Mutex<Option<String>>>,
@@ -69,7 +69,7 @@ pub(crate) struct RecordingSegmentAllocator {
 }
 
 impl RecordingSegmentAllocator {
-    pub(crate) fn new(tenant: TenantId, cidr: &str, local_slot: u32) -> Self {
+    pub fn new(tenant: TenantId, cidr: &str, local_slot: u32) -> Self {
         let allocation = AllocatedSegment::new(
             "netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"
                 .parse()
@@ -91,7 +91,7 @@ impl RecordingSegmentAllocator {
         }
     }
 
-    pub(crate) fn with_quarantine_failure(self, message: impl Into<String>) -> Self {
+    pub fn with_quarantine_failure(self, message: impl Into<String>) -> Self {
         *self
             .quarantine_failure
             .lock()
@@ -100,6 +100,7 @@ impl RecordingSegmentAllocator {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn clear_quarantine_failure(&self) {
         *self
             .quarantine_failure
@@ -107,7 +108,7 @@ impl RecordingSegmentAllocator {
             .expect("recording allocator failure lock should not be poisoned") = None;
     }
 
-    pub(crate) fn with_reserve_attachment_observer(
+    pub fn with_reserve_attachment_observer(
         mut self,
         observer: impl Fn(&NetworkReservationClaim) -> Result<(), SandboxError> + Send + Sync + 'static,
     ) -> Self {
@@ -115,12 +116,12 @@ impl RecordingSegmentAllocator {
         self
     }
 
-    pub(crate) fn with_release_reserved_failure(mut self, message: impl Into<String>) -> Self {
+    pub fn with_release_reserved_failure(mut self, message: impl Into<String>) -> Self {
         self.release_reserved_failure = Some(message.into());
         self
     }
 
-    pub(crate) fn with_finalize_release_failure(self, message: impl Into<String>) -> Self {
+    pub fn with_finalize_release_failure(self, message: impl Into<String>) -> Self {
         *self
             .finalize_release_failure
             .lock()
@@ -129,14 +130,14 @@ impl RecordingSegmentAllocator {
         self
     }
 
-    pub(crate) fn clear_finalize_release_failure(&self) {
+    pub fn clear_finalize_release_failure(&self) {
         *self
             .finalize_release_failure
             .lock()
             .expect("recording allocator failure lock should not be poisoned") = None;
     }
 
-    pub(crate) fn with_adopt_attachment_observer(
+    pub fn with_adopt_attachment_observer(
         mut self,
         observer: impl Fn(&NetworkReservationClaim) -> Result<(), SandboxError> + Send + Sync + 'static,
     ) -> Self {
@@ -144,13 +145,14 @@ impl RecordingSegmentAllocator {
         self
     }
 
-    pub(crate) fn operations(&self) -> Vec<SegmentAllocatorOperation> {
+    pub fn operations(&self) -> Vec<SegmentAllocatorOperation> {
         self.operations
             .lock()
             .expect("recording allocator lock should not be poisoned")
             .clone()
     }
 
+    #[cfg(test)]
     pub(crate) fn substitute_observed_association_for_test(
         &self,
         association: NetworkAttachmentSegmentAssociation,

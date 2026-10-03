@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use nimbus_network::NetworkProviderId;
-use nimbus_sandbox::backends::krun::KrunSandboxBackend;
 use nimbus_sandbox::{
     ProviderCommandJournalError, SandboxBackendKind, sandbox_network_plan_requirements,
 };
+use nimbus_sandbox_krun::KrunSandboxBackend;
 use nimbus_workloads::{WorkloadExecutionProviderId, WorkloadFailureEvidence};
 
 use super::{

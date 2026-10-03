@@ -6,14 +6,14 @@ use crate::error::SandboxError;
 use crate::instance::SandboxId;
 
 mod attachment_lifecycle;
-pub(crate) use attachment_lifecycle::{
+pub use attachment_lifecycle::{
     AttachmentReleaseActions, HostManagedAttachmentCommandInspection,
     HostManagedAttachmentCommandInspectionError, HostManagedAttachmentDetachPhase,
     HostManagedAttachmentReleasePhase, HostManagedAttachmentTeardownState,
     RetainedAttachmentPublicationEvidence,
 };
-#[cfg(test)]
-pub(crate) use attachment_lifecycle::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use attachment_lifecycle::{
     HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentTeardownCheckpoint,
 };
 mod cluster;
@@ -35,11 +35,11 @@ mod realization;
 mod reaper;
 mod segment;
 mod startup_reconciliation;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 mod test_support;
 
-pub(crate) use attachment_lifecycle::OciAttachmentReadinessFailure;
-pub(crate) use attachment_lifecycle::{
+pub use attachment_lifecycle::OciAttachmentReadinessFailure;
+pub use attachment_lifecycle::{
     AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
     AttachmentDetachFailure, AttachmentDetachFailureStage, AttachmentTeardownMode,
     OciAttachmentAdapter, OciAttachmentAuxiliaryListener, OciAttachmentBaseReadinessState,
@@ -48,11 +48,11 @@ pub(crate) use attachment_lifecycle::{
     OciMachineForwardedAttachmentBackend, oci_attachment_plan,
 };
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) use egress_pin::FixedOciEgressPinProvider;
-pub(crate) use egress_pin::{
+pub use egress_pin::FixedOciEgressPinProvider;
+pub use egress_pin::{
     OciEgressPinObservation, OciEgressPinObserver, OciEgressPinProvider, RealOciEgressPinProvider,
 };
-pub(crate) use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
+pub use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
 #[cfg(test)]
 pub(crate) use forwarding::DeterministicMachinePortForwardingProvider;
 pub(crate) use forwarding::{
@@ -64,17 +64,17 @@ pub use forwarding::{
     MachinePortForwardingRetirementObservation, OciMachinePortForwarderConfig,
     OciMachinePortForwardingRetirement,
 };
-pub(crate) use ipam::{
+pub use ipam::{
     OciIpamAuthority, deallocate_container_ips_after_confirmed_detach,
     retire_terminal_container_ipam_release,
 };
-#[cfg(test)]
-pub(crate) use ipam::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use ipam::{
     allocate_container_ips, begin_netavark_setup_without_ack_for_test,
     reconcile_terminal_container_ipam_releases,
 };
-#[cfg(test)]
-pub(crate) fn terminal_container_ipam_release_is_absent_for_test(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn terminal_container_ipam_release_is_absent_for_test(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
@@ -85,23 +85,21 @@ pub(crate) fn terminal_container_ipam_release_is_absent_for_test(
         ipam::ContainerIpamAuthorityState::Absent
     ))
 }
-pub(crate) use layout::{
-    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
-};
-pub(crate) use netavark::{
+pub use layout::{OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr};
+pub use netavark::{
     OciNetavarkOperation, authenticate_container_network_generation,
     authenticate_container_network_generation_for_cleanup,
 };
-#[cfg(test)]
-pub(crate) use netavark::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use netavark::{
     begin_host_managed_teardown_without_ack_for_test, setup_container_network,
     setup_host_managed_network_for_test, teardown_container_network,
 };
-pub(crate) use orphan_convergence::{
+pub use orphan_convergence::{
     OciOrphanCleanupContext, OciOrphanCleanupDisposition, OciOrphanCleanupKind,
     OciOrphanCleanupSubject,
 };
-pub(crate) use orphan_evidence::OciRetainedManifestEvidence;
+pub use orphan_evidence::OciRetainedManifestEvidence;
 pub(crate) use placement::{OciPlacementAuthority, OciPlacementProvider, place_sandbox_on_block};
 pub(crate) use process::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
@@ -119,8 +117,8 @@ pub(crate) use proxy::{
 pub(crate) use proxy::{
     panicking_machine_port_proxy_for_test, prepare_machine_port_proxies, start_machine_port_proxies,
 };
-pub(crate) use realization::OciSegmentRealization;
-pub(crate) use reaper::{
+pub use realization::OciSegmentRealization;
+pub use reaper::{
     ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity,
     compensate_reserved_network_launch_after_ports, quarantine_network_segment_hold,
     release_network_segment_hold, release_reserved_network_launch_after_ports,
@@ -128,16 +126,16 @@ pub(crate) use reaper::{
 };
 #[cfg(test)]
 pub(crate) use segment::SingleNodeSegmentAllocator;
-pub(crate) use segment::{ConfiguredSegmentAllocator, DEFAULT_TENANT_PREFIX};
-pub(crate) use startup_reconciliation::reconcile_startup_network_state_with_cleanup;
-#[cfg(test)]
-pub(crate) use test_support::{
+pub use segment::{ConfiguredSegmentAllocator, DEFAULT_TENANT_PREFIX};
+pub use startup_reconciliation::reconcile_startup_network_state_with_cleanup;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use test_support::{
     RecordingSegmentAllocator, SegmentAllocatorOperation, direct_test_ipam_authority,
     direct_test_port_authority,
 };
 
 /// OCI-family specialization of the portable segment allocation capability.
-pub(crate) type OciSegmentAllocator =
+pub type OciSegmentAllocator =
     dyn NetworkSegmentAllocator<Segment = OciSegmentRealization, Error = SandboxError>;
 
 /// Stable name of the sole OCI workload attachment currently realized.
@@ -146,7 +144,7 @@ pub(crate) type OciSegmentAllocator =
 /// inheriting a previous incarnation's attachment hold.
 pub(crate) const DEFAULT_ATTACHMENT_NAME: &str = "default";
 
-pub(crate) fn default_network_attachment_id(sandbox_id: &SandboxId) -> NetworkAttachmentId {
+pub fn default_network_attachment_id(sandbox_id: &SandboxId) -> NetworkAttachmentId {
     NetworkAttachmentId::for_workload_attachment(sandbox_id.as_str(), DEFAULT_ATTACHMENT_NAME)
 }
 
@@ -159,11 +157,11 @@ pub(crate) fn inspect_container_ips(
     ipam::load_container_ips(ipam_authority, layout, sandbox_id)
 }
 
-pub(crate) const DEFAULT_NETAVARK_BINARY: &str = "netavark";
-pub(crate) const DEFAULT_AARDVARK_DNS_BINARY: &str = "aardvark-dns";
-pub(crate) const DEFAULT_NETWORK_NAME: &str = "nimbus";
-pub(crate) const DEFAULT_NETWORK_INTERFACE: &str = "nimbus0";
-pub(crate) const DEFAULT_NETWORK_SUBNET: &str = "10.89.0.0/24";
+pub const DEFAULT_NETAVARK_BINARY: &str = "netavark";
+pub const DEFAULT_AARDVARK_DNS_BINARY: &str = "aardvark-dns";
+pub const DEFAULT_NETWORK_NAME: &str = "nimbus";
+pub const DEFAULT_NETWORK_INTERFACE: &str = "nimbus0";
+pub const DEFAULT_NETWORK_SUBNET: &str = "10.89.0.0/24";
 pub(crate) const DEFAULT_MACHINE_FORWARDER_HOST: &str = "gateway.containers.internal";
 pub(crate) const DEFAULT_MACHINE_FORWARDER_PORT: u16 = 80;
 pub(crate) const DEFAULT_MACHINE_FORWARDER_PATH: &str = "/services/forwarder";

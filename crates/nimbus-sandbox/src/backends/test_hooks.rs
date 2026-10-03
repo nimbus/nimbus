@@ -2,8 +2,14 @@
 
 use std::path::Path;
 
+pub use crate::provider_command::{
+    ProviderCommandLockTestProbe, with_provider_command_lock_test_probe,
+};
+pub use crate::provision::test_support::{
+    legacy_start_attachment_network_plan_fixture, sandbox_provision_network_plan_fixture,
+};
+
 use crate::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
-use crate::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig};
 use crate::{
     ProviderCommandClaim, ProviderCommandOperation, SandboxBackendKind,
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownOperation,
@@ -43,40 +49,7 @@ impl PreparedContainerNetworkTeardown {
     }
 }
 
-/// Durable Krun fixture that can create independent backend instances.
-#[doc(hidden)]
-pub struct PreparedKrunNetworkTeardown {
-    config: KrunSandboxBackendConfig,
-}
-
-impl PreparedKrunNetworkTeardown {
-    /// Prepare one exact attached workload with durable `ExecutionStopped` evidence.
-    pub fn new(
-        root: &Path,
-        stopped: &SandboxExecutionTeardownCommand,
-        detached: &SandboxNetworkTeardownCommand,
-        plan: SandboxProvisionNetworkPlan,
-        pep_port: u16,
-        release_pep_reservation: impl FnOnce(),
-    ) -> crate::Result<Self> {
-        super::krun::prepare_network_teardown_fixture(
-            root,
-            stopped,
-            detached,
-            plan,
-            pep_port,
-            release_pep_reservation,
-        )
-        .map(|config| Self { config })
-    }
-
-    /// Reopen only from the fixture's durable roots.
-    pub fn reopen(&self) -> KrunSandboxBackend {
-        super::krun::reopen_network_teardown_fixture(&self.config)
-    }
-}
-
-pub(in crate::backends) fn validate_network_teardown_fixture(
+pub fn validate_network_teardown_fixture(
     backend: SandboxBackendKind,
     execution_provider_key: &str,
     attachment_provider_key: &str,

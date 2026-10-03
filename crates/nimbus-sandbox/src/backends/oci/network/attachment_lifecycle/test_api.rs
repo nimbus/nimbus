@@ -79,7 +79,7 @@ impl AttachmentHostEffects for DeterministicAttachmentHostEffects {
 impl OciAttachmentAdapter<'_> {
     /// Exercise the production attachment algorithm with deterministic
     /// namespace and Netavark effects on any test host.
-    pub(crate) fn attach_with_test_host(
+    pub fn attach_with_test_host(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         authority: AttachmentAttachAuthority<'_>,
@@ -168,8 +168,8 @@ impl OciAttachmentAdapter<'_> {
         lifecycle.complete_injected_setup(&self.context, setup)
     }
 
-    #[cfg(test)]
-    pub(crate) fn compensate_injected_host_setup_failure(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn compensate_injected_host_setup_failure(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         batch: OciPortBindLifetimeBatch,
@@ -179,10 +179,11 @@ impl OciAttachmentAdapter<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl OciAttachmentLifecycle<'_> {
     /// Route an injected provider result through the canonical compensation
     /// seam without manufacturing a live Netavark lifetime batch.
+    #[cfg(test)]
     fn complete_injected_setup(
         &self,
         context: &OciAttachmentContext<'_>,

@@ -48,7 +48,7 @@ pub(crate) use cleanup::DurableSegmentCleanupAuthority;
 pub(crate) const DEFAULT_NODE_SUPERNET: &str = "10.0.0.0/16";
 /// The default per-tenant subnet prefix (`/24` = 253 sandboxes). On-demand block
 /// growth for denser packing is MTN6.
-pub(crate) const DEFAULT_TENANT_PREFIX: u8 = 24;
+pub const DEFAULT_TENANT_PREFIX: u8 = 24;
 
 /// The node super-net this allocator may carve tenant subnets from. Single-node
 /// installs the node-0 slice at epoch 0; the cluster leg installs a raft-committed
@@ -297,7 +297,7 @@ pub(crate) struct SingleNodeSegmentAllocator {
 /// The adapter freezes typed topology around one injected allocator backed by
 /// the manager-derived state-store handle. Operations delegate to that retained
 /// allocator; they never reopen durable authority from a path.
-pub(crate) struct ConfiguredSegmentAllocator {
+pub struct ConfiguredSegmentAllocator {
     inner: std::result::Result<SingleNodeSegmentAllocator, Arc<str>>,
 }
 
@@ -338,7 +338,7 @@ impl ConfiguredSegmentAllocator {
 
     /// Cache one direct-adapter reconstruction outcome without reopening it
     /// during later lifecycle operations.
-    pub(crate) fn reconstruct_direct(
+    pub fn reconstruct_direct(
         state_root: impl AsRef<Path>,
         supernet: &str,
         tenant_prefix: u8,

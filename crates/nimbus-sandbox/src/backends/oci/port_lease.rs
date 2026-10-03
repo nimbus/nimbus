@@ -29,9 +29,9 @@ mod bind_outcome;
 mod binding_authority;
 mod teardown;
 
-#[cfg(test)]
-pub(crate) use bind_claim::claim_bind_attempts;
-pub(crate) use bind_claim::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use bind_claim::claim_bind_attempts;
+pub use bind_claim::{
     abandon_bind_attempt_with_lifetime_without_effect,
     abandon_bind_attempts_with_lifetimes_without_effect, abandon_bind_attempts_without_effect,
     abandon_bind_plan_member_attempt_with_lifetime_without_effect,
@@ -43,10 +43,10 @@ pub(crate) use bind_claim::{
     claim_rebind_plan_member_attempt_with_lifetime,
     claim_rebind_plan_members_attempts_with_lifetimes,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+pub(crate) use bind_outcome::adopt_claimed_and_activate_batch;
 #[cfg(test)]
-pub(crate) use bind_outcome::{
-    adopt_claimed_and_activate, adopt_claimed_and_activate_batch, record_bind_failure,
-};
+pub(crate) use bind_outcome::{adopt_claimed_and_activate, record_bind_failure};
 pub(crate) use bind_outcome::{
     adopt_claimed_and_activate_batch_with_lifetimes,
     adopt_claimed_and_activate_plan_member_with_lifetime,
@@ -63,7 +63,7 @@ pub(crate) use binding_authority::{
 };
 #[cfg(test)]
 pub(crate) use teardown::prepare_rebind_batch_after_confirmed_stop;
-pub(crate) use teardown::{
+pub use teardown::{
     prepare_process_bound_plan_member_rebind_after_owner_death,
     prepare_process_bound_rebind_after_owner_death,
     prepare_provider_managed_batch_after_confirmed_stop,
@@ -86,7 +86,7 @@ const RESERVATION_COORDINATOR_KEY: &str = "nimbus-sandbox.network-launch-coordin
 
 /// Sandbox effect owner that interprets one durable provider handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OciPortProvider {
+pub enum OciPortProvider {
     Netavark,
     MachinePortProxy,
     EgressPep,
@@ -150,13 +150,13 @@ pub(crate) struct ReservedPortLeaseRecordBatch {
 }
 
 /// Exact provider claims and non-cloneable process lifetimes for one batch.
-pub(crate) struct OciPortBindLifetimeBatch {
+pub struct OciPortBindLifetimeBatch {
     claims: Vec<PortBindClaim>,
     lifetimes: Vec<PortLeaseLifetimeGuard>,
 }
 
 impl OciPortBindLifetimeBatch {
-    pub(crate) fn claims(&self) -> &[PortBindClaim] {
+    pub fn claims(&self) -> &[PortBindClaim] {
         &self.claims
     }
 
@@ -213,7 +213,7 @@ impl ReservedPortLeaseRecordBatch {
     }
 }
 
-pub(crate) fn new_launch_reservation_claim() -> Result<NetworkReservationClaim> {
+pub fn new_launch_reservation_claim() -> Result<NetworkReservationClaim> {
     let provider_id = NetworkProviderId::for_registration_key(RESERVATION_COORDINATOR_KEY);
     let handle = NetworkProviderHandle::new(provider_id, format!("attempt:{}", Ulid::new()))
         .map_err(|error| SandboxError::OperationFailed {
@@ -554,7 +554,7 @@ pub(crate) fn verify_reserved_batch_for_coordinator(
 }
 
 /// Reserve a provider-assigned identity whose numeric port is adopted later.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn reserve_provider_assigned(
     authority: &LocalPortLeaseAuthority,
     request: PortLeaseRequest,

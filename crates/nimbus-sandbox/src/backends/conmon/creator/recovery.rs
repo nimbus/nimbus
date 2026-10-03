@@ -19,13 +19,13 @@ mod tests;
 /// attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CreatorAttemptReceipt {
+pub struct CreatorAttemptReceipt {
     attempt_id: String,
     process: CreatorProcessIdentity,
 }
 
 impl CreatorAttemptReceipt {
-    pub(crate) fn attempt_id(&self) -> &str {
+    pub fn attempt_id(&self) -> &str {
         &self.attempt_id
     }
 
@@ -34,8 +34,8 @@ impl CreatorAttemptReceipt {
         &self.process
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_test(attempt_id: impl Into<String>) -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test(attempt_id: impl Into<String>) -> Self {
         Self {
             attempt_id: attempt_id.into(),
             process: CreatorProcessIdentity {
@@ -46,8 +46,8 @@ impl CreatorAttemptReceipt {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_substituted_birth_for_test(mut self) -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn with_substituted_birth_for_test(mut self) -> Self {
         match &mut self.process.birth {
             CreatorProcessBirth::LinuxProcStartTicks { ticks } => *ticks = ticks.saturating_add(1),
             CreatorProcessBirth::AppleBsdStartTime { microseconds, .. } => {
@@ -61,7 +61,7 @@ impl CreatorAttemptReceipt {
 /// Durable reason a creator attempt can no longer materialize provider effects.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum CreatorQuiescenceProof {
+pub enum CreatorQuiescenceProof {
     /// The operating-system spawn was rejected before any child existed.
     NeverSpawned { attempt_id: String },
     /// A wrapper process existed, but its pre-effect launch gate was never
@@ -72,23 +72,23 @@ pub(crate) enum CreatorQuiescenceProof {
 }
 
 impl CreatorQuiescenceProof {
-    pub(crate) fn never_spawned(attempt_id: impl Into<String>) -> Self {
+    pub fn never_spawned(attempt_id: impl Into<String>) -> Self {
         Self::NeverSpawned {
             attempt_id: attempt_id.into(),
         }
     }
 
-    pub(crate) fn dead_contained(receipt: CreatorAttemptReceipt) -> Self {
+    pub fn dead_contained(receipt: CreatorAttemptReceipt) -> Self {
         Self::DeadContained { receipt }
     }
 
-    pub(crate) fn launch_gate_never_released(attempt_id: impl Into<String>) -> Self {
+    pub fn launch_gate_never_released(attempt_id: impl Into<String>) -> Self {
         Self::LaunchGateNeverReleased {
             attempt_id: attempt_id.into(),
         }
     }
 
-    pub(crate) fn attempt_id(&self) -> &str {
+    pub fn attempt_id(&self) -> &str {
         match self {
             Self::NeverSpawned { attempt_id } | Self::LaunchGateNeverReleased { attempt_id } => {
                 attempt_id
@@ -130,7 +130,7 @@ enum CreatorProcessBirth {
 
 /// Fresh-process observation of the creator containment only.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CreatorContainmentObservation {
+pub enum CreatorContainmentObservation {
     /// The exact process incarnation remains live in its recorded process
     /// group. Recovery must not signal or supersede its owner.
     Live,
@@ -196,7 +196,7 @@ pub(super) fn capture_creator_attempt(
     })
 }
 
-pub(crate) fn observe_creator_containment(
+pub fn observe_creator_containment(
     receipt: &CreatorAttemptReceipt,
 ) -> CreatorContainmentObservation {
     let expected = &receipt.process;
@@ -233,7 +233,7 @@ pub(crate) fn observe_creator_containment(
 /// containment plus explicit runtime absence. The dead receipt remains durable
 /// until a later acknowledged lifecycle checkpoint or the next pre-spawn
 /// cleanup, so acknowledgement loss cannot erase recovery evidence.
-pub(crate) fn confirm_dead_conmon_receipt(conmon_pidfile: &std::path::Path) -> Result<()> {
+pub fn confirm_dead_conmon_receipt(conmon_pidfile: &std::path::Path) -> Result<()> {
     let metadata =
         std::fs::symlink_metadata(conmon_pidfile).map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => SandboxError::OperationFailed {

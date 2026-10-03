@@ -2,7 +2,7 @@
 
 /// Closed runtime state supplied by an effect-owning provider adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProvisionActivationRuntimeState {
+pub enum ProvisionActivationRuntimeState {
     /// The workload process is currently running.
     Running,
     /// Provider creation is still converging without a retry decision.
@@ -17,7 +17,7 @@ pub(crate) enum ProvisionActivationRuntimeState {
 
 /// Provider-neutral result consumed by one provision phase inspector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProvisionActivationObservationKind {
+pub enum ProvisionActivationObservationKind {
     Succeeded,
     Absent,
     InProgress,
@@ -25,7 +25,7 @@ pub(crate) enum ProvisionActivationObservationKind {
 }
 
 /// Classify one normalized provider runtime state without I/O or mutation.
-pub(crate) const fn classify_provision_activation(
+pub const fn classify_provision_activation(
     state: ProvisionActivationRuntimeState,
 ) -> ProvisionActivationObservationKind {
     match state {

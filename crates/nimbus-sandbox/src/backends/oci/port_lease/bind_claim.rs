@@ -17,8 +17,8 @@ use super::{
 use crate::error::{Result, SandboxError};
 
 /// Claim a complete Nimbus-owned listener batch before any provider bind.
-#[cfg(test)]
-pub(crate) fn claim_bind_attempts(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn claim_bind_attempts(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     provider: OciPortProvider,
@@ -40,7 +40,7 @@ pub(crate) fn claim_bind_attempts(
 }
 
 /// Claim one sandbox provider attempt together with its exact process lifetime.
-pub(crate) fn claim_bind_attempt_with_lifetime(
+pub fn claim_bind_attempt_with_lifetime(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     provider: OciPortProvider,
@@ -56,7 +56,7 @@ pub(crate) fn claim_bind_attempt_with_lifetime(
 
 /// Claim one compiler-planned effect while proving the complete immutable
 /// plan membership without claiming unrelated listeners for this provider.
-pub(crate) fn claim_bind_plan_member_attempt_with_lifetime(
+pub fn claim_bind_plan_member_attempt_with_lifetime(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     request: &PortLeaseRequest,
@@ -78,7 +78,7 @@ pub(crate) fn claim_bind_plan_member_attempt_with_lifetime(
 }
 
 /// Claim one retained planned binding for its next process lifetime.
-pub(crate) fn claim_rebind_plan_member_attempt_with_lifetime(
+pub fn claim_rebind_plan_member_attempt_with_lifetime(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     request: &PortLeaseRequest,
@@ -100,7 +100,7 @@ pub(crate) fn claim_rebind_plan_member_attempt_with_lifetime(
     Ok((claim, lifetime))
 }
 
-pub(crate) fn claim_rebind_plan_members_attempts_with_lifetimes(
+pub fn claim_rebind_plan_members_attempts_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],
@@ -140,7 +140,7 @@ pub(crate) fn claim_rebind_plan_members_attempts_with_lifetimes(
 }
 
 /// Claim a complete provider batch together with exact process lifetimes.
-pub(crate) fn claim_bind_attempts_with_lifetimes(
+pub fn claim_bind_attempts_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     provider: OciPortProvider,
@@ -164,7 +164,7 @@ pub(crate) fn claim_bind_attempts_with_lifetimes(
 
 /// Claim one provider-owned subset while authenticating the complete compiler
 /// plan in the same durable transaction.
-pub(crate) fn claim_bind_plan_members_attempts_with_lifetimes(
+pub fn claim_bind_plan_members_attempts_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],
@@ -193,7 +193,7 @@ pub(crate) fn claim_bind_plan_members_attempts_with_lifetimes(
 }
 
 /// Relinquish exact bind claims after all corresponding effects are absent.
-pub(crate) fn abandon_bind_attempts_without_effect(
+pub fn abandon_bind_attempts_without_effect(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     claims: &[PortBindClaim],
@@ -219,7 +219,7 @@ pub(crate) fn abandon_bind_attempts_without_effect(
 }
 
 /// Relinquish one exact lifetime-fenced attempt after proving no effect.
-pub(crate) fn abandon_bind_attempt_with_lifetime_without_effect(
+pub fn abandon_bind_attempt_with_lifetime_without_effect(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     claim: &PortBindClaim,
@@ -231,7 +231,7 @@ pub(crate) fn abandon_bind_attempt_with_lifetime_without_effect(
         .map_err(port_lease_error)
 }
 
-pub(crate) fn abandon_bind_plan_member_attempt_with_lifetime_without_effect(
+pub fn abandon_bind_plan_member_attempt_with_lifetime_without_effect(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     request: &PortLeaseRequest,
@@ -250,7 +250,7 @@ pub(crate) fn abandon_bind_plan_member_attempt_with_lifetime_without_effect(
         .map_err(port_lease_error)
 }
 
-pub(crate) fn abandon_rebind_plan_member_attempt_with_lifetime_without_effect(
+pub fn abandon_rebind_plan_member_attempt_with_lifetime_without_effect(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     request: &PortLeaseRequest,
@@ -279,7 +279,7 @@ pub(crate) fn abandon_rebind_plan_member_attempt_with_lifetime_without_effect(
         .map_err(port_lease_error)
 }
 
-pub(crate) fn abandon_rebind_plan_members_attempts_with_lifetimes_without_effect(
+pub fn abandon_rebind_plan_members_attempts_with_lifetimes_without_effect(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],
@@ -314,7 +314,7 @@ pub(crate) fn abandon_rebind_plan_members_attempts_with_lifetimes_without_effect
 }
 
 /// Relinquish one complete lifetime-fenced batch after proving no effect.
-pub(crate) fn abandon_bind_attempts_with_lifetimes_without_effect(
+pub fn abandon_bind_attempts_with_lifetimes_without_effect(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     batch: &OciPortBindLifetimeBatch,
@@ -345,7 +345,7 @@ pub(crate) fn abandon_bind_attempts_with_lifetimes_without_effect(
 }
 
 /// Relinquish one no-effect provider subset under the complete compiler plan.
-pub(crate) fn abandon_bind_plan_members_attempts_with_lifetimes_without_effect(
+pub fn abandon_bind_plan_members_attempts_with_lifetimes_without_effect(
     authority: &LocalPortLeaseAuthority,
     plan_members: &[PortLeaseRequest],
     requests: &[PortLeaseRequest],

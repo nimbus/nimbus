@@ -98,7 +98,7 @@ impl EgressProxyRegistry {
     /// The engine retains a non-ready Stopping tombstone through provider
     /// shutdown, trust-anchor removal, and durable release. Any failed step is
     /// retried against the same exact process-local evidence.
-    pub(crate) fn stop_with_assignment(
+    pub fn stop_with_assignment(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
@@ -127,7 +127,7 @@ impl EgressProxyRegistry {
     /// Provider acknowledgement and trust-anchor removal precede the explicit
     /// Active → Reserved transition. The same request then re-enters the normal
     /// bind-claim lifecycle on restart.
-    pub(crate) fn stop_for_restart(
+    pub fn stop_for_restart(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
@@ -153,7 +153,7 @@ impl EgressProxyRegistry {
 
     /// Stop an exact PEP while retaining its selected listener as fenced,
     /// non-bindable detach authority.
-    pub(crate) fn stop_for_detach(
+    pub fn stop_for_detach(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
@@ -261,7 +261,7 @@ impl EgressProxyRegistry {
     }
 
     /// Release one exact stopped-retained PEP lease without a provider effect.
-    pub(crate) fn release_after_detach(
+    pub fn release_after_detach(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
