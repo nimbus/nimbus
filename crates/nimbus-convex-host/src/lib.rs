@@ -5,7 +5,7 @@
 //! owns the routes and the socket loop and calls into this crate.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use http::Method;
 use nimbus_bridge::read_tracking::{
