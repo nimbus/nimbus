@@ -17,5 +17,5 @@ mod top_level;
 pub(crate) use top_level::execute_convex_action_cancellable_with_auth;
 #[cfg(test)]
 pub(crate) use top_level::{
-    execute_convex_action, execute_convex_action_cancellable, execute_named_action_request_direct,
+    execute_convex_action_cancellable, execute_named_action_request_direct,
 };

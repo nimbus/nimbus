@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use axum::body::Bytes;
-use axum::extract::OriginalUri;
 use axum::extract::ws::{Message, WebSocket};
-use axum::http::{HeaderMap, Method};
 use futures::{SinkExt, StreamExt};
 pub use nimbus_convex::ConvexRegistry;
 pub(crate) use nimbus_convex::*;
 pub use nimbus_convex::{ConvexSiloAuthRegistry, ConvexTenancyConfig, SiloTeamRegistry, TeamId};
-use nimbus_core::{Error, InvocationAuth, Query, TenantId};
+use nimbus_core::{InvocationAuth, Query, TenantId};
 use nimbus_engine::SubscriptionUpdate;
-use nimbus_runtime::{HostCallCancellation, InvocationKind, InvocationRequest};
+use nimbus_runtime::HostCallCancellation;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
