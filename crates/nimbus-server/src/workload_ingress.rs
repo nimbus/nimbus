@@ -38,12 +38,12 @@ use nimbus_network::{
     PortLeaseAccounting, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest,
     PortProtocol, PublishedEndpointId,
 };
-use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::{
     ProviderCommandJournalError, SandboxBackendKind, SandboxError, SandboxProvisionIngressRoute,
     SandboxProvisionIngressTargetObservation, SandboxProvisionIngressTargets,
     SandboxProvisionNetworkPlan,
 };
+use nimbus_sandbox_container::ContainerSandboxBackend;
 use nimbus_sandbox_krun::KrunSandboxBackend;
 use nimbus_workloads::{WorkloadProvisionProviderTarget, WorkloadPublicationIntent};
 

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use nimbus_sandbox::ProviderCommandClaim;
-use nimbus_sandbox::backends::conmon::runtime_process::RuntimeProcessIdentity;
+use nimbus_sandbox_container::conmon::runtime_process::RuntimeProcessIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::vm) enum KrunNetworkStopRequirementError {

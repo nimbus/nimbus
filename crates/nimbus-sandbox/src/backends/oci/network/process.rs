@@ -19,7 +19,7 @@ use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::error::SandboxError;
 
 mod machine_proxy_lifetime;
-pub(crate) use machine_proxy_lifetime::{
+pub use machine_proxy_lifetime::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
     MachinePortProxyCleanupDisposition, MachinePortProxyCleanupState, MachinePortProxyEntries,
     MachinePortProxyEntry, MachinePortProxyKey, MachinePortProxyLeaseAuthority,
@@ -164,7 +164,7 @@ impl OciNetworkProcess {
         self.netavark_port_lifetimes.clone()
     }
 
-    pub(crate) fn machine_port_proxy_lifetimes(&self) -> MachinePortProxyLifetimeRegistry {
+    pub fn machine_port_proxy_lifetimes(&self) -> MachinePortProxyLifetimeRegistry {
         self.machine_port_proxy_lifetimes.clone()
     }
 

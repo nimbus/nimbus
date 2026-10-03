@@ -1,6 +1,4 @@
 pub mod capabilities;
-pub mod conmon;
-pub mod container;
 pub mod inspection;
 pub mod oci;
 pub mod poll;

@@ -10,7 +10,8 @@ Nimbus runs untrusted, process-shaped workloads inside **sandboxes** — isolate
 Linux execution environments owned by a tenant. On hosts that are not Linux,
 Nimbus first boots a **machine**: a single outer Linux VM that supplies the
 kernel features sandboxes need. This page tours the crates that implement both
-layers: `crates/nimbus-sandbox` (the sandbox seam and its backends),
+layers: `crates/nimbus-sandbox` (the sandbox seam and its shared backend layer),
+`crates/nimbus-sandbox-container` (the container backend),
 `crates/nimbus-sandbox-krun` (the krun backend), and
 `crates/nimbus-machine` plus the `nimbus machine` CLI flow in
 `crates/nimbus-cli/src/machine/`.
@@ -37,7 +38,7 @@ seam: a backend reports its `kind()`, and implements `start`, `inspect`, and
 
 ## The container backend
 
-The container backend (`crates/nimbus-sandbox/src/backends/container/`) is the
+The container backend (`crates/nimbus-sandbox-container/src/`) is the
 production path for process-capable launches. It composes standard OCI
 tooling:
 

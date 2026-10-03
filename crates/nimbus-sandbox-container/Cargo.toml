@@ -1,0 +1,43 @@
+[package]
+name = "nimbus-sandbox-container"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Gates deterministic cross-crate fixture construction. The feature is used
+# only by upper-crate dev-dependencies and adds no production provider path.
+test-hooks = ["nimbus-sandbox/test-hooks"]
+
+[dependencies]
+libc.workspace = true
+nimbus-core = { path = "../nimbus-core" }
+nimbus-durable-record = { path = "../nimbus-durable-record" }
+nimbus-egress = { path = "../nimbus-egress" }
+nimbus-network = { path = "../nimbus-network" }
+nimbus-sandbox = { path = "../nimbus-sandbox" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+ulid.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+futures.workspace = true
+nimbus-process-harness = { path = "../nimbus-process-harness" }
+nimbus-sandbox = { path = "../nimbus-sandbox", features = ["test-hooks"] }
+shell-words.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }

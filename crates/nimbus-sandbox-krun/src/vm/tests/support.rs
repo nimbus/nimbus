@@ -28,7 +28,6 @@ pub(super) use super::super::{
     published_endpoints, running_status, slugify, visible_published_endpoints,
 };
 pub(super) use nimbus_network::EndpointProtocol;
-pub(super) use nimbus_sandbox::backends::conmon::lifecycle::RestartLaunchTestProbe;
 pub(super) use nimbus_sandbox::backends::oci::buildah::{
     ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
 };
@@ -53,6 +52,7 @@ pub(super) use nimbus_sandbox::{
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxResourceQuotaPolicy,
     SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
+pub(super) use nimbus_sandbox_container::conmon::lifecycle::RestartLaunchTestProbe;
 pub(super) fn sample_spec() -> SandboxSpec {
     sample_spec_with_rootfs(Path::new("/srv/rootfs"))
 }
@@ -248,7 +248,7 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
         creator_handoff: match start_mode {
             KrunStartMode::PlanOnly => KrunCreatorHandoffState::NotSpawned,
             KrunStartMode::Execute => KrunCreatorHandoffState::RuntimeObserved {
-                receipt: nimbus_sandbox::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+                receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
                     "test-runtime-observed",
                 ),
             },

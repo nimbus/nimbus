@@ -11,12 +11,12 @@ use tempfile::TempDir;
 
 use nimbus_core::TenantId;
 use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
-use nimbus_sandbox::backends::container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
-};
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec,
     SandboxRootSpec, SandboxSpec,
+};
+use nimbus_sandbox_container::{
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 
 #[path = "support/provision.rs"]

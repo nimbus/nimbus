@@ -5,9 +5,6 @@ use std::cell::RefCell;
 use nimbus_network::NetworkAttachmentReservationState;
 
 use nimbus_sandbox::backends::KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
-use nimbus_sandbox::backends::conmon::lifecycle::{
-    inspect_runtime_artifact_presence, remove_if_exists,
-};
 use nimbus_sandbox::backends::oci::network::{
     AttachmentAuxiliaryDisposition, HostManagedAttachmentCommandInspection,
     HostManagedAttachmentCommandInspectionError, HostManagedAttachmentTeardownState,
@@ -17,6 +14,9 @@ use nimbus_sandbox::{
     ProviderCommandObservation, ProviderCommandObservationKind, SandboxError,
     SandboxNetworkTeardownCommand, SandboxNetworkTeardownObservation,
     SandboxNetworkTeardownOperation,
+};
+use nimbus_sandbox_container::conmon::lifecycle::{
+    inspect_runtime_artifact_presence, remove_if_exists,
 };
 
 use super::teardown::state::KrunNetworkStopRequirementError;

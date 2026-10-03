@@ -12,7 +12,7 @@ use nimbus_network::{
     NetworkSovereigntyRequirements,
 };
 #[cfg(target_os = "linux")]
-use nimbus_sandbox::backends::container::{
+use nimbus_sandbox_container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 #[cfg(target_os = "linux")]

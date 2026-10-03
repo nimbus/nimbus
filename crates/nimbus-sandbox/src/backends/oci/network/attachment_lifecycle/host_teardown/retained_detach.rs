@@ -40,7 +40,7 @@ pub(super) struct NeverEffectedAuthoritySnapshot {
 
 impl OciAttachmentAdapter<'_> {
     /// Detach provider effects while every reusable authority stays retained.
-    pub(crate) fn detach_host_managed_retained(
+    pub fn detach_host_managed_retained(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,
@@ -117,7 +117,7 @@ impl OciAttachmentAdapter<'_> {
 
     /// Detach a machine-forwarded private attachment after its publication
     /// owner proves exact durable absence and retained listener authority.
-    pub(crate) fn detach_machine_forwarded_retained(
+    pub fn detach_machine_forwarded_retained(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,

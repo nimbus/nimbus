@@ -268,7 +268,7 @@ impl OciPortLeaseCoordinator {
     /// coordinator, so its durable confirmed-stop receipts become the
     /// independent evidence for either a clean retained batch or the exact
     /// attempt-unique Netavark claims recorded by the next setup.
-    pub(crate) fn classify_netavark_cleanup_batch(
+    pub fn classify_netavark_cleanup_batch(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -435,7 +435,7 @@ impl OciPortLeaseCoordinator {
     /// The exact wildcard guest listener is the provider effect. The external
     /// publication address remains part of the request identity, but is never
     /// substituted for the listener receipt during cleanup.
-    pub(crate) fn classify_machine_cleanup_batch(
+    pub fn classify_machine_cleanup_batch(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -560,7 +560,7 @@ impl OciPortLeaseCoordinator {
     }
 
     /// Release one exact machine-proxy batch from durable confirmed-stop receipts.
-    pub(crate) fn release_restart_retained_machine_bindings(
+    pub fn release_restart_retained_machine_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,

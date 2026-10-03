@@ -12,7 +12,7 @@ use nimbus_core::Cidr;
 use nimbus_machine::{MachineBootAuthorityEvidence, MachineForwarderAuthority};
 use nimbus_network::{LocalNetworkManager, LocalNetworkManagerError, NetworkCapabilityRegistry};
 use nimbus_sandbox::backends::OciNetworkProcess;
-use nimbus_sandbox::backends::container::{
+use nimbus_sandbox_container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, OciMachinePortForwarderConfig,
 };
 

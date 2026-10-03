@@ -159,8 +159,8 @@ impl OciAttachmentAdapter<'_> {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn complete_injected_setup(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn complete_injected_setup(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         setup: Result<Vec<Ipv4Addr>>,
@@ -183,7 +183,7 @@ impl OciAttachmentAdapter<'_> {
 impl OciAttachmentLifecycle<'_> {
     /// Route an injected provider result through the canonical compensation
     /// seam without manufacturing a live Netavark lifetime batch.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn complete_injected_setup(
         &self,
         context: &OciAttachmentContext<'_>,

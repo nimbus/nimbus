@@ -2,15 +2,15 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nimbus_sandbox::backends::conmon::lifecycle::{
+use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_container::conmon::lifecycle::{
     RuntimeStateObservation, runtime_state_for_creator_attempt,
 };
-use nimbus_sandbox::backends::conmon::runtime_process::{
+use nimbus_sandbox_container::conmon::runtime_process::{
     RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
     RuntimeProcessSignalOutcome, capture_runtime_process_identity,
     inspect_runtime_process_identity, signal_authenticated_runtime_process,
 };
-use nimbus_sandbox::{Result, SandboxError};
 
 use super::super::{KrunCreatorHandoffState, KrunSandboxManifest};
 

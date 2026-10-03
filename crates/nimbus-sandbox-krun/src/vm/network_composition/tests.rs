@@ -7,14 +7,14 @@ use std::sync::Arc;
 use nimbus_core::{Cidr, TenantId};
 use nimbus_network::{LocalNetworkManager, LocalNetworkStateStore, PortLeasePhase};
 use nimbus_proxy::{WorkloadPep, WorkloadPepConfig};
-use nimbus_sandbox::backends::container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
-};
 use nimbus_sandbox::backends::oci::egress::{egress_decision_log_root, egress_trust_anchor_root};
 use nimbus_sandbox::backends::oci::network::OciNetworkProcess;
 use nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim;
 use nimbus_sandbox::backends::oci::port_lifecycle::SandboxLaunchPortPlan;
 use nimbus_sandbox::{SandboxId, SandboxPortBinding};
+use nimbus_sandbox_container::{
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
+};
 use tempfile::TempDir;
 
 use crate::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};

@@ -49,7 +49,7 @@ impl CommandSpec {
     }
 }
 
-pub(crate) fn render_command_failure(stdout: &[u8], stderr: &[u8]) -> String {
+pub fn render_command_failure(stdout: &[u8], stderr: &[u8]) -> String {
     let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
     if !stderr.is_empty() {
         return stderr;
@@ -70,7 +70,7 @@ pub(crate) fn render_command_failure(stdout: &[u8], stderr: &[u8]) -> String {
 /// `MAX_CAPTURED_STREAM_BYTES` per stream. The owner kills and reaps on
 /// timeout; every other post-spawn error either retains that owner through
 /// cleanup or transfers it to a dedicated reaper before returning.
-pub(crate) fn run_bounded_command_output(
+pub fn run_bounded_command_output(
     command: &mut Command,
     timeout: Duration,
 ) -> std::io::Result<Output> {

@@ -181,11 +181,11 @@ pub struct AttachmentDetachFailure {
 }
 
 impl AttachmentDetachFailure {
-    pub(crate) fn stage(&self) -> AttachmentDetachFailureStage {
+    pub fn stage(&self) -> AttachmentDetachFailureStage {
         self.stage
     }
 
-    pub(crate) fn into_error(self) -> SandboxError {
+    pub fn into_error(self) -> SandboxError {
         self.error
     }
 }
@@ -303,7 +303,7 @@ impl<'a> OciAttachmentAdapter<'a> {
         )
     }
 
-    pub(crate) fn inspect_machine_forwarded_base_readiness(
+    pub fn inspect_machine_forwarded_base_readiness(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         pin_provider: &dyn super::OciEgressPinObserver,
@@ -335,7 +335,7 @@ impl<'a> OciAttachmentAdapter<'a> {
         )
     }
 
-    pub(crate) fn complete_machine_forwarded_readiness(
+    pub fn complete_machine_forwarded_readiness(
         &self,
         base: attachment_readiness::OciAttachmentBaseReadinessEvidence,
         publication: std::result::Result<super::MachineForwardedPublicationReadiness, String>,
@@ -352,7 +352,7 @@ impl<'a> OciAttachmentAdapter<'a> {
         lifecycle.detach_host_managed(&self.context, mode, before_provider_detach)
     }
 
-    pub(crate) fn detach_machine_forwarded<T>(
+    pub fn detach_machine_forwarded<T>(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         mode: AttachmentTeardownMode,
@@ -684,7 +684,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
 
     /// Preserve a planning failure while compensating ports, IPAM, and the
     /// exact reserved attachment in reverse order.
-    pub(crate) fn compensate_reserved(
+    pub fn compensate_reserved(
         &self,
         backend: AttachmentBackendKind,
         identity: ReservedNetworkLaunchIdentity<'_>,

@@ -149,7 +149,7 @@ impl RetainedAttachmentPublicationEvidence {
         Ok(Self::Deferred { terminal_sha256 })
     }
 
-    pub(crate) fn machine_forwarded(absence_sha256: String) -> Result<Self> {
+    pub fn machine_forwarded(absence_sha256: String) -> Result<Self> {
         require_sha256("machine publication absence", &absence_sha256)?;
         Ok(Self::MachineForwarded { absence_sha256 })
     }
@@ -647,7 +647,7 @@ impl HostManagedAttachmentTeardownState {
         self.release_phase
     }
 
-    pub(crate) fn forwarded_release_absence_evidence(
+    pub fn forwarded_release_absence_evidence(
         &self,
     ) -> Result<crate::SandboxNetworkReleaseAbsenceEvidence> {
         self.validate()?;

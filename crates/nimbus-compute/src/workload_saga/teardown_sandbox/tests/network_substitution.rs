@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_process_harness::PortWindow;
-use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
-use nimbus_sandbox::backends::test_hooks::PreparedContainerNetworkTeardown;
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
     ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
@@ -14,6 +12,8 @@ use nimbus_sandbox::{
     SandboxNetworkTeardownObservation, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
     SandboxSpec,
 };
+use nimbus_sandbox_container::test_hooks::PreparedContainerNetworkTeardown;
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 use nimbus_sandbox_krun::test_hooks::PreparedKrunNetworkTeardown;
 use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig};
 use nimbus_workloads::{

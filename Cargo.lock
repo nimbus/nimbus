@@ -6495,6 +6495,7 @@ dependencies = [
  "nimbus-operator",
  "nimbus-process-harness",
  "nimbus-sandbox",
+ "nimbus-sandbox-container",
  "nimbus-sandbox-krun",
  "nimbus-server",
  "nimbus-services",
@@ -6584,6 +6585,7 @@ dependencies = [
  "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-sandbox",
+ "nimbus-sandbox-container",
  "nimbus-sandbox-krun",
  "nimbus-services",
  "nimbus-system",
@@ -7061,7 +7063,6 @@ dependencies = [
  "bytes",
  "cap-std",
  "flate2",
- "futures",
  "libc",
  "nimbus-blob",
  "nimbus-core",
@@ -7089,6 +7090,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-sandbox-container"
+version = "0.1.48"
+dependencies = [
+ "futures",
+ "libc",
+ "nimbus-core",
+ "nimbus-durable-record",
+ "nimbus-egress",
+ "nimbus-network",
+ "nimbus-process-harness",
+ "nimbus-sandbox",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "shell-words",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "ulid",
+ "windows-sys 0.61.2",
+ "workspace-hack",
+]
+
+[[package]]
 name = "nimbus-sandbox-krun"
 version = "0.1.48"
 dependencies = [
@@ -7102,6 +7127,7 @@ dependencies = [
  "nimbus-process-harness",
  "nimbus-proxy",
  "nimbus-sandbox",
+ "nimbus-sandbox-container",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7158,6 +7184,7 @@ dependencies = [
  "nimbus-runtime",
  "nimbus-s3",
  "nimbus-sandbox",
+ "nimbus-sandbox-container",
  "nimbus-sandbox-krun",
  "nimbus-services",
  "nimbus-storage",

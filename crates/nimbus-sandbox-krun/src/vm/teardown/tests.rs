@@ -11,11 +11,6 @@ use std::time::{Duration, Instant};
 
 use nimbus_core::TenantId;
 
-use nimbus_sandbox::backends::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
-use nimbus_sandbox::backends::conmon::runtime_process::{
-    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
-    RuntimeProcessSignalOutcome,
-};
 use nimbus_sandbox::backends::oci::command::CommandSpec;
 use nimbus_sandbox::backends::oci::egress::EgressProxyAssignment;
 use nimbus_sandbox::backends::oci::materializer::MaterializedImageRootfs;
@@ -26,6 +21,11 @@ use nimbus_sandbox::{
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation, SandboxHandle,
     SandboxId, SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAttemptFence, SandboxRootSpec,
     SandboxRootfsSpec, SandboxSpec, SandboxStatus,
+};
+use nimbus_sandbox_container::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
+use nimbus_sandbox_container::conmon::runtime_process::{
+    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
+    RuntimeProcessSignalOutcome,
 };
 
 use super::super::{

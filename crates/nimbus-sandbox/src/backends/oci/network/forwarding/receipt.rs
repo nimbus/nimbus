@@ -58,7 +58,7 @@ impl MachinePortForwardReceipt {
 /// provider answered completely, but its route set cannot authenticate either
 /// the exact desired publication or exact absence.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MachinePortForwardingSlotObservation {
+pub enum MachinePortForwardingSlotObservation {
     Exposed(MachinePortForwardReceipt),
     Absent(MachinePortForwardReceipt),
     Conflicting {
@@ -68,21 +68,21 @@ pub(crate) enum MachinePortForwardingSlotObservation {
 }
 
 impl MachinePortForwardingSlotObservation {
-    pub(crate) fn exposed_receipt(&self) -> Option<&MachinePortForwardReceipt> {
+    pub fn exposed_receipt(&self) -> Option<&MachinePortForwardReceipt> {
         match self {
             Self::Exposed(receipt) => Some(receipt),
             Self::Absent(_) | Self::Conflicting { .. } => None,
         }
     }
 
-    pub(crate) fn absent_receipt(&self) -> Option<&MachinePortForwardReceipt> {
+    pub fn absent_receipt(&self) -> Option<&MachinePortForwardReceipt> {
         match self {
             Self::Absent(receipt) => Some(receipt),
             Self::Exposed(_) | Self::Conflicting { .. } => None,
         }
     }
 
-    pub(crate) fn conflict_detail(&self) -> Option<&str> {
+    pub fn conflict_detail(&self) -> Option<&str> {
         match self {
             Self::Conflicting { detail, .. } => Some(detail),
             Self::Exposed(_) | Self::Absent(_) => None,
@@ -96,7 +96,7 @@ impl MachinePortForwardingSlotObservation {
 /// cannot be substituted for a provider observation captured by the current
 /// inspection attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CurrentMachinePortForwardingObservation {
+pub struct CurrentMachinePortForwardingObservation {
     provider_instance: NetworkProviderHandle,
     provider_generation: NetworkResourceGeneration,
     slots: Vec<MachinePortForwardingSlotObservation>,
@@ -104,7 +104,7 @@ pub(crate) struct CurrentMachinePortForwardingObservation {
 }
 
 impl CurrentMachinePortForwardingObservation {
-    pub(crate) fn authenticated(
+    pub fn authenticated(
         provider_instance: &NetworkProviderHandle,
         provider_generation: NetworkResourceGeneration,
         slots: Vec<MachinePortForwardingSlotObservation>,
@@ -122,11 +122,11 @@ impl CurrentMachinePortForwardingObservation {
         }
     }
 
-    pub(crate) fn provider_instance(&self) -> &NetworkProviderHandle {
+    pub fn provider_instance(&self) -> &NetworkProviderHandle {
         &self.provider_instance
     }
 
-    pub(crate) fn provider_generation(&self) -> NetworkResourceGeneration {
+    pub fn provider_generation(&self) -> NetworkResourceGeneration {
         self.provider_generation
     }
 
@@ -134,7 +134,7 @@ impl CurrentMachinePortForwardingObservation {
         &self.receipts
     }
 
-    pub(crate) fn slots(&self) -> &[MachinePortForwardingSlotObservation] {
+    pub fn slots(&self) -> &[MachinePortForwardingSlotObservation] {
         &self.slots
     }
 }

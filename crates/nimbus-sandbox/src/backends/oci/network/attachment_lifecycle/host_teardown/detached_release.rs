@@ -92,7 +92,7 @@ pub struct AttachmentReleaseActions<RequirePublicationAbsent, ReleaseListeners, 
 impl<RequirePublicationAbsent, ReleaseListeners, ReleaseAuxiliary>
     AttachmentReleaseActions<RequirePublicationAbsent, ReleaseListeners, ReleaseAuxiliary>
 {
-    pub(crate) fn new(
+    pub fn new(
         require_publication_absent: RequirePublicationAbsent,
         release_listeners: ReleaseListeners,
         release_auxiliary: ReleaseAuxiliary,
@@ -107,7 +107,7 @@ impl<RequirePublicationAbsent, ReleaseListeners, ReleaseAuxiliary>
 
 impl OciAttachmentAdapter<'_> {
     /// Release every authority retained by one exact detached proof.
-    pub(crate) fn release_host_managed_detached(
+    pub fn release_host_managed_detached(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,
@@ -157,7 +157,7 @@ impl OciAttachmentAdapter<'_> {
 
     /// Release a machine-forwarded attachment after the retained detach proof
     /// and the same exact machine-publication absence are authenticated.
-    pub(crate) fn release_machine_forwarded_detached(
+    pub fn release_machine_forwarded_detached(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,

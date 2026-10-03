@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 use nimbus_sandbox::{
     ProviderCommandClaim, ProviderCommandClaimInput, ProviderCommandOperation, SandboxBackendKind,
 };
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 use nimbus_workloads::{
     ProposedWorkloadTeardownTransition, WorkloadProvisionInspectionResult, WorkloadSagaPhase,
     WorkloadSagaRecord, WorkloadTeardownDecision, WorkloadTeardownProviderTarget,

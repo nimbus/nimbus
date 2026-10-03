@@ -636,7 +636,7 @@ fn publication_completion_cannot_cross_host_and_machine_modes() {
         &fixture.assignment,
     );
     let machine =
-        <ContainerSandboxBackend as OciMachineForwardedAttachmentBackend>::machine_forwarded_attachment_adapter(
+        <ContainerAttachmentBackend as OciMachineForwardedAttachmentBackend>::machine_forwarded_attachment_adapter(
             input,
             &forwarder,
         );

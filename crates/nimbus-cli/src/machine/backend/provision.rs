@@ -44,9 +44,8 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, NetworkTlsBehavior, PortBindClaim, PortBindRealm,
     PortLeaseAccounting, PortLeaseBinding, PortLeaseLifetimeGuard, PortLeasePhase, PortProtocol,
 };
-use nimbus_sandbox::{
-    ProviderCommandAttemptJournal, SandboxId, backends::container::OciMachinePortForwarderConfig,
-};
+use nimbus_sandbox::{ProviderCommandAttemptJournal, SandboxId};
+use nimbus_sandbox_container::OciMachinePortForwarderConfig;
 use nimbus_workloads::{
     NodeIdentity, WorkloadExecutableIntent, WorkloadExecutionProviderId,
     WorkloadExecutionReference, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,

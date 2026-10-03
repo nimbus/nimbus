@@ -54,6 +54,7 @@ nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-s3 = { path = "../nimbus-s3" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-sandbox-container = { path = "../nimbus-sandbox-container" }
 nimbus-sandbox-krun = { path = "../nimbus-sandbox-krun" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-storage = { path = "../nimbus-storage", default-features = false }

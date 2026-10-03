@@ -39,6 +39,7 @@ nimbus-operator = { path = "../nimbus-operator" }
 nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-sandbox-container = { path = "../nimbus-sandbox-container" }
 nimbus-sandbox-krun = { path = "../nimbus-sandbox-krun" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-system = { path = "../nimbus-system" }
@@ -57,5 +58,6 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 nimbus-sandbox = { path = "../nimbus-sandbox", features = ["test-hooks"] }
+nimbus-sandbox-container = { path = "../nimbus-sandbox-container", features = ["test-hooks"] }
 nimbus-sandbox-krun = { path = "../nimbus-sandbox-krun", features = ["test-hooks"] }
 nimbus-process-harness = { path = "../nimbus-process-harness" }

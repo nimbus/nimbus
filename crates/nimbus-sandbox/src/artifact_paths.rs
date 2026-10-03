@@ -68,7 +68,7 @@ pub fn all_manifest_paths(state_root: &Path) -> io::Result<Vec<PathBuf>> {
 
 /// Find every canonical per-sandbox container state directory, including a
 /// first manifest publication that crashed after creating only a stage file.
-pub(crate) fn all_container_state_dirs(state_root: &Path) -> io::Result<Vec<PathBuf>> {
+pub fn all_container_state_dirs(state_root: &Path) -> io::Result<Vec<PathBuf>> {
     let tenants_root = state_root.join(TENANTS_DIR);
     if !try_path_exists(&tenants_root, "tenants artifact root")? {
         return Ok(Vec::new());

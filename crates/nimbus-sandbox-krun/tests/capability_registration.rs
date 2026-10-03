@@ -7,13 +7,13 @@ use nimbus_network::{
     NetworkControlPlaneLocality, NetworkIsolationMode, NetworkLifecycleFeature,
     NetworkManagementMode, NetworkProviderId, NetworkResourceGeneration,
 };
-use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
-#[cfg(target_os = "linux")]
-use nimbus_sandbox::backends::container::{ContainerStartMode, OciMachinePortForwarderConfig};
 use nimbus_sandbox::backends::{
     CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY, KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
     SandboxAttachmentRegistrationError,
 };
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
+#[cfg(target_os = "linux")]
+use nimbus_sandbox_container::{ContainerStartMode, OciMachinePortForwarderConfig};
 #[cfg(target_os = "linux")]
 use nimbus_sandbox_krun::KrunStartMode;
 use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig};

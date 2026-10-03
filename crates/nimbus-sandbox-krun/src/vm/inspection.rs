@@ -61,13 +61,13 @@ impl KrunSandboxBackend {
         }
 
         let exit_present =
-            nimbus_sandbox::backends::conmon::lifecycle::inspect_runtime_artifact_presence(
+            nimbus_sandbox_container::conmon::lifecycle::inspect_runtime_artifact_presence(
                 &manifest.conmon_layout.exit_status_file,
                 "exit-status receipt",
             )?;
         if exit_present {
             let (exit_code, exit_evidence) =
-                nimbus_sandbox::backends::conmon::lifecycle::read_exit_code_evidence(
+                nimbus_sandbox_container::conmon::lifecycle::read_exit_code_evidence(
                     &manifest.conmon_layout.exit_status_file,
                 )?;
             return exited_inspection(self, &manifest, exit_code, &exit_evidence).map(Some);
@@ -91,7 +91,7 @@ impl KrunSandboxBackend {
         }
 
         let observation =
-            nimbus_sandbox::backends::conmon::lifecycle::observe_runtime_status_with_evidence(
+            nimbus_sandbox_container::conmon::lifecycle::observe_runtime_status_with_evidence(
                 RuntimeStatusProbe {
                     exit_status_file: &manifest.conmon_layout.exit_status_file,
                     state_command: &manifest.conmon_launch.state_command,

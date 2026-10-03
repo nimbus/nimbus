@@ -22,9 +22,9 @@ use nimbus_node::{
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
     ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
-    backends::container::{
-        ContainerSandboxBackend, ContainerSandboxBackendConfig, OciMachinePortForwarderConfig,
-    },
+};
+use nimbus_sandbox_container::{
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, OciMachinePortForwarderConfig,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState,

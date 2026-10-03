@@ -41,7 +41,7 @@ pub(super) fn machine_systemd_teardown_state_root(control_data_dir: &Path) -> Pa
 }
 
 pub(super) fn machine_api_summary_from_container_summary(
-    summary: nimbus_sandbox::backends::container::ContainerSandboxSummary,
+    summary: nimbus_sandbox_container::ContainerSandboxSummary,
 ) -> MachineApiServiceSandboxSummary {
     MachineApiServiceSandboxSummary {
         sandbox_id: summary.sandbox_id,
@@ -56,7 +56,7 @@ pub(super) fn machine_api_summary_from_container_summary(
 }
 
 pub(super) fn machine_api_details_from_container_details(
-    details: nimbus_sandbox::backends::container::ContainerSandboxDetails,
+    details: nimbus_sandbox_container::ContainerSandboxDetails,
 ) -> MachineApiServiceSandboxDetails {
     MachineApiServiceSandboxDetails {
         summary: machine_api_summary_from_container_summary(details.summary),

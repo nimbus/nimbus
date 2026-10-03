@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-use nimbus_sandbox::backends::conmon::creator::{CreatorQuiescenceProof, OwnedConmonCreator};
 use nimbus_sandbox::backends::oci::command::CommandSpec;
 use nimbus_sandbox::backends::oci::conmon::OciConmonLayout;
 use nimbus_sandbox::backends::oci::network::OciNetworkLayout;
+use nimbus_sandbox_container::conmon::creator::{CreatorQuiescenceProof, OwnedConmonCreator};
 
 use super::support::*;
 

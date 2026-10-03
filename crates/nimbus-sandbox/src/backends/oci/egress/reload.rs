@@ -39,7 +39,7 @@ enum EgressPolicyReloadPhase {
 }
 
 impl EgressPolicyReloadState {
-    pub(crate) const fn initial() -> Self {
+    pub const fn initial() -> Self {
         Self {
             desired_generation: NonZeroU64::MIN,
             latest_attempt_generation: 0,
@@ -47,21 +47,21 @@ impl EgressPolicyReloadState {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) const fn desired_generation(&self) -> NonZeroU64 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn desired_generation(&self) -> NonZeroU64 {
         self.desired_generation
     }
 
-    #[cfg(test)]
-    pub(crate) const fn latest_attempt_generation(&self) -> u64 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn latest_attempt_generation(&self) -> u64 {
         self.latest_attempt_generation
     }
 
-    pub(crate) const fn is_applying(&self) -> bool {
+    pub const fn is_applying(&self) -> bool {
         matches!(self.phase, EgressPolicyReloadPhase::Applying)
     }
 
-    pub(crate) fn active_attempt(&self) -> Result<Option<PolicyReloadAttempt>> {
+    pub fn active_attempt(&self) -> Result<Option<PolicyReloadAttempt>> {
         if self.latest_attempt_generation == 0 {
             return Ok(None);
         }
@@ -77,7 +77,7 @@ impl EgressPolicyReloadState {
         )))
     }
 
-    pub(crate) fn begin(&mut self) -> Result<PolicyReloadAttempt> {
+    pub fn begin(&mut self) -> Result<PolicyReloadAttempt> {
         if self.is_applying() {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -110,7 +110,7 @@ impl EgressPolicyReloadState {
         ))
     }
 
-    pub(crate) fn pending_attempt(&self) -> Result<Option<PolicyReloadAttempt>> {
+    pub fn pending_attempt(&self) -> Result<Option<PolicyReloadAttempt>> {
         if !self.is_applying() {
             return Ok(None);
         }
@@ -129,7 +129,7 @@ impl EgressPolicyReloadState {
         )))
     }
 
-    pub(crate) fn complete(&mut self, receipt: PolicyReloadReceipt) -> Result<()> {
+    pub fn complete(&mut self, receipt: PolicyReloadReceipt) -> Result<()> {
         let expected = self
             .pending_attempt()?
             .ok_or_else(|| SandboxError::OperationFailed {
@@ -221,7 +221,7 @@ impl EgressProxyRegistry {
 
     /// Reconcile an exact durable reload attempt only while the registered PEP
     /// and its complete listener lifecycle attachment remain authenticated.
-    pub(crate) fn reconcile_authenticated_reload(
+    pub fn reconcile_authenticated_reload(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
