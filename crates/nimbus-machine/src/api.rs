@@ -183,6 +183,11 @@ pub struct MachineApiHealthResponse {
     pub protocol_version: String,
     pub listen_mode: String,
     pub control_data_dir: String,
+    /// The guest nimbus release that serves this API. A guest that predates
+    /// version reporting omits it, so the host can still name that guest
+    /// when it refuses it.
+    #[serde(default)]
+    pub nimbus_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

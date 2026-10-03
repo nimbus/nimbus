@@ -3,10 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: verify-machine-os-release-default-gate.sh --release-dir <path> --expected-tag <vX.Y.Z> [--require-ghcr-public]
+usage: verify-machine-os-release-default-gate.sh --release-dir <path> --expected-tag <vX.Y.Z> [--require-ghcr-public] [--image-asset-out <path>]
 
-Verify that a nimbus-machine-os release bundle is complete enough to be used
-as the source of a future macOS default digest pin.
+Verify that a nimbus-machine-os release bundle is complete enough to be the
+default guest image of the matching nimbus CLI release. Every CLI boots
+ghcr.io/nimbus/machine-os:<its own release tag>, so a CLI release must not
+publish unless that tag exists and resolves to the bundle digest.
 
 This intentionally verifies release evidence only. It does not prove macOS
 boot parity or SELinux runtime safety; those remain separate BMD gates.
@@ -22,7 +24,11 @@ Required release assets:
 Options:
   --release-dir <path>     Directory containing downloaded machine-os assets
   --expected-tag <tag>     Nimbus/machine-os release tag, for example v0.1.23
-  --require-ghcr-public    Require the GHCR image digest to be anonymously pullable
+  --require-ghcr-public    Require the GHCR release tag to exist, resolve to the
+                           bundle digest, and be anonymously pullable
+  --image-asset-out <path> After every check passes, write the resolved image
+                           tag and digest as a nimbus release asset. Requires
+                           --require-ghcr-public
   -h, --help               Show this help
 EOF
 }
@@ -55,17 +61,9 @@ assert_sha256_hex() {
   [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || die "${label} must be 64 hex chars, got '${value}'"
 }
 
-assert_ghcr_anonymous_pull() {
-  local reference="$1"
-  local digest="$2"
-  local repository_path token_response token status manifest_url token_url
-
-  command -v curl >/dev/null 2>&1 || die "curl is required for --require-ghcr-public"
-  [[ "${reference}" == ghcr.io/* ]] || die "GHCR public check requires ghcr.io reference, got ${reference}"
-
-  repository_path="${reference#ghcr.io/}"
-  repository_path="${repository_path%%:*}"
-  [[ -n "${repository_path}" ]] || die "failed to parse GHCR repository path from ${reference}"
+ghcr_anonymous_token() {
+  local repository_path="$1"
+  local token_response token token_url
 
   token_url="https://ghcr.io/token?service=ghcr.io&scope=repository:${repository_path}:pull"
   token_response="$(curl -sS "${token_url}")" || die "failed to request anonymous GHCR pull token for ${repository_path}"
@@ -76,6 +74,38 @@ assert_ghcr_anonymous_pull() {
   )"
 
   [[ -n "${token}" ]] || die "GHCR package ${repository_path} is not anonymously readable; token endpoint did not issue a pull token"
+  printf '%s\n' "${token}"
+}
+
+assert_ghcr_anonymous_pull() {
+  local reference="$1"
+  local tag="$2"
+  local digest="$3"
+  local repository_path token status manifest_url headers tag_status tag_digest
+
+  command -v curl >/dev/null 2>&1 || die "curl is required for --require-ghcr-public"
+  [[ "${reference}" == ghcr.io/* ]] || die "GHCR public check requires ghcr.io reference, got ${reference}"
+
+  repository_path="${reference#ghcr.io/}"
+  repository_path="${repository_path%%:*}"
+  [[ -n "${repository_path}" ]] || die "failed to parse GHCR repository path from ${reference}"
+
+  token="$(ghcr_anonymous_token "${repository_path}")" || exit 1
+
+  # The CLI derives its default image from its own version, so the release
+  # tag itself must exist and point at the verified bundle digest.
+  headers="$(
+    curl -sS -I \
+      -H "Authorization: Bearer ${token}" \
+      -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+      "https://ghcr.io/v2/${repository_path}/manifests/${tag}"
+  )" || die "failed to request GHCR manifest ${repository_path}:${tag}"
+  headers="$(printf '%s\n' "${headers}" | tr -d '\r')"
+  tag_status="$(printf '%s\n' "${headers}" | awk 'toupper($1) ~ /^HTTP\// { status = $2 } END { print status }')"
+  [[ "${tag_status}" == "200" ]] || die "GHCR release tag ${repository_path}:${tag} does not exist; got HTTP ${tag_status}. Publish machine-os ${tag} before the nimbus ${tag} release"
+  tag_digest="$(printf '%s\n' "${headers}" | awk 'tolower($1) == "docker-content-digest:" { digest = $2 } END { print digest }')"
+  assert_sha256_digest "GHCR ${repository_path}:${tag} Docker-Content-Digest" "${tag_digest}"
+  [[ "${tag_digest}" == "${digest}" ]] || die "GHCR release tag ${repository_path}:${tag} resolves to ${tag_digest}, but the machine-os bundle digest is ${digest}"
 
   manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${digest}"
   status="$(
@@ -91,6 +121,7 @@ assert_ghcr_anonymous_pull() {
 release_dir=""
 expected_tag=""
 require_ghcr_public=0
+image_asset_out=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -106,6 +137,10 @@ while [[ $# -gt 0 ]]; do
       require_ghcr_public=1
       shift
       ;;
+    --image-asset-out)
+      image_asset_out="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -120,6 +155,9 @@ done
 [[ -n "${expected_tag}" ]] || die "--expected-tag is required"
 [[ "${expected_tag}" == v* ]] || die "--expected-tag must include the leading v"
 [[ -d "${release_dir}" ]] || die "release dir does not exist: ${release_dir}"
+if [[ -n "${image_asset_out}" && "${require_ghcr_public}" -ne 1 ]]; then
+  die "--image-asset-out requires --require-ghcr-public so the asset records the registry-resolved digest"
+fi
 
 command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
 
@@ -191,7 +229,17 @@ grep -F '"name": "podman"' "${sbom}" >/dev/null || die "SBOM must include podman
 grep -F "${digest}" "${machine_reference}" >/dev/null || die "machine-image-reference must include the promoted digest"
 
 if [[ "${require_ghcr_public}" -eq 1 ]]; then
-  assert_ghcr_anonymous_pull "${expected_reference}" "${digest}"
+  assert_ghcr_anonymous_pull "${expected_reference}" "${expected_tag}" "${digest}"
+fi
+
+if [[ -n "${image_asset_out}" ]]; then
+  mkdir -p "$(dirname "${image_asset_out}")"
+  {
+    printf 'image=ghcr.io/nimbus/machine-os\n'
+    printf 'tag=%s\n' "${expected_tag}"
+    printf 'digest=%s\n' "${digest}"
+    printf 'reference=%s@%s\n' "${expected_reference}" "${digest}"
+  } >"${image_asset_out}"
 fi
 
 printf 'verified: machine-os release %s has digest, embedded nimbus version/hash, SBOM, checksum, OCI, and bootc promotion evidence\n' "${expected_tag}"

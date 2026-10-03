@@ -99,6 +99,14 @@ if [[ "${last_arg}" == *"/token?"* ]]; then
   printf '{"token":"fake-anonymous-token"}'
   exit 0
 fi
+if [[ "${last_arg}" == *"/manifests/v9.9.9" ]]; then
+  if [[ "${FAKE_GHCR_TAG_STATUS}" != "200" ]]; then
+    printf 'HTTP/2 %s\r\ncontent-type: application/json\r\n\r\n' "${FAKE_GHCR_TAG_STATUS}"
+    exit 0
+  fi
+  printf 'HTTP/2 200\r\ncontent-type: application/vnd.oci.image.manifest.v1+json\r\ndocker-content-digest: %s\r\n\r\n' "${FAKE_GHCR_TAG_DIGEST}"
+  exit 0
+fi
 if [[ "${last_arg}" == *"/manifests/sha256:"* ]]; then
   printf '200'
   exit 0
@@ -107,12 +115,59 @@ printf 'unexpected fake curl invocation: %s\n' "$*" >&2
 exit 2
 EOF
 chmod +x "${fake_curl_dir}/curl"
-PATH="${fake_curl_dir}:${PATH}" bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
+image_asset="${tmp_dir}/assets/nimbus_machine_os_image.txt"
+FAKE_GHCR_TAG_STATUS=200 FAKE_GHCR_TAG_DIGEST="${digest}" PATH="${fake_curl_dir}:${PATH}" \
+  bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
   --release-dir "${good_dir}" \
   --expected-tag "${expected_tag}" \
   --require-ghcr-public \
+  --image-asset-out "${image_asset}" \
   >"${tmp_dir}/good-public.out"
 grep -F "verified: machine-os release ${expected_tag}" "${tmp_dir}/good-public.out" >/dev/null
+diff -u - "${image_asset}" <<EOF
+image=ghcr.io/nimbus/machine-os
+tag=${expected_tag}
+digest=${digest}
+reference=ghcr.io/nimbus/machine-os:${expected_tag}@${digest}
+EOF
+
+missing_tag_asset="${tmp_dir}/missing-tag/nimbus_machine_os_image.txt"
+if FAKE_GHCR_TAG_STATUS=404 FAKE_GHCR_TAG_DIGEST="" PATH="${fake_curl_dir}:${PATH}" \
+  bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
+  --release-dir "${good_dir}" \
+  --expected-tag "${expected_tag}" \
+  --require-ghcr-public \
+  --image-asset-out "${missing_tag_asset}" \
+  >"${tmp_dir}/missing-tag.out" 2>&1; then
+  echo "expected machine-os release gate to reject a missing GHCR release tag" >&2
+  exit 1
+fi
+grep -F "GHCR release tag nimbus/machine-os:${expected_tag} does not exist; got HTTP 404" "${tmp_dir}/missing-tag.out" >/dev/null
+if [[ -e "${missing_tag_asset}" ]]; then
+  echo "machine-os release gate must not write the image asset when the tag is missing" >&2
+  exit 1
+fi
+
+if FAKE_GHCR_TAG_STATUS=200 FAKE_GHCR_TAG_DIGEST="${manifest_digest}" PATH="${fake_curl_dir}:${PATH}" \
+  bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
+  --release-dir "${good_dir}" \
+  --expected-tag "${expected_tag}" \
+  --require-ghcr-public \
+  >"${tmp_dir}/moved-tag.out" 2>&1; then
+  echo "expected machine-os release gate to reject a tag that resolves to another digest" >&2
+  exit 1
+fi
+grep -F "resolves to ${manifest_digest}, but the machine-os bundle digest is ${digest}" "${tmp_dir}/moved-tag.out" >/dev/null
+
+if bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
+  --release-dir "${good_dir}" \
+  --expected-tag "${expected_tag}" \
+  --image-asset-out "${image_asset}" \
+  >"${tmp_dir}/asset-without-public.out" 2>&1; then
+  echo "expected machine-os release gate to require --require-ghcr-public for --image-asset-out" >&2
+  exit 1
+fi
+grep -F -- "--image-asset-out requires --require-ghcr-public" "${tmp_dir}/asset-without-public.out" >/dev/null
 
 fake_private_curl_dir="${tmp_dir}/fake-curl-private"
 mkdir -p "${fake_private_curl_dir}"
@@ -166,4 +221,4 @@ if bash "${repo_root}/scripts/verify-machine-os-release-default-gate.sh" \
 fi
 grep -F "disk_type=applehv" "${tmp_dir}/bad.out" >/dev/null
 
-printf 'verified: machine-os release default gate helper accepts complete evidence, verifies GHCR public-read checks, and rejects non-applehv artifacts\n'
+printf 'verified: machine-os release default gate helper accepts complete evidence, verifies GHCR release-tag and public-read checks, writes the image asset, and rejects missing tags, moved tags, and non-applehv artifacts\n'

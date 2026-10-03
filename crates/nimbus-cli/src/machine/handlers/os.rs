@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::machine::record::MachineProvider;
-
 pub(in crate::machine) fn run_machine_os(
     command: MachineOsCommand,
     roots: &MachineRootLayout,
@@ -296,7 +294,7 @@ fn run_bootc_machine_os_upgrade(
 ) -> Result<(), Error> {
     let client = require_running_bootc_machine_api_client(paths, state)?;
     let before = client.bootc_status()?;
-    let stream = default_bootc_machine_os_upgrade_stream();
+    let stream = default_machine_os_upgrade_stream();
     let current_image = describe_bootc_status_image(&before);
     let current_version = before
         .booted_digest
@@ -356,19 +354,6 @@ fn run_bootc_machine_os_upgrade(
     _authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     Err(unsupported_bootc_machine_os_error())
-}
-
-#[cfg(unix)]
-fn default_bootc_machine_os_upgrade_stream() -> MachineOsUpgradeStream {
-    MachineOsUpgradeStream {
-        repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
-        additional_supported_repositories: &[],
-        target_image: default_machine_image_for_provider(MachineProvider::Krunkit),
-        target_version: machine_image_reference_version_label(&default_machine_image_for_provider(
-            MachineProvider::Krunkit,
-        )),
-        follows_host_release: false,
-    }
 }
 
 #[cfg(unix)]
@@ -548,7 +533,7 @@ pub(in crate::machine) fn plan_machine_os_upgrade(
     config: &MachineConfigRecord,
 ) -> Result<MachineOsUpgradePlan, Error> {
     let reference = current_machine_oci_reference(config)?;
-    let stream = default_machine_os_upgrade_stream(config);
+    let stream = default_machine_os_upgrade_stream();
     let repository = machine_image_reference_repository(reference.as_str());
     let repository_supported = repository == stream.repository
         || stream
@@ -591,28 +576,13 @@ pub(in crate::machine) fn plan_machine_os_upgrade(
     })
 }
 
-fn default_machine_os_upgrade_stream(config: &MachineConfigRecord) -> MachineOsUpgradeStream {
-    match config.provider {
-        provider if provider.uses_managed_applehv_guest() && cfg!(target_os = "macos") => {
-            MachineOsUpgradeStream {
-                repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
-                additional_supported_repositories: &[],
-                target_image: default_machine_image_for_provider(config.provider),
-                target_version: machine_image_reference_version_label(
-                    &default_machine_image_for_provider(config.provider),
-                ),
-                follows_host_release: false,
-            }
-        }
-        MachineProvider::Krunkit | MachineProvider::Vfkit | MachineProvider::Wsl2 => {
-            MachineOsUpgradeStream {
-                repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
-                additional_supported_repositories: &[],
-                target_image: default_machine_image_for_provider(config.provider),
-                target_version: super::super::current_machine_release_tag(),
-                follows_host_release: true,
-            }
-        }
+fn default_machine_os_upgrade_stream() -> MachineOsUpgradeStream {
+    MachineOsUpgradeStream {
+        repository: DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
+        additional_supported_repositories: &[],
+        target_image: default_machine_image(),
+        target_version: super::super::current_machine_release_tag(),
+        follows_host_release: true,
     }
 }
 
@@ -749,6 +719,7 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION.to_owned(),
                 listen_mode: "direct-socket".to_owned(),
                 control_data_dir: "/var/lib/nimbus/control".to_owned(),
+                nimbus_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             })
             .expect("health response should encode");
             write!(

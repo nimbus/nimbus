@@ -41,7 +41,7 @@ fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_d
     fs::write(&image_path, []).expect("image should write");
     let mut config = sample_config(&image_path);
     config.guest.image_source = MachineImageSource::OciReference {
-        reference: default_machine_image_for_provider(MachineProvider::Krunkit),
+        reference: default_machine_image(),
     };
     let paths = config.roots.paths("default");
     paths
@@ -72,7 +72,7 @@ fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_d
     assert_eq!(
         config.guest.image_source,
         MachineImageSource::OciReference {
-            reference: default_machine_image_for_provider(MachineProvider::Krunkit),
+            reference: default_machine_image(),
         }
     );
     assert_eq!(state.lifecycle, MachineLifecycle::Stopped);

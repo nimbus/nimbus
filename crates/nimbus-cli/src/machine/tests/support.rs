@@ -15,17 +15,10 @@ pub(super) enum RootCommand {
 }
 
 pub(super) fn expected_default_machine_image() -> String {
-    if cfg!(target_os = "macos") {
-        format!(
-            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}@{DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST}",
-            DEFAULT_NIMBUS_MACHINE_IMAGE_TAG
-        )
-    } else {
-        format!(
-            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
-            current_machine_release_tag()
-        )
-    }
+    format!(
+        "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
+        current_machine_release_tag()
+    )
 }
 
 fn machine_guest_binary_override_env_lock() -> &'static Mutex<()> {
@@ -83,11 +76,7 @@ pub(super) fn supported_stream_digest_image_for_upgrade_test() -> String {
 }
 
 pub(super) fn expected_upgrade_target_version() -> String {
-    if cfg!(target_os = "macos") {
-        DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST.to_owned()
-    } else {
-        current_machine_release_tag()
-    }
+    current_machine_release_tag()
 }
 
 pub(super) fn test_network_authority_record(

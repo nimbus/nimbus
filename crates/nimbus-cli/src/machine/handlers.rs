@@ -22,6 +22,7 @@ use super::files::{
     remove_dir_if_empty, remove_dir_if_exists, remove_machine_runtime_artifacts,
     with_authenticated_default_machine_lock, with_authenticated_machine_lock, write_json_file,
 };
+use super::guest_version::require_matching_guest_nimbus_version;
 use super::local_server::try_run_lifecycle_command_via_live_server;
 use super::manager::{
     build_scp_command, build_ssh_command, refresh_machine_state, release_machine_ssh_port,
@@ -40,11 +41,10 @@ use super::render::{
 };
 use super::stop_authority::HostMachineStopAuthority;
 use super::{
-    DEFAULT_MACHINE_NAME, DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
-    default_machine_image_for_provider, default_machine_volumes, describe_machine_image_source,
-    invalidate_materialized_machine_os, machine_image_reference_repository,
-    machine_image_reference_version_label, uses_nimbus_bootc_machine_image_source,
-    uses_podman_machine_image_source,
+    DEFAULT_MACHINE_NAME, DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY, default_machine_image,
+    default_machine_volumes, describe_machine_image_source, invalidate_materialized_machine_os,
+    machine_image_reference_repository, machine_image_reference_version_label,
+    uses_nimbus_bootc_machine_image_source, uses_podman_machine_image_source,
 };
 #[cfg(unix)]
 use nimbus_machine::api::MachineApiBootcStatusResponse;
@@ -97,9 +97,8 @@ pub(crate) fn require_default_machine_api_client(
     network: &HostMachineNetworkAuthority,
 ) -> Result<MachineApiClient, Error> {
     let roots = MachineRootLayout::resolve()?;
-    let (paths, state) = with_authenticated_default_machine_lock(&roots, network, || {
-        let (paths, _, state) = load_initialized_machine(&roots, network, DEFAULT_MACHINE_NAME)?;
-        Ok((paths, state))
+    let (paths, config, state) = with_authenticated_default_machine_lock(&roots, network, || {
+        load_initialized_machine(&roots, network, DEFAULT_MACHINE_NAME)
     })?;
     if !matches!(state.lifecycle, MachineLifecycle::Running) {
         return Err(Error::InvalidInput(format!(
@@ -129,13 +128,14 @@ pub(crate) fn require_default_machine_api_client(
         .clone();
     let client = MachineApiClient::new(paths.api_socket_path.clone())
         .with_forwarder_authority(forwarder_authority);
-    client.health().map_err(|error| {
+    let health = client.health().map_err(|error| {
         Error::InvalidInput(format!(
             "machine '{}' guest machine API is not reachable at {}: {error}",
             DEFAULT_MACHINE_NAME,
             paths.api_socket_path.display()
         ))
     })?;
+    require_matching_guest_nimbus_version(&config.guest.image_source, &health)?;
     Ok(client)
 }
 
