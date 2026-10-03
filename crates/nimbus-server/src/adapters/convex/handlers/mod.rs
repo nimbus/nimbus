@@ -13,11 +13,6 @@ use nimbus_core::{ScheduleRequest, TenantId, Timestamp};
 use nimbus_runtime::{InvocationKind, InvocationRequest};
 use serde_json::Value;
 
-use super::execution::{
-    check_host_cancellation, dispatch_convex_mutation_async, execute_convex_action_async,
-    execute_query_result_async, invoke_named_convex_function_async_cancellable,
-    next_runtime_server_request_id,
-};
 use super::http_actions::dispatch_http_route;
 use super::subscriptions::handle_convex_socket_for_tenant;
 use super::{
@@ -27,7 +22,13 @@ use super::{
     normalize_http_request_path, parse_job_id,
 };
 use crate::state::{AppError, AppState, RequestCancellationGuard, record_authenticated_usage};
+use nimbus_compute::execution::errors::check_host_cancellation;
+use nimbus_compute::execution::invocations::next_runtime_server_request_id;
 use nimbus_compute::scheduling::ScheduleResponse;
+use nimbus_convex_host::{
+    dispatch_convex_mutation_async, execute_convex_action_async, execute_query_result_async,
+    invoke_named_convex_function_async_cancellable,
+};
 
 mod function_routes;
 mod http;

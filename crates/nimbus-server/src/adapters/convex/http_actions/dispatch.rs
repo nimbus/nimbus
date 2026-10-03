@@ -40,14 +40,15 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
         route_request.body,
     );
     let service = state.engine.clone();
-    execution::execute_http_action_async(
+    let response = prepare_http_action_response_async(
         &service,
         &registry,
-        &tenant_context,
+        tenant_context.tenant_id(),
         &route.plan,
         &request_context,
         request_auth.as_ref(),
+        None,
     )
-    .await
-    .map_err(AppError::from)
+    .await?;
+    response::build_http_response_parts(response).map_err(AppError::from)
 }

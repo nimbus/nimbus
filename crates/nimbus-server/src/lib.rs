@@ -27,15 +27,15 @@ mod workload_saga_store;
 mod ws;
 
 pub use adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
-pub use adapters::cloudflare::{
-    CloudflareBindingRegistry, CloudflareConfig, D1DatabaseBinding, DurableObjectBinding,
-    KvNamespaceBinding, R2BucketBinding, WranglerConfigError,
-};
 pub use adapters::convex::ConvexRegistry;
 pub use adapters::convex::{ConvexSiloAuthRegistry, ConvexTenancyConfig, SiloTeamRegistry, TeamId};
 pub use adapters::dynamodb::DynamoDbConfig;
 pub use adapters::firebase::{FirebaseConfig, ProjectSpecError, ProjectTenantRegistry};
 pub use adapters::s3::S3Config;
+pub use nimbus_cloudflare::{
+    CloudflareBindingRegistry, CloudflareConfig, D1DatabaseBinding, DurableObjectBinding,
+    KvNamespaceBinding, R2BucketBinding, WranglerConfigError,
+};
 /// Enables Firebase Emulator token-verification bypass for dev/test servers.
 ///
 /// The default Firebase config rejects unverified emulator tokens and uses a

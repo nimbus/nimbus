@@ -1,0 +1,126 @@
+use super::*;
+
+impl ConvexHostBridge {
+    pub(crate) fn record_table_read(&self, table: &TableName) {
+        let table_id = self
+            .engine()
+            .table_id(self.tenant_id(), table)
+            .ok()
+            .flatten();
+        self.host_state()
+            .record_table_read(table, table_id.as_ref());
+    }
+
+    pub(crate) fn record_document_read(&self, table: &TableName, document_id: &DocumentId) {
+        let table_id = self
+            .engine()
+            .table_id(self.tenant_id(), table)
+            .ok()
+            .flatten();
+        self.host_state()
+            .record_document_read(table, table_id.as_ref(), document_id);
+    }
+
+    pub(crate) fn record_result_documents(&self, table: &TableName, value: &Value) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    self.record_result_documents(table, item);
+                }
+            }
+            Value::Object(map) => {
+                if let Some(document_id) = map
+                    .get("_id")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<DocumentId>().ok())
+                    .and_then(|document_id| {
+                        resolve_convex_document_id(table, document_id)
+                            .ok()
+                            .map(|resolved| resolved.into_document_id())
+                    })
+                {
+                    self.record_document_read(table, &document_id);
+                }
+
+                if let Some(data) = map.get("data") {
+                    self.record_result_documents(table, data);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn record_query_result_value(&self, query: &ConvexExecutableQuery, value: &Value) {
+        match query {
+            ConvexExecutableQuery::Query(query) => {
+                self.record_result_documents(&query.table, value)
+            }
+            ConvexExecutableQuery::Read(ConvexReadCommand::Get { table, .. }) => {
+                self.record_result_documents(table, value);
+            }
+            ConvexExecutableQuery::Read(ConvexReadCommand::First { query })
+            | ConvexExecutableQuery::Read(ConvexReadCommand::Unique { query }) => {
+                self.record_result_documents(&query.table, value);
+            }
+        }
+    }
+
+    pub(crate) fn record_paginated_window_read(
+        &self,
+        query: &Query,
+        page_size: usize,
+        after: Option<&Cursor>,
+        page: &nimbus_core::Page,
+    ) {
+        let table_id = self
+            .engine()
+            .table_id(self.tenant_id(), &query.table)
+            .ok()
+            .flatten();
+        self.host_state().record_paginated_window_read(
+            query,
+            table_id.as_ref(),
+            page_size,
+            after,
+            page,
+        );
+    }
+
+    pub(crate) fn record_limited_query_window(
+        &self,
+        query: &Query,
+        limit: usize,
+        value: &Value,
+    ) -> Result<(), Error> {
+        if query.order.is_none() {
+            return Ok(());
+        }
+
+        let data = match value {
+            Value::Array(items) => items.clone(),
+            Value::Null => Vec::new(),
+            other => vec![other.clone()],
+        };
+        let page = nimbus_core::Page {
+            data,
+            has_more: false,
+            next_cursor: None,
+        };
+        self.record_paginated_window_read(query, limit, None, &page);
+        Ok(())
+    }
+
+    pub(crate) fn record_index_read(&self, read: RuntimeIndexRangeRead) {
+        self.host_state().record_index_read(read);
+    }
+
+    pub(crate) fn record_predicate_read(&self, table: &TableName, filters: &[Filter]) {
+        let table_id = self
+            .engine()
+            .table_id(self.tenant_id(), table)
+            .ok()
+            .flatten();
+        self.host_state()
+            .record_predicate_read(table, table_id.as_ref(), filters);
+    }
+}

@@ -25,9 +25,11 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-bridge` | Runtime host bridge: bootstraps per-invocation host state and routes V8 host calls into the engine. |
 | `nimbus-cli` | The `nimbus` CLI application library: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. Invoked by the thin `nimbus-bin` entrypoint. |
 | `nimbus-cloud-functions` | Cloud Functions-compatible adapter contracts and runtime bridge. |
+| `nimbus-cloudflare` | Cloudflare-compatible adapter logic without transport: wrangler bindings, Workers KV policy, the Worker KV host bridge, and the test-only Durable Object substrate. |
 | `nimbus-code-index` | Deploy-time structural JavaScript/TypeScript code-navigation index built with oxc. |
 | `nimbus-compute` | Transport-free compute-plane composition and sole workload-saga coordinator: provision, restart, teardown, execution workers, runtime provenance, filesystem grants, and service/runtime wiring shared by server and CLI. |
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
+| `nimbus-convex-host` | Convex host logic without transport: the runtime host bridge over the engine, function execution, HTTP-action preparation, and subscription transforms. |
 | `nimbus-core` | Shared types and validation. Zero I/O. |
 | `nimbus-crypto` | At-rest envelope/keyring primitives, crypto-shred, and framed blob AEAD; depends only on `nimbus-core` plus external crypto crates. |
 | `nimbus-durable-record` | Crash-consistent local records: directory sync, staged atomic file publication, and a checksummed append journal with torn-tail recovery. Zero workspace dependencies. |
@@ -151,6 +153,9 @@ Protocol semantics live in standalone crates — `nimbus-convex`,
 `nimbus-dynamodb` — supported by the shared `nimbus-bridge` and `nimbus-auth`
 seams. Provider-family Firestore path, default-database, and storage-locator
 lowering (shared by Firebase and Cloud Functions) lives in `nimbus-core::firestore`.
+`nimbus-convex-host` owns the transport-free Convex host bridge, function
+execution, and subscription transforms. `nimbus-cloudflare` owns the
+transport-free Cloudflare bindings, Workers KV policy, and Worker host bridge.
 `crates/nimbus-server/src/adapters/` holds only thin transport shims that mount
 those crates; MongoDB and DynamoDB additionally run their own listeners.
 → <https://nimbusdocs.com/concepts/architecture/adapters/>

@@ -40,9 +40,9 @@ SENSITIVE_FILES = {
     "crates/nimbus-engine/src/tenant/write_rate.rs",
     "crates/nimbus-firebase/src/grpc/listen_stream.rs",
     "crates/nimbus-firebase/src/grpc/write_stream.rs",
-    "crates/nimbus-server/src/adapters/cloudflare/durable_objects/mod.rs",
-    "crates/nimbus-server/src/adapters/convex/execution/async_ops/scheduling.rs",
-    "crates/nimbus-server/src/adapters/convex/execution/sync_ops/scheduling.rs",
+    "crates/nimbus-cloudflare/src/durable_objects.rs",
+    "crates/nimbus-convex-host/src/execution/async_ops/scheduling.rs",
+    "crates/nimbus-convex-host/src/execution/sync_ops/scheduling.rs",
     "crates/nimbus-server/src/adapters/convex/handlers/scheduling.rs",
 }
 

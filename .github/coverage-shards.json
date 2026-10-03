@@ -36,8 +36,10 @@
       "shard": "adapters",
       "packages": [
         "nimbus-convex",
+        "nimbus-convex-host",
         "nimbus-firebase",
         "nimbus-cloud-functions",
+        "nimbus-cloudflare",
         "nimbus-mongodb",
         "nimbus-dynamodb",
         "nimbus-s3",

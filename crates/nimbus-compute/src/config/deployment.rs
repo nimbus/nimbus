@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use nimbus_auth::ApplicationAuthVerifier;
 use nimbus_cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
+use nimbus_cloudflare::CloudflareConfig;
 use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use nimbus_firebase::FirebaseConfig;
-
-use crate::cloudflare_config::CloudflareConfig;
 
 #[derive(Default)]
 pub struct DeploymentConfig {
