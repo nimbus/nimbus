@@ -30,6 +30,7 @@ mod client;
 mod command;
 mod files;
 mod guest_config;
+mod guest_version;
 mod handlers;
 mod local_server;
 #[cfg(unix)]
@@ -110,32 +111,20 @@ use self::render::*;
 pub(crate) const DEFAULT_MACHINE_NAME: &str = "default";
 const MACHINE_PROVIDER_ENV: &str = "NIMBUS_MACHINE_PROVIDER";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/machine-os";
-const DEFAULT_NIMBUS_MACHINE_IMAGE_TAG: &str = "v0.1.45";
-const DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST: &str =
-    "sha256:e313a09b481b86de8cfe99cefdc1e9b631d65e96b3971eb300660f8ae92e1e9b";
 const DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY: &str = "quay.io/podman/machine-os";
 
 fn current_machine_release_tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
+/// Every provider boots the machine-os image published for this CLI's own
+/// release tag. The release workflow refuses to publish a CLI whose tag has no
+/// machine-os image and records the resolved digest as a release asset.
 fn default_machine_image() -> String {
-    default_machine_image_for_provider(MachineProvider::Krunkit)
-}
-
-fn default_machine_image_for_provider(provider: MachineProvider) -> String {
-    match provider {
-        // Both macOS micro-VM monitors boot the pinned, digest-addressed
-        // `applehv` machine-os image.
-        provider if provider.uses_managed_applehv_guest() && cfg!(target_os = "macos") => format!(
-            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}@{DEFAULT_NIMBUS_MACHINE_IMAGE_DIGEST}",
-            DEFAULT_NIMBUS_MACHINE_IMAGE_TAG
-        ),
-        MachineProvider::Krunkit | MachineProvider::Vfkit | MachineProvider::Wsl2 => format!(
-            "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
-            current_machine_release_tag()
-        ),
-    }
+    format!(
+        "docker://{DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY}:{}",
+        current_machine_release_tag()
+    )
 }
 
 /// Resolve the machine VMM provider. Precedence: an explicit selection (CLI flag

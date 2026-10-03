@@ -12,11 +12,6 @@ fn parses_machine_init_defaults_to_version_pinned_release_image() {
             assert_eq!(init.image, expected_default_machine_image());
             assert!(!init.bootc_native);
             if cfg!(target_os = "macos") {
-                assert_eq!(
-                    init.image,
-                    "docker://ghcr.io/nimbus/machine-os:v0.1.45@sha256:e313a09b481b86de8cfe99cefdc1e9b631d65e96b3971eb300660f8ae92e1e9b",
-                    "the macOS host release must pin the matching published guest image"
-                );
                 assert!(init.volumes.is_empty());
                 assert_eq!(
                     default_machine_volumes(),
@@ -39,6 +34,25 @@ fn parses_machine_init_defaults_to_version_pinned_release_image() {
         }
         _ => panic!("expected init subcommand"),
     }
+}
+
+#[test]
+fn default_machine_image_tag_matches_cli_version() {
+    // The default guest image follows this CLI's release tag on every
+    // platform. A source constant pinned to an older tag let a 0.1.49 CLI
+    // boot a 0.1.45 guest that speaks a different machine API.
+    let image = default_machine_image();
+    assert_eq!(
+        image,
+        format!(
+            "docker://ghcr.io/nimbus/machine-os:v{}",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+    assert_eq!(
+        machine_image_reference_version_label(&image),
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    );
 }
 
 #[test]

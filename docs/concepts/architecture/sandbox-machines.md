@@ -134,9 +134,13 @@ process argv, entrypoint, command, and environment come back as counts
 `crates/nimbus-machine` models the machine itself; the `nimbus machine` CLI
 flow lives in `crates/nimbus-cli/src/machine/`. A machine is one long-lived
 Linux VM per development host, not a per-workload unit. Its image source is
-integrity-anchored: an OCI reference (the default is `ghcr.io/nimbus/machine-os`,
-digest-pinned on macOS), an HTTP URL that must carry a `#sha256=<digest>`
-fragment, or a local disk file. Lifecycle is explicit —
+integrity-anchored: an OCI reference (the default is
+`ghcr.io/nimbus/machine-os:v<CLI version>`, and each release records the digest
+of that tag as a release asset), an HTTP URL that must carry a
+`#sha256=<digest>` fragment, or a local disk file. The guest machine API
+reports its nimbus version. The CLI refuses a guest from the release stream
+whose version differs from its own, and warns for an explicit image override.
+Lifecycle is explicit —
 uninitialized, stopped, starting, running, failed — and `nimbus machine`
 exposes init/start/stop/status/list/inspect plus ssh, file copy, guest
 configuration, and OS apply/upgrade/rollback subcommands.

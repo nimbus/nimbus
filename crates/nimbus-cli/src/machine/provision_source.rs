@@ -29,6 +29,7 @@ use super::files::{
     load_machine_provision_source_snapshot, read_machine_config_snapshot_if_exists,
     with_exact_authenticated_default_machine_lock,
 };
+use super::guest_version::require_matching_guest_nimbus_version;
 use super::manager::{
     next_machine_forwarder_authority, start_machine_with_expected_forwarder_authority,
 };
@@ -243,6 +244,7 @@ impl PreparedDefaultMachineProvisionSource {
                 DEFAULT_MACHINE_NAME, MACHINE_API_ROLE, PROTOCOL_VERSION
             )));
         }
+        require_matching_guest_nimbus_version(&self.config.guest.image_source, &health)?;
         let adapter = self.source_plan.activate(client.clone(), &self.network)?;
         Ok(ActivatedDefaultMachineProvisionSource { client, adapter })
     }

@@ -53,8 +53,7 @@ use crate::machine::{
     DEFAULT_PODMAN_MACHINE_IMAGE_REPOSITORY, MachineBootstrapMode, MachineGuestConfig,
     MachineGuestProvisioning, MachineImageFormat, MachineImageSource, MachineProvider,
     MachineResources, MachineRootLayout, MachineVolume, current_machine_release_tag,
-    default_machine_image_for_provider, describe_machine_image_source,
-    machine_image_reference_repository,
+    default_machine_image, describe_machine_image_source, machine_image_reference_repository,
 };
 use nimbus::{EndpointProtocol, SandboxPortBinding, TenantId};
 use nimbus_machine::{MachineForwarderAuthority, MachineNetworkAuthorityRecord};

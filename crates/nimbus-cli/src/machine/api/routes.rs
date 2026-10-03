@@ -155,6 +155,7 @@ async fn machine_api_healthz(
         protocol_version: PROTOCOL_VERSION.to_owned(),
         listen_mode: state.listen_mode.as_str().to_owned(),
         control_data_dir: state.control_data_dir.display().to_string(),
+        nimbus_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
     })
 }
 
