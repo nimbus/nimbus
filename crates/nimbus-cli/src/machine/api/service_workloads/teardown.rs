@@ -29,10 +29,10 @@ use nimbus_sandbox::{
     ProviderCommandStartedClaimDecision, SandboxExecutionAttemptId,
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
     SandboxExecutionTeardownOperation,
-    backends::container::{
-        CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerHostTerminalEvidence,
-        ContainerSandboxBackend,
-    },
+};
+use nimbus_sandbox_container::{
+    CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerHostTerminalEvidence,
+    ContainerSandboxBackend,
 };
 use nimbus_workloads::{
     WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadTeardownCommandMode,

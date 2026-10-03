@@ -19,7 +19,7 @@ pub(crate) struct ContainerRunnerCommand {
 pub(crate) async fn run_container_runner_command(
     command: ContainerRunnerCommand,
 ) -> Result<(), Box<dyn Error>> {
-    nimbus_sandbox::backends::container::run_prepared_container_service_workload(command.bundle)?;
+    nimbus_sandbox_container::run_prepared_container_service_workload(command.bundle)?;
     Ok(())
 }
 

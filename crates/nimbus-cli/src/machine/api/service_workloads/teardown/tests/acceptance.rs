@@ -26,9 +26,9 @@ use nimbus_sandbox::{
     ProviderCommandClaimDecision, ProviderCommandStartedClaimDecision, SandboxBackendKind,
     SandboxExecutionAttemptId, SandboxId, SandboxOwnerSpec, SandboxProcessSpec,
     SandboxProvisionDependencyListener, SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxSpec,
-    backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig},
     sandbox_network_plan_requirements,
 };
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState,
     LocalEnforcementBinding, NodeIdentity, WorkloadActivationIntent, WorkloadAdmissionEvidence,

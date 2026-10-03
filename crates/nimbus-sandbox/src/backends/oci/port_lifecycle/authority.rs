@@ -29,7 +29,7 @@ impl OciPortLeaseCoordinator {
     }
 
     /// Reconstruct once in the separate container-runner OS process.
-    pub(crate) fn reconstruct_for_runner(
+    pub fn reconstruct_for_runner(
         state_root: impl AsRef<Path>,
         range: RangeInclusive<u16>,
     ) -> Self {

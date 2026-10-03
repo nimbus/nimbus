@@ -188,7 +188,7 @@ fn terminal_projection_rejects_every_retained_krun_launch_authority() {
 
     terminal.provider_failure_cleanup = KrunProviderFailureCleanupState::Inactive;
     terminal.creator_handoff = KrunCreatorHandoffState::Pending {
-        receipt: nimbus_sandbox::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
             "terminal-authority-matrix",
         ),
     };
@@ -206,7 +206,7 @@ fn terminal_projection_rejects_every_retained_krun_launch_authority() {
     );
 
     terminal.creator_handoff = KrunCreatorHandoffState::Quiesced {
-        proof: nimbus_sandbox::backends::conmon::creator::CreatorQuiescenceProof::never_spawned(
+        proof: nimbus_sandbox_container::conmon::creator::CreatorQuiescenceProof::never_spawned(
             "terminal-authority-matrix",
         ),
     };
@@ -365,7 +365,7 @@ fn pending_creator_fences_provider_and_network_cleanup() {
         reservation_claim: claim,
     };
     manifest.creator_handoff = KrunCreatorHandoffState::Pending {
-        receipt: nimbus_sandbox::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
             "pending-test-attempt",
         ),
     };

@@ -9,7 +9,7 @@ use nimbus_sandbox::{
     SandboxProvisionPhaseObservation, SandboxRestartAttemptFence, SandboxSpec,
 };
 
-use nimbus_sandbox::backends::container::ContainerSandboxBackend;
+use nimbus_sandbox_container::ContainerSandboxBackend;
 use nimbus_sandbox_krun::KrunSandboxBackend;
 
 use super::provision_provider::ProviderProvisionEffectObservation;

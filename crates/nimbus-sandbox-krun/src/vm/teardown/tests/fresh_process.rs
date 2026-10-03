@@ -7,14 +7,14 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nimbus_sandbox::backends::conmon::runtime_process::{
-    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
-    RuntimeProcessSignalOutcome,
-};
 use nimbus_sandbox::{
     ProviderCommandClaim, ProviderCommandClaimDecision, ProviderCommandClaimInput,
     ProviderCommandObservationKind, ProviderCommandOperation, SandboxExecutionTeardownCommand,
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
+};
+use nimbus_sandbox_container::conmon::runtime_process::{
+    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
+    RuntimeProcessSignalOutcome,
 };
 
 use super::*;

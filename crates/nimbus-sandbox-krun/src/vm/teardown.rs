@@ -7,14 +7,14 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use nimbus_sandbox::backends::conmon::runtime_process::{
-    RuntimeProcessIdentityObservation, RuntimeProcessSignal, RuntimeProcessSignalOutcome,
-};
 use nimbus_sandbox::{
     ProviderCommandClaim, ProviderCommandExecutionClaim, ProviderCommandJournalError,
     ProviderCommandObservation, ProviderCommandObservationKind, SandboxError,
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
     SandboxExecutionTeardownOperation,
+};
+use nimbus_sandbox_container::conmon::runtime_process::{
+    RuntimeProcessIdentityObservation, RuntimeProcessSignal, RuntimeProcessSignalOutcome,
 };
 
 use super::{
@@ -630,11 +630,11 @@ impl KrunSandboxBackend {
             KrunExecutionTerminalObservation::NotObserved => {}
         }
         let process = runtime.capture_process(manifest)?;
-        let graceful_signal = nimbus_sandbox::backends::conmon::lifecycle::configured_stop_signal(
+        let graceful_signal = nimbus_sandbox_container::conmon::lifecycle::configured_stop_signal(
             manifest.image_metadata.stop_signal.as_deref(),
         );
         let parsed_signal = RuntimeProcessSignal::parse(&graceful_signal)?;
-        let timeout = nimbus_sandbox::backends::conmon::lifecycle::configured_stop_timeout(
+        let timeout = nimbus_sandbox_container::conmon::lifecycle::configured_stop_timeout(
             &manifest.spec,
             self.config.stop_timeout,
         );

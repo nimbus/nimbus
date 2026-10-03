@@ -20,9 +20,6 @@ use nimbus_network::{
     PortBindingSpec, PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseFence,
     PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
-use nimbus_sandbox::backends::container::{
-    CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerSandboxBackend,
-};
 use nimbus_sandbox::backends::{
     CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY, KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
 };
@@ -36,6 +33,9 @@ use nimbus_sandbox::{
     SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
     SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation, SandboxSpec,
     sandbox_network_plan_requirements,
+};
+use nimbus_sandbox_container::{
+    CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerSandboxBackend,
 };
 use nimbus_sandbox_krun::KrunSandboxBackend;
 use sha2::{Digest, Sha256};

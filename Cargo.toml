@@ -37,6 +37,7 @@ members = [
     "crates/nimbus-workload-identity",
     "crates/nimbus-runtime",
     "crates/nimbus-sandbox",
+    "crates/nimbus-sandbox-container",
     "crates/nimbus-sandbox-krun",
     "crates/nimbus-s3",
     "crates/nimbus-core",

@@ -1,7 +1,5 @@
 //! Narrow deterministic fixtures for upper-crate substitution tests.
 
-use std::path::Path;
-
 pub use crate::provider_command::{
     ProviderCommandLockTestProbe, with_provider_command_lock_test_probe,
 };
@@ -9,45 +7,11 @@ pub use crate::provision::test_support::{
     legacy_start_attachment_network_plan_fixture, sandbox_provision_network_plan_fixture,
 };
 
-use crate::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 use crate::{
     ProviderCommandClaim, ProviderCommandOperation, SandboxBackendKind,
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownOperation,
     SandboxNetworkTeardownCommand, SandboxNetworkTeardownOperation, SandboxProvisionNetworkPlan,
 };
-
-/// Durable Container fixture that can create independent backend instances.
-#[doc(hidden)]
-pub struct PreparedContainerNetworkTeardown {
-    config: ContainerSandboxBackendConfig,
-}
-
-impl PreparedContainerNetworkTeardown {
-    /// Prepare one exact attached workload with durable `ExecutionStopped` evidence.
-    pub fn new(
-        root: &Path,
-        stopped: &SandboxExecutionTeardownCommand,
-        detached: &SandboxNetworkTeardownCommand,
-        plan: SandboxProvisionNetworkPlan,
-        pep_port: u16,
-        release_pep_reservation: impl FnOnce(),
-    ) -> crate::Result<Self> {
-        super::container::prepare_network_teardown_fixture(
-            root,
-            stopped,
-            detached,
-            plan,
-            pep_port,
-            release_pep_reservation,
-        )
-        .map(|config| Self { config })
-    }
-
-    /// Reopen only from the fixture's durable roots.
-    pub fn reopen(&self) -> ContainerSandboxBackend {
-        super::container::reopen_network_teardown_fixture(&self.config)
-    }
-}
 
 pub fn validate_network_teardown_fixture(
     backend: SandboxBackendKind,

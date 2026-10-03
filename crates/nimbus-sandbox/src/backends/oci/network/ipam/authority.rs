@@ -53,7 +53,7 @@ impl OciIpamAuthority {
     }
 
     /// Reconstruct once in the separate container-runner OS process.
-    pub(crate) fn reconstruct_for_runner(state_root: impl AsRef<Path>) -> Self {
+    pub fn reconstruct_for_runner(state_root: impl AsRef<Path>) -> Self {
         Self::reconstruct("container runner", state_root.as_ref())
     }
 

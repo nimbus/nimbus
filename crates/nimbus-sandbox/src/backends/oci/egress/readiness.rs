@@ -62,8 +62,8 @@ pub enum EgressReloadAttachmentState {
 }
 
 impl EgressReadinessState {
-    #[cfg(test)]
-    pub(crate) const fn is_missing_registration(&self) -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn is_missing_registration(&self) -> bool {
         matches!(
             self,
             Self::NotReady(EgressReadinessFailure::MissingRegistration)
@@ -258,7 +258,7 @@ impl EgressProxyRegistry {
     /// policy bytes and reload-attempt identity are deliberately not required
     /// here because reconciling those stale fields is the effect this seam
     /// authorizes.
-    pub(crate) fn authenticated_reload_attachment(
+    pub fn authenticated_reload_attachment(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,

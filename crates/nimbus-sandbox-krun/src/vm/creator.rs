@@ -1,10 +1,10 @@
 //! Durable krun creator-attempt orchestration and recovery.
 
-use nimbus_sandbox::backends::conmon::creator::{
+use nimbus_sandbox_container::conmon::creator::{
     CreatorContainmentObservation, CreatorQuiescenceProof, OwnedConmonCreator,
     confirm_dead_conmon_receipt, observe_creator_containment, publish_creator_attempt_annotation,
 };
-use nimbus_sandbox::backends::conmon::lifecycle::{
+use nimbus_sandbox_container::conmon::lifecycle::{
     RuntimeStateObservation, runtime_state_for_creator_attempt,
     wait_for_runtime_state_for_creator_attempt,
 };

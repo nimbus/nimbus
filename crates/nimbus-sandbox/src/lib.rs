@@ -15,7 +15,6 @@ mod execution_attempt;
 mod inspection;
 mod instance;
 mod network_status;
-mod process;
 mod provider_command;
 mod provision;
 mod spec;

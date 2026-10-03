@@ -18,23 +18,6 @@ use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationError, SandboxAttachmentRegistrationKind,
     host_managed_attachment_registration,
 };
-#[cfg(test)]
-use nimbus_sandbox::backends::conmon::lifecycle::RestartLaunchTestProbe;
-#[cfg(test)]
-use nimbus_sandbox::backends::conmon::lifecycle::detect_runtime_status as detect_conmon_runtime_status;
-#[cfg(test)]
-use nimbus_sandbox::backends::conmon::lifecycle::remove_if_exists;
-use nimbus_sandbox::backends::conmon::lifecycle::{
-    RuntimeStatusProbe, ensure_linux_host, run_status_best_effort, run_status_checked,
-    runtime_state,
-};
-#[cfg(test)]
-use nimbus_sandbox::backends::conmon::lifecycle::{
-    configured_stop_signal, configured_stop_timeout,
-};
-use nimbus_sandbox::backends::conmon::spec_resolve::{
-    merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
-};
 use nimbus_sandbox::backends::oci::buildah::{
     ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
 };
@@ -79,6 +62,23 @@ use nimbus_sandbox::{SandboxHandle, SandboxId, SandboxStatus};
 use nimbus_sandbox::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, resolve_process_without_image_defaults,
+};
+#[cfg(test)]
+use nimbus_sandbox_container::conmon::lifecycle::RestartLaunchTestProbe;
+#[cfg(test)]
+use nimbus_sandbox_container::conmon::lifecycle::detect_runtime_status as detect_conmon_runtime_status;
+#[cfg(test)]
+use nimbus_sandbox_container::conmon::lifecycle::remove_if_exists;
+use nimbus_sandbox_container::conmon::lifecycle::{
+    RuntimeStatusProbe, ensure_linux_host, run_status_best_effort, run_status_checked,
+    runtime_state,
+};
+#[cfg(test)]
+use nimbus_sandbox_container::conmon::lifecycle::{
+    configured_stop_signal, configured_stop_timeout,
+};
+use nimbus_sandbox_container::conmon::spec_resolve::{
+    merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
 };
 
 mod attachment_teardown;
@@ -854,13 +854,13 @@ enum KrunCreatorHandoffState {
         attempt_id: String,
     },
     Pending {
-        receipt: nimbus_sandbox::backends::conmon::creator::CreatorAttemptReceipt,
+        receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt,
     },
     Quiesced {
-        proof: nimbus_sandbox::backends::conmon::creator::CreatorQuiescenceProof,
+        proof: nimbus_sandbox_container::conmon::creator::CreatorQuiescenceProof,
     },
     RuntimeObserved {
-        receipt: nimbus_sandbox::backends::conmon::creator::CreatorAttemptReceipt,
+        receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt,
     },
 }
 

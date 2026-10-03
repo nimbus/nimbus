@@ -20,41 +20,41 @@ use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
-pub(crate) type MachinePortProxyKey = (TenantId, SandboxId);
-pub(crate) type MachinePortProxyEntries = HashMap<MachinePortProxyKey, MachinePortProxyEntry>;
+pub type MachinePortProxyKey = (TenantId, SandboxId);
+pub type MachinePortProxyEntries = HashMap<MachinePortProxyKey, MachinePortProxyEntry>;
 
-pub(crate) struct MachinePortProxyRegistration {
-    pub(crate) port_bindings: Vec<SandboxPortBinding>,
-    pub(crate) port_leases: Vec<PortLeaseRequest>,
-    pub(crate) routes: Vec<MachinePortProxyRoute>,
-    pub(crate) proxies: Vec<MachinePortProxy>,
-    pub(crate) lease_authority: Option<MachinePortProxyLeaseAuthority>,
+pub struct MachinePortProxyRegistration {
+    pub port_bindings: Vec<SandboxPortBinding>,
+    pub port_leases: Vec<PortLeaseRequest>,
+    pub routes: Vec<MachinePortProxyRoute>,
+    pub proxies: Vec<MachinePortProxy>,
+    pub lease_authority: Option<MachinePortProxyLeaseAuthority>,
 }
 
-pub(crate) enum MachinePortProxyLeaseAuthority {
+pub enum MachinePortProxyLeaseAuthority {
     Live(OciPortBindLifetimeBatch),
     Recovered(Vec<PortLeaseRecoveryGuard>),
 }
 
-pub(crate) enum MachinePortProxyEntry {
+pub enum MachinePortProxyEntry {
     Running(MachinePortProxyRegistration),
     Stopping(Arc<Mutex<MachinePortProxyCleanupState>>),
 }
 
 /// Exact inputs for one read-only machine publication observation.
-pub(crate) struct MachineForwardedPublicationInspection<'a> {
-    pub(crate) tenant_id: &'a TenantId,
-    pub(crate) sandbox_id: &'a SandboxId,
-    pub(crate) assigned_ips: &'a [Ipv4Addr],
-    pub(crate) bindings: &'a [SandboxPortBinding],
-    pub(crate) leases: &'a [PortLeaseRequest],
-    pub(crate) durable_receipts: &'a [MachinePortForwardReceipt],
-    pub(crate) forwarder: &'a OciMachinePortForwarderConfig,
-    pub(crate) port_leases: &'a OciPortLeaseCoordinator,
+pub struct MachineForwardedPublicationInspection<'a> {
+    pub tenant_id: &'a TenantId,
+    pub sandbox_id: &'a SandboxId,
+    pub assigned_ips: &'a [Ipv4Addr],
+    pub bindings: &'a [SandboxPortBinding],
+    pub leases: &'a [PortLeaseRequest],
+    pub durable_receipts: &'a [MachinePortForwardReceipt],
+    pub forwarder: &'a OciMachinePortForwarderConfig,
+    pub port_leases: &'a OciPortLeaseCoordinator,
     /// Complete compiler-owned launch membership for a PlanOnly provision.
     /// Legacy coarse launches retain their sandbox-derived authority until the
     /// NNC6.4 deletion gate removes that path.
-    pub(crate) planned_members: Option<&'a [PortLeaseRequest]>,
+    pub planned_members: Option<&'a [PortLeaseRequest]>,
 }
 
 /// Non-serializable proof that one exact machine publication is current.
@@ -63,7 +63,7 @@ pub(crate) struct MachineForwardedPublicationInspection<'a> {
 /// registry, listener leases, local workers, durable receipts, and provider
 /// observation have all authenticated as one generation.
 #[derive(Debug)]
-pub(crate) struct MachineForwardedPublicationReadiness {
+pub struct MachineForwardedPublicationReadiness {
     tenant_id: TenantId,
     sandbox_id: SandboxId,
     provider_instance: NetworkProviderHandle,
@@ -71,19 +71,19 @@ pub(crate) struct MachineForwardedPublicationReadiness {
 }
 
 impl MachineForwardedPublicationReadiness {
-    pub(crate) fn tenant_id(&self) -> &TenantId {
+    pub fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
     }
 
-    pub(crate) fn sandbox_id(&self) -> &SandboxId {
+    pub fn sandbox_id(&self) -> &SandboxId {
         &self.sandbox_id
     }
 
-    pub(crate) fn provider_instance(&self) -> &NetworkProviderHandle {
+    pub fn provider_instance(&self) -> &NetworkProviderHandle {
         &self.provider_instance
     }
 
-    pub(crate) fn provider_generation(&self) -> NetworkResourceGeneration {
+    pub fn provider_generation(&self) -> NetworkResourceGeneration {
         self.provider_generation
     }
 
@@ -103,29 +103,29 @@ impl MachineForwardedPublicationReadiness {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MachinePortProxyCleanupDisposition {
+pub enum MachinePortProxyCleanupDisposition {
     Restart,
     Release,
 }
 
-pub(crate) struct MachinePortProxyCleanupState {
-    pub(crate) disposition: MachinePortProxyCleanupDisposition,
-    pub(crate) port_lease_coordinator: OciPortLeaseCoordinator,
-    pub(crate) registration: MachinePortProxyRegistration,
-    pub(crate) expected_bindings: Vec<PortLeaseBinding>,
-    pub(crate) withdraw_complete: bool,
-    pub(crate) provider_stopped: bool,
-    pub(crate) durable_transition_complete: bool,
+pub struct MachinePortProxyCleanupState {
+    pub disposition: MachinePortProxyCleanupDisposition,
+    pub port_lease_coordinator: OciPortLeaseCoordinator,
+    pub registration: MachinePortProxyRegistration,
+    pub expected_bindings: Vec<PortLeaseBinding>,
+    pub withdraw_complete: bool,
+    pub provider_stopped: bool,
+    pub durable_transition_complete: bool,
 }
 
 /// Shared, fail-closed owner of machine-proxy process lifetimes.
 #[derive(Clone, Default)]
-pub(crate) struct MachinePortProxyLifetimeRegistry {
+pub struct MachinePortProxyLifetimeRegistry {
     inner: Arc<Mutex<MachinePortProxyEntries>>,
 }
 
 impl MachinePortProxyLifetimeRegistry {
-    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, MachinePortProxyEntries>> {
+    pub fn lock(&self) -> Result<MutexGuard<'_, MachinePortProxyEntries>> {
         self.inner
             .lock()
             .map_err(|_| SandboxError::OperationFailed {
@@ -133,7 +133,7 @@ impl MachinePortProxyLifetimeRegistry {
             })
     }
 
-    pub(crate) fn inspect_current_publication(
+    pub fn inspect_current_publication(
         &self,
         inspection: MachineForwardedPublicationInspection<'_>,
     ) -> Result<MachineForwardedPublicationReadiness> {
@@ -262,10 +262,8 @@ impl MachinePortProxyLifetimeRegistry {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn try_lock(
-        &self,
-    ) -> std::sync::TryLockResult<MutexGuard<'_, MachinePortProxyEntries>> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn try_lock(&self) -> std::sync::TryLockResult<MutexGuard<'_, MachinePortProxyEntries>> {
         self.inner.try_lock()
     }
 }

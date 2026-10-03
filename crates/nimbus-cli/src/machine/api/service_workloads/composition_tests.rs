@@ -9,7 +9,7 @@ use nimbus_node::{
     SystemdStopUnitResponse, SystemdTransientCapabilities, SystemdTransientUnitBackend,
     SystemdUnitStatus, UnavailableSystemdDbusClient,
 };
-use nimbus_sandbox::backends::container::{
+use nimbus_sandbox_container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, OciMachinePortForwarderConfig,
 };
 

@@ -32,9 +32,7 @@ const MAX_MACHINE_FORWARDER_RESPONSE_BYTES: usize = 1024 * 1024;
 
 mod receipt;
 mod retirement;
-pub(crate) use receipt::{
-    CurrentMachinePortForwardingObservation, MachinePortForwardingSlotObservation,
-};
+pub use receipt::{CurrentMachinePortForwardingObservation, MachinePortForwardingSlotObservation};
 pub use receipt::{MachinePortForwardOutcome, MachinePortForwardReceipt};
 pub use retirement::{
     MachinePortForwardingRetirement, MachinePortForwardingRetirementObservation,
@@ -226,7 +224,7 @@ pub(crate) fn expose_machine_ports(
 /// unavailable, unsupported, truncated, or malformed response leaves current
 /// forwarding unknown. A complete list classifies every desired slot as exact
 /// exposed, exact absent, or conflicting.
-pub(crate) fn inspect_machine_ports(
+pub fn inspect_machine_ports(
     config: &OciMachinePortForwarderConfig,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
@@ -292,7 +290,7 @@ pub(crate) fn unexpose_machine_ports(
 /// Small sandbox-owned effect capability consumed by the durable publication
 /// coordinator. It deliberately exposes one complete inspection and one exact
 /// mutation at a time; mutation returns are diagnostic, never provider truth.
-pub(crate) trait MachinePortForwardingProvider {
+pub trait MachinePortForwardingProvider {
     fn provider_instance(&self) -> &NetworkProviderHandle;
     fn provider_generation(&self) -> NetworkResourceGeneration;
     fn inspect(
@@ -307,22 +305,22 @@ pub(crate) trait MachinePortForwardingProvider {
 
 /// Deterministic current-provider substitute used by lifecycle tests that own
 /// no native gvproxy process.
-#[cfg(test)]
-pub(crate) struct DeterministicMachinePortForwardingProvider {
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct DeterministicMachinePortForwardingProvider {
     config: OciMachinePortForwarderConfig,
     exposed: bool,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl DeterministicMachinePortForwardingProvider {
-    pub(crate) fn exposed(config: &OciMachinePortForwarderConfig) -> Self {
+    pub fn exposed(config: &OciMachinePortForwarderConfig) -> Self {
         Self {
             config: config.clone(),
             exposed: true,
         }
     }
 
-    pub(crate) fn absent(config: &OciMachinePortForwarderConfig) -> Self {
+    pub fn absent(config: &OciMachinePortForwarderConfig) -> Self {
         Self {
             config: config.clone(),
             exposed: false,
@@ -330,7 +328,7 @@ impl DeterministicMachinePortForwardingProvider {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl MachinePortForwardingProvider for DeterministicMachinePortForwardingProvider {
     fn provider_instance(&self) -> &NetworkProviderHandle {
         self.config.provider_instance()
@@ -389,7 +387,7 @@ impl MachinePortForwardingProvider for DeterministicMachinePortForwardingProvide
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MachinePortMutationDiagnostic {
+pub struct MachinePortMutationDiagnostic {
     status_accepted: bool,
 }
 
@@ -400,12 +398,12 @@ impl MachinePortMutationDiagnostic {
         }
     }
 
-    pub(crate) fn status_accepted(self) -> bool {
+    pub fn status_accepted(self) -> bool {
         self.status_accepted
     }
 
-    #[cfg(test)]
-    pub(crate) const fn accepted() -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn accepted() -> Self {
         Self {
             status_accepted: true,
         }

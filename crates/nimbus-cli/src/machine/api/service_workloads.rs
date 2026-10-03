@@ -28,8 +28,8 @@ use nimbus_node::{
 use nimbus_sandbox::{
     SandboxBackend, SandboxCleanupObservation, SandboxExecutionObservation, SandboxInspection,
     SandboxRestartAssessment, SandboxRestartIneligibility,
-    backends::container::{ContainerSandboxBackend, ContainerSandboxStateView},
 };
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxStateView};
 use nimbus_workloads::WorkloadExecutionId;
 
 use super::{MachineApiHttpError, sandbox_error_to_http_error};

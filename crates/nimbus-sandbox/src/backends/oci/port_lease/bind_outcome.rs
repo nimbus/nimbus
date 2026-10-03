@@ -267,7 +267,7 @@ pub(crate) fn adopt_claimed_and_activate_plan_members_with_lifetimes(
 }
 
 /// Record a confirmed no-effect provider bind failure.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn record_bind_failure(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,

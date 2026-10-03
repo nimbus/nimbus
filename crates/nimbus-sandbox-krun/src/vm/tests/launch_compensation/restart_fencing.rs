@@ -68,7 +68,7 @@ fn assert_restart_cleanup_is_fenced(
     .expect("fixture PEP should own its exact listener");
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved {
-        receipt: nimbus_sandbox::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_container::conmon::creator::CreatorAttemptReceipt::for_test(
             "runtime-observed-fixture",
         ),
     };

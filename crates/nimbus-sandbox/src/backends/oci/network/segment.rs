@@ -348,7 +348,7 @@ impl ConfiguredSegmentAllocator {
 
     /// Cache one reconstruction outcome for the separate container runner
     /// process without treating it as an injected in-process composition.
-    pub(crate) fn reconstruct_for_runner(
+    pub fn reconstruct_for_runner(
         state_root: impl AsRef<Path>,
         supernet: &str,
         tenant_prefix: u8,

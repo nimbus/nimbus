@@ -22,10 +22,9 @@ use nimbus_sandbox::{
     SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandInput,
     SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
     SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation,
-    backends::{
-        CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY, container::OciMachinePortForwarderConfig,
-    },
+    backends::CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
 };
+use nimbus_sandbox_container::OciMachinePortForwarderConfig;
 use nimbus_workloads::{
     NodeIdentity, WorkloadOwnerEvidenceDigest, WorkloadTeardownClaim, WorkloadTeardownCommandMode,
     WorkloadTeardownDispatchAuthorization, WorkloadTeardownProviderTarget, WorkloadTeardownReceipt,

@@ -18,7 +18,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use nimbus::{Error, SandboxBackendKind, SandboxError, SandboxStatus, TenantId};
 use nimbus_node::SystemdTransientUnitBackend;
-use nimbus_sandbox::backends::container::{
+use nimbus_sandbox_container::{
     ContainerSandboxBackendConfig, ContainerSandboxStateView, OciMachinePortForwarderConfig,
 };
 use nimbus_workloads::NodeIdentity;

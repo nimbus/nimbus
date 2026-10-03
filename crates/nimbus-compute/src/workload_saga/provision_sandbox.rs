@@ -12,12 +12,12 @@ use nimbus_network::{
     PortIpv6Overlap, PortLeaseAccounting, PortLeaseFence, PortLeaseRequest, PortProtocol,
     PortPublicationIntent, PortRequestMode,
 };
-use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::{
     ProviderCommandJournalError, SandboxBackend, SandboxBackendKind, SandboxError, SandboxId,
     SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
     SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation, SandboxSpec,
 };
+use nimbus_sandbox_container::ContainerSandboxBackend;
 use nimbus_sandbox_krun::KrunSandboxBackend;
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, WorkloadGeneration, WorkloadNetworkPortRequestMode,
@@ -693,10 +693,10 @@ pub(crate) mod tests {
         NetworkPortAssignmentMode, NetworkProviderId, NetworkSovereigntyCapabilities,
         NetworkSovereigntyRequirements, PortProtocol,
     };
-    use nimbus_sandbox::backends::container::ContainerSandboxBackendConfig;
     use nimbus_sandbox::{
         SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, sandbox_network_plan_requirements,
     };
+    use nimbus_sandbox_container::ContainerSandboxBackendConfig;
     use nimbus_sandbox_krun::KrunSandboxBackendConfig;
     use nimbus_tenant::{
         TenantIsolationContextExt, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,

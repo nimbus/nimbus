@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use nimbus_network::NetworkProviderId;
-use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaimDecision, ProviderCommandExecutionClaim,
     ProviderCommandJournalError, ProviderCommandObservation, ProviderCommandObservationKind,
@@ -14,6 +13,7 @@ use nimbus_sandbox::{
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation, SandboxId,
     SandboxNetworkTeardownObservation, sandbox_network_plan_requirements,
 };
+use nimbus_sandbox_container::ContainerSandboxBackend;
 use nimbus_workloads::{
     WorkloadExecutionProviderId, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,
     WorkloadTeardownCommandMode, WorkloadTeardownProviderTarget, WorkloadTeardownStep,

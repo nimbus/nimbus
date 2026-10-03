@@ -32,9 +32,9 @@ use nimbus_sandbox::{
     MachinePortForwardingRetirementObservation, ProviderCommandObservation,
     ProviderCommandOperation, ProviderCommandStartedClaimDecision, SandboxExecutionAttemptId,
     SandboxId, SandboxPortBinding, SandboxProvisionDependencyListener, SandboxProvisionNetworkPlan,
-    backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig},
     sandbox_network_plan_requirements,
 };
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 use nimbus_workloads::{
     LocalEnforcementBinding, WorkloadOwnerEvidenceDigest, WorkloadSagaCommit, WorkloadSagaExpected,
     WorkloadSagaFuture, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase,
@@ -415,8 +415,7 @@ fn guest_service(
     let backend = Arc::new(ContainerSandboxBackend::new(config));
     let command = request.command();
     let sandbox_id = SandboxId::new(command.execution_locator().execution_id().as_str());
-    let state_view =
-        nimbus_sandbox::backends::container::ContainerSandboxStateView::new(guest_root);
+    let state_view = nimbus_sandbox_container::ContainerSandboxStateView::new(guest_root);
     if state_view
         .inspect(&sandbox_id)
         .expect("guest manifest inspection should stay readable")

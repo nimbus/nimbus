@@ -121,12 +121,12 @@ large_file	crates/nimbus-sandbox/src/backends/oci/egress/tests.rs	review	sandbox
 large_file	crates/nimbus-sandbox/src/backends/oci/egress.rs	review	sandbox	Shared per-sandbox egress PEP lifecycle; cleanup, process, readiness, assignment, and reload are already children.
 large_file	crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs	review	sandbox	OCI port lease coordinator root; authority, batch state, publication, machine, and Netavark lifetime are already children.
 large_file	crates/nimbus-sandbox/src/backends/oci/port_lifecycle/tests.rs	review	sandbox	OCI port lifecycle suite; batch classification, machine cleanup, Netavark cleanup, and teardown progress are already children.
-large_file	crates/nimbus-sandbox/src/backends/container/runtime/launch_cleanup.rs	review	sandbox	Container launch cleanup suite owns runner execution ownership and owner-death fencing cases.
-large_file	crates/nimbus-sandbox/src/backends/container/runtime/machine_ports.rs	review	sandbox	Container-owned lifecycle for provider-managed machine port proxies, including partial-start cleanup.
-large_file	crates/nimbus-sandbox/src/backends/container/runtime/runner.rs	review	sandbox	Prepared plan-only workload runner entry point; identity, lifecycle lock, and recovery are already children.
-large_file	crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs	review	sandbox	Durable machine port publication state machine that journals each ambiguous per-binding effect; the store is already a child.
-large_file	crates/nimbus-sandbox/src/backends/container/runtime/planning.rs	review	sandbox	Container planning suite owns manifest persistence, network config, and exact-claim ordering cases.
-large_file	crates/nimbus-sandbox/src/backends/container/runtime/restart.rs	review	sandbox	Coordinator-issued, attempt-fenced container restart phases; provider effects only, with tests in a child.
+large_file	crates/nimbus-sandbox-container/src/runtime/launch_cleanup.rs	review	sandbox	Container launch cleanup suite owns runner execution ownership and owner-death fencing cases.
+large_file	crates/nimbus-sandbox-container/src/runtime/machine_ports.rs	review	sandbox	Container-owned lifecycle for provider-managed machine port proxies, including partial-start cleanup.
+large_file	crates/nimbus-sandbox-container/src/runtime/runner.rs	review	sandbox	Prepared plan-only workload runner entry point; identity, lifecycle lock, and recovery are already children.
+large_file	crates/nimbus-sandbox-container/src/runtime/machine_port_publication.rs	review	sandbox	Durable machine port publication state machine that journals each ambiguous per-binding effect; the store is already a child.
+large_file	crates/nimbus-sandbox-container/src/runtime/planning.rs	review	sandbox	Container planning suite owns manifest persistence, network config, and exact-claim ordering cases.
+large_file	crates/nimbus-sandbox-container/src/runtime/restart.rs	review	sandbox	Coordinator-issued, attempt-fenced container restart phases; provider effects only, with tests in a child.
 large_file	crates/nimbus-sandbox-krun/src/bundle.rs	review	sandbox	Krun bundle layout, mounts, process user, and OCI config construction with its contract tests.
 large_file	crates/nimbus-sandbox-krun/src/vm/teardown/tests.rs	review	sandbox	Krun execution teardown suite; fresh-process and network-teardown cases are already children.
 large_file	crates/nimbus-sandbox-krun/src/vm/tests/launch_compensation.rs	review	sandbox	Krun execute-mode launch compensation suite; restart fencing is already a child.

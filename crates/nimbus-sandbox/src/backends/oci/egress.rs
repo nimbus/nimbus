@@ -1433,7 +1433,7 @@ pub fn egress_trust_anchor_mount(
     })
 }
 
-pub(crate) fn egress_trust_anchor_path(
+pub fn egress_trust_anchor_path(
     trust_anchor_root: &Path,
     tenant_id: &TenantId,
     id: &SandboxId,
@@ -1614,7 +1614,7 @@ fn remove_trust_anchor_file(path: &Path) -> Result<()> {
 /// preparation, but has no process-local registry entry to drive normal PEP
 /// shutdown. The identifiers are validated and the derived path is rechecked
 /// against the canonical root before deletion.
-pub(crate) fn remove_unactivated_egress_trust_anchor(
+pub fn remove_unactivated_egress_trust_anchor(
     state_root: &Path,
     tenant_id: &TenantId,
     id: &SandboxId,

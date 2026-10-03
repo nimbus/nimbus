@@ -9,8 +9,11 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 #[cfg(test)]
 use super::super::port_lease::{
-    abandon_bind_attempts_without_effect, adopt_claimed_and_activate_batch, claim_bind_attempts,
-    prepare_rebind_batch_after_confirmed_stop, record_bind_failure,
+    abandon_bind_attempts_without_effect, prepare_rebind_batch_after_confirmed_stop,
+};
+#[cfg(any(test, feature = "test-hooks"))]
+use super::super::port_lease::{
+    adopt_claimed_and_activate_batch, claim_bind_attempts, record_bind_failure,
 };
 use super::super::port_lease::{
     prepare_provider_managed_plan_members_after_confirmed_stop,
@@ -103,8 +106,8 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn activate_machine_bindings(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn activate_machine_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -154,7 +157,7 @@ impl OciPortLeaseCoordinator {
         .collect()
     }
 
-    pub(crate) fn activate_machine_bindings_with_lifetimes(
+    pub fn activate_machine_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -195,7 +198,7 @@ impl OciPortLeaseCoordinator {
         .collect()
     }
 
-    pub(crate) fn activate_planned_machine_bindings_with_lifetimes(
+    pub fn activate_planned_machine_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
         bindings: &[SandboxPortBinding],
@@ -247,7 +250,7 @@ impl OciPortLeaseCoordinator {
         .collect()
     }
 
-    pub(crate) fn activate_rebind_planned_machine_bindings_with_lifetimes(
+    pub fn activate_rebind_planned_machine_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
         bindings: &[SandboxPortBinding],
@@ -284,8 +287,8 @@ impl OciPortLeaseCoordinator {
         .collect()
     }
 
-    #[cfg(test)]
-    pub(crate) fn claim_machine_bindings(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn claim_machine_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -386,7 +389,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn abandon_machine_bind_claims_with_lifetimes_without_effect(
+    pub fn abandon_machine_bind_claims_with_lifetimes_without_effect(
         &self,
         leases: &[PortLeaseRequest],
         batch: &OciPortBindLifetimeBatch,
@@ -407,7 +410,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn abandon_planned_machine_bind_claims_with_lifetimes_without_effect(
+    pub fn abandon_planned_machine_bind_claims_with_lifetimes_without_effect(
         &self,
         plan_members: &[PortLeaseRequest],
         leases: &[PortLeaseRequest],
@@ -430,7 +433,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(
+    pub fn abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(
         &self,
         bindings: &[SandboxPortBinding],
         plan_members: &[PortLeaseRequest],
@@ -459,7 +462,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn require_active_machine_bindings(
+    pub fn require_active_machine_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -490,7 +493,7 @@ impl OciPortLeaseCoordinator {
             .collect()
     }
 
-    pub(crate) fn require_active_planned_machine_bindings(
+    pub fn require_active_planned_machine_bindings(
         &self,
         tenant_id: &TenantId,
         bindings: &[SandboxPortBinding],
@@ -520,7 +523,7 @@ impl OciPortLeaseCoordinator {
             .collect()
     }
 
-    pub(crate) fn require_active_machine_bindings_with_lifetimes(
+    pub fn require_active_machine_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -563,7 +566,7 @@ impl OciPortLeaseCoordinator {
         Ok(active)
     }
 
-    pub(crate) fn require_active_planned_machine_bindings_with_lifetimes(
+    pub fn require_active_planned_machine_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
         bindings: &[SandboxPortBinding],
@@ -616,7 +619,7 @@ impl OciPortLeaseCoordinator {
             .collect()
     }
 
-    pub(crate) fn require_releasable_machine_bindings(
+    pub fn require_releasable_machine_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -654,7 +657,7 @@ impl OciPortLeaseCoordinator {
     /// durably moves the batch to `CleanupPending`. That phase fences reuse but
     /// does not mean the external forwarder effect is absent, so publication
     /// reconciliation must still be able to inspect and withdraw it.
-    pub(crate) fn require_machine_publication_withdrawal_fence(
+    pub fn require_machine_publication_withdrawal_fence(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -700,7 +703,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn require_planned_machine_publication_withdrawal_fence(
+    pub fn require_planned_machine_publication_withdrawal_fence(
         &self,
         tenant_id: &TenantId,
         bindings: &[SandboxPortBinding],
@@ -745,7 +748,7 @@ impl OciPortLeaseCoordinator {
     /// Authenticate the immutable listener identities carried by terminal
     /// machine-publication evidence without reinterpreting the current lease
     /// phase as provider truth.
-    pub(crate) fn require_machine_publication_identity(
+    pub fn require_machine_publication_identity(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -756,7 +759,7 @@ impl OciPortLeaseCoordinator {
         self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)
     }
 
-    pub(crate) fn require_planned_machine_publication_identity(
+    pub fn require_planned_machine_publication_identity(
         &self,
         tenant_id: &TenantId,
         bindings: &[SandboxPortBinding],
@@ -778,7 +781,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn prepare_machine_bindings_for_rebind_with_lifetimes(
+    pub fn prepare_machine_bindings_for_rebind_with_lifetimes(
         &self,
         leases: &[PortLeaseRequest],
         expected_bindings: &[PortLeaseBinding],
@@ -794,7 +797,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn release_machine_bindings_after_confirmed_stop_with_lifetimes(
+    pub fn release_machine_bindings_after_confirmed_stop_with_lifetimes(
         &self,
         leases: &[PortLeaseRequest],
         expected_bindings: &[PortLeaseBinding],
@@ -810,7 +813,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn recover_machine_bindings_after_owner_death(
+    pub fn recover_machine_bindings_after_owner_death(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -844,7 +847,7 @@ impl OciPortLeaseCoordinator {
         Ok((expected, recoveries))
     }
 
-    pub(crate) fn prepare_recovered_planned_machine_bindings_for_rebind(
+    pub fn prepare_recovered_planned_machine_bindings_for_rebind(
         &self,
         plan_members: &[PortLeaseRequest],
         leases: &[PortLeaseRequest],
@@ -864,7 +867,7 @@ impl OciPortLeaseCoordinator {
 
     /// Release one exact compiler-planned machine listener subset after its
     /// provider stop is durably confirmed.
-    pub(crate) fn release_planned_restart_retained_machine_bindings(
+    pub fn release_planned_restart_retained_machine_bindings(
         &self,
         plan_members: &[PortLeaseRequest],
         leases: &[PortLeaseRequest],
@@ -879,7 +882,7 @@ impl OciPortLeaseCoordinator {
     /// Acquire exact dead-owner authority for one compiler-planned publication
     /// subset without falling back to sandbox-derived listener identity or the
     /// guest wildcard transport address.
-    pub(crate) fn recover_planned_machine_bindings_after_owner_death(
+    pub fn recover_planned_machine_bindings_after_owner_death(
         &self,
         tenant_id: &TenantId,
         bindings: &[SandboxPortBinding],
@@ -915,7 +918,7 @@ impl OciPortLeaseCoordinator {
         Ok((expected, recoveries))
     }
 
-    pub(crate) fn prepare_recovered_machine_bindings_for_rebind(
+    pub fn prepare_recovered_machine_bindings_for_rebind(
         &self,
         leases: &[PortLeaseRequest],
         expected_bindings: &[PortLeaseBinding],
@@ -931,7 +934,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn release_recovered_machine_bindings(
+    pub fn release_recovered_machine_bindings(
         &self,
         leases: &[PortLeaseRequest],
         recoveries: &[PortLeaseRecoveryGuard],
@@ -949,7 +952,7 @@ impl OciPortLeaseCoordinator {
     /// `Released` requires exact historical provider evidence when present.
     /// A mixed terminal batch must share one coordinator. Every other shape
     /// retains ambiguity or live authority.
-    pub(crate) fn machine_bindings_are_terminal_without_effect(
+    pub fn machine_bindings_are_terminal_without_effect(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -962,8 +965,8 @@ impl OciPortLeaseCoordinator {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn record_machine_proxy_bind_failure(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn record_machine_proxy_bind_failure(
         &self,
         request: &PortLeaseRequest,
         claim: &PortBindClaim,

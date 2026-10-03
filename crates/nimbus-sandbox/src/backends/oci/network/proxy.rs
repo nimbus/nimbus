@@ -102,29 +102,29 @@ fn configure_machine_port_timeout(
 }
 
 /// Bound but inert host listener for one provider-managed machine endpoint.
-pub(crate) struct PreparedMachinePortProxy {
+pub struct PreparedMachinePortProxy {
     bind_addr: SocketAddr,
     target_addr: SocketAddr,
     listener: TcpListener,
 }
 
 /// Inert listener batch plus the exact live process generations that own it.
-pub(crate) struct PreparedMachinePortProxyBatch {
+pub struct PreparedMachinePortProxyBatch {
     proxies: Vec<PreparedMachinePortProxy>,
     bind_authority: OciPortBindLifetimeBatch,
     planned_rebind: bool,
 }
 
 impl PreparedMachinePortProxyBatch {
-    pub(crate) fn bind_authority(&self) -> &OciPortBindLifetimeBatch {
+    pub fn bind_authority(&self) -> &OciPortBindLifetimeBatch {
         &self.bind_authority
     }
 
-    pub(crate) fn is_planned_rebind(&self) -> bool {
+    pub fn is_planned_rebind(&self) -> bool {
         self.planned_rebind
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<PreparedMachinePortProxy>, OciPortBindLifetimeBatch) {
+    pub fn into_parts(self) -> (Vec<PreparedMachinePortProxy>, OciPortBindLifetimeBatch) {
         (self.proxies, self.bind_authority)
     }
 }
@@ -136,7 +136,7 @@ impl PreparedMachinePortProxyBatch {
 /// replay must therefore compare this normalized plan before reusing a live
 /// provider effect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct MachinePortProxyRoute {
+pub struct MachinePortProxyRoute {
     guest_listener_addr: SocketAddr,
     target_addr: SocketAddr,
     external_publication_addr: SocketAddr,
@@ -155,7 +155,7 @@ impl MachinePortProxyRoute {
     }
 }
 
-pub(crate) struct MachinePortProxy {
+pub struct MachinePortProxy {
     bind_addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
     listener_owned: Arc<AtomicBool>,
@@ -180,14 +180,14 @@ struct MachinePortProxyPreparation<'a> {
     release_authority: MachinePortPreparationReleaseAuthority<'a>,
 }
 
-pub(crate) struct MachinePortProxyStartFailure {
+pub struct MachinePortProxyStartFailure {
     error: SandboxError,
     running: Vec<MachinePortProxy>,
     bind_authority: OciPortBindLifetimeBatch,
 }
 
 impl MachinePortProxyStartFailure {
-    pub(crate) fn into_parts(
+    pub fn into_parts(
         self,
     ) -> (
         SandboxError,
@@ -199,13 +199,13 @@ impl MachinePortProxyStartFailure {
 }
 
 /// Running local workers plus every exact lifetime in their atomic lease batch.
-pub(crate) struct RunningMachinePortProxyBatch {
+pub struct RunningMachinePortProxyBatch {
     proxies: Vec<MachinePortProxy>,
     bind_authority: OciPortBindLifetimeBatch,
 }
 
 impl RunningMachinePortProxyBatch {
-    pub(crate) fn into_parts(self) -> (Vec<MachinePortProxy>, OciPortBindLifetimeBatch) {
+    pub fn into_parts(self) -> (Vec<MachinePortProxy>, OciPortBindLifetimeBatch) {
         (self.proxies, self.bind_authority)
     }
 }
@@ -444,12 +444,12 @@ impl MachinePortProxy {
     /// This is intentionally process-local evidence. Durable restart
     /// reconciliation belongs to NNC3.8; an exited retained worker may never be
     /// republished as though its `Active` lease proved current reachability.
-    pub(crate) fn provider_is_running(&self) -> bool {
+    pub fn provider_is_running(&self) -> bool {
         matches!(&self.stop_state, MachinePortProxyStopState::Running(_))
             && self.listener_owned.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn shutdown(&mut self) -> Result<()> {
+    pub fn shutdown(&mut self) -> Result<()> {
         self.stop()
     }
 
@@ -507,8 +507,8 @@ impl Drop for MachinePortProxy {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn panicking_machine_port_proxy_for_test(bind_addr: SocketAddr) -> MachinePortProxy {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn panicking_machine_port_proxy_for_test(bind_addr: SocketAddr) -> MachinePortProxy {
     let shutdown = Arc::new(AtomicBool::new(false));
     let join = thread::spawn(|| -> std::result::Result<(), String> {
         panic!("injected machine accept-worker panic")
@@ -522,7 +522,7 @@ pub(crate) fn panicking_machine_port_proxy_for_test(bind_addr: SocketAddr) -> Ma
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MachinePortPreparationReleaseAuthority<'a> {
+pub enum MachinePortPreparationReleaseAuthority<'a> {
     Retain,
     RetainPlanned {
         plan_members: &'a [PortLeaseRequest],
@@ -584,8 +584,8 @@ impl<'a> MachinePortPreparationReleaseAuthority<'a> {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn prepare_machine_port_proxies(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn prepare_machine_port_proxies(
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     assigned_ips: &[Ipv4Addr],
@@ -610,7 +610,7 @@ pub(crate) fn prepare_machine_port_proxies(
     )
 }
 
-pub(crate) fn prepare_machine_port_proxies_with_release_authority(
+pub fn prepare_machine_port_proxies_with_release_authority(
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     assigned_ips: &[Ipv4Addr],
@@ -881,7 +881,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
 
 /// Normalize the complete provider routing plan without binding or mutating
 /// durable authority.
-pub(crate) fn machine_port_proxy_routes(
+pub fn machine_port_proxy_routes(
     assigned_ips: &[Ipv4Addr],
     port_bindings: &[SandboxPortBinding],
 ) -> Result<Vec<MachinePortProxyRoute>> {
@@ -901,8 +901,8 @@ pub(crate) fn machine_port_proxy_routes(
 }
 
 /// Start a fully prepared batch only after exact durable activation.
-#[cfg(test)]
-pub(crate) fn start_machine_port_proxies(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn start_machine_port_proxies(
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],
@@ -928,7 +928,7 @@ pub(crate) fn start_machine_port_proxies(
     })
 }
 
-pub(crate) fn start_machine_port_proxies_with_recovery(
+pub fn start_machine_port_proxies_with_recovery(
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],

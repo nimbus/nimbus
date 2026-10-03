@@ -3,7 +3,7 @@ name: Container PEP Egress
 on:
   # Keep both path lists equal to the tracked inputs of the cargo test steps:
   # the Linux in-workspace closure of
-  # `cargo tree -p nimbus-sandbox -p nimbus-sandbox-krun -e normal,build,dev --target x86_64-unknown-linux-gnu`,
+  # `cargo tree -p nimbus-sandbox -p nimbus-sandbox-container -p nimbus-sandbox-krun -e normal,build,dev --target x86_64-unknown-linux-gnu`,
   # the workspace manifests and toolchain pins, and the setup-rust-cached action
   # with the scripts it runs.
   pull_request:
@@ -24,6 +24,7 @@ on:
       - "crates/nimbus-process-harness/**"
       - "crates/nimbus-proxy/**"
       - "crates/nimbus-sandbox/**"
+      - "crates/nimbus-sandbox-container/**"
       - "crates/nimbus-sandbox-krun/**"
       - "crates/workspace-hack/**"
       - "third_party/brotli-3.5.0/**"
@@ -51,6 +52,7 @@ on:
       - "crates/nimbus-process-harness/**"
       - "crates/nimbus-proxy/**"
       - "crates/nimbus-sandbox/**"
+      - "crates/nimbus-sandbox-container/**"
       - "crates/nimbus-sandbox-krun/**"
       - "crates/workspace-hack/**"
       - "third_party/brotli-3.5.0/**"

@@ -43,10 +43,12 @@ pub use bind_claim::{
     claim_rebind_plan_member_attempt_with_lifetime,
     claim_rebind_plan_members_attempts_with_lifetimes,
 };
+#[cfg(test)]
+pub(crate) use bind_outcome::adopt_claimed_and_activate;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use bind_outcome::adopt_claimed_and_activate_batch;
-#[cfg(test)]
-pub(crate) use bind_outcome::{adopt_claimed_and_activate, record_bind_failure};
+#[cfg(any(test, feature = "test-hooks"))]
+pub(crate) use bind_outcome::record_bind_failure;
 pub(crate) use bind_outcome::{
     adopt_claimed_and_activate_batch_with_lifetimes,
     adopt_claimed_and_activate_plan_member_with_lifetime,
@@ -160,7 +162,7 @@ impl OciPortBindLifetimeBatch {
         &self.claims
     }
 
-    pub(crate) fn lifetimes(&self) -> &[PortLeaseLifetimeGuard] {
+    pub fn lifetimes(&self) -> &[PortLeaseLifetimeGuard] {
         &self.lifetimes
     }
 

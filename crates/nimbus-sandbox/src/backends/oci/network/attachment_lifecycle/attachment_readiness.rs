@@ -48,13 +48,13 @@ impl OciAttachmentBaseReadinessEvidence {
 }
 
 impl OciAttachmentReadinessEvidence {
-    #[cfg(test)]
-    pub(crate) fn observation(&self) -> &NetworkObservation {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn observation(&self) -> &NetworkObservation {
         &self.observation
     }
 
-    #[cfg(test)]
-    pub(crate) fn assigned_ips(&self) -> &[Ipv4Addr] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn assigned_ips(&self) -> &[Ipv4Addr] {
         &self.assigned_ips
     }
 }
@@ -94,8 +94,8 @@ pub enum OciAttachmentBaseReadinessState {
 }
 
 impl OciAttachmentReadinessState {
-    #[cfg(test)]
-    pub(crate) fn is_ready(&self) -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_ready(&self) -> bool {
         match self {
             Self::Ready(evidence) => {
                 debug_assert_eq!(

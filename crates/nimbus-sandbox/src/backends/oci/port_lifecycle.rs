@@ -38,10 +38,10 @@ use super::port_lease::{
 #[cfg(test)]
 use super::port_lease::{
     abandon_bind_attempts_without_effect, new_launch_reservation_claim,
-    prepare_rebind_batch_after_confirmed_stop, release, reserve,
+    prepare_rebind_batch_after_confirmed_stop, reserve,
 };
 #[cfg(any(test, feature = "test-hooks"))]
-use super::port_lease::{adopt_claimed_and_activate_batch, claim_bind_attempts};
+use super::port_lease::{adopt_claimed_and_activate_batch, claim_bind_attempts, release};
 use crate::backends::capabilities::SANDBOX_EGRESS_PEP_PROVIDER_KEY;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -75,7 +75,7 @@ enum PublishedListenerProvider {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum LaunchPortBatchState {
+pub enum LaunchPortBatchState {
     NeverBound,
     NetavarkClaimed(Vec<PortBindClaim>),
     RestartRetained,
@@ -115,7 +115,7 @@ pub struct ReservedLaunchPorts {
     pub published_bindings: Vec<SandboxPortBinding>,
     pub published_leases: Vec<PortLeaseRequest>,
     pub internal_listener: Option<ReservedInternalListener>,
-    pub(crate) reservation_claim: NetworkReservationClaim,
+    pub reservation_claim: NetworkReservationClaim,
     publication_lifetime: Option<NetworkReservationLifetimeGuard>,
 }
 
@@ -185,7 +185,7 @@ impl<'a> SandboxLaunchPortPlan<'a> {
         }
     }
 
-    pub(crate) fn with_reallocatable_listener_names(
+    pub fn with_reallocatable_listener_names(
         mut self,
         listener_names: &'a BTreeSet<String>,
     ) -> Self {
@@ -214,7 +214,7 @@ impl OciPortLeaseCoordinator {
     /// external desired exposure, while the guest-side proxy binds an IPv4
     /// wildcard listener. The durable conflict target must describe that real
     /// wildcard effect so a specific-address lease cannot overlap it.
-    pub(crate) fn with_machine_port_proxy_bindings(mut self) -> Self {
+    pub fn with_machine_port_proxy_bindings(mut self) -> Self {
         self.published_listener_provider = PublishedListenerProvider::MachinePortProxy;
         self
     }
@@ -506,7 +506,7 @@ impl OciPortLeaseCoordinator {
     }
 
     /// Compensate an exact request set retained in a launch manifest.
-    pub(crate) fn release_never_bound_requests(
+    pub fn release_never_bound_requests(
         &self,
         requests: &[PortLeaseRequest],
         reservation_claim: &NetworkReservationClaim,
@@ -594,7 +594,7 @@ impl OciPortLeaseCoordinator {
     /// and an already-released identical compensation replay. A uniformly
     /// adopted group is provider-owned cleanup input. Claimless failures and
     /// mixed ownership fail closed.
-    pub(crate) fn classify_launch_port_batch(
+    pub fn classify_launch_port_batch(
         &self,
         requests: &[PortLeaseRequest],
         reservation_claim: &NetworkReservationClaim,
@@ -827,7 +827,7 @@ impl OciPortLeaseCoordinator {
     /// Authenticate the plan-rendered binding list against its canonical
     /// operator and image inputs before the runner converts previews into
     /// durable range requests.
-    pub(crate) fn validate_plan_binding_provenance(
+    pub fn validate_plan_binding_provenance(
         &self,
         requested_bindings: &[SandboxPortBinding],
         rendered_bindings: &[SandboxPortBinding],
@@ -958,7 +958,7 @@ impl OciPortLeaseCoordinator {
         Ok(expected.flatten())
     }
 
-    pub(crate) fn require_binding_leases(
+    pub fn require_binding_leases(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -1381,7 +1381,7 @@ impl OciPortLeaseCoordinator {
         })
     }
 
-    pub(crate) fn withdraw_bindings(
+    pub fn withdraw_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -1419,8 +1419,8 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn release_bindings(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn release_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,

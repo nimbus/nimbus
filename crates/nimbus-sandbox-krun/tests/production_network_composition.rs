@@ -13,9 +13,6 @@ use nimbus_network::{
     PortIpv6Overlap, PortLeaseAccounting, PortLeaseError, PortLeaseFence, PortLeaseId,
     PortLeasePhase, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
-use nimbus_sandbox::backends::container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
-};
 use nimbus_sandbox::backends::{
     CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY, KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
     SandboxAttachmentRegistrationError,
@@ -26,6 +23,9 @@ use nimbus_sandbox::{
     SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
     SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     sandbox_network_plan_requirements,
+};
+use nimbus_sandbox_container::{
+    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use serde_json::Value;

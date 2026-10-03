@@ -16,7 +16,7 @@ pub mod resource_quota;
 /// Serde otherwise treats a missing `Option<T>` field as `None`, which is too
 /// permissive for manifest authority fields where omission and an explicit
 /// post-adoption `null` have different wire meanings.
-pub(crate) fn deserialize_required_option<'de, D, T>(
+pub fn deserialize_required_option<'de, D, T>(
     deserializer: D,
 ) -> std::result::Result<Option<T>, D::Error>
 where

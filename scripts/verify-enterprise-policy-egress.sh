@@ -24,11 +24,13 @@ cargo test -p nimbus-server service_manager -- --nocapture
 printf '\n[5/8] sandbox egress policy and enforcement contract fixtures\n'
 cargo test -p nimbus-egress -- --test-threads=1 --nocapture
 cargo test -p nimbus-sandbox egress -- --test-threads=1 --nocapture
+cargo test -p nimbus-sandbox-container egress -- --test-threads=1 --nocapture
 cargo test -p nimbus-sandbox-krun egress -- --test-threads=1 --nocapture
 
 printf '\n[6/8] sandbox egress proxy enforcement fixtures\n'
 cargo test -p nimbus-proxy egress_proxy -- --test-threads=1 --nocapture
 cargo test -p nimbus-sandbox egress_proxy -- --test-threads=1 --nocapture
+cargo test -p nimbus-sandbox-container egress_proxy -- --test-threads=1 --nocapture
 cargo test -p nimbus-sandbox-krun egress_proxy -- --test-threads=1 --nocapture
 
 printf '\n[7/8] tenant isolation audit export and redaction fixtures\n'

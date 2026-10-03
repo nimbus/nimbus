@@ -7,7 +7,7 @@ use nimbus_machine::{
     MachineStateRecord,
 };
 use nimbus_network::{LocalNetworkStateStore, NetworkResourceGeneration};
-use nimbus_sandbox::backends::container::OciMachinePortForwarderConfig;
+use nimbus_sandbox_container::OciMachinePortForwarderConfig;
 use tempfile::TempDir;
 
 use super::super::command::{MachineCommand, MachineStartCommand, MachineSubcommand};

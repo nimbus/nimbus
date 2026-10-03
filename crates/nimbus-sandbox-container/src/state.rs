@@ -1,0 +1,755 @@
+use std::cmp::Ordering;
+use std::path::{Path, PathBuf};
+
+use nimbus_core::TenantId;
+use serde::{Deserialize, Serialize};
+
+use super::runtime::ContainerSandboxBackendConfig;
+use nimbus_network::{NetworkAttachmentId, PublishedEndpoint};
+use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox::{SandboxHandle, SandboxId, SandboxStatus};
+use nimbus_sandbox::{
+    SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits, SandboxSpec,
+};
+use nimbus_sandbox::{SandboxNetworkStatus, SandboxProvisionNetworkPlan};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerSandboxStateView {
+    state_root: PathBuf,
+}
+
+impl ContainerSandboxStateView {
+    pub fn new(state_root: impl Into<PathBuf>) -> Self {
+        Self {
+            state_root: state_root.into(),
+        }
+    }
+
+    pub fn from_config(config: &ContainerSandboxBackendConfig) -> Self {
+        Self::new(config.workload_state_root.clone())
+    }
+
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
+
+    pub fn list(&self) -> Result<Vec<ContainerSandboxSummary>> {
+        let mut summaries = self
+            .read_all_records()?
+            .into_iter()
+            .filter(ContainerPersistedSandboxRecord::is_service_owned)
+            .map(ContainerPersistedSandboxRecord::into_summary)
+            .collect::<Result<Vec<_>>>()?;
+        summaries.sort_by(compare_summary_order);
+        Ok(summaries)
+    }
+
+    pub fn list_for_tenant(&self, tenant_id: &TenantId) -> Result<Vec<ContainerSandboxSummary>> {
+        let mut summaries = self
+            .list()?
+            .into_iter()
+            .filter(|summary| &summary.tenant_id == tenant_id)
+            .collect::<Vec<_>>();
+        summaries.sort_by(compare_summary_order);
+        Ok(summaries)
+    }
+
+    pub fn inspect(&self, sandbox_id: &SandboxId) -> Result<Option<ContainerSandboxDetails>> {
+        let Some(manifest_path) = nimbus_sandbox::artifact_paths::manifest_path_for_sandbox_id(
+            &self.state_root,
+            sandbox_id,
+        )
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to find container sandbox manifest for {} under {}: {error}",
+                sandbox_id,
+                self.state_root.display()
+            ),
+        })?
+        else {
+            return Ok(None);
+        };
+        match self.read_record(&manifest_path)? {
+            Some(record) if record.is_service_owned() => record.into_details().map(Some),
+            Some(_) | None => Ok(None),
+        }
+    }
+
+    pub fn inspect_service(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Result<Option<ContainerSandboxDetails>> {
+        let selected = self
+            .read_all_records()?
+            .into_iter()
+            .filter(|record| {
+                record.manifest.spec.tenant_id == *tenant_id
+                    && record.manifest.spec.service_name() == Some(service_name)
+            })
+            .max_by(compare_service_identity_preference);
+
+        selected
+            .map(ContainerPersistedSandboxRecord::into_details)
+            .transpose()
+    }
+
+    pub fn log_paths(&self, sandbox_id: &SandboxId) -> Result<Option<ContainerSandboxLogPaths>> {
+        self.inspect(sandbox_id)
+            .map(|details| details.map(|details| details.log_paths))
+    }
+
+    fn read_all_records(&self) -> Result<Vec<ContainerPersistedSandboxRecord>> {
+        let mut records = Vec::new();
+        for manifest_path in nimbus_sandbox::artifact_paths::all_manifest_paths(&self.state_root)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to read container tenant state directory {}: {error}",
+                    self.state_root.display()
+                ),
+            })?
+        {
+            let Some(record) = self.read_record(&manifest_path)? else {
+                continue;
+            };
+            records.push(record);
+        }
+
+        Ok(records)
+    }
+
+    fn read_record(&self, manifest_path: &Path) -> Result<Option<ContainerPersistedSandboxRecord>> {
+        if !manifest_path.exists() {
+            return Ok(None);
+        }
+
+        let contents =
+            std::fs::read(manifest_path).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to read container sandbox manifest {}: {error}",
+                    manifest_path.display()
+                ),
+            })?;
+        let manifest =
+            serde_json::from_slice::<ContainerPersistedManifest>(&contents).map_err(|error| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to parse container sandbox manifest {}: {error}",
+                        manifest_path.display()
+                    ),
+                }
+            })?;
+
+        Ok(Some(ContainerPersistedSandboxRecord {
+            manifest,
+            manifest_path: manifest_path.to_path_buf(),
+        }))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContainerSandboxSummary {
+    pub sandbox_id: SandboxId,
+    pub tenant_id: TenantId,
+    pub service_name: String,
+    pub status: SandboxStatus,
+    pub published_endpoints: Vec<PublishedEndpoint>,
+    pub network_status: Option<SandboxNetworkStatus>,
+    pub last_exit_code: Option<i32>,
+    pub shutdown_requested: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContainerSandboxDetails {
+    pub summary: ContainerSandboxSummary,
+    pub resources: SandboxResourceLimits,
+    pub lifecycle: SandboxLifecycleSpec,
+    pub port_bindings: Vec<SandboxPortBinding>,
+    pub log_paths: ContainerSandboxLogPaths,
+    pub state_dir: PathBuf,
+    pub manifest_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContainerSandboxLogPaths {
+    pub ctr_log: PathBuf,
+    pub oci_log: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContainerPersistedSandboxRecord {
+    manifest: ContainerPersistedManifest,
+    manifest_path: PathBuf,
+}
+
+impl ContainerPersistedSandboxRecord {
+    fn is_service_owned(&self) -> bool {
+        self.manifest.spec.service_name().is_some()
+    }
+
+    fn service_name(&self) -> &str {
+        self.manifest
+            .spec
+            .service_name()
+            .expect("service sandbox state records require service owner metadata")
+    }
+
+    fn portable_network_status(&self) -> Result<Option<SandboxNetworkStatus>> {
+        self.manifest
+            .provision_network_plan
+            .as_ref()
+            .map(|plan| {
+                plan.project_portable_status(
+                    self.manifest
+                        .network_config
+                        .as_ref()
+                        .map(|config| &config.attachment_id),
+                    &self.manifest.handle.published_endpoints,
+                )
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "container state for {} carries crossed portable network status: {error}",
+                        self.manifest.handle.id
+                    ),
+                })
+            })
+            .transpose()
+    }
+
+    fn into_summary(self) -> Result<ContainerSandboxSummary> {
+        let service_name = self.service_name().to_owned();
+        let network_status = self.portable_network_status()?;
+        Ok(ContainerSandboxSummary {
+            sandbox_id: self.manifest.handle.id,
+            tenant_id: self.manifest.spec.tenant_id,
+            service_name,
+            status: self.manifest.status,
+            published_endpoints: self.manifest.handle.published_endpoints,
+            network_status,
+            last_exit_code: self.manifest.last_exit_code,
+            shutdown_requested: self.manifest.shutdown_requested,
+        })
+    }
+
+    fn into_details(self) -> Result<ContainerSandboxDetails> {
+        let service_name = self.service_name().to_owned();
+        let network_status = self.portable_network_status()?;
+        let summary = ContainerSandboxSummary {
+            sandbox_id: self.manifest.handle.id,
+            tenant_id: self.manifest.spec.tenant_id.clone(),
+            service_name,
+            status: self.manifest.status,
+            published_endpoints: self.manifest.handle.published_endpoints.clone(),
+            network_status,
+            last_exit_code: self.manifest.last_exit_code,
+            shutdown_requested: self.manifest.shutdown_requested,
+        };
+
+        Ok(ContainerSandboxDetails {
+            summary,
+            resources: self.manifest.spec.resources,
+            lifecycle: self.manifest.spec.lifecycle,
+            port_bindings: self.manifest.spec.port_bindings,
+            log_paths: ContainerSandboxLogPaths {
+                ctr_log: self.manifest.conmon_layout.ctr_log,
+                oci_log: self.manifest.conmon_layout.oci_log,
+            },
+            state_dir: self.manifest.conmon_layout.container_state_dir,
+            manifest_path: self.manifest_path,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct ContainerPersistedManifest {
+    handle: SandboxHandle,
+    spec: SandboxSpec,
+    provision_network_plan: Option<SandboxProvisionNetworkPlan>,
+    network_config: Option<ContainerPersistedNetworkConfig>,
+    conmon_layout: ContainerPersistedConmonLayout,
+    last_exit_code: Option<i32>,
+    shutdown_requested: bool,
+    status: SandboxStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct ContainerPersistedNetworkConfig {
+    attachment_id: NetworkAttachmentId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct ContainerPersistedConmonLayout {
+    container_state_dir: PathBuf,
+    ctr_log: PathBuf,
+    oci_log: PathBuf,
+}
+
+fn compare_summary_order(
+    left: &ContainerSandboxSummary,
+    right: &ContainerSandboxSummary,
+) -> Ordering {
+    left.tenant_id
+        .cmp(&right.tenant_id)
+        .then_with(|| left.service_name.cmp(&right.service_name))
+        .then_with(|| left.sandbox_id.as_str().cmp(right.sandbox_id.as_str()))
+}
+
+fn compare_service_identity_preference(
+    left: &ContainerPersistedSandboxRecord,
+    right: &ContainerPersistedSandboxRecord,
+) -> Ordering {
+    live_status(left.manifest.status)
+        .cmp(&live_status(right.manifest.status))
+        .then_with(|| {
+            left.manifest
+                .handle
+                .id
+                .as_str()
+                .cmp(right.manifest.handle.id.as_str())
+        })
+}
+
+fn live_status(status: SandboxStatus) -> bool {
+    matches!(
+        status,
+        SandboxStatus::Starting
+            | SandboxStatus::Ready
+            | SandboxStatus::NotReady
+            | SandboxStatus::Stopping
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::path::Path;
+
+    use nimbus_core::TenantId;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::ContainerSandboxStateView;
+    use nimbus_network::{EndpointProtocol, NetworkAttachmentId, PublishedEndpoint};
+    use nimbus_sandbox::{SandboxHandle, SandboxId, SandboxStatus};
+    use nimbus_sandbox::{SandboxPortBinding, SandboxResourceLimits, SandboxSpec};
+
+    #[test]
+    fn state_view_lists_manifest_backed_summaries_and_skips_missing_manifest_dirs() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "db-01aaa",
+            "svc-demo",
+            "db",
+            SandboxStatus::Ready,
+            Some(137),
+        );
+        write_manifest(
+            temp_dir.path(),
+            "cache-01aaa",
+            "svc-demo",
+            "cache",
+            SandboxStatus::Stopped,
+            Some(0),
+        );
+        fs::create_dir_all(
+            temp_dir
+                .path()
+                .join("tenants")
+                .join("svc-demo")
+                .join("sandboxes")
+                .join("missing-only-dir")
+                .join("state")
+                .join("containers")
+                .join("missing-only-dir"),
+        )
+        .expect("missing-only-dir should build");
+
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+        let summaries = view.list().expect("manifest list should load");
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|summary| summary.service_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cache", "db"]
+        );
+        assert_eq!(summaries[0].status, SandboxStatus::Stopped);
+        assert_eq!(summaries[1].status, SandboxStatus::Ready);
+        assert_eq!(summaries[1].last_exit_code, Some(137));
+        assert_eq!(summaries[1].network_status, None);
+    }
+
+    #[test]
+    fn state_view_excludes_standalone_sandboxes_from_service_projection() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "db-01aaa",
+            "svc-demo",
+            "db",
+            SandboxStatus::Ready,
+            None,
+        );
+        write_standalone_manifest(
+            temp_dir.path(),
+            "scratch-01aaa",
+            "svc-demo",
+            "scratch",
+            SandboxStatus::Ready,
+        );
+
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+        let tenant_id = TenantId::new("svc-demo").expect("tenant id should be valid");
+
+        let summaries = view.list().expect("manifest list should load");
+        assert_eq!(
+            summaries
+                .iter()
+                .map(|summary| summary.service_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["db"]
+        );
+        assert_eq!(
+            view.list_for_tenant(&tenant_id)
+                .expect("tenant manifest list should load")
+                .len(),
+            1
+        );
+        assert!(
+            view.inspect(&SandboxId::new("scratch-01aaa"))
+                .expect("inspect should succeed")
+                .is_none(),
+            "standalone sandboxes must not project as service sandbox details"
+        );
+        assert!(
+            view.log_paths(&SandboxId::new("scratch-01aaa"))
+                .expect("log path lookup should succeed")
+                .is_none(),
+            "standalone sandboxes must not expose service log paths"
+        );
+        assert!(
+            view.inspect_service(&tenant_id, "scratch")
+                .expect("service inspect should succeed")
+                .is_none(),
+            "standalone display names must not resolve as service names"
+        );
+    }
+
+    #[test]
+    fn inspect_service_prefers_live_sandbox_before_newer_terminal_one() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "db-01aaa",
+            "svc-demo",
+            "db",
+            SandboxStatus::Ready,
+            None,
+        );
+        write_manifest(
+            temp_dir.path(),
+            "db-01bbb",
+            "svc-demo",
+            "db",
+            SandboxStatus::Stopped,
+            Some(0),
+        );
+
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+        let details = view
+            .inspect_service(
+                &TenantId::new("svc-demo").expect("tenant id should be valid"),
+                "db",
+            )
+            .expect("inspect should succeed")
+            .expect("service should resolve");
+
+        assert_eq!(details.summary.sandbox_id.as_str(), "db-01aaa");
+        assert_eq!(details.summary.status, SandboxStatus::Ready);
+        assert!(
+            details
+                .log_paths
+                .ctr_log
+                .ends_with("containers/db-01aaa/ctr.log"),
+            "ctr log should come from the selected live sandbox"
+        );
+    }
+
+    #[test]
+    fn inspect_service_falls_back_to_newest_terminal_sandbox_when_no_live_match_exists() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "db-01aaa",
+            "svc-demo",
+            "db",
+            SandboxStatus::Failed,
+            Some(1),
+        );
+        write_manifest(
+            temp_dir.path(),
+            "db-01bbb",
+            "svc-demo",
+            "db",
+            SandboxStatus::Stopped,
+            Some(0),
+        );
+
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+        let details = view
+            .inspect_service(
+                &TenantId::new("svc-demo").expect("tenant id should be valid"),
+                "db",
+            )
+            .expect("inspect should succeed")
+            .expect("service should resolve");
+
+        assert_eq!(details.summary.sandbox_id.as_str(), "db-01bbb");
+        assert_eq!(details.summary.status, SandboxStatus::Stopped);
+    }
+
+    #[test]
+    fn state_view_returns_empty_results_for_missing_roots_and_unknown_services() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+        let tenant_id = TenantId::new("svc-demo").expect("tenant id should be valid");
+
+        assert!(
+            view.list().expect("list should succeed").is_empty(),
+            "missing state roots should list as empty"
+        );
+        assert!(
+            view.inspect(&SandboxId::new("db-01aaa"))
+                .expect("inspect should succeed")
+                .is_none(),
+            "unknown sandbox ids should return none"
+        );
+        assert!(
+            view.inspect_service(&tenant_id, "db")
+                .expect("service inspect should succeed")
+                .is_none(),
+            "unknown service identities should return none"
+        );
+        assert!(
+            view.log_paths(&SandboxId::new("db-01aaa"))
+                .expect("log path lookup should succeed")
+                .is_none(),
+            "unknown log path lookups should return none"
+        );
+    }
+
+    #[test]
+    fn state_view_projects_exact_portable_status_and_rejects_crossed_attachment() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "api-01aaa",
+            "svc-demo",
+            "api",
+            SandboxStatus::Ready,
+            None,
+        );
+        let (manifest_path, plan) =
+            add_exact_network_plan(temp_dir.path(), "api-01aaa", "svc-demo", "container-state");
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+
+        let summary = view
+            .list()
+            .expect("exact status should project")
+            .pop()
+            .expect("service summary should exist");
+        let status = summary
+            .network_status
+            .expect("exact plan should produce portable status");
+        assert_eq!(
+            status
+                .attachment()
+                .expect("attachment should be observed")
+                .attachment_id(),
+            plan.attachment_id()
+        );
+        assert_eq!(
+            status.published_endpoints()[0].endpoint_id(),
+            plan.listeners()[0].endpoint_id()
+        );
+
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should read"))
+                .expect("manifest should parse");
+        manifest["network_config"]["attachment_id"] = serde_json::to_value(
+            NetworkAttachmentId::for_workload_attachment("crossed", "primary"),
+        )
+        .expect("crossed attachment should serialize");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+
+        assert!(
+            view.list()
+                .expect_err("crossed attachment evidence must fail closed")
+                .to_string()
+                .contains("crossed portable network status")
+        );
+    }
+
+    fn write_manifest(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        service_name: &str,
+        status: SandboxStatus,
+        last_exit_code: Option<i32>,
+    ) {
+        write_manifest_with_owner(ManifestFixture {
+            state_root,
+            sandbox_id,
+            tenant_id,
+            handle_name: service_name,
+            owner: json!({
+                "kind": "service",
+                "name": service_name
+            }),
+            status,
+            last_exit_code,
+        });
+    }
+
+    fn write_standalone_manifest(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        display_name: &str,
+        status: SandboxStatus,
+    ) {
+        write_manifest_with_owner(ManifestFixture {
+            state_root,
+            sandbox_id,
+            tenant_id,
+            handle_name: display_name,
+            owner: json!({
+                "kind": "standalone",
+                "display_name": display_name
+            }),
+            status,
+            last_exit_code: None,
+        });
+    }
+
+    fn add_exact_network_plan(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        label: &str,
+    ) -> (
+        std::path::PathBuf,
+        nimbus_sandbox::SandboxProvisionNetworkPlan,
+    ) {
+        let tenant_id = TenantId::new(tenant_id).expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(sandbox_id);
+        let manifest_path =
+            nimbus_sandbox::artifact_paths::manifest_path(state_root, &tenant_id, &sandbox_id);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should read"))
+                .expect("manifest should parse");
+        let spec: SandboxSpec =
+            serde_json::from_value(manifest["spec"].clone()).expect("sandbox spec should parse");
+        let plan = nimbus_sandbox::backends::test_hooks::sandbox_provision_network_plan_fixture(
+            &spec,
+            &sandbox_id,
+            label,
+        );
+        manifest["provision_network_plan"] =
+            serde_json::to_value(&plan).expect("provision plan should serialize");
+        manifest["network_config"] = json!({"attachment_id": plan.attachment_id()});
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+        (manifest_path, plan)
+    }
+
+    struct ManifestFixture<'a> {
+        state_root: &'a Path,
+        sandbox_id: &'a str,
+        tenant_id: &'a str,
+        handle_name: &'a str,
+        owner: serde_json::Value,
+        status: SandboxStatus,
+        last_exit_code: Option<i32>,
+    }
+
+    fn write_manifest_with_owner(fixture: ManifestFixture<'_>) {
+        let tenant_id = TenantId::new(fixture.tenant_id).expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(fixture.sandbox_id);
+        let manifest_path = nimbus_sandbox::artifact_paths::manifest_path(
+            fixture.state_root,
+            &tenant_id,
+            &sandbox_id,
+        );
+        let container_dir = manifest_path
+            .parent()
+            .expect("manifest path should have a parent directory");
+        fs::create_dir_all(container_dir).expect("container manifest directory should exist");
+
+        let handle = SandboxHandle::new(
+            tenant_id.clone(),
+            sandbox_id,
+            fixture.handle_name,
+            nimbus_sandbox::SandboxBackendKind::Container,
+            fixture.status,
+            vec![
+                PublishedEndpoint::new(
+                    "http",
+                    EndpointProtocol::Tcp,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
+                )
+                .with_guest_port(8080),
+            ],
+        );
+        let manifest = json!({
+            "handle": handle,
+            "spec": {
+                "tenant_id": tenant_id,
+                "owner": fixture.owner,
+                "backend": "container",
+                "root": {
+                    "kind": "rootfs",
+                    "rootfs": "/tmp/rootfs",
+                    "readonly": true
+                },
+                "process": {
+                    "args": ["/bin/server"],
+                    "env": ["PATH=/usr/bin"],
+                    "cwd": "/",
+                    "terminal": false
+                },
+                "resources": SandboxResourceLimits::default(),
+                "lifecycle": {
+                    "restart_policy": "never"
+                },
+                "port_bindings": [SandboxPortBinding::tcp("http", 18080, 8080)]
+            },
+            "conmon_layout": {
+                "container_state_dir": container_dir,
+                "ctr_log": container_dir.join("ctr.log"),
+                "oci_log": container_dir.join("oci.log")
+            },
+            "last_exit_code": fixture.last_exit_code,
+            "shutdown_requested": matches!(fixture.status, SandboxStatus::Stopped),
+            "status": fixture.status
+        });
+
+        fs::write(
+            manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+    }
+}

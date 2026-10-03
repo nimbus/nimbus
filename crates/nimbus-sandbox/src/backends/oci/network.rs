@@ -53,9 +53,9 @@ pub use egress_pin::{
     OciEgressPinObservation, OciEgressPinObserver, OciEgressPinProvider, RealOciEgressPinProvider,
 };
 pub use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
-#[cfg(test)]
-pub(crate) use forwarding::DeterministicMachinePortForwardingProvider;
-pub(crate) use forwarding::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use forwarding::DeterministicMachinePortForwardingProvider;
+pub use forwarding::{
     CurrentMachinePortForwardingObservation, MachinePortForwardingProvider,
     MachinePortForwardingSlotObservation, MachinePortMutationDiagnostic, inspect_machine_ports,
 };
@@ -101,20 +101,20 @@ pub use orphan_convergence::{
 };
 pub use orphan_evidence::OciRetainedManifestEvidence;
 pub(crate) use placement::{OciPlacementAuthority, OciPlacementProvider, place_sandbox_on_block};
-pub(crate) use process::{
+pub use process::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
     MachinePortProxyCleanupDisposition, MachinePortProxyCleanupState, MachinePortProxyEntries,
     MachinePortProxyEntry, MachinePortProxyKey, MachinePortProxyLeaseAuthority,
     MachinePortProxyLifetimeRegistry, MachinePortProxyRegistration,
 };
 pub use process::{OciNetworkProcess, OciNetworkProcessError};
-pub(crate) use proxy::{
+pub use proxy::{
     MachinePortPreparationReleaseAuthority, MachinePortProxy, MachinePortProxyRoute,
     machine_port_proxy_routes, prepare_machine_port_proxies_with_release_authority,
     start_machine_port_proxies_with_recovery,
 };
-#[cfg(test)]
-pub(crate) use proxy::{
+#[cfg(any(test, feature = "test-hooks"))]
+pub use proxy::{
     panicking_machine_port_proxy_for_test, prepare_machine_port_proxies, start_machine_port_proxies,
 };
 pub use realization::OciSegmentRealization;
@@ -148,8 +148,8 @@ pub fn default_network_attachment_id(sandbox_id: &SandboxId) -> NetworkAttachmen
     NetworkAttachmentId::for_workload_attachment(sandbox_id.as_str(), DEFAULT_ATTACHMENT_NAME)
 }
 
-#[cfg(test)]
-pub(crate) fn inspect_container_ips(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn inspect_container_ips(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,

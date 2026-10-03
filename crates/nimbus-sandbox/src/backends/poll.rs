@@ -19,7 +19,7 @@ use crate::error::Result;
 /// per-backend loops), so a deadline that has already passed makes this
 /// return `Ok(None)` without probing. A `deadline` of `None` polls forever —
 /// it returns only once `probe` reports a value.
-pub(crate) fn poll_until_deadline<T>(
+pub fn poll_until_deadline<T>(
     deadline: Option<Instant>,
     interval: Duration,
     mut probe: impl FnMut() -> Result<Option<T>>,

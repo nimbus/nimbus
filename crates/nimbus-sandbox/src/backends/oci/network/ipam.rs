@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxId, SandboxStatus};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::default_network_attachment_id;
 use super::dto::{IpamAllocation, IpamState, NetavarkProviderOperation};
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
@@ -352,7 +352,7 @@ pub(super) fn allocate_container_ips_on_first_available_for_attachment(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn load_container_ips(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
