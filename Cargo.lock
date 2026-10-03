@@ -6554,6 +6554,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-cloudflare"
+version = "0.1.48"
+dependencies = [
+ "base64 0.22.1",
+ "nimbus-core",
+ "nimbus-dynamodb",
+ "nimbus-engine",
+ "nimbus-runtime",
+ "nimbus-services",
+ "nimbus-storage",
+ "nimbus-testing",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "workspace-hack",
+]
+
+[[package]]
 name = "nimbus-code-index"
 version = "0.1.48"
 dependencies = [
@@ -6571,9 +6592,9 @@ dependencies = [
  "nimbus-auth",
  "nimbus-bridge",
  "nimbus-cloud-functions",
+ "nimbus-cloudflare",
  "nimbus-convex",
  "nimbus-core",
- "nimbus-dynamodb",
  "nimbus-engine",
  "nimbus-firebase",
  "nimbus-fs",
@@ -6599,7 +6620,6 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
- "toml 1.1.2+spec-1.1.0",
  "tracing",
  "workspace-hack",
 ]
@@ -6621,6 +6641,33 @@ dependencies = [
  "nimbus-testing",
  "reqwest",
  "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "workspace-hack",
+]
+
+[[package]]
+name = "nimbus-convex-host"
+version = "0.1.48"
+dependencies = [
+ "http 1.4.2",
+ "nimbus-auth",
+ "nimbus-bridge",
+ "nimbus-compute",
+ "nimbus-convex",
+ "nimbus-core",
+ "nimbus-egress",
+ "nimbus-engine",
+ "nimbus-runtime",
+ "nimbus-services",
+ "nimbus-storage",
+ "nimbus-system",
+ "nimbus-tenant",
+ "nimbus-tenant-context",
+ "nimbus-workloads",
  "serde",
  "serde_json",
  "tempfile",
@@ -7184,9 +7231,11 @@ dependencies = [
  "nimbus-blob",
  "nimbus-bridge",
  "nimbus-cloud-functions",
+ "nimbus-cloudflare",
  "nimbus-code-index",
  "nimbus-compute",
  "nimbus-convex",
+ "nimbus-convex-host",
  "nimbus-core",
  "nimbus-dynamodb",
  "nimbus-egress",

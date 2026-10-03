@@ -43,8 +43,10 @@ nimbus-auth = { path = "../nimbus-auth" }
 nimbus-blob = { path = "../nimbus-blob" }
 nimbus-bridge = { path = "../nimbus-bridge" }
 nimbus-cloud-functions = { path = "../nimbus-cloud-functions" }
+nimbus-cloudflare = { path = "../nimbus-cloudflare" }
 nimbus-code-index = { path = "../nimbus-code-index" }
 nimbus-convex = { path = "../nimbus-convex" }
+nimbus-convex-host = { path = "../nimbus-convex-host" }
 nimbus-dynamodb = { path = "../nimbus-dynamodb" }
 nimbus-egress = { path = "../nimbus-egress" }
 nimbus-license = { path = "../nimbus-license" }

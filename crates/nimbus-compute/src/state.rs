@@ -15,6 +15,7 @@ use std::sync::{Arc, RwLock};
 
 use nimbus_auth::ApplicationAuthVerifier;
 use nimbus_cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
+use nimbus_cloudflare::CloudflareConfig;
 use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use nimbus_engine::Engine;
 use nimbus_firebase::FirebaseConfig;
@@ -33,7 +34,6 @@ use nimbus_workloads::{NodeIdentity, TenantRetirementStore, WorkloadSagaStore};
 use tempfile::TempDir;
 use tracing::warn;
 
-use crate::cloudflare_config::CloudflareConfig;
 use crate::config::control_plane::ControlPlaneConfig;
 use crate::config::deployment::DeploymentConfig;
 use crate::config::node_services::NodeServicesConfig;

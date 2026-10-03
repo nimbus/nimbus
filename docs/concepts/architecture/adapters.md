@@ -58,9 +58,10 @@ Each adapter has a thin counterpart under
 meets transport:
 
 - `crates/nimbus-server/src/adapters/convex/` owns the axum handlers
-  for queries, mutations, actions, HTTP actions, and scheduling, the
-  WebSocket socket loop, and the server-side host bridge wiring for
-  Convex function execution.
+  for queries, mutations, actions, HTTP actions, and scheduling, and
+  the WebSocket socket loop. The runtime host bridge, function
+  execution, and subscription transforms they call live in the
+  transport-free `crates/nimbus-convex-host` crate.
 - `crates/nimbus-server/src/adapters/firebase/` owns the REST handlers
   and, in its `grpc/` submodule, the tonic service implementation —
   unary calls, the listen stream, the write stream, and the WebSocket

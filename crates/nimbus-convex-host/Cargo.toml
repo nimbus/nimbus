@@ -1,0 +1,45 @@
+[package]
+name = "nimbus-convex-host"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+# Convex host logic without transport: the runtime host bridge, function
+# execution, and subscription transforms. nimbus-server owns the Convex routes
+# and the WebSocket loop.
+[dependencies]
+http.workspace = true
+nimbus-auth = { path = "../nimbus-auth" }
+nimbus-bridge = { path = "../nimbus-bridge" }
+nimbus-compute = { path = "../nimbus-compute" }
+nimbus-convex = { path = "../nimbus-convex" }
+nimbus-core = { path = "../nimbus-core" }
+nimbus-engine = { path = "../nimbus-engine", default-features = false }
+nimbus-runtime = { path = "../nimbus-runtime" }
+nimbus-services = { path = "../nimbus-services" }
+nimbus-system = { path = "../nimbus-system" }
+nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-tenant-context = { path = "../nimbus-tenant-context" }
+nimbus-workloads = { path = "../nimbus-workloads" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+nimbus-compute = { path = "../nimbus-compute", features = ["test-hooks"] }
+nimbus-egress = { path = "../nimbus-egress" }
+nimbus-engine = { path = "../nimbus-engine", default-features = false, features = [
+    "test-hooks",
+] }
+nimbus-storage = { path = "../nimbus-storage", default-features = false }
+tempfile.workspace = true

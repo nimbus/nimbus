@@ -1,5 +1,3 @@
-#![cfg_attr(test, allow(dead_code))]
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -8,24 +6,16 @@ use axum::body::Bytes;
 use axum::extract::OriginalUri;
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use nimbus_core::InvocationAuth;
+use nimbus_convex_host::prepare_http_action_response_async;
 use nimbus_core::{Error, TenantId};
-use nimbus_runtime::HostCallCancellation;
 use serde_json::{Value, json};
 
-#[cfg(test)]
-use super::execution::execute_convex_action;
-use super::execution::{
-    check_host_cancellation, execute_convex_action_async,
-    execute_convex_action_cancellable_with_auth,
-};
 use super::*;
 
 mod dispatch;
-mod execution;
 mod request_context;
 mod response;
+mod route_request;
 
 pub(in crate::adapters::convex) use dispatch::dispatch_http_route;
-pub(in crate::adapters::convex) use execution::prepare_http_action_response_async;
-pub(in crate::adapters::convex) use execution::prepare_http_action_response_cancellable;
+pub(in crate::adapters::convex) use route_request::ConvexHttpRouteRequest;

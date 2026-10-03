@@ -1,6 +1,5 @@
 use super::*;
-use crate::adapters::convex::execution::RuntimeInvocationContext;
-use crate::adapters::convex::runtime_auth_payload;
+use nimbus_convex_host::{RuntimeInvocationContext, runtime_auth_payload};
 
 /// Executes a Convex-style action backed by an existing Nimbus operation.
 pub(crate) async fn action(

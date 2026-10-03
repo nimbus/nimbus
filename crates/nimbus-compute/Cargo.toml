@@ -25,9 +25,9 @@ nimbus-artifacts = { path = "../nimbus-artifacts" }
 nimbus-auth = { path = "../nimbus-auth" }
 nimbus-bridge = { path = "../nimbus-bridge" }
 nimbus-cloud-functions = { path = "../nimbus-cloud-functions" }
+nimbus-cloudflare = { path = "../nimbus-cloudflare" }
 nimbus-convex = { path = "../nimbus-convex" }
 nimbus-core = { path = "../nimbus-core" }
-nimbus-dynamodb = { path = "../nimbus-dynamodb" }
 nimbus-engine = { path = "../nimbus-engine" }
 nimbus-firebase = { path = "../nimbus-firebase" }
 nimbus-fs = { path = "../nimbus-fs" }
@@ -52,7 +52,6 @@ tempfile.workspace = true
 thiserror.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true
-toml.workspace = true
 tracing.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 

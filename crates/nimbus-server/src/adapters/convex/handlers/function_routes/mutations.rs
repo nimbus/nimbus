@@ -1,6 +1,5 @@
 use super::*;
-use crate::adapters::convex::execution::RuntimeInvocationContext;
-use crate::adapters::convex::runtime_auth_payload;
+use nimbus_convex_host::{RuntimeInvocationContext, runtime_auth_payload};
 
 /// Executes a Convex-style mutation over Nimbus's existing mutation engine.
 pub(crate) async fn mutation(

@@ -7,7 +7,6 @@
 //! and re-exports the pieces its adapters still need.
 
 pub mod artifact_verifier_effects;
-pub mod cloudflare_config;
 pub mod config;
 pub mod deploy;
 pub mod deploy_artifacts;

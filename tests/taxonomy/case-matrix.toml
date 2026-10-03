@@ -65,9 +65,9 @@ cases = [
   { class = "smoke", tests = ["runtime::tests::basic_invocation::web_standard::runtime_loads_bundle_and_invokes_host_bridge"] },
   { class = "main", tests = ["runtime::tests::host_bridge::runtime_async_ops_use_async_host_bridge_path", "runtime::tests::host_bridge::runtime_async_write_and_scheduler_ops_use_async_host_bridge_path"] },
   { class = "edge", tests = ["runtime::tests::host_bridge::runtime_same_isolate_nested_entry_uses_sync_host_bridge_path", "runtime::tests::host_bridge::runtime_query_paginate_treats_full_page_with_cursor_as_not_done"] },
-  { class = "error", tests = ["adapters::convex::tests::contracts::dispatch_host_call_rejects_operation_payload_mismatches_before_handler_dispatch", "runtime::tests::host_bridge::runtime_query_context_is_reader_only_when_request_kind_is_present"] },
+  { class = "error", tests = ["tests::contracts::dispatch_host_call_rejects_operation_payload_mismatches_before_handler_dispatch", "runtime::tests::host_bridge::runtime_query_context_is_reader_only_when_request_kind_is_present"] },
   { class = "recovery", tests = ["runtime::tests::pool_reuse::warm_pooled_runtime_rebinds_host_bridge_per_invocation", "runtime::tests::pool_reuse::fresh_realm_installs_bootstrap_and_uses_bound_host_bridge"] },
-  { class = "real_world", tests = ["adapters::convex::tests::authorization::runtime_host_bridge_query_and_insert_respect_engine_authorization", "backends::wasmtime::host_linker::tests::wasmtime_linker_routes_database_imports_through_host_bridge"] },
+  { class = "real_world", tests = ["tests::authorization::runtime_host_bridge_query_and_insert_respect_engine_authorization", "backends::wasmtime::host_linker::tests::wasmtime_linker_routes_database_imports_through_host_bridge"] },
 ]
 
 [[surfaces]]
@@ -146,10 +146,10 @@ cases = [
 surface = "cloudflare_adapter"
 mission_critical = false
 cases = [
-  { class = "smoke", tests = ["adapters::cloudflare::host_bridge::tests::cloudflare_worker_env_ns_e2e_round_trips_kv"] },
-  { class = "main", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_storage_transaction_round_trips_per_instance"] },
-  { class = "edge", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_per_instance_lanes_make_independent_progress"] },
-  { class = "error", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_expired_activation_lease_fences_reads_and_writes"] },
-  { class = "recovery", tests = ["adapters::cloudflare::durable_objects::tests::durable_object_alarm_and_websocket_hibernation_round_trip"] },
+  { class = "smoke", tests = ["host_bridge::tests::cloudflare_worker_env_ns_e2e_round_trips_kv"] },
+  { class = "main", tests = ["durable_objects::tests::durable_object_storage_transaction_round_trips_per_instance"] },
+  { class = "edge", tests = ["durable_objects::tests::durable_object_per_instance_lanes_make_independent_progress"] },
+  { class = "error", tests = ["durable_objects::tests::durable_object_expired_activation_lease_fences_reads_and_writes"] },
+  { class = "recovery", tests = ["durable_objects::tests::durable_object_alarm_and_websocket_hibernation_round_trip"] },
   { class = "real_world", gap = "B8 wave adapters" },
 ]
