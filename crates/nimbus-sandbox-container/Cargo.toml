@@ -12,7 +12,7 @@ workspace = true
 [features]
 # Gates deterministic cross-crate fixture construction. The feature is used
 # only by upper-crate dev-dependencies and adds no production provider path.
-test-hooks = ["nimbus-sandbox/test-hooks"]
+test-hooks = ["nimbus-sandbox/test-hooks", "nimbus-sandbox-host/test-hooks"]
 
 [dependencies]
 libc.workspace = true
@@ -21,6 +21,7 @@ nimbus-durable-record = { path = "../nimbus-durable-record" }
 nimbus-egress = { path = "../nimbus-egress" }
 nimbus-network = { path = "../nimbus-network" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-sandbox-host = { path = "../nimbus-sandbox-host" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -32,6 +33,7 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 futures.workspace = true
 nimbus-process-harness = { path = "../nimbus-process-harness" }
 nimbus-sandbox = { path = "../nimbus-sandbox", features = ["test-hooks"] }
+nimbus-sandbox-host = { path = "../nimbus-sandbox-host", features = ["test-hooks"] }
 shell-words.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

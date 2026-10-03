@@ -188,9 +188,7 @@ impl ContainerSandboxBackend {
         let readiness = self.authenticated_egress_readiness(manifest)?;
         let attachment = self.non_routable_attachment_readiness(manifest, readiness)?;
         let (status, application) = match &attachment {
-            nimbus_sandbox::backends::oci::network::OciAttachmentBaseReadinessState::Ready(
-                attachment,
-            ) => {
+            nimbus_sandbox_host::network::OciAttachmentBaseReadinessState::Ready(attachment) => {
                 let Some(assigned_ip) = attachment.assigned_ips().first().copied() else {
                     return Ok((
                         SandboxStatus::NotReady,
@@ -216,9 +214,9 @@ impl ContainerSandboxBackend {
                     );
                 (application.status(), Some(application))
             }
-            nimbus_sandbox::backends::oci::network::OciAttachmentBaseReadinessState::NotReady(
-                _,
-            ) => (SandboxStatus::NotReady, None),
+            nimbus_sandbox_host::network::OciAttachmentBaseReadinessState::NotReady(_) => {
+                (SandboxStatus::NotReady, None)
+            }
         };
         let evidence =
             serde_json::to_vec(&(&application, format!("{attachment:?}"))).map_err(|error| {

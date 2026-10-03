@@ -36,24 +36,6 @@ pub fn sandbox_provision_network_plan_fixture(
     )
 }
 
-/// Supply test-only coarse-start fixtures with explicit attachment desired
-/// state without changing their legacy port-reservation identities.
-pub fn legacy_start_attachment_network_plan_fixture(
-    spec: &SandboxSpec,
-    sandbox_id: &SandboxId,
-    _label: &str,
-) -> NetworkPlan {
-    let backend = match spec.backend {
-        crate::SandboxBackendKind::Container => {
-            crate::backends::oci::network::AttachmentBackendKind::Container
-        }
-        crate::SandboxBackendKind::Krun => {
-            crate::backends::oci::network::AttachmentBackendKind::Krun
-        }
-    };
-    crate::backends::oci::network::oci_attachment_plan(&spec.tenant_id, sandbox_id, backend)
-}
-
 fn build_sandbox_provision_network_plan_fixture(
     spec: &SandboxSpec,
     label: &str,

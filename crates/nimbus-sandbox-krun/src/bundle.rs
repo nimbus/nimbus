@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use nimbus_sandbox::backends::oci::egress::{
-    egress_proxy_env_entries, egress_trust_anchor_env_entries, scrub_reserved_egress_env,
-};
-use nimbus_sandbox::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use nimbus_sandbox::{Result, SandboxError};
 use nimbus_sandbox::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
+use nimbus_sandbox_host::egress::{
+    egress_proxy_env_entries, egress_trust_anchor_env_entries, scrub_reserved_egress_env,
+};
+use nimbus_sandbox_host::hardening::{masked_paths_json, readonly_paths_json};
 
 use super::ingress::{format_private_tsi_port_map, private_tsi_upstream_port};
 
@@ -619,11 +619,11 @@ mod tests {
     };
     use nimbus_network::EndpointProtocol;
     use nimbus_sandbox::SandboxBackendKind;
-    use nimbus_sandbox::backends::oci::hardening::{DEFAULT_MASKED_PATHS, DEFAULT_READONLY_PATHS};
     use nimbus_sandbox::{
         SandboxMountSource, SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding,
         SandboxProcessSpec, SandboxResourceLimits, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
     };
+    use nimbus_sandbox_host::hardening::{DEFAULT_MASKED_PATHS, DEFAULT_READONLY_PATHS};
 
     fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
         config["process"]["env"]

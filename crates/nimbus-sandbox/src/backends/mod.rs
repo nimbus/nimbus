@@ -1,6 +1,5 @@
 pub mod capabilities;
 pub mod inspection;
-pub mod oci;
 pub mod poll;
 pub mod readiness_probe;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -12,4 +11,3 @@ pub use capabilities::{
     SandboxAttachmentRegistrationError, SandboxNetworkPlanRequirements,
     sandbox_network_plan_requirements,
 };
-pub use oci::network::{OciNetworkProcess, OciNetworkProcessError};

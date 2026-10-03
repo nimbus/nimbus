@@ -18,41 +18,6 @@ use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationError, SandboxAttachmentRegistrationKind,
     host_managed_attachment_registration,
 };
-use nimbus_sandbox::backends::oci::buildah::{
-    ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults,
-};
-use nimbus_sandbox::backends::oci::builder::OciDockerfileBuilder;
-use nimbus_sandbox::backends::oci::conmon::{
-    OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
-};
-use nimbus_sandbox::backends::oci::egress::{
-    EgressProxyAssignment, EgressProxyRegistry, EgressReadinessState, egress_decision_log_root,
-    egress_listener_reservation, egress_proxy_assignment, egress_trust_anchor_mount,
-    egress_trust_anchor_root,
-};
-use nimbus_sandbox::backends::oci::materializer::{
-    MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
-};
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAttachAuthority, AttachmentBackendKind, ConfiguredSegmentAllocator,
-    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
-    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
-    OciAttachmentAuxiliaryListener, OciAttachmentInput, OciAttachmentLifecycle,
-    OciAttachmentProviderPaths, OciEgressPinProvider, OciHostManagedAttachmentBackend,
-    OciIpamAuthority, OciNetworkConfig, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
-    RealOciEgressPinProvider, TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
-    default_network_attachment_id, retire_terminal_container_ipam_release,
-};
-#[cfg(test)]
-use nimbus_sandbox::backends::oci::network::{
-    HostManagedAttachmentCheckpointTestProbe, OciAttachmentReadinessState,
-};
-use nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim;
-use nimbus_sandbox::backends::oci::port_lifecycle::{
-    DEFAULT_MAX_PORTS_PER_TENANT, NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator,
-    ReservedLaunchPorts, SandboxLaunchPortPlan,
-};
-use nimbus_sandbox::backends::oci::resource_quota::ResourceQuotaManager;
 use nimbus_sandbox::backends::readiness_probe::{
     ReadinessProbeProvider, SocketReadinessProbeProvider,
 };
@@ -80,6 +45,39 @@ use nimbus_sandbox_container::conmon::lifecycle::{
 use nimbus_sandbox_container::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
 };
+use nimbus_sandbox_host::buildah::{ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults};
+use nimbus_sandbox_host::builder::OciDockerfileBuilder;
+use nimbus_sandbox_host::conmon::{
+    OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
+};
+use nimbus_sandbox_host::egress::{
+    EgressProxyAssignment, EgressProxyRegistry, EgressReadinessState, egress_decision_log_root,
+    egress_listener_reservation, egress_proxy_assignment, egress_trust_anchor_mount,
+    egress_trust_anchor_root,
+};
+use nimbus_sandbox_host::materializer::{
+    MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
+};
+use nimbus_sandbox_host::network::{
+    AttachmentAttachAuthority, AttachmentBackendKind, ConfiguredSegmentAllocator,
+    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
+    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
+    OciAttachmentAuxiliaryListener, OciAttachmentInput, OciAttachmentLifecycle,
+    OciAttachmentProviderPaths, OciEgressPinProvider, OciHostManagedAttachmentBackend,
+    OciIpamAuthority, OciNetworkConfig, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
+    RealOciEgressPinProvider, TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
+    default_network_attachment_id, retire_terminal_container_ipam_release,
+};
+#[cfg(test)]
+use nimbus_sandbox_host::network::{
+    HostManagedAttachmentCheckpointTestProbe, OciAttachmentReadinessState,
+};
+use nimbus_sandbox_host::port_lease::new_launch_reservation_claim;
+use nimbus_sandbox_host::port_lifecycle::{
+    DEFAULT_MAX_PORTS_PER_TENANT, NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator,
+    ReservedLaunchPorts, SandboxLaunchPortPlan,
+};
+use nimbus_sandbox_host::resource_quota::ResourceQuotaManager;
 
 mod attachment_teardown;
 mod creator;
@@ -636,8 +634,7 @@ impl KrunSandboxBackend {
     fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
         // Per-tenant PRIMARY block: distinct subnet + bridge identity (audit M1).
         let segment = self.segment_allocator.segment_for(tenant)?;
-        let reservation_claim =
-            nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()?;
+        let reservation_claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()?;
         let attachment_id = NetworkAttachmentId::for_workload_attachment(
             tenant.as_str(),
             "krun-network-config-test",
@@ -692,7 +689,7 @@ impl KrunSandboxBackend {
             .map_or(&fallback_attachment_id, |config| &config.attachment_id);
         self.attachment_lifecycle(&ports).release_reserved(
             AttachmentBackendKind::Krun,
-            nimbus_sandbox::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+            nimbus_sandbox_host::network::ReservedNetworkLaunchIdentity::new(
                 &manifest.network_layout,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
@@ -715,7 +712,7 @@ impl KrunSandboxBackend {
             ports.release_unpublished_launch_ports(reservations, reservation_claim);
         self.attachment_lifecycle(&ports).release_reserved(
             AttachmentBackendKind::Krun,
-            nimbus_sandbox::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+            nimbus_sandbox_host::network::ReservedNetworkLaunchIdentity::new(
                 &manifest.network_layout,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
@@ -819,7 +816,7 @@ struct KrunSandboxManifest {
     ///
     /// This records effect boundaries and compound detached evidence. The
     /// provider command journal remains the sole command-result authority.
-    network_teardown: nimbus_sandbox::backends::oci::network::HostManagedAttachmentTeardownState,
+    network_teardown: nimbus_sandbox_host::network::HostManagedAttachmentTeardownState,
     egress_proxy: Option<EgressProxyAssignment>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,

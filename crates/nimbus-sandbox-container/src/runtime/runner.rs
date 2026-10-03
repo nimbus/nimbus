@@ -75,7 +75,7 @@ struct RunnerHandoffDecisionRecord {
     prepared_manifest_sha256: String,
     pre_effect_authority_sha256: String,
     execution_identity_sha256: String,
-    #[serde(deserialize_with = "nimbus_sandbox::backends::oci::deserialize_required_option")]
+    #[serde(deserialize_with = "nimbus_sandbox_host::deserialize_required_option")]
     effect_receipt: Option<RunnerEffectReceipt>,
 }
 

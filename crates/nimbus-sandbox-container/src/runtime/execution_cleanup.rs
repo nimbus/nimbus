@@ -9,11 +9,11 @@ use super::machine_ports::MachinePortProxyCleanup;
 use super::*;
 use crate::conmon::lifecycle::delete_runtime_and_confirm_absent as delete_conmon_runtime_and_confirm_absent;
 use nimbus_network::{NetworkReservationClaim, PortLeaseRequest};
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentAuxiliaryDisposition, AttachmentDetachFailure, AttachmentDetachFailureStage,
     AttachmentTeardownMode,
 };
-use nimbus_sandbox::backends::oci::port_lifecycle::LaunchPortBatchState;
+use nimbus_sandbox_host::port_lifecycle::LaunchPortBatchState;
 
 struct MachineForwardedFinalization {
     published_batch_state: LaunchPortBatchState,
@@ -58,7 +58,7 @@ impl ContainerSandboxBackend {
     fn release_host_managed_execution_artifacts(
         &self,
         manifest: &mut ContainerSandboxManifest,
-        network_config: &nimbus_sandbox::backends::oci::network::OciNetworkConfig,
+        network_config: &nimbus_sandbox_host::network::OciNetworkConfig,
     ) -> Result<()> {
         let mut errors = Vec::new();
         if let Err(error) = self.remove_runner_manifest_pointer(manifest) {
@@ -117,8 +117,8 @@ impl ContainerSandboxBackend {
     fn release_machine_forwarded_execution_artifacts(
         &self,
         manifest: &mut ContainerSandboxManifest,
-        network_config: &nimbus_sandbox::backends::oci::network::OciNetworkConfig,
-        forwarder: nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig,
+        network_config: &nimbus_sandbox_host::network::OciNetworkConfig,
+        forwarder: nimbus_sandbox_host::network::OciMachinePortForwarderConfig,
     ) -> Result<()> {
         let mut errors = Vec::new();
         if let Err(error) = self.remove_runner_manifest_pointer(manifest) {

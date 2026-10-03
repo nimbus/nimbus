@@ -2,7 +2,7 @@
 
 use super::support::*;
 
-use nimbus_sandbox::backends::oci::conmon::OciConmonLayout;
+use nimbus_sandbox_host::conmon::OciConmonLayout;
 
 fn initial_manifest(
     backend: &KrunSandboxBackend,

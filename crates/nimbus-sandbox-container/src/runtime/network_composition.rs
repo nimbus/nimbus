@@ -4,19 +4,17 @@ use std::sync::Arc;
 
 use nimbus_network::LocalNetworkAttachmentAuthority;
 
-use nimbus_sandbox::backends::oci::egress::{
-    EgressProxyRegistry, egress_decision_log_root, egress_trust_anchor_root,
-};
-use nimbus_sandbox::backends::oci::network::{
-    ConfiguredSegmentAllocator, MachinePortProxyLifetimeRegistry, OciIpamAuthority,
-    OciNetworkProcess, OciNetworkProcessError, OciSegmentAllocator, RealOciEgressPinProvider,
-};
-use nimbus_sandbox::backends::oci::port_lifecycle::{
-    NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator,
-};
 #[cfg(test)]
 use nimbus_sandbox::backends::readiness_probe::ReadinessProbeProvider;
 use nimbus_sandbox::backends::readiness_probe::SocketReadinessProbeProvider;
+use nimbus_sandbox_host::egress::{
+    EgressProxyRegistry, egress_decision_log_root, egress_trust_anchor_root,
+};
+use nimbus_sandbox_host::network::{
+    ConfiguredSegmentAllocator, MachinePortProxyLifetimeRegistry, OciIpamAuthority,
+    OciNetworkProcess, OciNetworkProcessError, OciSegmentAllocator, RealOciEgressPinProvider,
+};
+use nimbus_sandbox_host::port_lifecycle::{NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator};
 
 use super::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 
@@ -220,7 +218,7 @@ impl ContainerSandboxBackend {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn with_egress_pin_provider(
         mut self,
-        provider: Arc<dyn nimbus_sandbox::backends::oci::network::OciEgressPinProvider>,
+        provider: Arc<dyn nimbus_sandbox_host::network::OciEgressPinProvider>,
     ) -> Self {
         self.egress_pin_provider = provider;
         self

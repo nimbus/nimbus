@@ -1,9 +1,9 @@
 //! Krun lifecycle-lock and inspection-side-effect proofs.
 
 use super::support::*;
-use nimbus_sandbox::backends::oci::conmon::OciConmonLayout;
-use nimbus_sandbox::backends::oci::network::{OciNetworkLayout, default_network_attachment_id};
 use nimbus_sandbox::{SandboxCleanupObservation, SandboxObservationUnknownReason};
+use nimbus_sandbox_host::conmon::OciConmonLayout;
+use nimbus_sandbox_host::network::{OciNetworkLayout, default_network_attachment_id};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 

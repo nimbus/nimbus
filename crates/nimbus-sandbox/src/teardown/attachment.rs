@@ -263,7 +263,7 @@ pub struct SandboxNetworkReleaseAbsenceEvidence {
 }
 
 impl SandboxNetworkReleaseAbsenceEvidence {
-    pub(crate) fn new(provider_absence_sha256: String, publication_absence_sha256: String) -> Self {
+    pub fn new(provider_absence_sha256: String, publication_absence_sha256: String) -> Self {
         Self {
             provider_absence_sha256,
             publication_absence_sha256,

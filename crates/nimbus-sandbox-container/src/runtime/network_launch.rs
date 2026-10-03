@@ -9,14 +9,12 @@ use nimbus_network::NetworkReservationClaim;
 
 use super::*;
 use nimbus_network::NetworkAttachmentId;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentBackendKind, OciAttachmentAdapter, OciAttachmentAuxiliaryListener,
     OciAttachmentInput, OciAttachmentProviderPaths, OciHostManagedAttachmentBackend,
     OciMachineForwardedAttachmentBackend, OciMachinePortForwarderConfig,
 };
-use nimbus_sandbox::backends::oci::network::{
-    OciAttachmentLifecycle, OciNetworkConfig, OciNetworkLayout,
-};
+use nimbus_sandbox_host::network::{OciAttachmentLifecycle, OciNetworkConfig, OciNetworkLayout};
 
 impl OciHostManagedAttachmentBackend for ContainerSandboxBackend {
     const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Container;
@@ -109,8 +107,7 @@ impl ContainerSandboxBackend {
     #[cfg(test)]
     pub(super) fn network_config(&self, tenant: &TenantId) -> Result<OciNetworkConfig> {
         let segment = self.segment_allocator.segment_for(tenant)?;
-        let reservation_claim =
-            nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()?;
+        let reservation_claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()?;
         let attachment_id = NetworkAttachmentId::for_workload_attachment(
             tenant.as_str(),
             "container-network-config-test",
@@ -162,7 +159,7 @@ impl ContainerSandboxBackend {
         let ports = self.port_lease_coordinator();
         self.attachment_lifecycle(&ports).compensate_reserved(
             AttachmentBackendKind::Container,
-            nimbus_sandbox::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+            nimbus_sandbox_host::network::ReservedNetworkLaunchIdentity::new(
                 layout,
                 tenant_id,
                 sandbox_id,
@@ -184,7 +181,7 @@ impl ContainerSandboxBackend {
         let attachment_id = &manifest.require_network_config()?.attachment_id;
         self.attachment_lifecycle(&ports).release_reserved(
             AttachmentBackendKind::Container,
-            nimbus_sandbox::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+            nimbus_sandbox_host::network::ReservedNetworkLaunchIdentity::new(
                 &manifest.network_layout,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,

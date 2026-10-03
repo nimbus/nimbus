@@ -22,9 +22,11 @@ use nimbus_machine::api::{
     MachineApiWorkloadTeardownProviderTranslation,
 };
 use nimbus_sandbox::{
-    MachinePortForwardingRetirement, OciMachinePortForwardingRetirement,
     ProviderCommandAttemptJournal, ProviderCommandJournalError, ProviderCommandObservation,
     ProviderCommandObservationKind, ProviderCommandStartedClaimDecision,
+};
+use nimbus_sandbox_host::{
+    network::MachinePortForwardingRetirement, network::OciMachinePortForwardingRetirement,
 };
 use nimbus_workloads::{
     WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadTeardownCommandMode,

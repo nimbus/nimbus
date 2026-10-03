@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 
 use nimbus_network::{ListenerId, LocalPortLeaseAuthority, NetworkResourceId};
-use nimbus_sandbox::backends::oci::network::{OciSegmentAllocator, RecordingSegmentAllocator};
+use nimbus_sandbox_host::network::{OciSegmentAllocator, RecordingSegmentAllocator};
 use tempfile::TempDir;
 
 fn split_plan_only_config(root: &Path) -> ContainerSandboxBackendConfig {

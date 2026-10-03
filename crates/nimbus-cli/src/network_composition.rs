@@ -28,9 +28,9 @@ use nimbus_network::{
 use nimbus_operator::LocalNodeNetworkRoot;
 use nimbus_sandbox::backends::SandboxAttachmentRegistrationError;
 use nimbus_sandbox::{
-    OciNetworkProcess, OciNetworkProcessError, ProviderCommandJournalError, SandboxBackendKind,
-    sandbox_network_plan_requirements,
+    ProviderCommandJournalError, SandboxBackendKind, sandbox_network_plan_requirements,
 };
+use nimbus_sandbox_host::{network::OciNetworkProcess, network::OciNetworkProcessError};
 use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunSandboxStateView};
 use nimbus_server::{
     ServeOptions, ServerForegroundWorkloadRuntime, ServerIngressPublicationAdapter,

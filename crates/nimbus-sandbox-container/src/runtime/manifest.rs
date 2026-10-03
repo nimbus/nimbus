@@ -12,20 +12,18 @@ use crate::bundle::ContainerBundleLayout;
 use crate::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use nimbus_sandbox::SandboxId;
 use nimbus_sandbox::SandboxProvisionNetworkPlan;
-use nimbus_sandbox::backends::oci::buildah::{
-    ImageHealthcheck, MountedRootfsSession, OciExposedPort,
-};
-use nimbus_sandbox::backends::oci::conmon::{OciConmonLaunchPlan, OciConmonLayout};
-use nimbus_sandbox::backends::oci::egress::{EgressPolicyReloadState, EgressProxyAssignment};
-use nimbus_sandbox::backends::oci::materializer::MaterializedImageRootfs;
-use nimbus_sandbox::backends::oci::network::{
-    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout, OciRetainedManifestEvidence,
-    TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
-};
 use nimbus_sandbox::{Result, SandboxError};
 use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_sandbox::{SandboxPortBinding, SandboxSpec};
+use nimbus_sandbox_host::buildah::{ImageHealthcheck, MountedRootfsSession, OciExposedPort};
+use nimbus_sandbox_host::conmon::{OciConmonLaunchPlan, OciConmonLayout};
+use nimbus_sandbox_host::egress::{EgressPolicyReloadState, EgressProxyAssignment};
+use nimbus_sandbox_host::materializer::MaterializedImageRootfs;
+use nimbus_sandbox_host::network::{
+    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout, OciRetainedManifestEvidence,
+    TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
+};
 
 use super::ContainerSandboxBackend;
 use super::config::{ContainerSandboxBackendConfig, ContainerStartMode};
@@ -267,7 +265,7 @@ impl ContainerSandboxBackend {
         if manifest.has_terminal_network_finality()
             && let Some(network_config) = manifest.network_config.as_ref()
         {
-            nimbus_sandbox::backends::oci::network::retire_terminal_container_ipam_release(
+            nimbus_sandbox_host::network::retire_terminal_container_ipam_release(
                 &self.ipam_authority,
                 &manifest.network_layout,
                 &manifest.handle.id,
@@ -339,7 +337,7 @@ pub(super) struct ContainerSandboxManifest {
     /// publishes this identity before `EffectsStarted`, so a substituted
     /// decision record cannot authenticate the manifest merely by recomputing
     /// its other fingerprints.
-    #[serde(deserialize_with = "nimbus_sandbox::backends::oci::deserialize_required_option")]
+    #[serde(deserialize_with = "nimbus_sandbox_host::deserialize_required_option")]
     pub(super) runner_handoff_id: Option<RunnerHandoffId>,
     /// Canonical operator-requested bindings before image-exposed plan previews
     /// are appended. The runner recomputes the exact automatic suffix from this
@@ -349,7 +347,7 @@ pub(super) struct ContainerSandboxManifest {
     /// Attempt-unique capability for compensating this never-bound launch.
     ///
     /// Cleared after initial provider adoption; restart never receives it.
-    #[serde(deserialize_with = "nimbus_sandbox::backends::oci::deserialize_required_option")]
+    #[serde(deserialize_with = "nimbus_sandbox_host::deserialize_required_option")]
     pub(super) launch_reservation_claim: Option<NetworkReservationClaim>,
     pub(super) egress_proxy: Option<EgressProxyAssignment>,
     /// Monotonic desired policy and provider-attempt generations.
@@ -379,8 +377,7 @@ pub(super) struct ContainerSandboxManifest {
     ///
     /// This records effect boundaries and compound detached evidence. The
     /// provider command journal remains the sole command-result authority.
-    pub(super) network_teardown:
-        nimbus_sandbox::backends::oci::network::HostManagedAttachmentTeardownState,
+    pub(super) network_teardown: nimbus_sandbox_host::network::HostManagedAttachmentTeardownState,
     pub(super) status: SandboxStatus,
 }
 

@@ -15,7 +15,7 @@ const VOLUMES_DIR: &str = "volumes";
 const CONTAINERS_DIR: &str = "containers";
 const MANIFEST_FILE: &str = "manifest.json";
 
-pub(crate) fn tenant_root(root: &Path, tenant_id: &TenantId) -> PathBuf {
+pub fn tenant_root(root: &Path, tenant_id: &TenantId) -> PathBuf {
     root.join(TENANTS_DIR).join(tenant_id.as_str())
 }
 
@@ -83,7 +83,7 @@ pub fn all_container_state_dirs(state_root: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-pub(crate) fn manifest_paths_for_tenant(
+pub fn manifest_paths_for_tenant(
     state_root: &Path,
     tenant_id: &TenantId,
 ) -> io::Result<Vec<PathBuf>> {

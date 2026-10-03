@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use nimbus_sandbox::backends::oci::network::{
-    HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentDetachPhase,
-    HostManagedAttachmentReleasePhase, HostManagedAttachmentTeardownCheckpoint,
-};
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaimInput, SandboxNetworkTeardownCommandInput,
     SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
+};
+use nimbus_sandbox_host::network::{
+    HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentDetachPhase,
+    HostManagedAttachmentReleasePhase, HostManagedAttachmentTeardownCheckpoint,
 };
 
 use super::*;
@@ -461,7 +461,7 @@ fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> 
         let sentinel = rootfs_path.join("provider-finality-sentinel");
         std::fs::write(&sentinel, b"owned").expect("Krun artifact sentinel should persist");
         manifest.launch_artifact = Some(KrunLaunchArtifact::Rootfs(
-            nimbus_sandbox::backends::oci::materializer::MaterializedImageRootfs {
+            nimbus_sandbox_host::materializer::MaterializedImageRootfs {
                 image_reference: "registry.example.com/nimbus/finality:test".to_owned(),
                 rootfs_path,
             },

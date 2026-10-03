@@ -6,11 +6,6 @@ use nimbus_core::TenantId;
 pub(super) use std::path::PathBuf;
 
 pub(super) use nimbus_sandbox::SandboxBackendKind;
-use nimbus_sandbox::backends::oci::buildah::{
-    OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
-};
-use nimbus_sandbox::backends::oci::materializer::MaterializedImageRootfs;
-use nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig;
 pub(super) use nimbus_sandbox::backends::test_hooks::sandbox_provision_network_plan_fixture as sample_provision_network_plan;
 pub(super) use nimbus_sandbox::{SandboxId, SandboxStatus};
 pub(super) use nimbus_sandbox::{
@@ -18,6 +13,11 @@ pub(super) use nimbus_sandbox::{
     SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
 pub(super) use nimbus_sandbox::{SandboxResourceLimits, SandboxResourceQuotaPolicy};
+use nimbus_sandbox_host::buildah::{
+    OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
+};
+use nimbus_sandbox_host::materializer::MaterializedImageRootfs;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 
 pub(super) fn sample_spec() -> SandboxSpec {
     SandboxSpec::new(
@@ -128,9 +128,9 @@ pub(super) fn mark_runtime_absent_for_cleanup(manifest: &mut ContainerSandboxMan
         ),
     };
     manifest.conmon_launch.delete_command =
-        nimbus_sandbox::backends::oci::command::CommandSpec::new("/usr/bin/true");
+        nimbus_sandbox_host::command::CommandSpec::new("/usr/bin/true");
     manifest.conmon_launch.state_command =
-        nimbus_sandbox::backends::oci::command::CommandSpec::new("/bin/sh").args([
+        nimbus_sandbox_host::command::CommandSpec::new("/bin/sh").args([
             "-c".to_owned(),
             format!(
                 "printf '%s\\n' 'container `{0}` does not exist: open \

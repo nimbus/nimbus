@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use super::lifecycle::{
     RuntimeProcessProviderObservation, runtime_process_state_for_creator_attempt,
 };
-use nimbus_sandbox::backends::oci::command::CommandSpec;
 use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::command::CommandSpec;
 
 const MAX_PIDFILE_BYTES: u64 = 32;
 

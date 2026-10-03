@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 use crate::process::pid_is_alive;
 use nimbus_sandbox::SandboxSpec;
 use nimbus_sandbox::SandboxStatus;
-use nimbus_sandbox::backends::oci::command::{
-    CommandSpec, render_command_failure, run_bounded_command_output,
-};
 use nimbus_sandbox::backends::poll::poll_until_deadline;
 use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::command::{
+    CommandSpec, render_command_failure, run_bounded_command_output,
+};
 
 pub(crate) const CREATOR_ATTEMPT_ANNOTATION: &str = "com.nimbus.creator-attempt";
 const RUNTIME_STATE_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);

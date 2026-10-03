@@ -117,10 +117,10 @@ large_file	crates/nimbus-compute/src/resource_provision/tests.rs	review	compute	
 large_file	crates/nimbus-compute/src/state.rs	review	compute	Transport-free ComputeState owns the engine handle, deployment snapshot, and workload composition config with its tests.
 large_file	crates/nimbus-compute/src/workload_network_plan/tests.rs	review	compute	Workload network-plan compilation suite; one compiler contract with shared sovereignty and decision fixtures.
 large_file	crates/nimbus-compute/src/resource_retirement/tests/support.rs	review	compute	Shared fixtures, event log, and fakes for the resource-retirement case modules beside it.
-large_file	crates/nimbus-sandbox/src/backends/oci/egress/tests.rs	review	sandbox	OCI egress PEP suite; post-activation cleanup, readiness, and registration failure are already children.
-large_file	crates/nimbus-sandbox/src/backends/oci/egress.rs	review	sandbox	Shared per-sandbox egress PEP lifecycle; cleanup, process, readiness, assignment, and reload are already children.
-large_file	crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs	review	sandbox	OCI port lease coordinator root; authority, batch state, publication, machine, and Netavark lifetime are already children.
-large_file	crates/nimbus-sandbox/src/backends/oci/port_lifecycle/tests.rs	review	sandbox	OCI port lifecycle suite; batch classification, machine cleanup, Netavark cleanup, and teardown progress are already children.
+large_file	crates/nimbus-sandbox-host/src/egress/tests.rs	review	sandbox	OCI egress PEP suite; post-activation cleanup, readiness, and registration failure are already children.
+large_file	crates/nimbus-sandbox-host/src/egress.rs	review	sandbox	Shared per-sandbox egress PEP lifecycle; cleanup, process, readiness, assignment, and reload are already children.
+large_file	crates/nimbus-sandbox-host/src/port_lifecycle.rs	review	sandbox	OCI port lease coordinator root; authority, batch state, publication, machine, and Netavark lifetime are already children.
+large_file	crates/nimbus-sandbox-host/src/port_lifecycle/tests.rs	review	sandbox	OCI port lifecycle suite; batch classification, machine cleanup, Netavark cleanup, and teardown progress are already children.
 large_file	crates/nimbus-sandbox-container/src/runtime/launch_cleanup.rs	review	sandbox	Container launch cleanup suite owns runner execution ownership and owner-death fencing cases.
 large_file	crates/nimbus-sandbox-container/src/runtime/machine_ports.rs	review	sandbox	Container-owned lifecycle for provider-managed machine port proxies, including partial-start cleanup.
 large_file	crates/nimbus-sandbox-container/src/runtime/runner.rs	review	sandbox	Prepared plan-only workload runner entry point; identity, lifecycle lock, and recovery are already children.

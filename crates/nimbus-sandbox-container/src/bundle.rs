@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use nimbus_egress::{EGRESS_ENFORCEMENT_ENV, EgressEnforcementPlan, EgressReloadPolicy};
-use nimbus_sandbox::backends::oci::egress::{
-    egress_proxy_env_entries, egress_trust_anchor_env_entries, scrub_reserved_egress_env,
-};
-use nimbus_sandbox::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use nimbus_sandbox::{Result, SandboxError};
 use nimbus_sandbox::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
+use nimbus_sandbox_host::egress::{
+    egress_proxy_env_entries, egress_trust_anchor_env_entries, scrub_reserved_egress_env,
+};
+use nimbus_sandbox_host::hardening::{masked_paths_json, readonly_paths_json};
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const DEFAULT_CPU_PERIOD: u64 = 100_000;

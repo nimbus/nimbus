@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use nimbus_network::{
     NetworkCondition, NetworkConditionKind, NetworkConditionState, NetworkResourcePhase,
 };
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortProxyEntry,
     MachinePortProxyLeaseAuthority, MachinePortProxyLifetimeRegistry, OciAttachmentReadinessState,
     machine_port_proxy_routes,
@@ -325,7 +325,7 @@ struct MachineRegistrySnapshot {
     entry_count: usize,
     bindings: Vec<SandboxPortBinding>,
     leases: Vec<nimbus_network::PortLeaseRequest>,
-    routes: Vec<nimbus_sandbox::backends::oci::network::MachinePortProxyRoute>,
+    routes: Vec<nimbus_sandbox_host::network::MachinePortProxyRoute>,
     worker_liveness: Vec<bool>,
     live_claims: String,
     live_lifetimes: String,

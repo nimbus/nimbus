@@ -14,8 +14,8 @@ use tempfile::TempDir;
 use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_requirements,
 };
-use nimbus_sandbox::backends::oci::network::{OciNetworkLayout, default_network_attachment_id};
-use nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim;
+use nimbus_sandbox_host::network::{OciNetworkLayout, default_network_attachment_id};
+use nimbus_sandbox_host::port_lease::new_launch_reservation_claim;
 
 fn foreign_plan(tenant_id: &TenantId, sandbox_id: &SandboxId) -> NetworkPlan {
     NetworkPlan::new(

@@ -3,8 +3,8 @@
 use nimbus_egress::EgressPolicy;
 
 use nimbus_sandbox::SandboxId;
-use nimbus_sandbox::backends::oci::egress::EgressReloadAttachmentState;
 use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::egress::EgressReloadAttachmentState;
 
 use super::{ContainerCreatorHandoffState, ContainerSandboxBackend, ContainerStartMode, runner};
 

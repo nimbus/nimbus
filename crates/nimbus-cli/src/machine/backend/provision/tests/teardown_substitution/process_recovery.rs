@@ -28,13 +28,15 @@ use nimbus_node::{
     HostTeardownInspectClaim, HostTeardownInspectObservation,
 };
 use nimbus_sandbox::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortForwardingRetirement,
-    MachinePortForwardingRetirementObservation, ProviderCommandObservation,
-    ProviderCommandOperation, ProviderCommandStartedClaimDecision, SandboxExecutionAttemptId,
-    SandboxId, SandboxPortBinding, SandboxProvisionDependencyListener, SandboxProvisionNetworkPlan,
-    sandbox_network_plan_requirements,
+    ProviderCommandObservation, ProviderCommandOperation, ProviderCommandStartedClaimDecision,
+    SandboxExecutionAttemptId, SandboxId, SandboxPortBinding, SandboxProvisionDependencyListener,
+    SandboxProvisionNetworkPlan, sandbox_network_plan_requirements,
 };
 use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
+use nimbus_sandbox_host::{
+    network::MachinePortForwardOutcome, network::MachinePortForwardReceipt,
+    network::MachinePortForwardingRetirement, network::MachinePortForwardingRetirementObservation,
+};
 use nimbus_workloads::{
     LocalEnforcementBinding, WorkloadOwnerEvidenceDigest, WorkloadSagaCommit, WorkloadSagaExpected,
     WorkloadSagaFuture, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase,

@@ -54,6 +54,7 @@ nimbus-server = { path = "../nimbus-server", default-features = false }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-sandbox-container = { path = "../nimbus-sandbox-container" }
+nimbus-sandbox-host = { path = "../nimbus-sandbox-host" }
 nimbus-sandbox-krun = { path = "../nimbus-sandbox-krun" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }

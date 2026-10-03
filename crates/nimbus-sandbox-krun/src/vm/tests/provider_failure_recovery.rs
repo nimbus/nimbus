@@ -5,7 +5,7 @@ use super::support::*;
 use std::sync::Arc;
 
 use nimbus_sandbox::SandboxError;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     OciSegmentAllocator, RecordingSegmentAllocator, default_network_attachment_id,
 };
 

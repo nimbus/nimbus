@@ -8,7 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use nimbus_sandbox::SandboxPortBinding;
-use nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 
 const FORWARDER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 static NEXT_COMPLETION_ID: AtomicU64 = AtomicU64::new(1);

@@ -16,8 +16,8 @@ use nimbus_network::{
     NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim, PortLeasePhase,
 };
 use nimbus_process_harness::PortWindow;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::network::{
     FixedOciEgressPinProvider, MachinePortPreparationReleaseAuthority, OciEgressPinProvider,
     OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
     default_network_attachment_id, panicking_machine_port_proxy_for_test,

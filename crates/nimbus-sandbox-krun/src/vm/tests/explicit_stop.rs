@@ -10,8 +10,8 @@ use nimbus_network::{
 };
 
 use nimbus_sandbox::SandboxError;
-use nimbus_sandbox::backends::oci::conmon::OciConmonLayout;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::conmon::OciConmonLayout;
+use nimbus_sandbox_host::network::{
     OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, RecordingSegmentAllocator,
     allocate_container_ips, deallocate_container_ips_after_confirmed_detach,
     default_network_attachment_id, reconcile_terminal_container_ipam_releases,
@@ -123,7 +123,7 @@ fn terminal_projection_rejects_every_retained_krun_launch_authority() {
         .expect("nonterminal checkpoint should persist");
     let checkpoint = fs::read(&stopping.conmon_layout.manifest_path)
         .expect("nonterminal checkpoint bytes should read");
-    let claim = nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
+    let claim = nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
         .expect("matrix claim should validate");
     let association = NetworkAttachmentSegmentAssociation::new(
         claim.clone(),

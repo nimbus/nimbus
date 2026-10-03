@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use nimbus_process_harness::PortWindow;
 
-use nimbus_sandbox::backends::oci::egress::{
+use nimbus_sandbox_host::egress::{
     PepPreAdoptionReleaseAuthority, ensure_egress_proxy_running_with_release_authority,
 };
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::{
     AttachmentAttachAuthority, FixedOciEgressPinProvider, default_network_attachment_id,
 };
 

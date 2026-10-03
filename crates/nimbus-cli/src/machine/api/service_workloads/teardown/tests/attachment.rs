@@ -23,9 +23,8 @@ use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
     ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
 };
-use nimbus_sandbox_container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, OciMachinePortForwarderConfig,
-};
+use nimbus_sandbox_container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState,
     LocalEnforcementBinding, NodeIdentity, WorkloadActivationIntent, WorkloadAdmissionEvidence,

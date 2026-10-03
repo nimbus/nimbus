@@ -144,7 +144,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         .as_ref()
         .expect("execute manifest should carry network config")
         .clone();
-    nimbus_sandbox::backends::oci::network::deallocate_container_ips_after_confirmed_detach(
+    nimbus_sandbox_host::network::deallocate_container_ips_after_confirmed_detach(
         &backend.ipam_authority,
         &stale.network_layout,
         &stale.handle.id,
@@ -155,9 +155,9 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
     .expect("first IPAM generation should release exactly");
     let mut replacement_network_config = stale_network_config.clone();
     replacement_network_config.reservation_claim =
-        nimbus_sandbox::backends::oci::port_lease::new_launch_reservation_claim()
+        nimbus_sandbox_host::port_lease::new_launch_reservation_claim()
             .expect("replacement IPAM claim should mint");
-    nimbus_sandbox::backends::oci::network::allocate_container_ips(
+    nimbus_sandbox_host::network::allocate_container_ips(
         &backend.ipam_authority,
         &stale.network_layout,
         &replacement_network_config,
@@ -219,7 +219,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         b"replacement-status"
     );
 
-    nimbus_sandbox::backends::oci::network::deallocate_container_ips_after_confirmed_detach(
+    nimbus_sandbox_host::network::deallocate_container_ips_after_confirmed_detach(
         &backend.ipam_authority,
         &stale.network_layout,
         &stale.handle.id,
@@ -228,7 +228,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         replacement_network_config.provider_kind(),
     )
     .expect("replacement IPAM should release exactly for fixture cleanup");
-    nimbus_sandbox::backends::oci::network::allocate_container_ips(
+    nimbus_sandbox_host::network::allocate_container_ips(
         &backend.ipam_authority,
         &stale.network_layout,
         &stale_network_config,
@@ -385,7 +385,7 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
         "successful retry must durably record network cleanup finality"
     );
     assert!(
-        !nimbus_sandbox::backends::oci::network::retire_terminal_container_ipam_release(
+        !nimbus_sandbox_host::network::retire_terminal_container_ipam_release(
             &backend.ipam_authority,
             &terminal.network_layout,
             &id,
@@ -425,7 +425,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
         .as_ref()
         .expect("execute manifest should carry IPAM authority")
         .clone();
-    nimbus_sandbox::backends::oci::network::deallocate_container_ips_after_confirmed_detach(
+    nimbus_sandbox_host::network::deallocate_container_ips_after_confirmed_detach(
         &backend.ipam_authority,
         &manifest.network_layout,
         &id,
@@ -459,7 +459,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
         .reconcile_terminal_ipam_retirement(&manifest)
         .expect("terminal replay should retire the exact pending IPAM receipt");
     assert!(
-        !nimbus_sandbox::backends::oci::network::retire_terminal_container_ipam_release(
+        !nimbus_sandbox_host::network::retire_terminal_container_ipam_release(
             &backend.ipam_authority,
             &manifest.network_layout,
             &id,

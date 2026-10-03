@@ -597,7 +597,7 @@ impl ConfirmedMachinePublicationJournal {
         retirement: &ConfirmedMachinePublicationRetirement,
         command: &ConfirmedWorkloadTeardownCommand,
         provider: &ConfirmedTeardownProviderCommand,
-        forwarding: &[nimbus_sandbox::MachinePortForwardReceipt],
+        forwarding: &[nimbus_sandbox_host::network::MachinePortForwardReceipt],
         ports: &[nimbus_network::PortLeaseRecord],
     ) -> Result<ConfirmedMachinePublicationRetirement, Error> {
         self.mutate(|body| {

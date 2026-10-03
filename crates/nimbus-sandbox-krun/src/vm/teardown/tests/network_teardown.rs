@@ -11,10 +11,6 @@ use nimbus_process_harness::PortWindow;
 
 use super::*;
 use nimbus_sandbox::backends::KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAttachAuthority, FixedOciEgressPinProvider, HostManagedAttachmentDetachPhase,
-    HostManagedAttachmentReleasePhase,
-};
 use nimbus_sandbox::backends::test_hooks::{
     ProviderCommandLockTestProbe, with_provider_command_lock_test_probe,
 };
@@ -22,6 +18,10 @@ use nimbus_sandbox::{
     ProviderCommandClaim, SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandInput,
     SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
     SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation, SandboxPortBinding,
+};
+use nimbus_sandbox_host::network::{
+    AttachmentAttachAuthority, FixedOciEgressPinProvider, HostManagedAttachmentDetachPhase,
+    HostManagedAttachmentReleasePhase,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

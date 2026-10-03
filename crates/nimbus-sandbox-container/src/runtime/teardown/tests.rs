@@ -12,13 +12,13 @@ use crate::conmon::runtime_process::{
 use crate::runtime::support::{
     sample_execution_attempt_id, sample_provision_network_plan, sample_spec_for_tenant,
 };
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider;
 use nimbus_sandbox::{
     ProviderCommandClaimDecision, ProviderCommandClaimInput, ProviderCommandObservationKind,
     ProviderCommandOperation, SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
     SandboxExecutionTeardownOperation,
 };
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::network::FixedOciEgressPinProvider;
 
 use super::*;
 

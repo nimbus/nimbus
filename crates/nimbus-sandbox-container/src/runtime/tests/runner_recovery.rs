@@ -5,9 +5,9 @@ use super::support::*;
 use nimbus_process_harness::PortWindow;
 
 use crate::conmon::creator::CreatorAttemptReceipt;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority;
-use nimbus_sandbox::backends::oci::network::default_network_attachment_id;
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority;
+use nimbus_sandbox_host::network::default_network_attachment_id;
 
 use tempfile::TempDir;
 

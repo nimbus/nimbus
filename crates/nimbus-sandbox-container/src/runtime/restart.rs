@@ -13,15 +13,15 @@ use crate::conmon::lifecycle::{
     remove_if_exists, runtime_state, runtime_state_for_creator_attempt, signal_process,
     wait_for_receipt,
 };
-use nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox::{SandboxId, SandboxStatus};
+use nimbus_sandbox::{SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation};
+use nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority;
+use nimbus_sandbox_host::network::{
     AttachmentAttachAuthority, MachinePortForwardReceipt, MachinePortForwardingProvider,
     MachinePortPreparationReleaseAuthority, OciAttachmentBaseReadinessState,
     OciMachinePortForwarderConfig,
 };
-use nimbus_sandbox::{Result, SandboxError};
-use nimbus_sandbox::{SandboxId, SandboxStatus};
-use nimbus_sandbox::{SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation};
 
 #[cfg(test)]
 use super::hostname_for;
@@ -950,7 +950,7 @@ impl ContainerSandboxBackend {
         provider_generation: NetworkResourceGeneration,
     ) -> Result<SandboxProvisionPhaseObservation> {
         let provider =
-            nimbus_sandbox::backends::oci::network::DeterministicMachinePortForwardingProvider::absent(
+            nimbus_sandbox_host::network::DeterministicMachinePortForwardingProvider::absent(
                 self.read_manifest(sandbox_id)?
                     .ok_or_else(|| SandboxError::NotFound {
                         sandbox_id: sandbox_id.as_str().to_owned(),
@@ -1507,9 +1507,7 @@ use crate::conmon::lifecycle::{
     remove_if_exists as legacy_remove_if_exists,
 };
 #[cfg(test)]
-use nimbus_sandbox::backends::oci::network::{
-    AttachmentAuxiliaryDisposition, AttachmentTeardownMode,
-};
+use nimbus_sandbox_host::network::{AttachmentAuxiliaryDisposition, AttachmentTeardownMode};
 
 #[cfg(test)]
 impl ContainerSandboxBackend {
@@ -1535,7 +1533,7 @@ impl ContainerSandboxBackend {
     fn reset_host_managed_runtime_for_restart(
         &self,
         manifest: &ContainerSandboxManifest,
-        network_config: &nimbus_sandbox::backends::oci::network::OciNetworkConfig,
+        network_config: &nimbus_sandbox_host::network::OciNetworkConfig,
     ) -> Result<()> {
         let ports = self.port_lease_coordinator_for_manifest(manifest)?;
         let hostname = hostname_for(&manifest.spec);
@@ -1562,8 +1560,8 @@ impl ContainerSandboxBackend {
     fn reset_machine_forwarded_runtime_for_restart(
         &self,
         manifest: &ContainerSandboxManifest,
-        network_config: &nimbus_sandbox::backends::oci::network::OciNetworkConfig,
-        forwarder: &nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig,
+        network_config: &nimbus_sandbox_host::network::OciNetworkConfig,
+        forwarder: &nimbus_sandbox_host::network::OciMachinePortForwarderConfig,
     ) -> Result<()> {
         let ports = self.port_lease_coordinator_for_manifest(manifest)?;
         let lifecycle = self.attachment_lifecycle(&ports);

@@ -20,9 +20,9 @@ use std::os::unix::process::CommandExt as _;
 
 use crate::conmon::lifecycle::{read_pid, remove_if_exists};
 use crate::process::pid_is_alive;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
 use nimbus_sandbox::backends::poll::poll_until_deadline;
 use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::command::CommandSpec;
 
 #[path = "creator/attempt_annotation.rs"]
 mod attempt_annotation;

@@ -5,7 +5,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::conmon::creator::OwnedConmonCreator;
 use crate::conmon::lifecycle::wait_for_path;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
+use nimbus_sandbox_host::command::CommandSpec;
 
 #[test]
 fn exact_live_creator_receipt_round_trips_and_observes_live() {

@@ -17,8 +17,8 @@ use tempfile::TempDir;
 
 use super::support::*;
 use super::*;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
-use nimbus_sandbox::backends::oci::egress::PepPreAdoptionReleaseAuthority;
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority;
 
 const CRASH_CHILD_TEST: &str = "runtime::tests::egress_reload_recovery::egress_reload_crash_child";
 const RECOVERY_CHILD_TEST: &str =

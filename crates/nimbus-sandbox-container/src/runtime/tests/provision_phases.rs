@@ -1,7 +1,7 @@
 use super::support::*;
 use nimbus_network::{LocalPortLeaseAuthority, NetworkResourceGeneration, PortLeasePhase};
 use nimbus_process_harness::PortWindow;
-use nimbus_sandbox::backends::oci::network::default_network_attachment_id;
+use nimbus_sandbox_host::network::default_network_attachment_id;
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::net::{Ipv4Addr, Shutdown, TcpListener};
@@ -39,7 +39,7 @@ fn container_provision_activation_classifies_runtime_state() {
         ("unknown-provider-state", "ambiguous"),
     ] {
         manifest.conmon_launch.state_command =
-            nimbus_sandbox::backends::oci::command::CommandSpec::new("/bin/sh").args([
+            nimbus_sandbox_host::command::CommandSpec::new("/bin/sh").args([
                 "-c".to_owned(),
                 format!(
                     "printf '%s\\n' '{{\"id\":\"{}\",\"status\":\"{state}\"}}'",
@@ -101,7 +101,7 @@ fn seed_partial_reservation(
     if matches!(cut, ReservationCrashCut::AttachmentReserved) {
         return start.manifest;
     }
-    let internal = nimbus_sandbox::backends::oci::egress::egress_listener_reservation(&config)
+    let internal = nimbus_sandbox_host::egress::egress_listener_reservation(&config)
         .expect("partial reservation should compile its PEP listener");
     backend
         .port_lease_coordinator()
@@ -179,7 +179,7 @@ impl PlanOnlyMachineProvisionFixture {
         config.published_port_range = pep_port..=pep_port;
         config.machine_port_forwarder = Some(sample_forwarder(forwarder_port));
         let backend = ContainerSandboxBackend::new(config).with_egress_pin_provider(Arc::new(
-            nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider::ready(),
+            nimbus_sandbox_host::network::FixedOciEgressPinProvider::ready(),
         ));
         let id = SandboxId::new(format!("plan-only-machine-{name}"));
         let spec = sample_spec_for_tenant(
@@ -214,7 +214,7 @@ impl PlanOnlyMachineProvisionFixture {
         }
     }
 
-    fn forwarder(&self) -> nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig {
+    fn forwarder(&self) -> nimbus_sandbox_host::network::OciMachinePortForwarderConfig {
         self.backend
             .read_manifest(&self.id)
             .expect("manifest should read")
@@ -276,7 +276,7 @@ impl PlanOnlyMachineProvisionFixture {
         let dead_owner = std::mem::replace(&mut self.backend, placeholder);
         drop(dead_owner);
         self.backend = ContainerSandboxBackend::new(config).with_egress_pin_provider(Arc::new(
-            nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider::ready(),
+            nimbus_sandbox_host::network::FixedOciEgressPinProvider::ready(),
         ));
     }
 
@@ -981,11 +981,11 @@ fn machine_ingress_absence_requires_exact_never_effected_leases() {
         .authority()
         .expect("machine fixture authority should open");
     let (_claim, lifetime) =
-        nimbus_sandbox::backends::oci::port_lease::claim_bind_plan_member_attempt_with_lifetime(
+        nimbus_sandbox_host::port_lease::claim_bind_plan_member_attempt_with_lifetime(
             authority,
             &plan_members,
             &request,
-            nimbus_sandbox::backends::oci::port_lease::OciPortProvider::MachinePortProxy,
+            nimbus_sandbox_host::port_lease::OciPortProvider::MachinePortProxy,
             reservation_claim,
             nimbus_network::PortLeaseEffectScope::ProviderManaged,
         )
@@ -1139,7 +1139,7 @@ fn fresh_backend_inspects_absent_then_recovers_planned_pep_and_machine_listener(
             &fixture.id,
             &[assigned_ip],
             &manifest,
-            nimbus_sandbox::backends::oci::network::MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+            nimbus_sandbox_host::network::MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
                 reservation_claim,
                 plan_members: &plan_members,
             },
@@ -1178,7 +1178,7 @@ fn fresh_backend_inspects_absent_then_recovers_planned_pep_and_machine_listener(
 
     let contender = ContainerSandboxBackend::new(fixture.backend.config.clone())
         .with_egress_pin_provider(Arc::new(
-            nimbus_sandbox::backends::oci::network::FixedOciEgressPinProvider::ready(),
+            nimbus_sandbox_host::network::FixedOciEgressPinProvider::ready(),
         ));
     let before_contender = snapshot_files(fixture._root.path());
     let contender_error = contender
@@ -1186,7 +1186,7 @@ fn fresh_backend_inspects_absent_then_recovers_planned_pep_and_machine_listener(
             &fixture.id,
             &[assigned_ip],
             &manifest,
-            nimbus_sandbox::backends::oci::network::MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+            nimbus_sandbox_host::network::MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
                 reservation_claim,
                 plan_members: &plan_members,
             },

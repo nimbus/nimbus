@@ -8,9 +8,10 @@ use nimbus_network::{PortLeasePhase, PortLeaseRequest};
 
 use nimbus_sandbox::SandboxId;
 use nimbus_sandbox::SandboxPortBinding;
+use nimbus_sandbox::{Result, SandboxError};
 #[cfg(test)]
-use nimbus_sandbox::backends::oci::network::panicking_machine_port_proxy_for_test;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::panicking_machine_port_proxy_for_test;
+use nimbus_sandbox_host::network::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
     MachinePortPreparationReleaseAuthority, MachinePortProxyCleanupDisposition,
     MachinePortProxyCleanupState, MachinePortProxyEntry, MachinePortProxyKey,
@@ -18,8 +19,7 @@ use nimbus_sandbox::backends::oci::network::{
     machine_port_proxy_routes, prepare_machine_port_proxies_with_release_authority,
     start_machine_port_proxies_with_recovery,
 };
-use nimbus_sandbox::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
-use nimbus_sandbox::{Result, SandboxError};
+use nimbus_sandbox_host::port_lifecycle::OciPortLeaseCoordinator;
 
 use super::ContainerStartMode;
 use super::{ContainerSandboxBackend, ContainerSandboxManifest};
@@ -766,13 +766,11 @@ impl ContainerSandboxBackend {
             &manifest.port_leases,
         )?;
         if manifest.port_leases.is_empty()
-            && state == nimbus_sandbox::backends::oci::port_lifecycle::LaunchPortBatchState::TerminalNoEffect
+            && state == nimbus_sandbox_host::port_lifecycle::LaunchPortBatchState::TerminalNoEffect
         {
             return Ok(());
         }
-        if state
-            == nimbus_sandbox::backends::oci::port_lifecycle::LaunchPortBatchState::RestartRetained
-        {
+        if state == nimbus_sandbox_host::port_lifecycle::LaunchPortBatchState::RestartRetained {
             return Ok(());
         }
         Err(SandboxError::OperationFailed {
@@ -887,7 +885,7 @@ impl ContainerSandboxBackend {
                             id,
                             expected_port_bindings,
                             expected_port_leases,
-                        )? == nimbus_sandbox::backends::oci::port_lifecycle::LaunchPortBatchState::RestartRetained
+                        )? == nimbus_sandbox_host::port_lifecycle::LaunchPortBatchState::RestartRetained
                     {
                         return Ok(None);
                     }
@@ -1063,8 +1061,7 @@ impl ContainerSandboxBackend {
 
     fn lock_machine_port_proxy_registry(
         &self,
-    ) -> Result<MutexGuard<'_, nimbus_sandbox::backends::oci::network::MachinePortProxyEntries>>
-    {
+    ) -> Result<MutexGuard<'_, nimbus_sandbox_host::network::MachinePortProxyEntries>> {
         self.machine_port_proxies.lock()
     }
 

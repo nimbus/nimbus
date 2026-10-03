@@ -1,7 +1,7 @@
 use super::*;
 use nimbus_machine::MachineNetworkAuthorityRecord;
 use nimbus_network::LocalNetworkStateStore;
-use nimbus_sandbox_container::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 
 #[derive(Debug, Parser)]
 pub(super) struct RootCli {

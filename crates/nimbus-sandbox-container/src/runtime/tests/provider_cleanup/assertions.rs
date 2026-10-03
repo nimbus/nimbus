@@ -1,6 +1,6 @@
 //! Shared exact-authority assertions for provider-cleanup proofs.
 
-use nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 
 use super::*;
 

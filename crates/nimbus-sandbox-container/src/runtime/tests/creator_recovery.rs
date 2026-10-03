@@ -9,7 +9,7 @@ use crate::conmon::creator::{
     observe_creator_containment,
 };
 use crate::conmon::lifecycle::wait_for_path;
-use nimbus_sandbox::backends::oci::command::CommandSpec;
+use nimbus_sandbox_host::command::CommandSpec;
 
 use super::support::sample_spec;
 use super::*;

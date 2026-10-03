@@ -7,16 +7,14 @@
 use super::readiness::synchronize_handle_status;
 use super::*;
 use crate::ingress::{private_tsi_readiness_endpoints, private_tsi_upstream_port};
-use nimbus_sandbox::backends::oci::egress::{
-    EgressReadinessFailure, PepPreAdoptionReleaseAuthority,
-};
-use nimbus_sandbox::backends::oci::network::{
-    OciAttachmentBaseReadinessState, OciAttachmentReadinessFailure,
-};
 use nimbus_sandbox::backends::readiness_probe::inspect_application_readiness;
 use nimbus_sandbox::{
     ProvisionActivationObservationKind, ProvisionActivationRuntimeState,
     SandboxProvisionPhaseObservation, classify_provision_activation,
+};
+use nimbus_sandbox_host::egress::{EgressReadinessFailure, PepPreAdoptionReleaseAuthority};
+use nimbus_sandbox_host::network::{
+    OciAttachmentBaseReadinessState, OciAttachmentReadinessFailure,
 };
 
 fn phase_evidence(phase: &'static str, value: &impl Serialize) -> Result<Vec<u8>> {

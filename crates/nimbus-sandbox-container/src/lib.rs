@@ -7,9 +7,6 @@ mod state;
 #[doc(hidden)]
 pub mod test_hooks;
 
-pub use nimbus_sandbox::backends::oci::network::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
-};
 pub use runtime::{
     CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerHostTerminalEvidence,
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,

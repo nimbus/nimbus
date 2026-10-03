@@ -663,9 +663,7 @@ fn exposure_named_cut_child() {
             )
             .attach_with_test_host(
                 &backend.attachment_lifecycle(&ports),
-                nimbus_sandbox::backends::oci::network::AttachmentAttachAuthority::FreshLaunch(
-                    launch_claim,
-                ),
+                nimbus_sandbox_host::network::AttachmentAttachAuthority::FreshLaunch(launch_claim),
                 |assigned_ips| {
                     let mut observer = CrashAtPublicationCheckpoint::from_environment();
                     backend.ensure_machine_port_proxies_running_with_publication(

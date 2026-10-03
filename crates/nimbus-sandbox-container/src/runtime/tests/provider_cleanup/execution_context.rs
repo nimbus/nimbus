@@ -334,7 +334,7 @@ fn mounted_rootfs_cleanup_uses_manifest_buildah_context_after_config_drift() {
             &SandboxId::new("manifest-buildah-config-drift"),
             None,
             Some(ContainerLaunchArtifact::MountedRootfs(
-                nimbus_sandbox::backends::oci::buildah::MountedRootfsSession {
+                nimbus_sandbox_host::buildah::MountedRootfsSession {
                     session_name: "persisted-buildah-session".to_owned(),
                     image_reference: "example.invalid/test:latest".to_owned(),
                 },
@@ -405,7 +405,7 @@ fn pending_creator_retains_network_authority_despite_runtime_absence() {
         assert!(record.bind_claim().is_none() && record.binding().is_none());
     }
     assert!(
-        nimbus_sandbox::backends::oci::network::inspect_container_ips(
+        nimbus_sandbox_host::network::inspect_container_ips(
             &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,

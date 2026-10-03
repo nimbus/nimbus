@@ -9,13 +9,13 @@ use nimbus_network::{NetworkProviderHandle, NetworkResourceGeneration};
 use serde::Serialize;
 
 use crate::conmon::lifecycle::{RuntimeStateObservation, runtime_state};
-use nimbus_sandbox::backends::oci::egress::EgressReadinessFailure;
-use nimbus_sandbox::backends::oci::network::{
-    OciAttachmentBaseReadinessState, OciAttachmentReadinessFailure,
-};
 use nimbus_sandbox::{
     ProvisionActivationObservationKind, ProvisionActivationRuntimeState,
     classify_provision_activation,
+};
+use nimbus_sandbox_host::egress::EgressReadinessFailure;
+use nimbus_sandbox_host::network::{
+    OciAttachmentBaseReadinessState, OciAttachmentReadinessFailure,
 };
 
 use super::machine_port_publication::DurableMachinePortPublicationObservation;
@@ -849,7 +849,7 @@ impl ContainerSandboxBackend {
         network_plan: &SandboxProvisionNetworkPlan,
         provider_instance: &NetworkProviderHandle,
         provider_generation: NetworkResourceGeneration,
-    ) -> Result<&'a nimbus_sandbox::backends::oci::network::OciMachinePortForwarderConfig> {
+    ) -> Result<&'a nimbus_sandbox_host::network::OciMachinePortForwarderConfig> {
         self.validate_manifest_execution_context(manifest)?;
         manifest.require_lifecycle_coordinator(
             ContainerLifecycleCoordinator::PreparedServiceRunner,

@@ -20,14 +20,14 @@ use nimbus_sandbox::SandboxPortBinding;
 use nimbus_sandbox::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
 };
+use nimbus_sandbox::{Result, SandboxError};
 #[cfg(test)]
-use nimbus_sandbox::backends::oci::network::DeterministicMachinePortForwardingProvider;
-use nimbus_sandbox::backends::oci::network::{
+use nimbus_sandbox_host::network::DeterministicMachinePortForwardingProvider;
+use nimbus_sandbox_host::network::{
     AttachmentBackendKind, MachinePortForwardOutcome, MachinePortForwardReceipt,
     MachinePortForwardingProvider, MachinePortForwardingSlotObservation,
     OciMachinePortForwarderConfig, oci_attachment_plan,
 };
-use nimbus_sandbox::{Result, SandboxError};
 
 use super::{ContainerSandboxBackend, ContainerSandboxManifest};
 
@@ -690,7 +690,7 @@ impl ContainerSandboxBackend {
         let action = MachinePortPublicationAction::Withdraw;
         let state_root = &manifest.runner_config.workload_state_root;
         let state_dir = &manifest.conmon_layout.container_state_dir;
-        nimbus_sandbox::backends::oci::durable_directory::establish_durable_directory_chain_with(
+        nimbus_sandbox::durable_directory::establish_durable_directory_chain_with(
             state_root,
             state_dir,
             "machine port publication",
@@ -1373,7 +1373,7 @@ impl ContainerSandboxBackend {
     ) -> Result<Vec<MachinePortForwardReceipt>> {
         let state_root = &manifest.runner_config.workload_state_root;
         let state_dir = &manifest.conmon_layout.container_state_dir;
-        nimbus_sandbox::backends::oci::durable_directory::establish_durable_directory_chain_with(
+        nimbus_sandbox::durable_directory::establish_durable_directory_chain_with(
             state_root,
             state_dir,
             "machine port publication",
@@ -1553,7 +1553,7 @@ impl ContainerSandboxBackend {
 
 fn reject_provider_conflicts(
     expectation: &MachinePortPublicationExpectation,
-    observation: &nimbus_sandbox::backends::oci::network::CurrentMachinePortForwardingObservation,
+    observation: &nimbus_sandbox_host::network::CurrentMachinePortForwardingObservation,
 ) -> Result<()> {
     if let Some((index, detail)) = observation
         .slots()
@@ -1573,7 +1573,7 @@ fn persist_observed_progress(
     state_dir: &Path,
     record: &mut MachinePortPublicationRecord,
     action: MachinePortPublicationAction,
-    observation: &nimbus_sandbox::backends::oci::network::CurrentMachinePortForwardingObservation,
+    observation: &nimbus_sandbox_host::network::CurrentMachinePortForwardingObservation,
 ) -> Result<()> {
     let mut changed = false;
     for (index, slot) in observation.slots().iter().enumerate() {
@@ -1595,7 +1595,7 @@ fn persist_observed_progress(
 fn inspect_provider(
     provider: &impl MachinePortForwardingProvider,
     expectation: &MachinePortPublicationExpectation,
-) -> Result<nimbus_sandbox::backends::oci::network::CurrentMachinePortForwardingObservation> {
+) -> Result<nimbus_sandbox_host::network::CurrentMachinePortForwardingObservation> {
     let observation = provider.inspect(
         &expectation.tenant_id,
         &expectation.sandbox_id,
@@ -1708,7 +1708,7 @@ fn ambiguous_mutation_error(
     expectation: &MachinePortPublicationExpectation,
     action: MachinePortPublicationAction,
     index: usize,
-    diagnostic: Option<nimbus_sandbox::backends::oci::network::MachinePortMutationDiagnostic>,
+    diagnostic: Option<nimbus_sandbox_host::network::MachinePortMutationDiagnostic>,
     mutation_error: Option<&SandboxError>,
     inspection_error: SandboxError,
 ) -> SandboxError {

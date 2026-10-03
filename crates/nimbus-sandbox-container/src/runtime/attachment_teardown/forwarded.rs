@@ -15,7 +15,7 @@ use super::{
     ContainerSandboxBackend, ContainerSandboxManifest, NetworkTeardownAdapterError,
     NetworkTeardownComposition, OciMachinePortForwarderConfig,
 };
-use nimbus_sandbox::backends::oci::network::RetainedAttachmentPublicationEvidence;
+use nimbus_sandbox_host::network::RetainedAttachmentPublicationEvidence;
 
 const FORWARDED_PUBLICATION_ABSENCE_DOMAIN: &[u8] =
     b"nimbus.sandbox.container.forwarded-publication-absence.v1\0";

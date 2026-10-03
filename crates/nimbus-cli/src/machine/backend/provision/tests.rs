@@ -42,7 +42,7 @@ use nimbus_network::{
     PortLeaseEffectScope, PortLeaseFence, PortLeaseId, PortLeaseRequest,
 };
 use nimbus_sandbox::{SandboxBackendKind, SandboxInspection};
-use nimbus_sandbox_container::OciMachinePortForwarderConfig;
+use nimbus_sandbox_host::network::OciMachinePortForwarderConfig;
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutionReference,
