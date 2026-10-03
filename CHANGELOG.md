@@ -5,6 +5,175 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.49] - 2026-10-03
+
+### Security
+
+- **cli**: The macOS guest fallback verifies the SHA-256 digest of the Linux
+  release archive before it extracts the archive. A mismatch deletes the
+  archive and stops with a digest error. A build without an embedded digest
+  does not download the archive; set `NIMBUS_MACHINE_GUEST_BINARY` to use a
+  local guest binary. by @jackspirou in [#406](https://github.com/nimbus/nimbus/pull/406)
+- **cli**: The bootc switch and upgrade handlers bind the transport, image, and
+  tag values, so a value cannot become a command option. by @jackspirou in
+  [#347](https://github.com/nimbus/nimbus/pull/347)
+- **firebase**: Firestore reads and writes do not follow inherited `__proto__`
+  fields, so a field path cannot change `Object.prototype`. by @jackspirou in
+  [#345](https://github.com/nimbus/nimbus/pull/345)
+- **codegen**: Function-reference generation does not follow inherited
+  prototype fields. by @jackspirou in [#346](https://github.com/nimbus/nimbus/pull/346)
+- **object-store**: Remove the option that accepted invalid TLS certificates.
+  TLS certificate verification is always on. by @jackspirou in
+  [#350](https://github.com/nimbus/nimbus/pull/350)
+- **compute**: The deploy artifact store validates the bundle digest and each
+  manifest file name before it builds a path. by @jackspirou in
+  [#341](https://github.com/nimbus/nimbus/pull/341)
+- **runtime**: The filesystem canary requires a denial from each write,
+  parent-escape, and read probe, and creates its probe file exclusively with
+  owner-only permissions. by @jackspirou in [#348](https://github.com/nimbus/nimbus/pull/348)
+- **vmm**: Move the private crun runtime to v1.30.1-nimbus.2, which carries the
+  upstream fixes for CVE-2026-84042, CVE-2026-88264, and CVE-2026-88265. crun
+  loads libkrun from `/usr/libexec/nimbus/lib`, and `check-vmm-host` fails when
+  crun loads libkrun or libkrunfw from a different path. by @jackspirou in
+  [#403](https://github.com/nimbus/nimbus/pull/403) and [#426](https://github.com/nimbus/nimbus/pull/426)
+- **deps**: Move wasmtime to 48.0.5 on the 48 LTS line for RUSTSEC-2026-0316,
+  RUSTSEC-2026-0325, RUSTSEC-2026-0326, and RUSTSEC-2026-0327, and clear the
+  other new RustSec advisories. by @jackspirou in [#404](https://github.com/nimbus/nimbus/pull/404),
+  [#428](https://github.com/nimbus/nimbus/pull/428), and [#445](https://github.com/nimbus/nimbus/pull/445)
+- **build**: Pin the rusty_v8 archive and binding digests for every release
+  target. Before, only Linux x86_64 had a digest check. by @jackspirou in
+  [#400](https://github.com/nimbus/nimbus/pull/400)
+- **brotli**: The vendored Brotli FFI destructors read the allocator context
+  from the moved container. by @jackspirou in [#349](https://github.com/nimbus/nimbus/pull/349)
+
+### Added
+
+- **machine**: The macOS archive bundles pinned krunkit 1.3.2, libkrun, its GPU
+  libraries, and the EFI firmware in `libexec`. vfkit moves to 0.6.4.
+  `nimbus machine info` shows the resolved VMM path and its version. by
+  @jackspirou in [#436](https://github.com/nimbus/nimbus/pull/436)
+- **machine**: Pass `--nested` to krunkit on Apple M3 or later with macOS 15 or
+  later. The krunkit launch log tells whether the guest gets nested
+  virtualization. by @jackspirou in [#442](https://github.com/nimbus/nimbus/pull/442)
+- **server**: A request that matches no route returns `service.route_not_found`.
+  A route that cannot find its resource keeps its own not-found code. Each
+  request id that the server mints names the surface that minted it. by
+  @jackspirou in [#375](https://github.com/nimbus/nimbus/pull/375)
+- **nimbus-ui**: Add the shadcn design lint as a required gate for the
+  operator console. Tables grow to their panel width, forms use `Field`, and
+  toasts use the registry toast. by @jackspirou in [#369](https://github.com/nimbus/nimbus/pull/369),
+  [#372](https://github.com/nimbus/nimbus/pull/372), and [#373](https://github.com/nimbus/nimbus/pull/373)
+- **docs**: Rebuild nimbusdocs.com on fumadocs. The docs site, the console, and
+  the website share one mascot with six faces. The website opens with a splash
+  hero and has the install tabs in its last chapter. by @jackspirou in
+  [#351](https://github.com/nimbus/nimbus/pull/351), [#352](https://github.com/nimbus/nimbus/pull/352),
+  [#353](https://github.com/nimbus/nimbus/pull/353), [#354](https://github.com/nimbus/nimbus/pull/354),
+  [#363](https://github.com/nimbus/nimbus/pull/363), and [#381](https://github.com/nimbus/nimbus/pull/381)
+
+### Changed
+
+- **machine**: Machine helpers resolve only from the environment override or
+  the bundled `libexec` copy. Nimbus does not look for krunkit or vfkit in
+  Homebrew or Podman locations. by @jackspirou in [#436](https://github.com/nimbus/nimbus/pull/436)
+- **storage**: redb moves to 4, which reads and writes file format v3 only.
+  Nimbus does not migrate redb files that an earlier release wrote. by
+  @jackspirou in [#430](https://github.com/nimbus/nimbus/pull/430)
+- **storage**: Sandbox, network, machine, and harness records publish through
+  one crash-consistent record crate. It syncs directories, publishes files
+  atomically, and recovers a journal with a torn tail. by @jackspirou in
+  [#444](https://github.com/nimbus/nimbus/pull/444), [#446](https://github.com/nimbus/nimbus/pull/446),
+  and [#451](https://github.com/nimbus/nimbus/pull/451)
+- **runtime**: Move the Deno fork to v2.9.7-nimbus.1. by @jackspirou in
+  [#386](https://github.com/nimbus/nimbus/pull/386), [#389](https://github.com/nimbus/nimbus/pull/389),
+  [#390](https://github.com/nimbus/nimbus/pull/390), [#393](https://github.com/nimbus/nimbus/pull/393),
+  [#394](https://github.com/nimbus/nimbus/pull/394), [#395](https://github.com/nimbus/nimbus/pull/395),
+  and [#396](https://github.com/nimbus/nimbus/pull/396)
+- **runtime**: Move the node24 lane to v24.21.0 and the node26 lane to
+  v26.10.0. by @jackspirou in [#382](https://github.com/nimbus/nimbus/pull/382)
+- **vmm**: Move the libkrun fork to v1.19.6-nimbus.1. by @jackspirou in
+  [#424](https://github.com/nimbus/nimbus/pull/424)
+- **deps**: Move to hyper 1, reqwest 0.13 (rustls with the platform
+  verifier), tonic and prost 0.14, rand 0.10, Pingora 0.9.0, mysql_async
+  0.37.1, s3s 0.17, object_store 0.14.2, zip 8, toml 1.1, and oxc 0.152.
+  Replace serde_yaml with serde_yaml_ng, and remove fs2 and fjall. by
+  @jackspirou in [#405](https://github.com/nimbus/nimbus/pull/405), [#412](https://github.com/nimbus/nimbus/pull/412),
+  [#413](https://github.com/nimbus/nimbus/pull/413), [#425](https://github.com/nimbus/nimbus/pull/425),
+  [#435](https://github.com/nimbus/nimbus/pull/435), [#437](https://github.com/nimbus/nimbus/pull/437),
+  [#438](https://github.com/nimbus/nimbus/pull/438), and [#440](https://github.com/nimbus/nimbus/pull/440)
+- **workspace**: Split the sandbox backends into `nimbus-sandbox-krun`,
+  `nimbus-sandbox-container`, and `nimbus-sandbox-host`. Move the Convex host
+  into `nimbus-convex-host`, the Workers KV and Durable Object host into
+  `nimbus-cloudflare`, and the tenant isolation types into
+  `nimbus-tenant-context`. Engine and storage settings parse once into typed
+  configuration, and PostgreSQL and MySQL share their statements through one
+  SQL dialect. Remove the unused `nimbus-adapters` crate and the parked
+  broker, reconciler, and server shim code. Behavior does not change. by
+  @jackspirou in [#405](https://github.com/nimbus/nimbus/pull/405), [#409](https://github.com/nimbus/nimbus/pull/409),
+  [#410](https://github.com/nimbus/nimbus/pull/410), [#439](https://github.com/nimbus/nimbus/pull/439),
+  [#443](https://github.com/nimbus/nimbus/pull/443), [#447](https://github.com/nimbus/nimbus/pull/447),
+  [#448](https://github.com/nimbus/nimbus/pull/448), [#449](https://github.com/nimbus/nimbus/pull/449),
+  and [#450](https://github.com/nimbus/nimbus/pull/450)
+- **release**: The GitHub release publishes the reviewed `CHANGELOG.md` section
+  for its tag. by @jackspirou in [#343](https://github.com/nimbus/nimbus/pull/343)
+- **release**: Build machine-os on Fedora 44 with bootc-image-builder v84.0.0.
+  by @jackspirou in [#415](https://github.com/nimbus/nimbus/pull/415)
+- **npm**: The JS workspace requires Node 24 or 26 and npm 11.19.0, and uses
+  one TypeScript version. by @jackspirou in [#399](https://github.com/nimbus/nimbus/pull/399)
+- **ci**: Pin the Rust toolchain to 1.99.0, Node to 24, and every action to a
+  commit SHA. Gate the owned-source file size in `ci-required`. Assign every
+  workspace crate to a coverage shard. by @jackspirou in [#359](https://github.com/nimbus/nimbus/pull/359),
+  [#423](https://github.com/nimbus/nimbus/pull/423), and [#427](https://github.com/nimbus/nimbus/pull/427)
+
+### Fixed
+
+- **engine**: All single-document write paths prepare their write the same
+  way. An update and a journal delete keep their resource path bindings. by
+  @jackspirou in [#414](https://github.com/nimbus/nimbus/pull/414)
+- **engine**: Coverage widening continues when the trigger cursor lags behind
+  later commits. by @jackspirou in [#388](https://github.com/nimbus/nimbus/pull/388)
+- **engine**: A commit-fault test hook applies to one tenant only, and counts
+  its hit and decides its fault in one step. by @jackspirou in
+  [#379](https://github.com/nimbus/nimbus/pull/379) and [#380](https://github.com/nimbus/nimbus/pull/380)
+- **storage**: Documents keep the same field order on every storage backend.
+  by @jackspirou in [#408](https://github.com/nimbus/nimbus/pull/408)
+- **runtime**: The execution timeout, system timeout, and heap limit stop an
+  invocation whose event loop parks. by @jackspirou in [#361](https://github.com/nimbus/nimbus/pull/361)
+- **runtime**: Every isolate uses the one V8 platform, and a snapshot keeps its
+  callback buffers alive while it serializes. by @jackspirou in
+  [#364](https://github.com/nimbus/nimbus/pull/364) and [#365](https://github.com/nimbus/nimbus/pull/365)
+- **runtime**: A warm runtime reset drains all V8 housekeeping tasks. When a
+  reset fails, the runtime reports the reason. by @jackspirou in
+  [#390](https://github.com/nimbus/nimbus/pull/390) and [#392](https://github.com/nimbus/nimbus/pull/392)
+- **runtime**: Deno I/O errors such as `NotFound`, `AlreadyExists`, and
+  `AddrInUse` keep their error class in JavaScript. by @jackspirou in
+  [#383](https://github.com/nimbus/nimbus/pull/383)
+- **runtime**: Node compatibility: fix the macOS dual-stack port bind, the
+  Node 20 ArrayBuffer limit, the Diffie-Hellman key storage, the
+  `NODE_OPTIONS` parser, the process warning-policy flags,
+  `--preserve-symlinks` package search, and `process.features`, and close the
+  Node 20 through 26 required-surface gaps. by @jackspirou in
+  [#366](https://github.com/nimbus/nimbus/pull/366), [#368](https://github.com/nimbus/nimbus/pull/368),
+  [#371](https://github.com/nimbus/nimbus/pull/371), [#378](https://github.com/nimbus/nimbus/pull/378),
+  [#384](https://github.com/nimbus/nimbus/pull/384), [#385](https://github.com/nimbus/nimbus/pull/385),
+  [#386](https://github.com/nimbus/nimbus/pull/386), and [#387](https://github.com/nimbus/nimbus/pull/387)
+- **cli**: Both machine config readers reject an unsupported schema version
+  with one message and one remedy. by @jackspirou in [#375](https://github.com/nimbus/nimbus/pull/375)
+- **install**: Correct the Homebrew install and tap trust instructions, and
+  remove the extra `brew trust` and `--cask` steps. by @jackspirou in
+  [#344](https://github.com/nimbus/nimbus/pull/344), [#357](https://github.com/nimbus/nimbus/pull/357),
+  and [#358](https://github.com/nimbus/nimbus/pull/358)
+- **ci**: Make the Node Compatibility nightly measure each fixture one way on
+  its own lane, and keep upstream drift from discarding its evidence. by
+  @jackspirou in [#360](https://github.com/nimbus/nimbus/pull/360), [#362](https://github.com/nimbus/nimbus/pull/362),
+  and [#377](https://github.com/nimbus/nimbus/pull/377)
+- **ci**: Fix the Examples Verify cache restore, the partial Valkey checkout,
+  the container egress path filters, and the Rust 1.99 atomics deprecation.
+  by @jackspirou in [#367](https://github.com/nimbus/nimbus/pull/367), [#418](https://github.com/nimbus/nimbus/pull/418),
+  [#419](https://github.com/nimbus/nimbus/pull/419), and [#421](https://github.com/nimbus/nimbus/pull/421)
+- **testing**: Give the launcher tests their own configuration environment,
+  and report a macOS nextest leak instead of a failure. by @jackspirou in
+  [#342](https://github.com/nimbus/nimbus/pull/342) and [#374](https://github.com/nimbus/nimbus/pull/374)
+
 ## [0.1.48] - 2026-09-09
 
 ### Added
