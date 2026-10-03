@@ -283,7 +283,7 @@ pub fn inspect_runtime_process_identity(
 /// The caller must durably persist that this signal may exist before calling
 /// this function. No provider-command or workload state is written here.
 #[cfg(target_os = "linux")]
-pub(crate) fn signal_authenticated_runtime_process(
+pub fn signal_authenticated_runtime_process(
     identity: &RuntimeProcessIdentity,
     state_command: &CommandSpec,
     pidfile: &Path,
