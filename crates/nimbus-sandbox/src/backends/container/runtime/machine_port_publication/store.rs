@@ -1,11 +1,14 @@
 //! Atomic durable storage and cross-process serialization for machine port publication.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nimbus_durable_record::{
+    CleanupError, CleanupStep, StagedWrite, WriteCheckpoint, WriteError, WriteFailure, WriteStep,
+    sync_directory,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -153,63 +156,89 @@ fn publish_record_locked_with_observer(
     rendered.push(b'\n');
     let stage_path = state_dir.join(MACHINE_PORT_EVIDENCE_STAGE_FILE);
     let evidence_path = state_dir.join(MACHINE_PORT_EVIDENCE_FILE);
-    let publication = (|| -> Result<()> {
-        let mut stage = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&stage_path)
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to create staged machine port evidence {}: {error}",
-                    stage_path.display()
-                ),
-            })?;
-        stage
-            .write_all(&rendered)
-            .and_then(|()| stage.sync_all())
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to durably stage machine port evidence {}: {error}",
-                    stage_path.display()
-                ),
-            })?;
-        observer.checkpoint(MachinePortEvidenceStoreCheckpoint::StageDurable)?;
-        fs::rename(&stage_path, &evidence_path).map_err(|error| SandboxError::OperationFailed {
+    let mut checkpoint = |checkpoint: WriteCheckpoint| {
+        observer.checkpoint(match checkpoint {
+            WriteCheckpoint::StageDurable => MachinePortEvidenceStoreCheckpoint::StageDurable,
+            WriteCheckpoint::Committed => MachinePortEvidenceStoreCheckpoint::CanonicalRenamed,
+        })
+    };
+    StagedWrite::new(&stage_path, &evidence_path)
+        .observer(&mut checkpoint)
+        .write(&rendered)
+        .map_err(|error| publication_error(&stage_path, &evidence_path, error))
+}
+
+fn publication_error(
+    stage_path: &Path,
+    evidence_path: &Path,
+    error: WriteError<SandboxError>,
+) -> SandboxError {
+    let primary = match error.failure {
+        WriteFailure::Io {
+            step: WriteStep::CreateStage,
+            source,
+            ..
+        } => SandboxError::OperationFailed {
             message: format!(
-                "failed to atomically publish machine port evidence {}: {error}",
+                "failed to create staged machine port evidence {}: {source}",
+                stage_path.display()
+            ),
+        },
+        WriteFailure::Io {
+            step: WriteStep::WriteStage | WriteStep::SyncStage,
+            source,
+            ..
+        } => SandboxError::OperationFailed {
+            message: format!(
+                "failed to durably stage machine port evidence {}: {source}",
+                stage_path.display()
+            ),
+        },
+        WriteFailure::Io {
+            step: WriteStep::Commit,
+            source,
+            ..
+        } => SandboxError::OperationFailed {
+            message: format!(
+                "failed to atomically publish machine port evidence {}: {source}",
                 evidence_path.display()
             ),
-        })?;
-        observer.checkpoint(MachinePortEvidenceStoreCheckpoint::CanonicalRenamed)?;
-        sync_directory(state_dir).map_err(|error| SandboxError::OperationFailed {
+        },
+        WriteFailure::Io {
+            step: WriteStep::SyncDirectory,
+            source,
+            ..
+        } => SandboxError::OperationFailed {
             message: format!(
                 "machine port evidence {} reached its commit point but directory sync failed; \
-                 publication outcome is ambiguous: {error}",
+                 publication outcome is ambiguous: {source}",
                 evidence_path.display()
             ),
-        })
-    })();
-    if let Err(primary) = publication {
-        let cleanup = match remove_regular_file_if_present(&stage_path) {
-            Ok(true) => sync_directory(state_dir).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to durably clean staged machine port evidence {}: {error}",
-                    stage_path.display()
-                ),
-            }),
-            Ok(false) => Ok(()),
-            Err(error) => Err(error),
-        };
-        return match cleanup {
-            Ok(()) => Err(primary),
-            Err(cleanup) => Err(SandboxError::OperationFailed {
-                message: format!(
-                    "{primary}; staged machine port evidence cleanup also failed: {cleanup}"
-                ),
-            }),
-        };
+        },
+        WriteFailure::Observer { error, .. } => error,
+    };
+    let cleanup = match error.cleanup {
+        None => return primary,
+        Some(CleanupError {
+            step: CleanupStep::RemoveStage,
+            source,
+            ..
+        }) => format!(
+            "failed to remove machine port evidence {}: {source}",
+            stage_path.display()
+        ),
+        Some(CleanupError {
+            step: CleanupStep::SyncDirectory,
+            source,
+            ..
+        }) => format!(
+            "failed to durably clean staged machine port evidence {}: {source}",
+            stage_path.display()
+        ),
+    };
+    SandboxError::OperationFailed {
+        message: format!("{primary}; staged machine port evidence cleanup also failed: {cleanup}"),
     }
-    Ok(())
 }
 
 pub(super) fn read_record(state_dir: &Path) -> Result<MachinePortPublicationRecord> {
@@ -367,10 +396,6 @@ fn non_regular_entry(path: &Path) -> SandboxError {
             path.display()
         ),
     }
-}
-
-pub(super) fn sync_directory(path: &Path) -> std::io::Result<()> {
-    File::open(path)?.sync_all()
 }
 
 fn record_sha256(record: &MachinePortPublicationRecord) -> Result<String> {

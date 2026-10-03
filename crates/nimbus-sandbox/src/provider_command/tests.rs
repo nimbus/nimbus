@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
