@@ -19,18 +19,18 @@ use crate::backends::readiness_probe::SocketReadinessProbeProvider;
 use super::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 
 impl ContainerSandboxBackend {
-    #[cfg(test)]
-    pub(crate) fn segment_allocator_handle_for_test(&self) -> Arc<OciSegmentAllocator> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn segment_allocator_handle_for_test(&self) -> Arc<OciSegmentAllocator> {
         Arc::clone(&self.segment_allocator)
     }
 
-    #[cfg(test)]
-    pub(crate) fn egress_registry_handle_for_test(&self) -> EgressProxyRegistry {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn egress_registry_handle_for_test(&self) -> EgressProxyRegistry {
         self.egress_proxies.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn netavark_port_lifetimes_handle_for_test(&self) -> NetavarkPortLifetimeRegistry {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn netavark_port_lifetimes_handle_for_test(&self) -> NetavarkPortLifetimeRegistry {
         self.netavark_port_lifetimes.clone()
     }
 

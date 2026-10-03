@@ -1,15 +1,15 @@
-pub(crate) mod buildah;
-pub(crate) mod builder;
-pub(crate) mod command;
-pub(crate) mod conmon;
-pub(crate) mod durable_directory;
-pub(crate) mod egress;
-pub(crate) mod hardening;
-pub(crate) mod materializer;
-pub(crate) mod network;
-pub(crate) mod port_lease;
-pub(crate) mod port_lifecycle;
-pub(crate) mod resource_quota;
+pub mod buildah;
+pub mod builder;
+pub mod command;
+pub mod conmon;
+pub mod durable_directory;
+pub mod egress;
+pub mod hardening;
+pub mod materializer;
+pub mod network;
+pub mod port_lease;
+pub mod port_lifecycle;
+pub mod resource_quota;
 
 /// Deserialize an explicitly present nullable field.
 ///

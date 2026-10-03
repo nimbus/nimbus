@@ -83,11 +83,7 @@ impl ReleasePublicationComposition {
     }
 }
 
-pub(crate) struct AttachmentReleaseActions<
-    RequirePublicationAbsent,
-    ReleaseListeners,
-    ReleaseAuxiliary,
-> {
+pub struct AttachmentReleaseActions<RequirePublicationAbsent, ReleaseListeners, ReleaseAuxiliary> {
     require_publication_absent: RequirePublicationAbsent,
     release_listeners: ReleaseListeners,
     release_auxiliary: ReleaseAuxiliary,
@@ -136,7 +132,7 @@ impl OciAttachmentAdapter<'_> {
 
     /// Release attachment-owned authority while the separately owned
     /// publication remains authenticated as exact terminal lease evidence.
-    pub(crate) fn release_deferred_detached(
+    pub fn release_deferred_detached(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,

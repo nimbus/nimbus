@@ -75,7 +75,7 @@ pub(crate) fn reconcile_startup_network_state_with_retained_desired_manifests(
 
 /// Apply exact startup quarantine, then offer only proven effectful orphans to
 /// a backend-owned cleanup-context adapter.
-pub(crate) fn reconcile_startup_network_state_with_cleanup(
+pub fn reconcile_startup_network_state_with_cleanup(
     workload_state_root: &Path,
     attachments: &LocalNetworkAttachmentAuthority,
     ipam: &OciIpamAuthority,

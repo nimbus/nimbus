@@ -474,7 +474,7 @@ impl OciAttachmentLifecycle<'_> {
 impl OciAttachmentAdapter<'_> {
     /// Prove an exact Active private attachment plus a dead planned PEP owner
     /// without acquiring durable recovery authority or performing effects.
-    pub(crate) fn authenticate_active_deferred_pep_recovery(
+    pub fn authenticate_active_deferred_pep_recovery(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
     ) -> Result<()> {

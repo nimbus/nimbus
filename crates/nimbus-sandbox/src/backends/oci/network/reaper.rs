@@ -23,7 +23,7 @@ use super::{
 
 /// Exact retained authorities and identities for one never-realized launch.
 #[derive(Clone, Copy)]
-pub(crate) struct ReservedNetworkLaunchIdentity<'a> {
+pub struct ReservedNetworkLaunchIdentity<'a> {
     layout: &'a OciNetworkLayout,
     tenant_id: &'a TenantId,
     sandbox_id: &'a SandboxId,
@@ -32,7 +32,7 @@ pub(crate) struct ReservedNetworkLaunchIdentity<'a> {
 }
 
 impl<'a> ReservedNetworkLaunchIdentity<'a> {
-    pub(crate) fn new(
+    pub fn new(
         layout: &'a OciNetworkLayout,
         tenant_id: &'a TenantId,
         sandbox_id: &'a SandboxId,
@@ -55,7 +55,7 @@ impl<'a> ReservedNetworkLaunchIdentity<'a> {
 
 /// Portable authority plus the exact launch identity needed for compensation.
 #[derive(Clone, Copy)]
-pub(crate) struct ReservedNetworkLaunchAuthority<'a> {
+pub struct ReservedNetworkLaunchAuthority<'a> {
     allocator: &'a OciSegmentAllocator,
     ipam_authority: &'a OciIpamAuthority,
     layout: &'a OciNetworkLayout,
@@ -67,7 +67,7 @@ pub(crate) struct ReservedNetworkLaunchAuthority<'a> {
 }
 
 impl<'a> ReservedNetworkLaunchAuthority<'a> {
-    pub(crate) fn new(
+    pub fn new(
         allocator: &'a OciSegmentAllocator,
         ipam_authority: &'a OciIpamAuthority,
         identity: ReservedNetworkLaunchIdentity<'a>,
@@ -97,7 +97,7 @@ pub(crate) fn reap_bridge_interface(interface: &str) -> Result<()> {
 ///
 /// The hold remains authoritative until the caller has confirmed provider and
 /// persistent-netns deletion, then calls [`release_network_segment_hold`].
-pub(crate) fn quarantine_network_segment_hold(
+pub fn quarantine_network_segment_hold(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
     attachment_id: &NetworkAttachmentId,
@@ -109,7 +109,7 @@ pub(crate) fn quarantine_network_segment_hold(
 /// Drop one quarantined sandbox hold after provider/netns deletion, reap every
 /// bridge returned when the tenant drains, then finalize the exact allocation.
 /// Any failed bridge deletion leaves durable cleanup-pending authority intact.
-pub(crate) fn release_network_segment_hold(
+pub fn release_network_segment_hold(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
     attachment_id: &NetworkAttachmentId,
@@ -159,7 +159,7 @@ pub(crate) fn compensate_reserved_network_launch_without_effect(
 /// A failed or ambiguous port release retains IPAM and segment authority as a
 /// deliberate safe leak; releasing later resources would let another launch
 /// reuse connectivity beneath still-fenced listeners.
-pub(crate) fn compensate_reserved_network_launch_after_ports(
+pub fn compensate_reserved_network_launch_after_ports(
     authority: ReservedNetworkLaunchAuthority<'_>,
     planning_error: SandboxError,
     port_compensation: Result<()>,
@@ -180,7 +180,7 @@ pub(crate) fn compensate_reserved_network_launch_after_ports(
 /// The caller supplies the complete port compensation result. A failure stops
 /// before IPAM or segment mutation and explicitly records that those later
 /// resources remain fenced.
-pub(crate) fn release_reserved_network_launch_after_ports(
+pub fn release_reserved_network_launch_after_ports(
     authority: ReservedNetworkLaunchAuthority<'_>,
     port_compensation: Result<()>,
 ) -> Result<()> {
@@ -197,7 +197,7 @@ pub(crate) fn release_reserved_network_launch_after_ports(
 /// The callback runs only after ports, IPAM, and segment authority are
 /// terminal. If publication fails or its outcome is ambiguous, the terminal
 /// IPAM witness remains as exact startup-reconciliation evidence.
-pub(crate) fn release_reserved_network_launch_after_ports_with_terminal_publication(
+pub fn release_reserved_network_launch_after_ports_with_terminal_publication(
     authority: ReservedNetworkLaunchAuthority<'_>,
     port_compensation: Result<()>,
     publish_terminal: impl FnOnce() -> Result<()>,

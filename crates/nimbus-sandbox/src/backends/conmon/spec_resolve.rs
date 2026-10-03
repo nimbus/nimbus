@@ -1,6 +1,6 @@
 use crate::spec::{SandboxProcessSpec, SandboxRootSpec, SandboxRootfsSpec};
 
-pub(crate) fn slugify(name: &str) -> String {
+pub fn slugify(name: &str) -> String {
     let mut slug = String::with_capacity(name.len());
     for character in name.chars() {
         if character.is_ascii_alphanumeric() {
@@ -12,10 +12,7 @@ pub(crate) fn slugify(name: &str) -> String {
     slug.trim_matches('-').to_owned()
 }
 
-pub(crate) fn resolve_root_spec(
-    root: &SandboxRootSpec,
-    defaults: &SandboxRootfsSpec,
-) -> SandboxRootSpec {
+pub fn resolve_root_spec(root: &SandboxRootSpec, defaults: &SandboxRootfsSpec) -> SandboxRootSpec {
     match root {
         SandboxRootSpec::Rootfs(rootfs) if !rootfs.is_unspecified() => {
             SandboxRootSpec::Rootfs(rootfs.clone())
@@ -29,7 +26,7 @@ pub(crate) fn resolve_root_spec(
     }
 }
 
-pub(crate) fn resolve_process_spec(
+pub fn resolve_process_spec(
     spec: &SandboxProcessSpec,
     defaults: &SandboxProcessSpec,
 ) -> SandboxProcessSpec {
@@ -53,7 +50,7 @@ pub(crate) fn resolve_process_spec(
     resolved
 }
 
-pub(crate) fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
+pub fn merge_env_overrides(base: &[String], overrides: &[String]) -> Vec<String> {
     let mut merged = base.to_vec();
     for override_entry in overrides {
         let Some(override_key) = env_key(override_entry) else {

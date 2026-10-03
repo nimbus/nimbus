@@ -29,11 +29,12 @@ use crate::backends::oci::port_lease::{
     record_plan_member_bind_failure_with_lifetime, release_reserved_batch_without_effect,
     require_active_provider_binding, require_current_listener_authority, target_for_ip,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::backends::oci::port_lease::{
-    OciPortLeaseIntent, adopt_claimed_and_activate, claim_bind_attempts, port_lease_request,
-    reserve_provider_assigned,
+    OciPortLeaseIntent, port_lease_request, reserve_provider_assigned,
 };
+#[cfg(test)]
+use crate::backends::oci::port_lease::{adopt_claimed_and_activate, claim_bind_attempts};
 #[cfg(test)]
 use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::error::{Result, SandboxError};
@@ -57,7 +58,7 @@ use nimbus_proxy::{
     RetainedFailedRegistration, WorkloadPepConfig, WorkloadPepTlsAuthority,
     fan_out_decision_loggers, tenant_decision_counter_sink,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use nimbus_proxy::{WorkloadPep, WorkloadPepReadiness};
 
 mod cleanup;
@@ -65,18 +66,16 @@ use cleanup::PepCleanupProgress;
 mod process;
 pub(crate) use process::EgressProxyProcess;
 mod readiness;
-pub(crate) use readiness::{
-    EgressReadinessFailure, EgressReadinessState, EgressReloadAttachmentState,
-};
+pub use readiness::{EgressReadinessFailure, EgressReadinessState, EgressReloadAttachmentState};
 mod assignment;
-pub(crate) use assignment::{
+pub use assignment::{
     EgressProxyAssignment, egress_listener_reservation, egress_proxy_assignment,
     ensure_egress_proxy_running, ensure_egress_proxy_running_with_release_authority,
 };
-#[cfg(test)]
-pub(crate) use assignment::{allocate_egress_proxy, egress_proxy_assignment_for_test};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use assignment::{allocate_egress_proxy, egress_proxy_assignment_for_test};
 mod reload;
-pub(crate) use reload::EgressPolicyReloadState;
+pub use reload::EgressPolicyReloadState;
 
 /// Registry of running per-sandbox egress proxies, shared by every sandbox
 /// backend. Cloning shares the underlying registry (it is `Arc`-backed), so a
@@ -92,7 +91,7 @@ pub(crate) use reload::EgressPolicyReloadState;
 /// published CA file still lives in the same registry entry (under one lock)
 /// as the PEP it belongs to.
 #[derive(Clone)]
-pub(crate) struct EgressProxyRegistry {
+pub struct EgressProxyRegistry {
     engine: Arc<EgressEngine<RegisteredArtifacts>>,
     decision_log_root: Arc<PathBuf>,
     trust_anchor_root: Arc<PathBuf>,
@@ -144,7 +143,7 @@ enum PepPreAdoptionAttempt<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PepPreAdoptionReleaseAuthority<'a> {
+pub enum PepPreAdoptionReleaseAuthority<'a> {
     Retain,
     FreshLaunch(&'a NetworkReservationClaim),
     FreshPlannedLaunch {
@@ -292,7 +291,7 @@ impl EgressProxyRegistry {
         )
     }
 
-    pub(crate) fn with_roots_and_port_authority(
+    pub fn with_roots_and_port_authority(
         decision_log_root: impl Into<PathBuf>,
         trust_anchor_root: impl Into<PathBuf>,
         network_state_root: impl Into<PathBuf>,
@@ -754,7 +753,7 @@ impl EgressProxyRegistry {
     /// Idempotent: a no-op if a proxy is already registered for `id`.
     /// Fail-closed: a policy compile error or proxy start error returns `Err`
     /// and registers nothing — callers must treat that as deny.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn ensure_running_with_lease(
         &self,
         tenant_id: &TenantId,
@@ -1240,8 +1239,8 @@ impl EgressProxyRegistry {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn ensure_running(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ensure_running(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
@@ -1269,8 +1268,8 @@ impl EgressProxyRegistry {
     /// active-policy state otherwise. A readiness gate must require both that a
     /// proxy is registered AND that its `WorkloadPepReadiness` reports an active
     /// policy generation before permitting a workload to launch.
-    #[cfg(test)]
-    pub(crate) fn readiness(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn readiness(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
@@ -1284,8 +1283,8 @@ impl EgressProxyRegistry {
     }
 
     /// True if a PEP is currently registered for `id`.
-    #[cfg(test)]
-    pub(crate) fn contains(&self, tenant_id: &TenantId, id: &SandboxId) -> Result<bool> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn contains(&self, tenant_id: &TenantId, id: &SandboxId) -> Result<bool> {
         let workload_id = Self::workload_id(tenant_id, id)?;
         self.engine
             .contains(&workload_id)
@@ -1304,21 +1303,13 @@ impl EgressProxyRegistry {
             .map_err(egress_proxy_error)
     }
 
-    #[cfg(test)]
-    pub(crate) fn decision_log_path_for_test(
-        &self,
-        tenant_id: &TenantId,
-        id: &SandboxId,
-    ) -> PathBuf {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn decision_log_path_for_test(&self, tenant_id: &TenantId, id: &SandboxId) -> PathBuf {
         self.decision_log_path(tenant_id, id)
     }
 
-    #[cfg(test)]
-    pub(crate) fn trust_anchor_path_for_test(
-        &self,
-        tenant_id: &TenantId,
-        id: &SandboxId,
-    ) -> PathBuf {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn trust_anchor_path_for_test(&self, tenant_id: &TenantId, id: &SandboxId) -> PathBuf {
         self.trust_anchor_path(tenant_id, id)
     }
 
@@ -1353,8 +1344,8 @@ impl EgressProxyRegistry {
     /// gate can be exercised against a not-ready (policy-less) PEP without a
     /// live VMM. Production code only ever registers a PEP through
     /// [`EgressProxyRegistry::ensure_running`], which always loads a policy.
-    #[cfg(test)]
-    pub(crate) fn insert_running_for_test(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn insert_running_for_test(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,
@@ -1409,11 +1400,11 @@ impl EgressProxyRegistry {
     }
 }
 
-pub(crate) fn egress_decision_log_root(state_root: &Path) -> PathBuf {
+pub fn egress_decision_log_root(state_root: &Path) -> PathBuf {
     state_root.join("egress-decision-logs")
 }
 
-pub(crate) fn egress_trust_anchor_root(state_root: &Path) -> PathBuf {
+pub fn egress_trust_anchor_root(state_root: &Path) -> PathBuf {
     state_root.join("egress-trust-anchors")
 }
 
@@ -1423,12 +1414,12 @@ const EGRESS_TRUST_ANCHOR_PLACEHOLDER: &str =
     "# Nimbus egress trust anchor placeholder; overwritten before launch\n";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EgressTrustAnchorMount {
-    pub(crate) host_path: PathBuf,
-    pub(crate) guest_path: String,
+pub struct EgressTrustAnchorMount {
+    pub host_path: PathBuf,
+    pub guest_path: String,
 }
 
-pub(crate) fn egress_trust_anchor_mount(
+pub fn egress_trust_anchor_mount(
     state_root: &Path,
     tenant_id: &TenantId,
     id: &SandboxId,
@@ -1650,7 +1641,7 @@ pub(crate) fn egress_proxy_error(error: EgressProxyError) -> SandboxError {
 /// microVM backend call this one helper instead of forking the env shape. The
 /// caller is responsible for first scrubbing `EGRESS_RESERVED_ENV_KEYS` so a
 /// tenant-supplied proxy override can never survive into the launched workload.
-pub(crate) fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
+pub fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
     [
         (EGRESS_PROXY_URL_ENV, egress_proxy_url),
         ("HTTP_PROXY", egress_proxy_url),
@@ -1669,7 +1660,7 @@ pub(crate) fn egress_proxy_env_entries(egress_proxy_url: &str) -> Vec<String> {
 
 /// Build trust-anchor env entries for workloads that are routed through a
 /// host-side PEP capable of selective HTTPS interception.
-pub(crate) fn egress_trust_anchor_env_entries(guest_path: &str) -> Vec<String> {
+pub fn egress_trust_anchor_env_entries(guest_path: &str) -> Vec<String> {
     [
         (EGRESS_CA_BUNDLE_ENV, guest_path),
         (EGRESS_NODE_EXTRA_CA_CERTS_ENV, guest_path),
@@ -1694,7 +1685,7 @@ fn env_key(entry: &str) -> Option<&str> {
 /// MUST scrub before injecting the PEP env so the two halves can never be
 /// half-applied. Defined here once so both backends call the same scrub.
 /// (egress audit L11.)
-pub(crate) fn scrub_reserved_egress_env(env: &mut Vec<String>) {
+pub fn scrub_reserved_egress_env(env: &mut Vec<String>) {
     env.retain(|entry| env_key(entry).is_none_or(|key| !EGRESS_RESERVED_ENV_KEYS.contains(&key)));
 }
 

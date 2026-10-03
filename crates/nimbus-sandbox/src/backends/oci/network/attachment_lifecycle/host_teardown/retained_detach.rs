@@ -68,7 +68,7 @@ impl OciAttachmentAdapter<'_> {
 
     /// Detach a private attachment whose separately owned publication has
     /// already reached exact terminal port-lease state.
-    pub(crate) fn detach_deferred_retained(
+    pub fn detach_deferred_retained(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,
@@ -101,7 +101,7 @@ impl OciAttachmentAdapter<'_> {
 
     /// Confirm no private attachment effect while separately owned publication
     /// is already terminal under its own durable lease authority.
-    pub(crate) fn detach_deferred_never_effected_retained(
+    pub fn detach_deferred_never_effected_retained(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,

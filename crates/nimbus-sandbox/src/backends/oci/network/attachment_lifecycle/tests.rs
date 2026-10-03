@@ -14,7 +14,6 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::backends::container::ContainerSandboxBackend;
-use crate::backends::krun::KrunSandboxBackend;
 use crate::backends::oci::network::ipam::inspect_netavark_provider_operation;
 use crate::backends::oci::network::netavark::{
     PreparedNetavarkSetup, PreparedNetavarkTeardown,
@@ -51,6 +50,13 @@ mod real_adapters;
 
 use authority::stale_provenance_fails_before_effects;
 
+/// Stands in for the Krun backend, which implements only the host-managed attachment defaults.
+struct KrunAttachmentBackend;
+
+impl OciHostManagedAttachmentBackend for KrunAttachmentBackend {
+    const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Krun;
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ContractBackend {
     Container,
@@ -78,7 +84,7 @@ impl ContractBackend {
                 <ContainerSandboxBackend as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(input)
             }
             Self::Krun => {
-                <KrunSandboxBackend as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(input)
+                <KrunAttachmentBackend as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(input)
             }
         }
     }
@@ -107,7 +113,7 @@ impl ContractBackend {
                 )
             }
             Self::Krun => {
-                <KrunSandboxBackend as OciHostManagedAttachmentBackend>::reserve_attachment_config(
+                <KrunAttachmentBackend as OciHostManagedAttachmentBackend>::reserve_attachment_config(
                     lifecycle,
                     tenant_id,
                     layout,
@@ -1304,7 +1310,7 @@ fn machine_forwarding_capability_is_explicit(backend: ContractBackend) {
             )
         }
         ContractBackend::Krun => {
-            <KrunSandboxBackend as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(
+            <KrunAttachmentBackend as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(
                 input,
             )
         }

@@ -2,11 +2,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
-use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_sandbox::{
     ProviderCommandClaim, ProviderCommandClaimDecision, ProviderCommandClaimInput,
     ProviderCommandObservationKind, SandboxBackendKind,
 };
+use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_workloads::{
     WorkloadExecutionProviderId, WorkloadOwnerEvidenceDigest, WorkloadSagaPhase,
     WorkloadSagaRecord, WorkloadTeardownProviderTarget,

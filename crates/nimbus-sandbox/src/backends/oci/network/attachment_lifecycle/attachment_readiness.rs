@@ -22,7 +22,7 @@ use crate::backends::oci::egress::{
 /// Exact portable evidence emitted only after every sandbox-private facet is
 /// authenticated.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OciAttachmentReadinessEvidence {
+pub struct OciAttachmentReadinessEvidence {
     observation: NetworkObservation,
     assigned_ips: Vec<Ipv4Addr>,
 }
@@ -33,7 +33,7 @@ pub(crate) struct OciAttachmentReadinessEvidence {
 /// This cannot be converted into a portable Ready observation without the
 /// host-managed or machine-forwarded completion owned by the selected mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OciAttachmentBaseReadinessEvidence {
+pub struct OciAttachmentBaseReadinessEvidence {
     tenant_id: nimbus_core::TenantId,
     sandbox_id: crate::instance::SandboxId,
     version: NetworkResourceVersion,
@@ -42,7 +42,7 @@ pub(crate) struct OciAttachmentBaseReadinessEvidence {
 }
 
 impl OciAttachmentBaseReadinessEvidence {
-    pub(crate) fn assigned_ips(&self) -> &[Ipv4Addr] {
+    pub fn assigned_ips(&self) -> &[Ipv4Addr] {
         &self.assigned_ips
     }
 }
@@ -62,7 +62,7 @@ impl OciAttachmentReadinessEvidence {
 /// Closed fail-closed reason that complete attachment readiness cannot be
 /// emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum OciAttachmentReadinessFailure {
+pub enum OciAttachmentReadinessFailure {
     UnsupportedPublicationMode,
     InvalidContext(String),
     MissingDurableAuthority,
@@ -81,14 +81,14 @@ pub(crate) enum OciAttachmentReadinessFailure {
 /// One exact complete observation or one named missing/conflicting/unknown
 /// facet. There is deliberately no partial-ready state.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum OciAttachmentReadinessState {
+pub enum OciAttachmentReadinessState {
     Ready(OciAttachmentReadinessEvidence),
     NotReady(OciAttachmentReadinessFailure),
 }
 
 /// Common evidence is intentionally not a complete readiness state.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum OciAttachmentBaseReadinessState {
+pub enum OciAttachmentBaseReadinessState {
     Ready(OciAttachmentBaseReadinessEvidence),
     NotReady(OciAttachmentReadinessFailure),
 }

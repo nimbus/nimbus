@@ -10,7 +10,8 @@ Nimbus runs untrusted, process-shaped workloads inside **sandboxes** — isolate
 Linux execution environments owned by a tenant. On hosts that are not Linux,
 Nimbus first boots a **machine**: a single outer Linux VM that supplies the
 kernel features sandboxes need. This page tours the crates that implement both
-layers: `crates/nimbus-sandbox` (the sandbox seam and its backends) and
+layers: `crates/nimbus-sandbox` (the sandbox seam and its backends),
+`crates/nimbus-sandbox-krun` (the krun backend), and
 `crates/nimbus-machine` plus the `nimbus machine` CLI flow in
 `crates/nimbus-cli/src/machine/`.
 
@@ -54,14 +55,14 @@ enforces network policy through the `SandboxEgressProxy` described below.
 
 ## The krun backend runs microVMs with enforced egress
 
-The krun backend (`crates/nimbus-sandbox/src/backends/krun/`) targets libkrun
+The krun backend (`crates/nimbus-sandbox-krun/src/`) targets libkrun
 microVMs on Linux KVM hosts. Its launch planning is real — image
 materialization, rootfs assembly, and guest configuration all work in
 `KrunStartMode::PlanOnly` — and `KrunStartMode::Execute` launches the microVM.
 Before the VMM starts, execute-mode launch stands up a deny-by-default network
 namespace and pins the guest's egress to the sandbox's own host-side proxy
 (`create_persistent_network_namespace` and `pin_netns_egress_to_own_proxy` in
-`crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs`), so a running guest
+`crates/nimbus-sandbox-krun/src/vm/lifecycle.rs`), so a running guest
 reaches the network only through the same policy-enforcing path as a container.
 This is the default backend for services run through `nimbus compose`.
 

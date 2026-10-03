@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use nimbus_core::TenantId;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use nimbus_network::NetworkSegmentId;
 use nimbus_network::{NetworkAttachmentId, NetworkPlan, NetworkReservationClaim};
 use serde::{Deserialize, Serialize};
@@ -17,14 +17,14 @@ use crate::instance::SandboxId;
 use super::DEFAULT_NETWORK_ID;
 use super::ipam::{parse_ipv4_address, parse_ipv4_subnet_and_gateway};
 use super::provider_locator::OciAttachmentProviderKind;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OciNetworkLayout {
+pub struct OciNetworkLayout {
     /// Backend-local root containing manifests and provider artifacts.
     pub workload_state_root: PathBuf,
     /// Node-local root containing the single network control-plane authority.
@@ -41,8 +41,8 @@ pub(crate) struct OciNetworkLayout {
 
 impl OciNetworkLayout {
     /// Deterministic test layout whose workload and network roots match.
-    #[cfg(test)]
-    pub(crate) fn under_root(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn under_root(
         state_root: impl Into<PathBuf>,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -52,7 +52,7 @@ impl OciNetworkLayout {
     }
 
     /// Layout with explicit backend-local artifacts and node network authority.
-    pub(crate) fn with_roots(
+    pub fn with_roots(
         workload_state_root: impl Into<PathBuf>,
         network_state_root: impl Into<PathBuf>,
         tenant_id: &TenantId,
@@ -77,7 +77,7 @@ impl OciNetworkLayout {
         }
     }
 
-    pub(crate) fn ensure_directories(&self) -> Result<()> {
+    pub fn ensure_directories(&self) -> Result<()> {
         for path in [
             &self.run_root,
             &self.netns_root,
@@ -94,7 +94,7 @@ impl OciNetworkLayout {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OciNetworkConfig {
+pub struct OciNetworkConfig {
     /// Exact compiler-selected attachment identity. Provider realization must
     /// never replace this with a `SandboxId`-derived authority key.
     pub attachment_id: NetworkAttachmentId,
@@ -140,12 +140,12 @@ pub(crate) struct OciNetworkConfig {
 }
 
 impl OciNetworkConfig {
-    pub(crate) const fn provider_kind(&self) -> OciAttachmentProviderKind {
+    pub const fn provider_kind(&self) -> OciAttachmentProviderKind {
         self.provider_kind
     }
 
-    #[cfg(test)]
-    pub(crate) fn provider_kind_label(&self) -> &'static str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn provider_kind_label(&self) -> &'static str {
         match self.provider_kind {
             OciAttachmentProviderKind::Container => "container",
             OciAttachmentProviderKind::Krun => "krun",
@@ -161,7 +161,7 @@ pub(super) fn default_network_id() -> String {
     DEFAULT_NETWORK_ID.to_owned()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Default for OciNetworkConfig {
     fn default() -> Self {
         Self {
@@ -185,7 +185,7 @@ impl Default for OciNetworkConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum OciNetworkDirectEgress {
+pub enum OciNetworkDirectEgress {
     Allow,
     Deny,
 }
@@ -203,7 +203,7 @@ impl OciNetworkDirectEgress {
     }
 }
 
-pub(crate) fn bridge_gateway_addr(config: &OciNetworkConfig) -> Result<Ipv4Addr> {
+pub fn bridge_gateway_addr(config: &OciNetworkConfig) -> Result<Ipv4Addr> {
     let (_, gateway) = parse_ipv4_subnet_and_gateway(&config.network_subnet)?;
     parse_ipv4_address(&gateway)
 }

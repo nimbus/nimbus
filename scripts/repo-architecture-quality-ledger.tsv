@@ -127,9 +127,9 @@ large_file	crates/nimbus-sandbox/src/backends/container/runtime/runner.rs	review
 large_file	crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs	review	sandbox	Durable machine port publication state machine that journals each ambiguous per-binding effect; the store is already a child.
 large_file	crates/nimbus-sandbox/src/backends/container/runtime/planning.rs	review	sandbox	Container planning suite owns manifest persistence, network config, and exact-claim ordering cases.
 large_file	crates/nimbus-sandbox/src/backends/container/runtime/restart.rs	review	sandbox	Coordinator-issued, attempt-fenced container restart phases; provider effects only, with tests in a child.
-large_file	crates/nimbus-sandbox/src/backends/krun/bundle.rs	review	sandbox	Krun bundle layout, mounts, process user, and OCI config construction with its contract tests.
-large_file	crates/nimbus-sandbox/src/backends/krun/vm/teardown/tests.rs	review	sandbox	Krun execution teardown suite; fresh-process and network-teardown cases are already children.
-large_file	crates/nimbus-sandbox/src/backends/krun/vm/tests/launch_compensation.rs	review	sandbox	Krun execute-mode launch compensation suite; restart fencing is already a child.
+large_file	crates/nimbus-sandbox-krun/src/bundle.rs	review	sandbox	Krun bundle layout, mounts, process user, and OCI config construction with its contract tests.
+large_file	crates/nimbus-sandbox-krun/src/vm/teardown/tests.rs	review	sandbox	Krun execution teardown suite; fresh-process and network-teardown cases are already children.
+large_file	crates/nimbus-sandbox-krun/src/vm/tests/launch_compensation.rs	review	sandbox	Krun execute-mode launch compensation suite; restart fencing is already a child.
 large_file	crates/nimbus-sandbox/src/provider_command/tests.rs	review	sandbox	Provider-command idempotency suite; async current claim and network recovery are already children.
 large_file	crates/nimbus-sandbox/src/provider_command.rs	review	sandbox	Provider-local idempotency for compute-issued commands; current claim and prepared request are already children.
 large_file	crates/nimbus-workloads/src/saga.rs	review	workloads	Portable workload-saga identity, evidence, and transition vocabulary with its typed errors.

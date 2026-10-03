@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 use std::time::{Duration, Instant};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::{
     sync::{Arc, Condvar, Mutex},
     time::Duration as TestDuration,
@@ -26,14 +26,14 @@ const RUNTIME_STATE_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 /// before the provider effect is observed, without sleeps or a live OCI
 /// runtime. Production builds contain neither this type nor the hook fields
 /// that consume it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
-pub(crate) struct RestartLaunchTestProbe {
+pub struct RestartLaunchTestProbe {
     shared: Arc<(Mutex<RestartLaunchTestState>, Condvar)>,
     timeout: TestDuration,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Default)]
 struct RestartLaunchTestState {
     entered: bool,
@@ -41,9 +41,9 @@ struct RestartLaunchTestState {
     effects: usize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl RestartLaunchTestProbe {
-    pub(crate) fn new(timeout: TestDuration) -> Self {
+    pub fn new(timeout: TestDuration) -> Self {
         Self {
             shared: Arc::new((
                 Mutex::new(RestartLaunchTestState::default()),
@@ -53,7 +53,7 @@ impl RestartLaunchTestProbe {
         }
     }
 
-    pub(crate) fn intercept_provider_launch(&self) -> Result<()> {
+    pub fn intercept_provider_launch(&self) -> Result<()> {
         let (lock, changed) = &*self.shared;
         let mut state = lock.lock().map_err(|_| SandboxError::OperationFailed {
             message: "restart launch test probe lock was poisoned".to_owned(),
@@ -75,7 +75,7 @@ impl RestartLaunchTestProbe {
         Ok(())
     }
 
-    pub(crate) fn effect_count(&self) -> usize {
+    pub fn effect_count(&self) -> usize {
         self.shared
             .0
             .lock()
@@ -84,7 +84,7 @@ impl RestartLaunchTestProbe {
     }
 }
 
-pub(crate) fn ensure_linux_host(backend_name: &str) -> Result<()> {
+pub fn ensure_linux_host(backend_name: &str) -> Result<()> {
     if cfg!(target_os = "linux") {
         return Ok(());
     }
@@ -96,7 +96,7 @@ pub(crate) fn ensure_linux_host(backend_name: &str) -> Result<()> {
     })
 }
 
-pub(crate) fn configured_stop_signal(stop_signal: Option<&str>) -> String {
+pub fn configured_stop_signal(stop_signal: Option<&str>) -> String {
     stop_signal
         .map(str::trim)
         .filter(|signal| !signal.is_empty())
@@ -104,38 +104,38 @@ pub(crate) fn configured_stop_signal(stop_signal: Option<&str>) -> String {
         .to_owned()
 }
 
-pub(crate) fn configured_stop_timeout(spec: &SandboxSpec, fallback: Duration) -> Duration {
+pub fn configured_stop_timeout(spec: &SandboxSpec, fallback: Duration) -> Duration {
     spec.lifecycle.stop_timeout.unwrap_or(fallback)
 }
 
-pub(crate) struct RuntimeStatusProbe<'a> {
-    pub(crate) exit_status_file: &'a Path,
-    pub(crate) state_command: &'a CommandSpec,
-    pub(crate) runtime_id: &'a str,
-    pub(crate) pidfile: &'a Path,
-    pub(crate) shutdown_requested: bool,
-    pub(crate) current_status: SandboxStatus,
+pub struct RuntimeStatusProbe<'a> {
+    pub exit_status_file: &'a Path,
+    pub state_command: &'a CommandSpec,
+    pub runtime_id: &'a str,
+    pub pidfile: &'a Path,
+    pub shutdown_requested: bool,
+    pub current_status: SandboxStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct DetectedRuntimeStatus {
-    pub(crate) status: SandboxStatus,
-    pub(crate) explicitly_absent: bool,
+pub struct DetectedRuntimeStatus {
+    pub status: SandboxStatus,
+    pub explicitly_absent: bool,
     pub(crate) provider_state: RuntimeStateObservation,
     pub(crate) provider_command_evidence: Option<RuntimeStateCommandEvidence>,
     pub(crate) pidfile_evidence: Option<Vec<u8>>,
     pub(crate) running_evidence: Vec<u8>,
 }
 
-#[cfg(test)]
-pub(crate) fn detect_runtime_status(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn detect_runtime_status(
     probe: RuntimeStatusProbe<'_>,
     running_status: impl FnOnce() -> Result<SandboxStatus>,
 ) -> Result<SandboxStatus> {
     observe_runtime_status(probe, running_status).map(|observation| observation.status)
 }
 
-pub(crate) fn inspect_runtime_artifact_presence(path: &Path, artifact: &str) -> Result<bool> {
+pub fn inspect_runtime_artifact_presence(path: &Path, artifact: &str) -> Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -148,8 +148,8 @@ pub(crate) fn inspect_runtime_artifact_presence(path: &Path, artifact: &str) -> 
     }
 }
 
-#[cfg(test)]
-pub(crate) fn observe_runtime_status(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn observe_runtime_status(
     probe: RuntimeStatusProbe<'_>,
     running_status: impl FnOnce() -> Result<SandboxStatus>,
 ) -> Result<DetectedRuntimeStatus> {
@@ -158,7 +158,7 @@ pub(crate) fn observe_runtime_status(
     })
 }
 
-pub(crate) fn observe_runtime_status_with_evidence(
+pub fn observe_runtime_status_with_evidence(
     probe: RuntimeStatusProbe<'_>,
     running_status: impl FnOnce() -> Result<(SandboxStatus, Vec<u8>)>,
 ) -> Result<DetectedRuntimeStatus> {
@@ -250,7 +250,7 @@ pub(crate) fn observe_runtime_status_with_evidence(
     })
 }
 
-pub(crate) fn run_status_checked(command: &CommandSpec) -> Result<()> {
+pub fn run_status_checked(command: &CommandSpec) -> Result<()> {
     let output = command
         .as_command()
         .output()
@@ -272,7 +272,7 @@ pub(crate) fn run_status_checked(command: &CommandSpec) -> Result<()> {
     })
 }
 
-pub(crate) fn run_status_best_effort(command: &CommandSpec) -> Result<()> {
+pub fn run_status_best_effort(command: &CommandSpec) -> Result<()> {
     let output = command
         .as_command()
         .output()
@@ -296,7 +296,7 @@ pub(crate) fn run_status_best_effort(command: &CommandSpec) -> Result<()> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) enum RuntimeStateObservation {
+pub enum RuntimeStateObservation {
     Present(String),
     ExplicitlyAbsent,
 }
@@ -324,7 +324,7 @@ enum RuntimeStateCommandOutcome {
     AmbiguousCompletedFailure(SandboxError),
 }
 
-pub(crate) fn runtime_state(
+pub fn runtime_state(
     command: &CommandSpec,
     expected_runtime_id: &str,
 ) -> Result<RuntimeStateObservation> {
@@ -349,7 +349,7 @@ fn runtime_state_with_evidence(
 }
 
 /// Observe runtime state only when it authenticates the exact creator attempt.
-pub(crate) fn runtime_state_for_creator_attempt(
+pub fn runtime_state_for_creator_attempt(
     command: &CommandSpec,
     expected_runtime_id: &str,
     expected_attempt_id: &str,
@@ -573,7 +573,7 @@ pub(crate) fn wait_for_runtime_state(
 }
 
 /// Wait for a created/running runtime belonging to the exact creator attempt.
-pub(crate) fn wait_for_runtime_state_for_creator_attempt(
+pub fn wait_for_runtime_state_for_creator_attempt(
     command: &CommandSpec,
     expected_runtime_id: &str,
     expected_attempt_id: &str,
@@ -791,7 +791,7 @@ pub(crate) fn read_exit_code(path: &Path) -> Result<i32> {
     read_exit_code_evidence(path).map(|(exit_code, _evidence)| exit_code)
 }
 
-pub(crate) fn read_exit_code_evidence(path: &Path) -> Result<(i32, Vec<u8>)> {
+pub fn read_exit_code_evidence(path: &Path) -> Result<(i32, Vec<u8>)> {
     let exit_status = std::fs::read(path).map_err(|error| SandboxError::OperationFailed {
         message: format!(
             "failed to read sandbox exit status {}: {error}",
@@ -822,7 +822,7 @@ fn parse_exit_code_evidence(path: &Path, exit_status: Vec<u8>) -> Result<(i32, V
     Ok((exit_code, exit_status))
 }
 
-pub(crate) fn remove_if_exists(path: &Path) -> Result<()> {
+pub fn remove_if_exists(path: &Path) -> Result<()> {
     if !inspect_runtime_artifact_presence(path, "runtime artifact")? {
         return Ok(());
     }

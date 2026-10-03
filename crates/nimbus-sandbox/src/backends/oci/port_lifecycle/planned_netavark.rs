@@ -22,7 +22,7 @@ use crate::spec::SandboxPortBinding;
 
 impl OciPortLeaseCoordinator {
     /// Release one never-bound compiler-issued provider subset.
-    pub(crate) fn release_never_bound_plan_members(
+    pub fn release_never_bound_plan_members(
         &self,
         plan_members: &[PortLeaseRequest],
         requests: &[PortLeaseRequest],

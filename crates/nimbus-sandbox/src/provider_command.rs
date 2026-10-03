@@ -30,23 +30,23 @@ mod prepared_request;
 
 use prepared_request::validate_prepared_request;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 std::thread_local! {
     static PROVIDER_COMMAND_LOCK_TEST_PROBE: std::cell::RefCell<Option<ProviderCommandLockTestProbe>> =
         const { std::cell::RefCell::new(None) };
 }
 
 /// Thread-scoped proof that a test reached real provider-lock contention.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug)]
-pub(crate) struct ProviderCommandLockTestProbe {
+pub struct ProviderCommandLockTestProbe {
     state: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
     timeout: Duration,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl ProviderCommandLockTestProbe {
-    pub(crate) fn new(timeout: Duration) -> Self {
+    pub fn new(timeout: Duration) -> Self {
         Self {
             state: std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
             timeout,
@@ -59,7 +59,7 @@ impl ProviderCommandLockTestProbe {
         changed.notify_all();
     }
 
-    pub(crate) fn wait_until_contended(&self) -> bool {
+    pub fn wait_until_contended(&self) -> bool {
         let (state, changed) = &*self.state;
         let state = state.lock().expect("provider lock probe should lock");
         let (state, _) = changed
@@ -69,12 +69,12 @@ impl ProviderCommandLockTestProbe {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 struct ProviderCommandLockTestProbeScope {
     previous: Option<ProviderCommandLockTestProbe>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Drop for ProviderCommandLockTestProbeScope {
     fn drop(&mut self) {
         PROVIDER_COMMAND_LOCK_TEST_PROBE.with(|slot| {
@@ -83,8 +83,8 @@ impl Drop for ProviderCommandLockTestProbeScope {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn with_provider_command_lock_test_probe<T>(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_provider_command_lock_test_probe<T>(
     probe: ProviderCommandLockTestProbe,
     action: impl FnOnce() -> T,
 ) -> T {
@@ -93,7 +93,7 @@ pub(crate) fn with_provider_command_lock_test_probe<T>(
     action()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn record_provider_command_lock_contention() {
     let probe = PROVIDER_COMMAND_LOCK_TEST_PROBE.with(|slot| slot.borrow().clone());
     if let Some(probe) = probe {
@@ -373,7 +373,7 @@ impl ProviderCommandClaim {
     /// The attempt, dispatch epoch, effect subject, provider target, and
     /// operation are command-local fences. They must not be equal across, for
     /// example, `StopExecution` and `DetachNetwork`.
-    pub(crate) fn same_lifecycle_fence(&self, other: &Self) -> bool {
+    pub fn same_lifecycle_fence(&self, other: &Self) -> bool {
         self.authority_id == other.authority_id
             && self.source_attempt_id == other.source_attempt_id
             && self.workload_generation == other.workload_generation
@@ -1718,7 +1718,7 @@ fn acquire_lock(file: File, path: &Path) -> Result<JournalGuard, ProviderCommand
         match file.try_lock().map_err(std::io::Error::from) {
             Ok(()) => return Ok(JournalGuard { _file: file }),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 record_provider_command_lock_contention();
                 if Instant::now() >= deadline {
                     return Err(ProviderCommandJournalError::Store {

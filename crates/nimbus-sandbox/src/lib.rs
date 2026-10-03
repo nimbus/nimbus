@@ -8,7 +8,7 @@
 
 pub mod backends;
 
-mod artifact_paths;
+pub mod artifact_paths;
 mod backend;
 mod error;
 mod execution_attempt;
@@ -49,17 +49,20 @@ pub use provider_command::{
     ProviderCommandStartedExecutionClaim,
 };
 pub use provision::{
+    ProvisionActivationObservationKind, ProvisionActivationRuntimeState,
     SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity,
     SandboxProvisionIngressRoute, SandboxProvisionIngressTargetObservation,
     SandboxProvisionIngressTargets, SandboxProvisionListener, SandboxProvisionNetworkPlan,
     SandboxProvisionNetworkPlanError, SandboxProvisionPhaseObservation,
+    classify_provision_activation,
 };
 pub use spec::{
     SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,
     SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
     SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec,
-    SandboxSpec, validate_sandbox_mounts, validate_tenant_volume_name,
+    SandboxSpec, resolve_process_without_image_defaults, validate_sandbox_mounts,
+    validate_tenant_volume_name,
 };
 pub use teardown::{
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownCommandError,

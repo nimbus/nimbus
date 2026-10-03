@@ -27,13 +27,11 @@ use nimbus_network::{
 };
 use nimbus_operator::LocalNodeNetworkRoot;
 use nimbus_sandbox::backends::SandboxAttachmentRegistrationError;
-use nimbus_sandbox::backends::krun::{
-    KrunSandboxBackend, KrunSandboxBackendConfig, KrunSandboxStateView,
-};
 use nimbus_sandbox::{
     OciNetworkProcess, OciNetworkProcessError, ProviderCommandJournalError, SandboxBackendKind,
     sandbox_network_plan_requirements,
 };
+use nimbus_sandbox_krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunSandboxStateView};
 use nimbus_server::{
     ServeOptions, ServerForegroundWorkloadRuntime, ServerIngressPublicationAdapter,
     ServerWorkloadComposition, ServerWorkloadCompositionError, ServerWorkloadProviders,
@@ -886,7 +884,7 @@ mod tests {
         NetworkSovereigntyCapabilities,
     };
     use nimbus_operator::LocalNodeNetworkRoot;
-    use nimbus_sandbox::backends::krun::KrunSandboxBackendConfig;
+    use nimbus_sandbox_krun::KrunSandboxBackendConfig;
 
     fn fixture_attachment() -> NetworkAttachmentProviderRegistration {
         NetworkAttachmentProviderRegistration::new(
@@ -1165,10 +1163,9 @@ services:
 
         std::fs::remove_file(&alias).expect("old alias should be removed");
         symlink(&foreign, &alias).expect("alias should retarget");
-        let _backend = nimbus_sandbox::backends::krun::KrunSandboxBackend::with_network_process(
-            config, process,
-        )
-        .expect("backend must retain the canonical authority after alias retarget");
+        let _backend =
+            nimbus_sandbox_krun::KrunSandboxBackend::with_network_process(config, process)
+                .expect("backend must retain the canonical authority after alias retarget");
         assert!(
             !nimbus_network::LocalNetworkStateStore::authority_path_for(&foreign).exists(),
             "retargeted foreign root must remain untouched"

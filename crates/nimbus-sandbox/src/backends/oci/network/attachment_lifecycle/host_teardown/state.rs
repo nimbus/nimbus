@@ -24,7 +24,7 @@ const FORWARDED_PROVIDER_ABSENCE_DOMAIN: &[u8] =
 /// Exact publication composition retained between detach and release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "mode")]
-pub(crate) enum RetainedAttachmentPublicationEvidence {
+pub enum RetainedAttachmentPublicationEvidence {
     HostManaged,
     Deferred { terminal_sha256: String },
     MachineForwarded { absence_sha256: String },
@@ -170,7 +170,7 @@ impl RetainedAttachmentPublicationEvidence {
 /// Durable boundaries for provider detach while reusable authority stays held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum HostManagedAttachmentDetachPhase {
+pub enum HostManagedAttachmentDetachPhase {
     NotStarted,
     AttachmentDeleting,
     SegmentQuarantined,
@@ -194,7 +194,7 @@ impl HostManagedAttachmentDetachPhase {
 /// Durable boundaries for release after an exact detached proof exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum HostManagedAttachmentReleasePhase {
+pub enum HostManagedAttachmentReleasePhase {
     NotStarted,
     ReleaseAuthenticated,
     PepReleaseMayExist,
@@ -216,9 +216,9 @@ impl HostManagedAttachmentReleasePhase {
 }
 
 /// Test-only abrupt-process boundary after one exact checkpoint is durable.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HostManagedAttachmentTeardownCheckpoint {
+pub enum HostManagedAttachmentTeardownCheckpoint {
     Detach(HostManagedAttachmentDetachPhase),
     Release(HostManagedAttachmentReleasePhase),
 }
@@ -227,16 +227,16 @@ pub(crate) enum HostManagedAttachmentTeardownCheckpoint {
 ///
 /// The abrupt exit does not unwind or run destructors. A separate process must
 /// reopen the durable roots and prove that recovery needs no in-memory state.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct HostManagedAttachmentCheckpointTestProbe {
+pub struct HostManagedAttachmentCheckpointTestProbe {
     checkpoint: HostManagedAttachmentTeardownCheckpoint,
     exit_code: i32,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl HostManagedAttachmentCheckpointTestProbe {
-    pub(crate) const fn exit_after(
+    pub const fn exit_after(
         checkpoint: HostManagedAttachmentTeardownCheckpoint,
         exit_code: i32,
     ) -> Self {
@@ -246,7 +246,7 @@ impl HostManagedAttachmentCheckpointTestProbe {
         }
     }
 
-    pub(crate) fn exit_if_reached(&self, state: &HostManagedAttachmentTeardownState) {
+    pub fn exit_if_reached(&self, state: &HostManagedAttachmentTeardownState) {
         let reached = match self.checkpoint {
             HostManagedAttachmentTeardownCheckpoint::Detach(phase) => state.detach_phase() == phase,
             HostManagedAttachmentTeardownCheckpoint::Release(phase) => {
@@ -261,7 +261,7 @@ impl HostManagedAttachmentCheckpointTestProbe {
 
 /// State-owned result of authenticating one exact teardown command replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HostManagedAttachmentCommandInspection {
+pub enum HostManagedAttachmentCommandInspection {
     /// The exact command already owns terminal state and can replay success.
     ExactTerminalSuccess,
     /// The exact current command can continue from its durable checkpoint.
@@ -272,7 +272,7 @@ pub(crate) enum HostManagedAttachmentCommandInspection {
 
 /// Stable state classification for a rejected teardown command replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HostManagedAttachmentCommandInspectionError {
+pub enum HostManagedAttachmentCommandInspectionError {
     /// The command or observation belongs to another command attempt.
     Crossed,
     /// The candidate epoch is stale, skipped, overflowed, or terminally fenced.
@@ -287,7 +287,7 @@ pub(crate) enum HostManagedAttachmentCommandInspectionError {
 /// snapshots are evidence only; their concept owners remain authoritative.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub(crate) struct HostManagedAttachmentDetachedProof {
+pub struct HostManagedAttachmentDetachedProof {
     schema_version: u32,
     tenant_id: TenantId,
     sandbox_id: SandboxId,
@@ -421,7 +421,7 @@ impl HostManagedAttachmentDetachedProof {
         })
     }
 
-    pub(crate) fn detach_claim(&self) -> &ProviderCommandClaim {
+    pub fn detach_claim(&self) -> &ProviderCommandClaim {
         &self.detach_claim
     }
 
@@ -437,7 +437,7 @@ impl HostManagedAttachmentDetachedProof {
         self.effect_disposition
     }
 
-    pub(crate) const fn confirmed_no_provider_effect(&self) -> bool {
+    pub const fn confirmed_no_provider_effect(&self) -> bool {
         matches!(
             self.effect_disposition,
             HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect
@@ -620,7 +620,7 @@ impl HostManagedAttachmentDetachedProof {
 /// Backend-manifest effect progress. This is not a command-result journal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub(crate) struct HostManagedAttachmentTeardownState {
+pub struct HostManagedAttachmentTeardownState {
     detach_claim: Option<ProviderCommandClaim>,
     detach_phase: HostManagedAttachmentDetachPhase,
     detached_proof: Option<HostManagedAttachmentDetachedProof>,
@@ -629,7 +629,7 @@ pub(crate) struct HostManagedAttachmentTeardownState {
 }
 
 impl HostManagedAttachmentTeardownState {
-    pub(crate) const fn initial() -> Self {
+    pub const fn initial() -> Self {
         Self {
             detach_claim: None,
             detach_phase: HostManagedAttachmentDetachPhase::NotStarted,
@@ -639,11 +639,11 @@ impl HostManagedAttachmentTeardownState {
         }
     }
 
-    pub(crate) const fn detach_phase(&self) -> HostManagedAttachmentDetachPhase {
+    pub const fn detach_phase(&self) -> HostManagedAttachmentDetachPhase {
         self.detach_phase
     }
 
-    pub(crate) const fn release_phase(&self) -> HostManagedAttachmentReleasePhase {
+    pub const fn release_phase(&self) -> HostManagedAttachmentReleasePhase {
         self.release_phase
     }
 
@@ -662,12 +662,12 @@ impl HostManagedAttachmentTeardownState {
             .forwarded_release_absence_evidence()
     }
 
-    #[cfg(test)]
-    pub(crate) fn detached_proof(&self) -> Option<&HostManagedAttachmentDetachedProof> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn detached_proof(&self) -> Option<&HostManagedAttachmentDetachedProof> {
         self.detached_proof.as_ref()
     }
 
-    pub(crate) fn record_detach_phase(
+    pub fn record_detach_phase(
         &mut self,
         claim: &ProviderCommandClaim,
         phase: HostManagedAttachmentDetachPhase,
@@ -688,7 +688,7 @@ impl HostManagedAttachmentTeardownState {
         Ok(changed)
     }
 
-    pub(crate) fn record_detached_for_command(
+    pub fn record_detached_for_command(
         &mut self,
         command: &SandboxNetworkTeardownCommand,
         proof: HostManagedAttachmentDetachedProof,
@@ -722,7 +722,7 @@ impl HostManagedAttachmentTeardownState {
         Ok(changed)
     }
 
-    pub(crate) fn require_detached_for_release(
+    pub fn require_detached_for_release(
         &self,
         command: &SandboxNetworkTeardownCommand,
     ) -> Result<&HostManagedAttachmentDetachedProof> {
@@ -739,7 +739,7 @@ impl HostManagedAttachmentTeardownState {
         Ok(proof)
     }
 
-    pub(crate) fn record_release_phase(
+    pub fn record_release_phase(
         &mut self,
         command: &SandboxNetworkTeardownCommand,
         phase: HostManagedAttachmentReleasePhase,
@@ -768,7 +768,7 @@ impl HostManagedAttachmentTeardownState {
     /// the provider-command stream lock. Exact replays do not change this
     /// state. A retry changes only the selected detach or release claim after
     /// the current claimed observation proves the stored claim in its lineage.
-    pub(crate) fn inspect_and_rebase_command(
+    pub fn inspect_and_rebase_command(
         &mut self,
         command: &SandboxNetworkTeardownCommand,
         current: &ProviderCommandObservation,
@@ -867,7 +867,7 @@ impl HostManagedAttachmentTeardownState {
         Ok(HostManagedAttachmentCommandInspection::AuthorizedImmediatePredecessor)
     }
 
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         match (
             self.detach_phase,
             self.detach_claim.as_ref(),

@@ -9,7 +9,7 @@ use crate::instance::SandboxId;
 use nimbus_core::TenantId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OciConmonLayout {
+pub struct OciConmonLayout {
     pub state_root: PathBuf,
     pub container_state_dir: PathBuf,
     pub exit_dir: PathBuf,
@@ -23,7 +23,7 @@ pub(crate) struct OciConmonLayout {
 }
 
 impl OciConmonLayout {
-    pub(crate) fn new(state_root: impl Into<PathBuf>, sandbox_id: &SandboxId) -> Self {
+    pub fn new(state_root: impl Into<PathBuf>, sandbox_id: &SandboxId) -> Self {
         let state_root = state_root.into();
         let container_state_dir = state_root.join("containers").join(sandbox_id.as_str());
         let exit_dir = state_root.join("exits");
@@ -42,7 +42,7 @@ impl OciConmonLayout {
         }
     }
 
-    pub(crate) fn new_for_tenant(
+    pub fn new_for_tenant(
         state_root: impl AsRef<Path>,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -53,7 +53,7 @@ impl OciConmonLayout {
         )
     }
 
-    pub(crate) fn ensure_directories(&self) -> std::io::Result<()> {
+    pub fn ensure_directories(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.container_state_dir)?;
         std::fs::create_dir_all(&self.exit_dir)?;
         std::fs::create_dir_all(&self.persist_dir)?;
@@ -62,7 +62,7 @@ impl OciConmonLayout {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OciConmonConfig {
+pub struct OciConmonConfig {
     pub conmon_path: PathBuf,
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
@@ -72,7 +72,7 @@ pub(crate) struct OciConmonConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OciConmonLaunchPlan {
+pub struct OciConmonLaunchPlan {
     pub create_command: CommandSpec,
     pub state_command: CommandSpec,
     pub start_command: CommandSpec,
@@ -80,7 +80,7 @@ pub(crate) struct OciConmonLaunchPlan {
     pub delete_command: CommandSpec,
 }
 
-pub(crate) fn build_launch_plan(
+pub fn build_launch_plan(
     config: &OciConmonConfig,
     layout: &OciConmonLayout,
     sandbox_id: &SandboxId,

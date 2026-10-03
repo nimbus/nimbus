@@ -14,11 +14,11 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, PortProtocol,
 };
 use nimbus_sandbox::backends::container::{ContainerSandboxBackendConfig, ContainerStartMode};
-use nimbus_sandbox::backends::krun::{KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
     sandbox_network_plan_requirements,
 };
+use nimbus_sandbox_krun::{KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_tenant::{
     TenantIsolationContextExt, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
     WorkloadAttributes,

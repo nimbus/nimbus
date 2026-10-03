@@ -1,11 +1,10 @@
-mod capabilities;
-pub(crate) mod conmon;
+pub mod capabilities;
+pub mod conmon;
 pub mod container;
-pub(crate) mod inspection;
-pub mod krun;
-pub(crate) mod oci;
-pub(crate) mod poll;
-mod readiness_probe;
+pub mod inspection;
+pub mod oci;
+pub mod poll;
+pub mod readiness_probe;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_hooks;

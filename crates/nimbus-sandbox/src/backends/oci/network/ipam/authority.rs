@@ -20,7 +20,7 @@ use super::super::layout::OciNetworkLayout;
 /// selects the durable authority. Every state access first authenticates that
 /// evidence against the injected process handle.
 #[derive(Clone, Debug)]
-pub(crate) struct OciIpamAuthority {
+pub struct OciIpamAuthority {
     source: OciIpamAuthoritySource,
     state_store: std::result::Result<LocalNetworkStateStore, Arc<str>>,
 }
@@ -28,7 +28,7 @@ pub(crate) struct OciIpamAuthority {
 #[derive(Clone, Debug)]
 enum OciIpamAuthoritySource {
     Process(LocalNetworkAuthority),
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     DirectTest {
         canonical_state_root: PathBuf,
     },
@@ -48,7 +48,7 @@ impl OciIpamAuthority {
     }
 
     /// Reconstruct once at an explicitly selected direct-adapter boundary.
-    pub(crate) fn reconstruct_direct(state_root: impl AsRef<Path>) -> Self {
+    pub fn reconstruct_direct(state_root: impl AsRef<Path>) -> Self {
         Self::reconstruct("direct adapter", state_root.as_ref())
     }
 
@@ -74,7 +74,7 @@ impl OciIpamAuthority {
 
     /// Reconstruct a direct authority only inside this module's state-machine
     /// tests, where no process composition exists.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn reconstruct_for_direct_test(layout: &OciNetworkLayout) -> Result<Self> {
         let state_store = LocalNetworkStateStore::open(&layout.network_state_root)
             .map_err(super::ipam_store_error)?;
@@ -107,7 +107,7 @@ impl OciIpamAuthority {
                         "OCI IPAM rejected network layout authority before state access: {error}"
                     ),
                 }),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             OciIpamAuthoritySource::DirectTest {
                 canonical_state_root,
             } => {
@@ -223,7 +223,7 @@ impl OciIpamAuthority {
                     ..
                 } => attempted_state_root,
                 OciIpamAuthoritySource::Process(authority) => authority.state_root(),
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 OciIpamAuthoritySource::DirectTest {
                     canonical_state_root,
                 } => canonical_state_root,

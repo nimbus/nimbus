@@ -9,7 +9,7 @@ use nimbus_network::{AllocatedSegment, NetworkSegmentId};
 
 #[cfg(test)]
 use nimbus_core::TenantId;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use nimbus_network::NetworkLeaseEpoch;
 
 /// A Netavark network identity in the provider's required 64-hex form.
@@ -32,7 +32,7 @@ impl NetavarkNetworkId {
 /// is sufficient for host-local provider names; global identity comes solely
 /// from [`AllocatedSegment::segment_id`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OciSegmentRealization {
+pub struct OciSegmentRealization {
     allocation: AllocatedSegment,
     network_name: String,
     network_interface: String,
@@ -62,7 +62,7 @@ impl OciSegmentRealization {
         self.allocation.cidr()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn lease_epoch(&self) -> NetworkLeaseEpoch {
         self.allocation.lease_epoch()
     }

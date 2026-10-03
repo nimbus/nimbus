@@ -21,7 +21,7 @@ use super::{
 
 /// Exact authenticated PEP dependency suitable for portable evidence lowering.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AuthenticatedPepReadiness {
+pub struct AuthenticatedPepReadiness {
     port_lease_id: PortLeaseId,
     lifetime: PortLeaseLifetime,
     policy_generation: PolicyGeneration,
@@ -29,7 +29,7 @@ pub(crate) struct AuthenticatedPepReadiness {
 
 /// Stable fail-closed reason no current PEP evidence can be emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EgressReadinessFailure {
+pub enum EgressReadinessFailure {
     MissingAssignment,
     ReloadApplying,
     MissingRegistration,
@@ -49,14 +49,14 @@ pub(crate) enum EgressReadinessFailure {
 
 /// Exact ready evidence or one named fail-closed reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EgressReadinessState {
+pub enum EgressReadinessState {
     Ready(AuthenticatedPepReadiness),
     NotReady(EgressReadinessFailure),
 }
 
 /// Whether reload reconciliation has one exact live lifecycle attachment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EgressReloadAttachmentState {
+pub enum EgressReloadAttachmentState {
     Authenticated,
     MissingRegistration,
 }
@@ -279,7 +279,7 @@ impl EgressProxyRegistry {
 
     /// Authenticate the desired assignment, durable listener, retained process
     /// lifetime, live worker, audit health, policy bytes, and reload attempt.
-    pub(crate) fn authenticated_readiness(
+    pub fn authenticated_readiness(
         &self,
         tenant_id: &TenantId,
         id: &SandboxId,

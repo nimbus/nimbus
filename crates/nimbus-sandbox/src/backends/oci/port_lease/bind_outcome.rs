@@ -138,7 +138,7 @@ pub(crate) fn adopt_claimed_and_activate_rebind_plan_members_with_lifetimes(
 }
 
 /// Atomically adopt and activate a complete Nimbus-owned listener batch.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn adopt_claimed_and_activate_batch(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],

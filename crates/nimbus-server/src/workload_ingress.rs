@@ -39,12 +39,12 @@ use nimbus_network::{
     PortProtocol, PublishedEndpointId,
 };
 use nimbus_sandbox::backends::container::ContainerSandboxBackend;
-use nimbus_sandbox::backends::krun::KrunSandboxBackend;
 use nimbus_sandbox::{
     ProviderCommandJournalError, SandboxBackendKind, SandboxError, SandboxProvisionIngressRoute,
     SandboxProvisionIngressTargetObservation, SandboxProvisionIngressTargets,
     SandboxProvisionNetworkPlan,
 };
+use nimbus_sandbox_krun::KrunSandboxBackend;
 use nimbus_workloads::{WorkloadProvisionProviderTarget, WorkloadPublicationIntent};
 
 #[cfg(test)]

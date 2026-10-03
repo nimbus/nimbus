@@ -45,8 +45,8 @@ pub struct OciNetworkProcess {
 }
 
 impl OciNetworkProcess {
-    #[cfg(test)]
-    pub(crate) fn lock_test_process_claim() -> std::sync::MutexGuard<'static, ()> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn lock_test_process_claim() -> std::sync::MutexGuard<'static, ()> {
         static SERIALIZER: Mutex<()> = Mutex::new(());
         SERIALIZER
             .lock()
@@ -98,8 +98,8 @@ impl OciNetworkProcess {
         Ok(process)
     }
 
-    #[cfg(test)]
-    pub(crate) fn authority(&self) -> LocalNetworkAuthority {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn authority(&self) -> LocalNetworkAuthority {
         self.authority.clone()
     }
 
@@ -135,7 +135,7 @@ impl OciNetworkProcess {
         Ok(self.authority.state_root().to_path_buf())
     }
 
-    pub(crate) fn egress_registry(
+    pub fn egress_registry(
         &self,
         decision_log_root: impl Into<PathBuf>,
         trust_anchor_root: impl Into<PathBuf>,
@@ -148,19 +148,19 @@ impl OciNetworkProcess {
         )
     }
 
-    pub(crate) fn segment_allocator(&self) -> Arc<OciSegmentAllocator> {
+    pub fn segment_allocator(&self) -> Arc<OciSegmentAllocator> {
         Arc::clone(&self.segment_allocator)
     }
 
-    pub(crate) fn ipam_authority(&self) -> OciIpamAuthority {
+    pub fn ipam_authority(&self) -> OciIpamAuthority {
         self.ipam.clone()
     }
 
-    pub(crate) fn attachment_authority(&self) -> LocalNetworkAttachmentAuthority {
+    pub fn attachment_authority(&self) -> LocalNetworkAttachmentAuthority {
         self.authority.attachments()
     }
 
-    pub(crate) fn netavark_port_lifetimes(&self) -> NetavarkPortLifetimeRegistry {
+    pub fn netavark_port_lifetimes(&self) -> NetavarkPortLifetimeRegistry {
         self.netavark_port_lifetimes.clone()
     }
 
@@ -168,7 +168,7 @@ impl OciNetworkProcess {
         self.machine_port_proxy_lifetimes.clone()
     }
 
-    pub(crate) fn port_lease_coordinator(
+    pub fn port_lease_coordinator(
         &self,
         range: RangeInclusive<u16>,
         max_ports_per_tenant: Option<usize>,

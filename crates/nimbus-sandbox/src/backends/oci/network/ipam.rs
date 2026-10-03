@@ -32,12 +32,12 @@ mod authority;
 mod evidence;
 mod provider_operation;
 
-pub(crate) use authority::OciIpamAuthority;
+pub use authority::OciIpamAuthority;
 pub(in crate::backends::oci::network) use evidence::{
     OciAttachmentProviderEvidence, OciIpamEvidenceLifecycle,
 };
-#[cfg(test)]
-pub(crate) use provider_operation::begin_netavark_setup_without_ack_for_test;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use provider_operation::begin_netavark_setup_without_ack_for_test;
 pub(super) use provider_operation::{
     NetavarkSetupClaim, NetavarkTeardownPlan, begin_netavark_setup, begin_netavark_setup_execution,
     begin_netavark_teardown, begin_netavark_teardown_execution, complete_netavark_setup,
@@ -129,8 +129,8 @@ fn parse_ipv4_bridge_subnet(subnet_cidr: &str) -> Result<Ipv4BridgeSubnet> {
     })
 }
 
-#[cfg(test)]
-pub(crate) fn allocate_container_ips(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn allocate_container_ips(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
@@ -171,7 +171,7 @@ pub(super) struct BlockIpAllocation {
 /// network authority lock, so concurrent placers cannot select the same
 /// address. Existing idempotent reservations are mapped back to their owning
 /// block and fail closed if that block is no longer in the supplied set.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn allocate_container_ips_on_first_available(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
@@ -414,7 +414,7 @@ pub(super) fn load_container_ips_for_segment(
 /// Authenticate either the live allocation or the last exact terminal
 /// generation. Returns the exact live addresses only while provider effects
 /// may still exist, so callers cannot split authentication from observation.
-pub(super) fn authenticate_container_network_generation_for_cleanup(
+pub fn authenticate_container_network_generation_for_cleanup(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
@@ -540,7 +540,7 @@ fn validate_ipam_generation(
 ///
 /// Pre-effect compensation must use [`deallocate_container_ips_for_claim`]
 /// instead; both operations require the exact launch-coordinator fence.
-pub(crate) fn deallocate_container_ips_after_confirmed_detach(
+pub fn deallocate_container_ips_after_confirmed_detach(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
@@ -650,7 +650,7 @@ pub(super) fn deallocate_container_ips_for_claim(
 ///
 /// A live allocation or a foreign terminal generation is never mutated. The
 /// boolean reports whether the exact tombstone was retired.
-pub(crate) fn retire_terminal_container_ipam_release(
+pub fn retire_terminal_container_ipam_release(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
@@ -703,13 +703,13 @@ pub(crate) fn retire_terminal_container_ipam_release(
 /// keeps a stale manifest from mutating a replacement live or terminal
 /// generation.
 #[cfg_attr(
-    not(test),
+    not(any(test, feature = "test-hooks")),
     expect(
         dead_code,
         reason = "NNC8.3 owns explicit cleanup convergence; NNC5.2d removes retirement from startup admission"
     )
 )]
-pub(crate) fn reconcile_terminal_container_ipam_releases(
+pub fn reconcile_terminal_container_ipam_releases(
     authority: &OciIpamAuthority,
     workload_state_root: &Path,
 ) -> Result<usize> {

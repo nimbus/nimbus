@@ -37,9 +37,11 @@ use super::port_lease::{
 };
 #[cfg(test)]
 use super::port_lease::{
-    abandon_bind_attempts_without_effect, adopt_claimed_and_activate_batch, claim_bind_attempts,
-    new_launch_reservation_claim, prepare_rebind_batch_after_confirmed_stop, release, reserve,
+    abandon_bind_attempts_without_effect, new_launch_reservation_claim,
+    prepare_rebind_batch_after_confirmed_stop, release, reserve,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+use super::port_lease::{adopt_claimed_and_activate_batch, claim_bind_attempts};
 use crate::backends::capabilities::SANDBOX_EGRESS_PEP_PROVIDER_KEY;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -54,12 +56,12 @@ mod netavark_lifetime;
 mod planned_netavark;
 
 pub(crate) use machine::machine_port_proxy_guest_listener_addr;
-pub(crate) use netavark_lifetime::NetavarkPortLifetimeRegistry;
+pub use netavark_lifetime::NetavarkPortLifetimeRegistry;
 
-pub(crate) const DEFAULT_MAX_PORTS_PER_TENANT: usize = 128;
+pub const DEFAULT_MAX_PORTS_PER_TENANT: usize = 128;
 
 #[derive(Debug, Clone)]
-pub(crate) struct OciPortLeaseCoordinator {
+pub struct OciPortLeaseCoordinator {
     range: RangeInclusive<u16>,
     authority: std::result::Result<LocalPortLeaseAuthority, Arc<str>>,
     max_ports_per_tenant: Option<usize>,
@@ -83,7 +85,7 @@ pub(crate) enum LaunchPortBatchState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InternalListenerReservation {
+pub struct InternalListenerReservation {
     listener_name: String,
     target: PortBindTarget,
     exposure: PortExposure,
@@ -104,15 +106,15 @@ impl InternalListenerReservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReservedInternalListener {
+pub struct ReservedInternalListener {
     pub(crate) port: u16,
     pub(crate) lease: PortLeaseRequest,
 }
 
-pub(crate) struct ReservedLaunchPorts {
-    pub(crate) published_bindings: Vec<SandboxPortBinding>,
-    pub(crate) published_leases: Vec<PortLeaseRequest>,
-    pub(crate) internal_listener: Option<ReservedInternalListener>,
+pub struct ReservedLaunchPorts {
+    pub published_bindings: Vec<SandboxPortBinding>,
+    pub published_leases: Vec<PortLeaseRequest>,
+    pub internal_listener: Option<ReservedInternalListener>,
     pub(crate) reservation_claim: NetworkReservationClaim,
     publication_lifetime: Option<NetworkReservationLifetimeGuard>,
 }
@@ -136,7 +138,7 @@ impl std::fmt::Debug for ReservedLaunchPorts {
 impl ReservedLaunchPorts {
     /// End the vulnerable reservation-to-manifest interval only after the
     /// canonical request set has been durably published.
-    pub(crate) fn confirm_manifest_published(&mut self) -> Result<()> {
+    pub fn confirm_manifest_published(&mut self) -> Result<()> {
         self.publication_lifetime
             .take()
             .ok_or_else(|| SandboxError::OperationFailed {
@@ -157,7 +159,7 @@ impl ReservedLaunchPorts {
     }
 }
 
-pub(crate) struct SandboxLaunchPortPlan<'a> {
+pub struct SandboxLaunchPortPlan<'a> {
     tenant_id: &'a TenantId,
     sandbox_id: &'a SandboxId,
     existing_bindings: &'a [SandboxPortBinding],
@@ -167,7 +169,7 @@ pub(crate) struct SandboxLaunchPortPlan<'a> {
 }
 
 impl<'a> SandboxLaunchPortPlan<'a> {
-    pub(crate) fn new(
+    pub fn new(
         tenant_id: &'a TenantId,
         sandbox_id: &'a SandboxId,
         existing_bindings: &'a [SandboxPortBinding],
@@ -191,7 +193,7 @@ impl<'a> SandboxLaunchPortPlan<'a> {
         self
     }
 
-    pub(crate) fn with_internal_listener(
+    pub fn with_internal_listener(
         mut self,
         internal_listener: InternalListenerReservation,
     ) -> Self {
@@ -201,7 +203,7 @@ impl<'a> SandboxLaunchPortPlan<'a> {
 }
 
 impl OciPortLeaseCoordinator {
-    pub(crate) fn with_range(mut self, range: RangeInclusive<u16>) -> Self {
+    pub fn with_range(mut self, range: RangeInclusive<u16>) -> Self {
         self.range = range;
         self
     }
@@ -217,7 +219,7 @@ impl OciPortLeaseCoordinator {
         self
     }
 
-    pub(crate) fn with_max_ports_per_tenant(mut self, max_ports_per_tenant: Option<usize>) -> Self {
+    pub fn with_max_ports_per_tenant(mut self, max_ports_per_tenant: Option<usize>) -> Self {
         self.max_ports_per_tenant = max_ports_per_tenant;
         self
     }
@@ -228,7 +230,7 @@ impl OciPortLeaseCoordinator {
     /// `reallocatable_listener_names` identifies authority-free plan previews:
     /// their rendered numbers are replaced by range-selected durable ports.
     /// All other existing bindings remain exact operator requests.
-    pub(crate) fn reserve_launch_ports_for_sandbox(
+    pub fn reserve_launch_ports_for_sandbox(
         &self,
         plan: SandboxLaunchPortPlan<'_>,
         reservation_claim: &NetworkReservationClaim,
@@ -386,7 +388,7 @@ impl OciPortLeaseCoordinator {
 
     /// Reserve the compiler-selected published listener identities plus one
     /// provider-local internal listener under the same launch claim.
-    pub(crate) fn reserve_exact_provision_ports(
+    pub fn reserve_exact_provision_ports(
         &self,
         plan: &SandboxProvisionNetworkPlan,
         internal_listener: Option<InternalListenerReservation>,
@@ -521,7 +523,7 @@ impl OciPortLeaseCoordinator {
     /// non-cloneable lifetime instead of consuming it so no fresh coordinator
     /// can enter between durable cleanup intent and the complete reverse-order
     /// network compensation.
-    pub(crate) fn release_unpublished_launch_ports(
+    pub fn release_unpublished_launch_ports(
         &self,
         reservations: &ReservedLaunchPorts,
         reservation_claim: &NetworkReservationClaim,
@@ -554,7 +556,7 @@ impl OciPortLeaseCoordinator {
     /// a complete batch could be returned to the caller. The list is only a
     /// selector: the subsequent batch transition atomically revalidates exact
     /// claim ownership and `Reserved` phase before releasing anything.
-    pub(crate) fn release_never_bound_launch_claim(
+    pub fn release_never_bound_launch_claim(
         &self,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
@@ -575,7 +577,7 @@ impl OciPortLeaseCoordinator {
     }
 
     /// Prove that an initial-launch coordinator still owns every reservation.
-    pub(crate) fn require_never_bound_launch_batch(
+    pub fn require_never_bound_launch_batch(
         &self,
         requests: &[PortLeaseRequest],
         reservation_claim: &NetworkReservationClaim,
@@ -691,7 +693,7 @@ impl OciPortLeaseCoordinator {
     ///
     /// Classifiers must not synthesize a lifecycle decision from records read
     /// across multiple independently locked store generations.
-    pub(crate) fn port_lease_records_snapshot(
+    pub fn port_lease_records_snapshot(
         &self,
         requests: &[PortLeaseRequest],
         provider_name: &str,
@@ -782,7 +784,7 @@ impl OciPortLeaseCoordinator {
     ///
     /// This exists only for plan rendering. Execute-mode callers must use
     /// [`Self::reserve_launch_ports_for_sandbox`].
-    pub(crate) fn preview_bindings_for_sandbox(
+    pub fn preview_bindings_for_sandbox(
         &self,
         tenant_id: &TenantId,
         existing_bindings: &[SandboxPortBinding],
@@ -873,7 +875,7 @@ impl OciPortLeaseCoordinator {
     }
 
     /// Atomically reserve one internal host-side listener such as an egress PEP.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn reserve_internal_listener(
         &self,
         tenant_id: &TenantId,
@@ -998,8 +1000,8 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn activate_netavark_bindings(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn activate_netavark_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -1037,7 +1039,7 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    pub(crate) fn activate_netavark_bindings_with_lifetimes(
+    pub fn activate_netavark_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -1063,8 +1065,8 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn claim_netavark_bindings(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn claim_netavark_bindings(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -1082,7 +1084,7 @@ impl OciPortLeaseCoordinator {
         )
     }
 
-    pub(crate) fn claim_netavark_bindings_with_lifetimes(
+    pub fn claim_netavark_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -1247,7 +1249,7 @@ impl OciPortLeaseCoordinator {
         Ok((expected, recoveries))
     }
 
-    pub(crate) fn recover_netavark_claims_after_owner_death(
+    pub fn recover_netavark_claims_after_owner_death(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
