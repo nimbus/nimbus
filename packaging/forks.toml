@@ -20,7 +20,7 @@
 # Each pattern must match at least once, and every match must carry the value
 # from this file. A pattern may span lines.
 
-ignore_paths = ["docs/"]
+ignore_paths = ["CHANGELOG.md", "docs/"]
 
 [forks.deno]
 repo = "nimbus/deno"
