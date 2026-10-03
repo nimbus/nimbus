@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use nimbus_sandbox_container::conmon::creator::{CreatorQuiescenceProof, OwnedConmonCreator};
 use nimbus_sandbox_host::command::CommandSpec;
 use nimbus_sandbox_host::conmon::OciConmonLayout;
+use nimbus_sandbox_host::conmon::creator::{CreatorQuiescenceProof, OwnedConmonCreator};
 use nimbus_sandbox_host::network::OciNetworkLayout;
 
 use super::support::*;

@@ -225,7 +225,9 @@ impl ContainerSandboxBackend {
                 "exit-status receipt",
             ),
         ] {
-            if crate::conmon::lifecycle::inspect_runtime_artifact_presence(path, label)? {
+            if nimbus_sandbox_host::conmon::lifecycle::inspect_runtime_artifact_presence(
+                path, label,
+            )? {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "Container orphan {} retains {label}; runtime absence is not proven",

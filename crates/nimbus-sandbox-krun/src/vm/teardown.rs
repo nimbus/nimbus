@@ -13,7 +13,7 @@ use nimbus_sandbox::{
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
     SandboxExecutionTeardownOperation,
 };
-use nimbus_sandbox_container::conmon::runtime_process::{
+use nimbus_sandbox_host::conmon::runtime_process::{
     RuntimeProcessIdentityObservation, RuntimeProcessSignal, RuntimeProcessSignalOutcome,
 };
 
@@ -630,11 +630,11 @@ impl KrunSandboxBackend {
             KrunExecutionTerminalObservation::NotObserved => {}
         }
         let process = runtime.capture_process(manifest)?;
-        let graceful_signal = nimbus_sandbox_container::conmon::lifecycle::configured_stop_signal(
+        let graceful_signal = nimbus_sandbox_host::conmon::lifecycle::configured_stop_signal(
             manifest.image_metadata.stop_signal.as_deref(),
         );
         let parsed_signal = RuntimeProcessSignal::parse(&graceful_signal)?;
-        let timeout = nimbus_sandbox_container::conmon::lifecycle::configured_stop_timeout(
+        let timeout = nimbus_sandbox_host::conmon::lifecycle::configured_stop_timeout(
             &manifest.spec,
             self.config.stop_timeout,
         );

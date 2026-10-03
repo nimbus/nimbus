@@ -49,8 +49,8 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-runtime` | V8 execution via `deno_core`; defines the runtime surface and the `HostBridge` trait. Zero workspace dependencies. |
 | `nimbus-s3` | S3-compatible object surface over the Nimbus blob and metadata planes (Seam D). |
 | `nimbus-sandbox` | Backend-agnostic sandbox and isolation lifecycle contracts, provider-command idempotency, and durable directory creation. |
-| `nimbus-sandbox-host` | Shared OCI host services for the sandbox backends: image build and materialization, Netavark, namespace, IPAM, nftables, gvproxy, and guest-network effects, port leases, the egress PEP, and resource quotas. |
-| `nimbus-sandbox-container` | Container sandbox backend: crun and conmon lifecycle, OCI bundle and state, machine port publication, and restart recovery. |
+| `nimbus-sandbox-host` | Shared OCI host services for the sandbox backends: image build and materialization, Netavark, namespace, IPAM, nftables, gvproxy, and guest-network effects, port leases, the egress PEP, conmon supervision, and resource quotas. |
+| `nimbus-sandbox-container` | Container sandbox backend: crun runtime lifecycle, OCI bundle and state, machine port publication, and restart recovery. |
 | `nimbus-sandbox-krun` | Krun microVM sandbox backend: bundle assembly, VM lifecycle, guest user switch, and cross-backend network composition tests. |
 | `nimbus-server` | HTTP/WebSocket transport: axum router, adapter transport shims, embedded UI, local-server security. |
 | `nimbus-services` | Logical service naming, readiness, registry, and service-manager primitives. |

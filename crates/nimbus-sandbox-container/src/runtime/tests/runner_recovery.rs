@@ -4,8 +4,8 @@ use super::support::*;
 
 use nimbus_process_harness::PortWindow;
 
-use crate::conmon::creator::CreatorAttemptReceipt;
 use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt;
 use nimbus_sandbox_host::egress::PepPreAdoptionReleaseAuthority;
 use nimbus_sandbox_host::network::default_network_attachment_id;
 

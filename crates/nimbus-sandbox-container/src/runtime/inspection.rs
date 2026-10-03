@@ -5,13 +5,13 @@
 //! snapshot into typed comparison evidence for the compute coordinator.
 
 use super::*;
-use crate::conmon::lifecycle::RuntimeStatusProbe;
 use nimbus_sandbox::backends::inspection::{RestartAssessmentInput, assess_restart};
 use nimbus_sandbox::{
     SandboxCleanupObservation, SandboxExecutionAttemptObservation, SandboxExecutionObservation,
     SandboxInspection, SandboxObservationUnknownReason, SandboxRestartAssessment,
     SandboxRestartBlocker, SandboxRestartIneligibility,
 };
+use nimbus_sandbox_host::conmon::lifecycle::RuntimeStatusProbe;
 
 impl ContainerSandboxBackend {
     pub(super) fn inspect_sync(&self, id: &SandboxId) -> Result<Option<SandboxInspection>> {
@@ -86,12 +86,12 @@ impl ContainerSandboxBackend {
         // Report the exit only once the receipt carries a code. Conmon creates
         // the receipt before it writes into it, so presence alone would make a
         // mid-publication receipt fail this inspection.
-        if let crate::conmon::lifecycle::ExitReceipt::Published {
+        if let nimbus_sandbox_host::conmon::lifecycle::ExitReceipt::Published {
             exit_code,
             evidence: exit_evidence,
-        } =
-            crate::conmon::lifecycle::read_exit_receipt(&manifest.conmon_layout.exit_status_file)?
-        {
+        } = nimbus_sandbox_host::conmon::lifecycle::read_exit_receipt(
+            &manifest.conmon_layout.exit_status_file,
+        )? {
             return exited_inspection(
                 self,
                 &manifest,
@@ -120,17 +120,18 @@ impl ContainerSandboxBackend {
             .map(Some);
         }
 
-        let observation = crate::conmon::lifecycle::observe_runtime_status_with_evidence(
-            RuntimeStatusProbe {
-                exit_status_file: &manifest.conmon_layout.exit_status_file,
-                state_command: &manifest.conmon_launch.state_command,
-                runtime_id: manifest.handle.id.as_str(),
-                pidfile: &manifest.conmon_layout.pidfile,
-                shutdown_requested: manifest.shutdown_requested,
-                current_status: manifest.status,
-            },
-            || self.read_only_running_status(&manifest),
-        )?;
+        let observation =
+            nimbus_sandbox_host::conmon::lifecycle::observe_runtime_status_with_evidence(
+                RuntimeStatusProbe {
+                    exit_status_file: &manifest.conmon_layout.exit_status_file,
+                    state_command: &manifest.conmon_launch.state_command,
+                    runtime_id: manifest.handle.id.as_str(),
+                    pidfile: &manifest.conmon_layout.pidfile,
+                    shutdown_requested: manifest.shutdown_requested,
+                    current_status: manifest.status,
+                },
+                || self.read_only_running_status(&manifest),
+            )?;
         let provider_evidence =
             serde_json::to_vec(&(&handoff_evidence, &observation)).map_err(|error| {
                 SandboxError::OperationFailed {

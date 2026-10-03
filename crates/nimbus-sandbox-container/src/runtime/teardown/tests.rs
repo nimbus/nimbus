@@ -5,10 +5,6 @@ use std::sync::{Arc, Mutex};
 
 use nimbus_process_harness::PortWindow;
 
-use crate::conmon::runtime_process::{
-    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
-    RuntimeProcessSignalOutcome,
-};
 use crate::runtime::support::{
     sample_execution_attempt_id, sample_provision_network_plan, sample_spec_for_tenant,
 };
@@ -18,6 +14,10 @@ use nimbus_sandbox::{
     SandboxExecutionTeardownOperation,
 };
 use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::runtime_process::{
+    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
+    RuntimeProcessSignalOutcome,
+};
 use nimbus_sandbox_host::network::FixedOciEgressPinProvider;
 
 use super::*;
@@ -1337,9 +1337,10 @@ fn every_durable_restart_checkpoint_is_a_settled_drain_boundary() {
             1,
         )
         .expect("restart fence should validate");
-        let creator_quiescence = crate::conmon::creator::CreatorQuiescenceProof::never_spawned(
-            format!("restart-checkpoint-creator-{phase}"),
-        );
+        let creator_quiescence =
+            nimbus_sandbox_host::conmon::creator::CreatorQuiescenceProof::never_spawned(format!(
+                "restart-checkpoint-creator-{phase}"
+            ));
         manifest.restart_transition = Some(match phase {
             "source_quiesced" => ContainerRestartTransition::SourceQuiesced {
                 fence: restart_fence.clone(),

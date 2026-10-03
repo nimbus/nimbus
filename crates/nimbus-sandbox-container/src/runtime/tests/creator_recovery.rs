@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use crate::conmon::creator::{
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::creator::{
     CreatorContainmentObservation, CreatorQuiescenceProof, OwnedConmonCreator,
     observe_creator_containment,
 };
-use crate::conmon::lifecycle::wait_for_path;
-use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::lifecycle::wait_for_path;
 
 use super::support::sample_spec;
 use super::*;

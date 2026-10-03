@@ -3,9 +3,9 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 use super::*;
+use crate::command::CommandSpec;
 use crate::conmon::creator::OwnedConmonCreator;
 use crate::conmon::lifecycle::wait_for_path;
-use nimbus_sandbox_host::command::CommandSpec;
 
 #[test]
 fn exact_live_creator_receipt_round_trips_and_observes_live() {

@@ -123,7 +123,7 @@ pub(super) fn reserve_and_prepare_plan_only_fixture(
 
 pub(super) fn mark_runtime_absent_for_cleanup(manifest: &mut ContainerSandboxManifest) {
     manifest.creator_handoff = ContainerCreatorHandoffState::Quiesced {
-        proof: crate::conmon::creator::CreatorQuiescenceProof::never_spawned(
+        proof: nimbus_sandbox_host::conmon::creator::CreatorQuiescenceProof::never_spawned(
             "test-confirmed-no-creator",
         ),
     };

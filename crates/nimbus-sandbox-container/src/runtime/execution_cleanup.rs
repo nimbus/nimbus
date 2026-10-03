@@ -7,8 +7,8 @@
 
 use super::machine_ports::MachinePortProxyCleanup;
 use super::*;
-use crate::conmon::lifecycle::delete_runtime_and_confirm_absent as delete_conmon_runtime_and_confirm_absent;
 use nimbus_network::{NetworkReservationClaim, PortLeaseRequest};
+use nimbus_sandbox_host::conmon::lifecycle::delete_runtime_and_confirm_absent as delete_conmon_runtime_and_confirm_absent;
 use nimbus_sandbox_host::network::{
     AttachmentAuxiliaryDisposition, AttachmentDetachFailure, AttachmentDetachFailureStage,
     AttachmentTeardownMode,

@@ -742,7 +742,7 @@ fn reload_egress_policy_updates_running_container_proxy() {
         )
         .expect("egress proxy should start on loopback test subnet");
     manifest.creator_handoff = ContainerCreatorHandoffState::RuntimeObserved {
-        receipt: crate::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
             "live-reload-runtime-observed",
         ),
     };

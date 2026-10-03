@@ -8,7 +8,6 @@ use std::time::Duration;
 use nimbus_network::{NetworkCapabilitySourceDigest, NetworkResourcePhase, PortLeasePhase};
 
 use super::*;
-use crate::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use crate::runtime::machine_port_publication::{
     MachinePortPublicationAction, MachinePortPublicationCheckpoint, MachinePortPublicationObserver,
 };
@@ -26,6 +25,7 @@ use nimbus_sandbox::{
     SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
     SandboxNetworkTeardownOperation, SandboxStatus,
 };
+use nimbus_sandbox_host::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 
 #[path = "network_teardown/fresh_process.rs"]
 mod fresh_process;

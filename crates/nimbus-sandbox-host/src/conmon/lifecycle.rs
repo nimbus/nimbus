@@ -9,14 +9,12 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::command::{CommandSpec, render_command_failure, run_bounded_command_output};
 use crate::process::pid_is_alive;
 use nimbus_sandbox::SandboxSpec;
 use nimbus_sandbox::SandboxStatus;
 use nimbus_sandbox::backends::poll::poll_until_deadline;
 use nimbus_sandbox::{Result, SandboxError};
-use nimbus_sandbox_host::command::{
-    CommandSpec, render_command_failure, run_bounded_command_output,
-};
 
 pub(crate) const CREATOR_ATTEMPT_ANNOTATION: &str = "com.nimbus.creator-attempt";
 const RUNTIME_STATE_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -477,7 +475,7 @@ fn run_runtime_state_command(
 /// Provider deletion is deliberately idempotent at the composition boundary:
 /// a non-zero delete result is diagnostic, while an exact state observation is
 /// the authority for retrying cleanup after an earlier delete succeeded.
-pub(crate) fn delete_runtime_and_confirm_absent(
+pub fn delete_runtime_and_confirm_absent(
     delete_command: &CommandSpec,
     state_command: &CommandSpec,
     expected_runtime_id: &str,
@@ -626,7 +624,7 @@ fn wait_for_runtime_state_inner(
     })
 }
 
-pub(crate) fn signal_process(signal: &str, pid: u32) -> Result<()> {
+pub fn signal_process(signal: &str, pid: u32) -> Result<()> {
     let status = std::process::Command::new("kill")
         .arg(format!("-{signal}"))
         .arg(pid.to_string())
@@ -642,7 +640,7 @@ pub(crate) fn signal_process(signal: &str, pid: u32) -> Result<()> {
     })
 }
 
-pub(crate) fn read_pid(path: &Path) -> Result<u32> {
+pub fn read_pid(path: &Path) -> Result<u32> {
     let pid = std::fs::read(path).map_err(|error| SandboxError::OperationFailed {
         message: format!("failed to read sandbox pidfile {}: {error}", path.display()),
     })?;
@@ -676,8 +674,8 @@ const RECEIPT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// gate; no production wait belongs here, because a production receipt always
 /// carries a value and existence is the wrong event to wait for. Use
 /// [`wait_for_receipt`] for those.
-#[cfg(test)]
-pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> bool {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn wait_for_path(path: &Path, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     let found = poll_until_deadline(Some(deadline), RECEIPT_POLL_INTERVAL, || {
         Ok(path.exists().then_some(()))
@@ -702,7 +700,7 @@ pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> bool {
 /// atomically. That matters, because the writers here are real runtime
 /// processes -- conmon and crun -- whose publication order this code does not
 /// own.
-pub(crate) fn wait_for_receipt<T>(
+pub fn wait_for_receipt<T>(
     path: &Path,
     timeout: Duration,
     read: impl Fn(&Path) -> Result<T>,
@@ -729,7 +727,7 @@ pub(crate) fn wait_for_receipt<T>(
 /// a receipt holding bytes that do not parse is corruption rather than a race.
 /// [`read_exit_receipt`] still reports that as an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ExitReceipt {
+pub enum ExitReceipt {
     /// No receipt exists, so the container has not exited.
     Absent,
     /// The receipt exists but does not carry an exit code yet.
@@ -743,7 +741,7 @@ impl ExitReceipt {
     ///
     /// Absent and unpublished both answer `None`, because neither is an
     /// observation of how the container exited.
-    pub(crate) fn exit_code(&self) -> Option<i32> {
+    pub fn exit_code(&self) -> Option<i32> {
         match self {
             Self::Published { exit_code, .. } => Some(*exit_code),
             Self::Absent | Self::Unpublished => None,
@@ -757,7 +755,7 @@ impl ExitReceipt {
 /// Prefer this over [`read_exit_code`] anywhere the caller inspects a receipt
 /// it did not first prove readable. `read_exit_code` remains correct after a
 /// wait that already established publication.
-pub(crate) fn read_exit_receipt(path: &Path) -> Result<ExitReceipt> {
+pub fn read_exit_receipt(path: &Path) -> Result<ExitReceipt> {
     if !inspect_runtime_artifact_presence(path, "exit-status receipt")? {
         return Ok(ExitReceipt::Absent);
     }
@@ -787,7 +785,7 @@ pub(crate) fn read_exit_receipt(path: &Path) -> Result<ExitReceipt> {
     })
 }
 
-pub(crate) fn read_exit_code(path: &Path) -> Result<i32> {
+pub fn read_exit_code(path: &Path) -> Result<i32> {
     read_exit_code_evidence(path).map(|(exit_code, _evidence)| exit_code)
 }
 

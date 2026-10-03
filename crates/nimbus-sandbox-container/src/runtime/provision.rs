@@ -8,11 +8,11 @@
 use nimbus_network::{NetworkProviderHandle, NetworkResourceGeneration};
 use serde::Serialize;
 
-use crate::conmon::lifecycle::{RuntimeStateObservation, runtime_state};
 use nimbus_sandbox::{
     ProvisionActivationObservationKind, ProvisionActivationRuntimeState,
     classify_provision_activation,
 };
+use nimbus_sandbox_host::conmon::lifecycle::{RuntimeStateObservation, runtime_state};
 use nimbus_sandbox_host::egress::EgressReadinessFailure;
 use nimbus_sandbox_host::network::{
     OciAttachmentBaseReadinessState, OciAttachmentReadinessFailure,

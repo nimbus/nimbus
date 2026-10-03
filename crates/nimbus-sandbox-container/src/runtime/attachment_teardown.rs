@@ -2,15 +2,15 @@
 
 use std::cell::RefCell;
 
-use crate::conmon::lifecycle::{
-    delete_runtime_and_confirm_absent, inspect_runtime_artifact_presence, remove_if_exists,
-};
 use nimbus_sandbox::backends::CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandExecutionClaim,
     ProviderCommandJournalError, ProviderCommandObservation, ProviderCommandObservationKind,
     SandboxError, SandboxNetworkTeardownCommand, SandboxNetworkTeardownObservation,
     SandboxNetworkTeardownOperation,
+};
+use nimbus_sandbox_host::conmon::lifecycle::{
+    delete_runtime_and_confirm_absent, inspect_runtime_artifact_presence, remove_if_exists,
 };
 use nimbus_sandbox_host::network::{
     AttachmentAuxiliaryDisposition, AttachmentReleaseActions,

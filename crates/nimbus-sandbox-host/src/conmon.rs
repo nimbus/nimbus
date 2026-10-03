@@ -8,6 +8,11 @@ use nimbus_core::TenantId;
 use nimbus_sandbox::SandboxId;
 use nimbus_sandbox::artifact_paths;
 
+pub mod creator;
+pub mod lifecycle;
+pub mod runtime_process;
+pub mod spec_resolve;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OciConmonLayout {
     pub state_root: PathBuf,

@@ -235,7 +235,7 @@ impl KrunSandboxBackend {
                 "exit-status receipt",
             ),
         ] {
-            if nimbus_sandbox_container::conmon::lifecycle::inspect_runtime_artifact_presence(
+            if nimbus_sandbox_host::conmon::lifecycle::inspect_runtime_artifact_presence(
                 path, label,
             )? {
                 return Err(SandboxError::OperationFailed {

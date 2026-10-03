@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::bundle::ContainerBundleLayout;
-use crate::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use nimbus_sandbox::SandboxId;
 use nimbus_sandbox::SandboxProvisionNetworkPlan;
 use nimbus_sandbox::{Result, SandboxError};
@@ -17,6 +16,7 @@ use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_sandbox::{SandboxPortBinding, SandboxSpec};
 use nimbus_sandbox_host::buildah::{ImageHealthcheck, MountedRootfsSession, OciExposedPort};
+use nimbus_sandbox_host::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use nimbus_sandbox_host::conmon::{OciConmonLaunchPlan, OciConmonLayout};
 use nimbus_sandbox_host::egress::{EgressPolicyReloadState, EgressProxyAssignment};
 use nimbus_sandbox_host::materializer::MaterializedImageRootfs;

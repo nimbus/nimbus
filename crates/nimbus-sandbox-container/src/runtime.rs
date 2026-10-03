@@ -34,13 +34,6 @@ pub(crate) use test_hooks::{prepare_network_teardown_fixture, reopen_network_tea
 use super::bundle::{
     ContainerBundleLayout, ContainerBundleMount, ContainerBundleOptions, write_bundle_config,
 };
-#[cfg(test)]
-use crate::conmon::lifecycle::RestartLaunchTestProbe;
-#[cfg(test)]
-use crate::conmon::lifecycle::{
-    RuntimeStatusProbe, detect_runtime_status as detect_conmon_runtime_status,
-};
-use crate::conmon::lifecycle::{ensure_linux_host, run_status_checked};
 use nimbus_egress::EgressPolicy;
 use nimbus_sandbox::SandboxProvisionNetworkPlan;
 use nimbus_sandbox::backends::capabilities::{
@@ -55,6 +48,13 @@ use nimbus_sandbox::{SandboxHandle, SandboxId, SandboxStatus};
 use nimbus_sandbox::{SandboxOciImageSource, SandboxRootSpec, SandboxSpec};
 use nimbus_sandbox_host::buildah::OciImageLaunchDefaults;
 use nimbus_sandbox_host::builder::OciDockerfileBuilder;
+#[cfg(test)]
+use nimbus_sandbox_host::conmon::lifecycle::RestartLaunchTestProbe;
+#[cfg(test)]
+use nimbus_sandbox_host::conmon::lifecycle::{
+    RuntimeStatusProbe, detect_runtime_status as detect_conmon_runtime_status,
+};
+use nimbus_sandbox_host::conmon::lifecycle::{ensure_linux_host, run_status_checked};
 use nimbus_sandbox_host::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
 #[cfg(test)]
 use nimbus_sandbox_host::egress::egress_trust_anchor_root;

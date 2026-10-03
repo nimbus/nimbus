@@ -7,7 +7,7 @@ use super::start::hostname_for;
 use super::*;
 
 use crate::ingress::private_tsi_readiness_endpoints;
-use nimbus_sandbox_container::conmon::lifecycle::RuntimeStateObservation;
+use nimbus_sandbox_host::conmon::lifecycle::RuntimeStateObservation;
 use nimbus_sandbox_host::network::OciAttachmentBaseReadinessState;
 #[cfg(test)]
 use nimbus_sandbox_host::network::{AttachmentAuxiliaryDisposition, AttachmentTeardownMode};

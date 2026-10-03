@@ -11,9 +11,7 @@ use nimbus_sandbox::{
     SandboxNetworkTeardownCommand, SandboxNetworkTeardownObservation,
     SandboxNetworkTeardownOperation,
 };
-use nimbus_sandbox_container::conmon::lifecycle::{
-    inspect_runtime_artifact_presence, remove_if_exists,
-};
+use nimbus_sandbox_host::conmon::lifecycle::{inspect_runtime_artifact_presence, remove_if_exists};
 use nimbus_sandbox_host::network::{
     AttachmentAuxiliaryDisposition, HostManagedAttachmentCommandInspection,
     HostManagedAttachmentCommandInspectionError, HostManagedAttachmentTeardownState,

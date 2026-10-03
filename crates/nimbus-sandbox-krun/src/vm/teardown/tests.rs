@@ -19,12 +19,12 @@ use nimbus_sandbox::{
     SandboxId, SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAttemptFence, SandboxRootSpec,
     SandboxRootfsSpec, SandboxSpec, SandboxStatus,
 };
-use nimbus_sandbox_container::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
-use nimbus_sandbox_container::conmon::runtime_process::{
+use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
+use nimbus_sandbox_host::conmon::runtime_process::{
     RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
     RuntimeProcessSignalOutcome,
 };
-use nimbus_sandbox_host::command::CommandSpec;
 use nimbus_sandbox_host::egress::EgressProxyAssignment;
 use nimbus_sandbox_host::materializer::MaterializedImageRootfs;
 

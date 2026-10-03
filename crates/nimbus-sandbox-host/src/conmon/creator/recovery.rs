@@ -29,8 +29,8 @@ impl CreatorAttemptReceipt {
         &self.attempt_id
     }
 
-    #[cfg(test)]
-    pub(crate) fn process(&self) -> &CreatorProcessIdentity {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn process(&self) -> &CreatorProcessIdentity {
         &self.process
     }
 
@@ -102,7 +102,7 @@ impl CreatorQuiescenceProof {
 /// attempt-scoped containment group.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CreatorProcessIdentity {
+pub struct CreatorProcessIdentity {
     pid: u32,
     process_group: u32,
     birth: CreatorProcessBirth,
@@ -114,8 +114,8 @@ impl CreatorProcessIdentity {
         self.pid
     }
 
-    #[cfg(test)]
-    pub(crate) fn process_group(&self) -> u32 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn process_group(&self) -> u32 {
         self.process_group
     }
 }

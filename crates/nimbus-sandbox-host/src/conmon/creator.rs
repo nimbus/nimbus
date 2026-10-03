@@ -18,11 +18,11 @@ use std::os::fd::{AsRawFd as _, FromRawFd as _};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 
+use crate::command::CommandSpec;
 use crate::conmon::lifecycle::{read_pid, remove_if_exists};
 use crate::process::pid_is_alive;
 use nimbus_sandbox::backends::poll::poll_until_deadline;
 use nimbus_sandbox::{Result, SandboxError};
-use nimbus_sandbox_host::command::CommandSpec;
 
 #[path = "creator/attempt_annotation.rs"]
 mod attempt_annotation;
@@ -85,10 +85,7 @@ impl OwnedConmonCreator {
     /// Production creator orchestration must use
     /// [`Self::spawn_gated_with_pid_receipt`].
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn spawn_with_pid_receipt(
-        command: &CommandSpec,
-        conmon_pidfile: &Path,
-    ) -> Result<Self> {
+    pub fn spawn_with_pid_receipt(command: &CommandSpec, conmon_pidfile: &Path) -> Result<Self> {
         Self::spawn_impl(command, conmon_pidfile, false)
     }
 

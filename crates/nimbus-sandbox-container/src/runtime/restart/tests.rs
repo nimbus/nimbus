@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use nimbus_process_harness::PortWindow;
 
-use crate::conmon::creator::{CreatorAttemptReceipt, OwnedConmonCreator};
 use nimbus_sandbox::SandboxProvisionPhaseObservation;
 use nimbus_sandbox_host::command::CommandSpec;
+use nimbus_sandbox_host::conmon::creator::{CreatorAttemptReceipt, OwnedConmonCreator};
 use nimbus_sandbox_host::network::FixedOciEgressPinProvider;
 
 use super::super::support::{

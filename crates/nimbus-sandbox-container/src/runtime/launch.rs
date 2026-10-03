@@ -2,11 +2,11 @@
 
 use ulid::Ulid;
 
-use crate::conmon::spec_resolve::{resolve_process_spec, resolve_root_spec, slugify};
 use nimbus_sandbox::Result;
 use nimbus_sandbox::SandboxId;
 use nimbus_sandbox::{SandboxSpec, resolve_process_without_image_defaults};
 use nimbus_sandbox_host::buildah::OciImageLaunchDefaults;
+use nimbus_sandbox_host::conmon::spec_resolve::{resolve_process_spec, resolve_root_spec, slugify};
 
 use super::manifest::{ContainerImageMetadata, ContainerResolvedLaunchSpec};
 

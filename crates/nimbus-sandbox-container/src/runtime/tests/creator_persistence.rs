@@ -2,7 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use crate::conmon::creator::CreatorQuiescenceProof;
+use nimbus_sandbox_host::conmon::creator::CreatorQuiescenceProof;
 
 use super::*;
 
@@ -173,7 +173,7 @@ fn creator_quiescence_failure_retains_exact_pending_fence() {
 #[test]
 fn pending_creator_manifest_persists_exact_birth_and_containment_receipt() {
     let state = ContainerCreatorHandoffState::Pending {
-        receipt: crate::conmon::creator::CreatorAttemptReceipt::for_test(
+        receipt: nimbus_sandbox_host::conmon::creator::CreatorAttemptReceipt::for_test(
             "creator-birth-receipt-attempt",
         ),
     };

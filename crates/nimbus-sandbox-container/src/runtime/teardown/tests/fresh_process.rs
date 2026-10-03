@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::conmon::runtime_process::{
-    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
-    RuntimeProcessSignalOutcome,
-};
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaimDecision, ProviderCommandClaimInput,
     ProviderCommandObservationKind, SandboxExecutionTeardownCommand,
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
+};
+use nimbus_sandbox_host::conmon::runtime_process::{
+    RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
+    RuntimeProcessSignalOutcome,
 };
 
 use super::*;

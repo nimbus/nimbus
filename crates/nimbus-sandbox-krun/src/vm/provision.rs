@@ -637,7 +637,7 @@ impl KrunSandboxBackend {
             &manifest.conmon_launch.state_command,
             manifest.handle.id.as_str(),
         ) {
-            Ok(nimbus_sandbox_container::conmon::lifecycle::RuntimeStateObservation::Present(state)) => {
+            Ok(nimbus_sandbox_host::conmon::lifecycle::RuntimeStateObservation::Present(state)) => {
                 let evidence = phase_evidence(
                     "workload_activation_runtime_state",
                     &(&manifest.handle, &state),
@@ -657,11 +657,11 @@ impl KrunSandboxBackend {
                     }
                 }
             }
-            Ok(nimbus_sandbox_container::conmon::lifecycle::RuntimeStateObservation::ExplicitlyAbsent) => {
-                Ok(SandboxProvisionPhaseObservation::Absent {
-                    evidence: phase_evidence("workload_activation_absent", &manifest.handle)?,
-                })
-            }
+            Ok(
+                nimbus_sandbox_host::conmon::lifecycle::RuntimeStateObservation::ExplicitlyAbsent,
+            ) => Ok(SandboxProvisionPhaseObservation::Absent {
+                evidence: phase_evidence("workload_activation_absent", &manifest.handle)?,
+            }),
             Err(error) => Ok(SandboxProvisionPhaseObservation::Ambiguous {
                 evidence: phase_evidence("workload_activation_unknown", &error.to_string())?,
             }),
