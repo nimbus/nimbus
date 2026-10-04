@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.50] - 2026-10-04
+
+### Fixed
+
+- **machine**: The default guest image runs `nimbus machine api` as a direct
+  socket listener (`--socket-path /run/nimbus/nimbus.sock`) and no longer
+  starts a `nimbus.socket` activation unit. The v0.1.49 guest image passed the
+  removed `--socket-activation` flag, so `nimbus.service` exited at boot and
+  `nimbus machine start` timed out waiting for the machine API. The image
+  build now proves that the baked binary accepts the unit's `nimbus machine
+  api` flags, and the SELinux policy labels `/run/nimbus` through a file
+  context (nimbus/machine-os#2).
+
 ## [0.1.49] - 2026-10-03
 
 ### Security
