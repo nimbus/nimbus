@@ -384,3 +384,201 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         );
     }
 }
+
+#[test]
+fn guest_api_readiness_timeout_releases_the_ssh_lease_for_machine_removal() {
+    let _guard = machine_lifecycle_test_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _helpers = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let timed_out = time_out_guest_api_readiness(&temp_dir);
+
+    release_machine_ssh_port(
+        &timed_out.network.port_leases(),
+        &timed_out.paths,
+        &timed_out.state,
+    )
+    .expect("removal should succeed after a readiness timeout");
+}
+
+#[test]
+fn guest_api_readiness_timeout_allows_restart_with_a_fresh_ssh_lease() {
+    let _guard = machine_lifecycle_test_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _helpers = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let timed_out = time_out_guest_api_readiness(&temp_dir);
+    let port_authority = timed_out.network.port_leases();
+
+    super::super::ports::release_dead_owner_machine_ssh_port(&port_authority, &timed_out.state)
+        .expect("start should find no dead lease to reconcile");
+    let restarted = MachineLaunchPlan::build(
+        &port_authority,
+        &timed_out.paths,
+        &timed_out.config,
+        &timed_out.state,
+    )
+    .expect("restart should prepare a fresh SSH lease");
+
+    assert_ne!(
+        restarted.runtime().ssh_listener_id,
+        timed_out.ssh_listener_id,
+        "a released lease must not be reused"
+    );
+    let fresh = port_authority
+        .inspect(&nimbus_network::PortLeaseId::for_listener(
+            &restarted.runtime().ssh_listener_id,
+        ))
+        .expect("fresh lease should inspect")
+        .expect("fresh lease should exist");
+    assert_eq!(fresh.phase(), PortLeasePhase::Reserved);
+    restarted
+        .ssh_port_lease()
+        .abandon_before_provider_start()
+        .expect("unused fresh lease should settle");
+}
+
+#[test]
+fn guest_api_readiness_timeout_allows_stop() {
+    let _guard = machine_lifecycle_test_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _helpers = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let mut timed_out = time_out_guest_api_readiness(&temp_dir);
+
+    let (stop_authority, authorization) =
+        test_machine_stop_authority(&timed_out.network, &timed_out.config, &timed_out.state);
+    super::super::stop::stop_machine(
+        &timed_out.network,
+        &timed_out.paths,
+        &timed_out.config,
+        &mut timed_out.state,
+        &stop_authority,
+        authorization,
+    )
+    .expect("stop should succeed after a readiness timeout");
+
+    assert_eq!(timed_out.state.lifecycle, MachineLifecycle::Stopped);
+    let lease = timed_out
+        .network
+        .port_leases()
+        .inspect(&nimbus_network::PortLeaseId::for_listener(
+            &timed_out.ssh_listener_id,
+        ))
+        .expect("SSH lease should inspect")
+        .expect("SSH lease should remain durable");
+    assert_eq!(lease.phase(), PortLeasePhase::Released);
+}
+
+struct TimedOutStart {
+    network: crate::machine::network_composition::MachineNetworkLifecycleHandle,
+    config: MachineConfigRecord,
+    paths: MachinePaths,
+    state: MachineStateRecord,
+    ssh_listener_id: ListenerId,
+}
+
+/// Drive the start error path exactly as a guest API readiness timeout does:
+/// the SSH lease is active, every helper child is still running, and the
+/// launch plan (with its process lifetime) ends with the command.
+fn time_out_guest_api_readiness(temp_dir: &TempDir) -> TimedOutStart {
+    let image_path = temp_dir.path().join("disk.raw");
+    fs::write(&image_path, []).expect("image should write");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    paths
+        .ensure_directories()
+        .expect("machine directories should exist");
+    let network = test_machine_network_lifecycle(temp_dir.path());
+    let port_authority = network.port_leases();
+    let launch_plan = MachineLaunchPlan::build(
+        &port_authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("launch plan should build");
+    launch_plan
+        .ssh_port_lease()
+        .activate_exact_loopback()
+        .expect("exact provider observation should activate");
+    let ssh_listener_id = launch_plan.runtime().ssh_listener_id.clone();
+    let mut state = MachineStateRecord::initialized();
+    state.lifecycle = MachineLifecycle::Starting;
+    state.manager = MachineManagerState::Launching;
+    state.runtime = Some(launch_plan.runtime().clone());
+
+    let spawn_helper = || {
+        MachineCommandLine {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".to_owned(), "exec sleep 30".to_owned()],
+            capture_log_path: None,
+        }
+        .spawn()
+        .expect("helper child should spawn")
+    };
+    let mut vmm_child = spawn_helper();
+    let mut gvproxy_child = spawn_helper();
+    let mut api_forward_child = spawn_helper();
+    let gvproxy_pid = i32::try_from(gvproxy_child.id()).expect("child pid should fit");
+    fs::write(&paths.gvproxy_pid_path, gvproxy_pid.to_string()).expect("gvproxy pid should write");
+    let receipt = super::super::process_identity::GvproxyProcessReceipt::capture(
+        gvproxy_child.id(),
+        &launch_plan.runtime().forwarder_authority,
+    )
+    .expect("exact gvproxy process identity should capture");
+    super::super::write_json_file(&paths.gvproxy_process_identity_path, &receipt)
+        .expect("exact gvproxy process receipt should write");
+
+    let error = handle_start_machine_error(
+        &paths,
+        &config,
+        &mut state,
+        Error::Internal("guest machine API did not become ready within 120s".to_owned()),
+        Some(&mut vmm_child),
+        Some(&mut gvproxy_child),
+        Some(&mut api_forward_child),
+    )
+    .map_err(|error| {
+        super::super::with_activated_lease_release(&launch_plan, Some(&mut gvproxy_child), error)
+    })
+    .expect_err("a readiness timeout must fail the start");
+    drop(launch_plan);
+
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("guest machine API did not become ready")
+            && !rendered.contains("failed to release"),
+        "the start must report only the readiness error: {rendered}"
+    );
+    assert_eq!(state.lifecycle, MachineLifecycle::Failed);
+    assert_eq!(state.manager, MachineManagerState::Failed);
+    assert!(
+        state
+            .last_error
+            .as_deref()
+            .is_some_and(|last| last.contains("guest machine API did not become ready")),
+        "the failure must be recorded: {:?}",
+        state.last_error
+    );
+    let lease = port_authority
+        .inspect(&nimbus_network::PortLeaseId::for_listener(&ssh_listener_id))
+        .expect("SSH lease should inspect")
+        .expect("SSH lease should remain durable");
+    assert_eq!(
+        lease.phase(),
+        PortLeasePhase::Released,
+        "the timed-out generation must not leave an Active lease"
+    );
+
+    TimedOutStart {
+        network,
+        config,
+        paths,
+        state,
+        ssh_listener_id,
+    }
+}

@@ -358,6 +358,7 @@ fn release_machine_ssh_port_releases_confirmed_stopped_authority() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let image_path = temp_dir.path().join("disk.raw");
     let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
     let authority = test_port_authority(temp_dir.path());
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
         authority.clone(),
@@ -391,12 +392,230 @@ fn release_machine_ssh_port_releases_confirmed_stopped_authority() {
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(runtime.clone());
 
-    release_machine_ssh_port(&authority, &state).expect("port release should succeed");
+    release_machine_ssh_port(&authority, &paths, &state).expect("port release should succeed");
     let record = authority
         .inspect(&PortLeaseId::for_listener(&runtime.ssh_listener_id))
         .expect("lease should inspect")
         .expect("lease should remain as terminal audit evidence");
     assert_eq!(record.phase(), PortLeasePhase::Released);
+}
+
+#[test]
+fn machine_removal_releases_a_dead_start_lease() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _helpers = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let (config, paths, authority) = dead_start_fixture(&temp_dir);
+    for activated in [true, false] {
+        let plan = MachineLaunchPlan::build(
+            &authority,
+            &paths,
+            &config,
+            &MachineStateRecord::initialized(),
+        )
+        .expect("launch plan should build");
+        if activated {
+            plan.ssh_port_lease()
+                .activate_exact_loopback()
+                .expect("exact provider observation should activate");
+        }
+        let state = failed_start_state(&plan);
+        drop(plan);
+
+        release_machine_ssh_port(&authority, &paths, &state)
+            .expect("removal should reconcile a dead start lease once gvproxy is absent");
+        assert_eq!(
+            ssh_lease_phase(&authority, &state),
+            PortLeasePhase::Released,
+            "activated={activated}"
+        );
+    }
+}
+
+#[test]
+fn restart_replaces_a_dead_start_lease_with_a_fresh_listener() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _helpers = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let (config, paths, authority) = dead_start_fixture(&temp_dir);
+    for activated in [true, false] {
+        let plan = MachineLaunchPlan::build(
+            &authority,
+            &paths,
+            &config,
+            &MachineStateRecord::initialized(),
+        )
+        .expect("launch plan should build");
+        if activated {
+            plan.ssh_port_lease()
+                .activate_exact_loopback()
+                .expect("exact provider observation should activate");
+        }
+        let state = failed_start_state(&plan);
+        drop(plan);
+
+        super::super::ports::release_dead_owner_machine_ssh_port(&authority, &state)
+            .expect("start should reconcile a dead start lease once gvproxy is absent");
+        let restarted = MachineLaunchPlan::build(&authority, &paths, &config, &state)
+            .expect("restart should prepare a fresh SSH lease");
+
+        assert_eq!(
+            ssh_lease_phase(&authority, &state),
+            PortLeasePhase::Released,
+            "activated={activated}"
+        );
+        let prior_listener = &state
+            .runtime
+            .as_ref()
+            .expect("failed state keeps its runtime")
+            .ssh_listener_id;
+        assert_ne!(
+            &restarted.runtime().ssh_listener_id,
+            prior_listener,
+            "a released lease must not be reused: activated={activated}"
+        );
+        let fresh = authority
+            .inspect(&PortLeaseId::for_listener(
+                &restarted.runtime().ssh_listener_id,
+            ))
+            .expect("fresh lease should inspect")
+            .expect("fresh lease should exist");
+        assert_eq!(fresh.phase(), PortLeasePhase::Reserved);
+        assert!(fresh.bind_claim().is_some());
+        restarted
+            .ssh_port_lease()
+            .abandon_before_provider_start()
+            .expect("unused fresh lease should settle");
+    }
+}
+
+#[test]
+fn dead_start_lease_reconcile_keeps_a_live_owner_or_gvproxy_fenced() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _helpers = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let (config, paths, authority) = dead_start_fixture(&temp_dir);
+    let plan = MachineLaunchPlan::build(
+        &authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("launch plan should build");
+    plan.ssh_port_lease()
+        .activate_exact_loopback()
+        .expect("exact provider observation should activate");
+    let state = failed_start_state(&plan);
+
+    let error = super::super::ports::release_dead_owner_machine_ssh_port(&authority, &state)
+        .expect_err("a live start lifetime must keep its lease");
+    assert!(
+        error.to_string().contains("live process lifetime"),
+        "start refusal should name the live owner: {error}"
+    );
+    let error = release_machine_ssh_port(&authority, &paths, &state)
+        .expect_err("removal must not release a live start lifetime");
+    assert!(
+        error.to_string().contains("live process lifetime"),
+        "removal refusal should name the live owner: {error}"
+    );
+    assert_eq!(ssh_lease_phase(&authority, &state), PortLeasePhase::Active);
+
+    drop(plan);
+    let (gvproxy_pid, gvproxy_reaper) = spawn_reaped_process("exec sleep 30");
+    fs::write(&paths.gvproxy_pid_path, gvproxy_pid.to_string()).expect("gvproxy pid should write");
+    let error = release_machine_ssh_port(&authority, &paths, &state)
+        .expect_err("removal must not release a lease while gvproxy is alive");
+    let _ = send_signal(gvproxy_pid, SIGKILL);
+    gvproxy_reaper
+        .join()
+        .expect("gvproxy reaper should observe process exit");
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("alive at pid {gvproxy_pid}")),
+        "removal refusal should name the live gvproxy: {error}"
+    );
+    assert_eq!(ssh_lease_phase(&authority, &state), PortLeasePhase::Active);
+
+    release_machine_ssh_port(&authority, &paths, &state)
+        .expect("removal should reconcile once gvproxy is gone");
+    assert_eq!(
+        ssh_lease_phase(&authority, &state),
+        PortLeasePhase::Released
+    );
+}
+
+#[test]
+fn stop_releases_a_dead_start_lease_that_never_activated() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _helpers = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let (config, paths, authority) = dead_start_fixture(&temp_dir);
+    let plan = MachineLaunchPlan::build(
+        &authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("launch plan should build");
+    let state = failed_start_state(&plan);
+    drop(plan);
+    let runtime = state
+        .runtime
+        .as_ref()
+        .expect("failed state keeps its runtime");
+
+    let cleanup = super::super::ports::withdraw_machine_ssh_port(&authority, runtime)
+        .expect("stop must fence a dead pre-activation claim")
+        .expect("dead claim owner should yield exact cleanup authority");
+    assert_eq!(
+        ssh_lease_phase(&authority, &state),
+        PortLeasePhase::CleanupPending
+    );
+    super::super::ports::retain_machine_ssh_port_after_confirmed_stop(cleanup)
+        .expect("confirmed stop should settle a claim without an adopted port");
+
+    assert_eq!(
+        ssh_lease_phase(&authority, &state),
+        PortLeasePhase::Released
+    );
+    release_machine_ssh_port(&authority, &paths, &state)
+        .expect("removal after stop should succeed");
+}
+
+fn dead_start_fixture(
+    temp_dir: &TempDir,
+) -> (MachineConfigRecord, MachinePaths, LocalPortLeaseAuthority) {
+    let image_path = temp_dir.path().join("disk.raw");
+    fs::write(&image_path, []).expect("image should write");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    paths
+        .ensure_runtime_directories()
+        .expect("runtime directories should exist");
+    (config, paths, test_port_authority(temp_dir.path()))
+}
+
+/// The state a start leaves after its process exits without settling the SSH
+/// lease, as `nimbus` 0.1.49 did after a guest API readiness timeout.
+fn failed_start_state(plan: &MachineLaunchPlan) -> MachineStateRecord {
+    let mut state = MachineStateRecord::initialized();
+    state.lifecycle = MachineLifecycle::Failed;
+    state.manager = MachineManagerState::Failed;
+    state.runtime = Some(plan.runtime().clone());
+    state
+}
+
+fn ssh_lease_phase(
+    authority: &LocalPortLeaseAuthority,
+    state: &MachineStateRecord,
+) -> PortLeasePhase {
+    let runtime = state
+        .runtime
+        .as_ref()
+        .expect("state should keep its runtime");
+    authority
+        .inspect(&PortLeaseId::for_listener(&runtime.ssh_listener_id))
+        .expect("SSH lease should inspect")
+        .expect("SSH lease should remain durable")
+        .phase()
 }
 
 #[test]

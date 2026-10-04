@@ -143,6 +143,7 @@ pub(super) fn mount_tag(target: &Path) -> String {
 
 pub(super) fn release_machine_ssh_port(
     _port_authority: &LocalPortLeaseAuthority,
+    _paths: &MachinePaths,
     state: &MachineStateRecord,
 ) -> Result<(), Error> {
     if state.runtime.is_some() {
@@ -368,12 +369,12 @@ mod tests {
     #[test]
     fn non_unix_release_rejects_retained_runtime_authority() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
-        let (_paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
+        let (paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
         let mut state = MachineStateRecord::initialized();
         let port_authority = port_authority(&temp_dir);
         state.runtime = Some(retained_runtime(&config));
 
-        let error = release_machine_ssh_port(&port_authority, &state)
+        let error = release_machine_ssh_port(&port_authority, &paths, &state)
             .expect_err("retained runtime evidence cannot be reported released by a no-op stub");
 
         assert!(

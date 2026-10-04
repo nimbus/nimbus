@@ -1103,7 +1103,7 @@ fn delete_machine_with_layout_locked(
         config.network_authority.provider_instance(),
     )?;
     let port_authority = network.port_leases();
-    release_machine_ssh_port(&port_authority, &state)?;
+    release_machine_ssh_port(&port_authority, &paths, &state)?;
     remove_dir_if_exists(&paths.config_dir)?;
     remove_dir_if_exists(&paths.state_dir)?;
     remove_dir_if_exists(&paths.data_dir)?;

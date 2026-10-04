@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -265,6 +265,9 @@ fn start_machine_with_lifecycle_and_expected(
     let startup_signals = StartupSignalMonitor::install()?;
     cleanup_runtime_artifacts(paths)?;
     let port_authority = network.port_leases();
+    // `ensure_machine_can_start` proved that no recorded gvproxy pid is alive,
+    // so a lease left by a dead start can be released for a fresh listener.
+    self::ports::release_dead_owner_machine_ssh_port(&port_authority, state)?;
     let launch_plan = MachineLaunchPlan::build(&port_authority, paths, config, state)?;
     if let Some(expected) = expected
         && launch_plan.runtime().forwarder_authority != *expected
@@ -412,7 +415,10 @@ fn start_machine_with_lifecycle_and_expected(
             vmm_child.as_mut(),
             gvproxy_child.as_mut(),
             api_forward_child.as_mut(),
-        );
+        )
+        .map_err(|error| {
+            with_activated_lease_release(&launch_plan, gvproxy_child.as_mut(), error)
+        });
     }
     if let Err(error) = self::guest::ensure_guest_machine_api_ready(
         paths,
@@ -434,7 +440,10 @@ fn start_machine_with_lifecycle_and_expected(
             vmm_child.as_mut(),
             gvproxy_child.as_mut(),
             api_forward_child.as_mut(),
-        );
+        )
+        .map_err(|error| {
+            with_activated_lease_release(&launch_plan, gvproxy_child.as_mut(), error)
+        });
     }
 
     state.lifecycle = MachineLifecycle::Running;
@@ -460,6 +469,30 @@ fn with_pre_provider_lease_cleanup(launch_plan: &MachineLaunchPlan, primary: Err
         Ok(()) => primary,
         Err(cleanup) => Error::Internal(format!(
             "{primary}; failed to settle the machine SSH lease before gvproxy started: {cleanup}"
+        )),
+    }
+}
+
+/// Release the activated SSH lease after the start error path reaped the exact
+/// gvproxy child. An unreaped or missing child proves nothing, so the lease
+/// stays fenced for dead-owner reconciliation.
+fn with_activated_lease_release(
+    launch_plan: &MachineLaunchPlan,
+    gvproxy_child: Option<&mut Child>,
+    primary: Error,
+) -> Error {
+    let release = match gvproxy_child.map(|child| child.try_wait()) {
+        Some(Ok(Some(_))) => launch_plan.ssh_port_lease().release_after_provider_exit(),
+        Some(Ok(None)) => Err(Error::Internal("gvproxy is still running".to_owned())),
+        Some(Err(error)) => Err(Error::Internal(format!(
+            "failed to poll the gvproxy child: {error}"
+        ))),
+        None => Err(Error::Internal("no gvproxy child was started".to_owned())),
+    };
+    match release {
+        Ok(()) => primary,
+        Err(cleanup) => Error::Internal(format!(
+            "{primary}; failed to release the machine SSH lease after gvproxy exited: {cleanup}"
         )),
     }
 }
@@ -605,8 +638,16 @@ pub(super) fn stop_machine(
 
 pub(super) fn release_machine_ssh_port(
     port_authority: &LocalPortLeaseAuthority,
+    paths: &MachinePaths,
     state: &MachineStateRecord,
 ) -> Result<(), Error> {
+    if let Some(pid) = self::stop::read_pid_if_alive(&paths.gvproxy_pid_path)? {
+        return Err(Error::conflict(format!(
+            "machine '{}' gvproxy is still alive at pid {pid}; its SSH port remains fenced",
+            paths.name
+        )));
+    }
+    self::ports::release_dead_owner_machine_ssh_port(port_authority, state)?;
     self::ports::release_machine_ssh_port(port_authority, state)
 }
 
