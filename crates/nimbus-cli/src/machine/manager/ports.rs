@@ -193,20 +193,7 @@ impl PreparedMachineSshPortLease {
     /// Adopt and activate exact loopback evidence after the SSH readiness gate
     /// observes gvproxy serving the selected port.
     pub(super) fn activate_exact_loopback(&self) -> Result<(), Error> {
-        let endpoint = PortBoundEndpoint::new(
-            PortProtocol::Tcp,
-            PortBindRealm::Host,
-            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
-            self.selected_port,
-        )
-        .map_err(|error| {
-            network_error("failed to describe the observed gvproxy SSH binding", error)
-        })?;
-        let binding = PortLeaseBinding::new(
-            endpoint,
-            PortBindingProvenance::NimbusOwned,
-            self.claim.provider_attempt().clone(),
-        );
+        let binding = self.exact_loopback_binding()?;
         self.authority
             .adopt_claimed_and_activate_with_lifetime(
                 &self.request,
@@ -226,13 +213,59 @@ impl PreparedMachineSshPortLease {
             })?;
         Ok(())
     }
+
+    /// Release the activated listener after the start path reaped the exact
+    /// gvproxy child that served it.
+    ///
+    /// A failed start after activation must not leave an `Active` lease
+    /// whose process lifetime dies with this command. The reaped child is the
+    /// provider-absence proof; the live lifetime guard authenticates this
+    /// generation.
+    pub(super) fn release_after_provider_exit(&self) -> Result<(), Error> {
+        let binding = self.exact_loopback_binding()?;
+        self.authority
+            .release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
+                &[(self.request.clone(), binding)],
+                std::slice::from_ref(&self.lifetime),
+            )
+            .map_err(|error| {
+                network_error(
+                    &format!(
+                        "failed to release machine SSH listener {} after gvproxy exited",
+                        self.request.lease_id()
+                    ),
+                    error,
+                )
+            })?;
+        Ok(())
+    }
+
+    fn exact_loopback_binding(&self) -> Result<PortLeaseBinding, Error> {
+        let endpoint = PortBoundEndpoint::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+            self.selected_port,
+        )
+        .map_err(|error| {
+            network_error("failed to describe the observed gvproxy SSH binding", error)
+        })?;
+        Ok(PortLeaseBinding::new(
+            endpoint,
+            PortBindingProvenance::NimbusOwned,
+            self.claim.provider_attempt().clone(),
+        ))
+    }
 }
 
 /// Exclusive dead-owner authority retained across exact gvproxy stop.
+///
+/// `binding` is absent for a generation that died before activation; it has
+/// no adopted port to retain.
 pub(super) struct MachineSshPortCleanup {
     authority: LocalPortLeaseAuthority,
     request: PortLeaseRequest,
-    binding: PortLeaseBinding,
+    binding: Option<PortLeaseBinding>,
     recovery: PortLeaseRecoveryGuard,
 }
 
@@ -260,69 +293,87 @@ pub(super) fn withdraw_machine_ssh_port(
 ) -> Result<Option<MachineSshPortCleanup>, Error> {
     let request = machine_ssh_request(&runtime.ssh_listener_id)?;
     let record = exact_record(authority, &request)?;
-    match record.phase() {
-        PortLeasePhase::Active | PortLeasePhase::Withdrawing | PortLeasePhase::CleanupPending => {
-            let binding = record.binding().cloned().ok_or_else(|| {
+    let binding = match record.phase() {
+        PortLeasePhase::Active | PortLeasePhase::Withdrawing => {
+            Some(record.binding().cloned().ok_or_else(|| {
                 unresolved_lifecycle_error(
                     &request,
                     record.phase(),
                     "recover before provider stop without exact binding evidence",
                 )
-            })?;
-            let recovery = match authority.recover_dead_lifetime(&request).map_err(|error| {
-                network_error("failed to inspect the gvproxy SSH lifetime", error)
-            })? {
-                PortLeaseRecoveryAttempt::Acquired(recovery) => recovery,
-                PortLeaseRecoveryAttempt::LiveOwner(_) => {
-                    return Err(Error::conflict(format!(
-                        "machine SSH listener {} remains owned by a live process lifetime",
-                        request.lease_id()
-                    )));
-                }
-                PortLeaseRecoveryAttempt::Settled(settled) => {
-                    return Err(unresolved_lifecycle_error(
-                        &request,
-                        settled.phase(),
-                        "recover a terminal provider generation",
-                    ));
-                }
-            };
-            authority
-                .mark_cleanup_pending_after_owner_death(&request, &recovery)
-                .map_err(|error| {
-                    network_error(
-                        &format!(
-                            "failed to quarantine machine SSH listener {} before provider stop",
-                            request.lease_id()
-                        ),
-                        error,
-                    )
-                })?;
-            Ok(Some(MachineSshPortCleanup {
-                authority: authority.clone(),
-                request,
-                binding,
-                recovery,
-            }))
+            })?)
         }
-        PortLeasePhase::Reserved if record.confirmed_stopped_binding().is_some() => Ok(None),
-        PortLeasePhase::Released | PortLeasePhase::Failed => Ok(None),
-        phase => Err(unresolved_lifecycle_error(
-            &request,
-            phase,
-            "withdraw before provider stop",
-        )),
-    }
+        PortLeasePhase::CleanupPending => record.binding().cloned(),
+        PortLeasePhase::Reserved if record.confirmed_stopped_binding().is_some() => {
+            return Ok(None);
+        }
+        PortLeasePhase::Reserved | PortLeasePhase::Binding
+            if record.active_lifetime().is_some() =>
+        {
+            None
+        }
+        PortLeasePhase::Released | PortLeasePhase::Failed => return Ok(None),
+        phase => {
+            return Err(unresolved_lifecycle_error(
+                &request,
+                phase,
+                "withdraw before provider stop",
+            ));
+        }
+    };
+    let recovery = match authority
+        .recover_dead_lifetime(&request)
+        .map_err(|error| network_error("failed to inspect the gvproxy SSH lifetime", error))?
+    {
+        PortLeaseRecoveryAttempt::Acquired(recovery) => recovery,
+        PortLeaseRecoveryAttempt::LiveOwner(_) => {
+            return Err(live_owner_error(&request));
+        }
+        PortLeaseRecoveryAttempt::Settled(settled) => {
+            return Err(unresolved_lifecycle_error(
+                &request,
+                settled.phase(),
+                "recover a terminal provider generation",
+            ));
+        }
+    };
+    authority
+        .mark_cleanup_pending_after_owner_death(&request, &recovery)
+        .map_err(|error| {
+            network_error(
+                &format!(
+                    "failed to quarantine machine SSH listener {} before provider stop",
+                    request.lease_id()
+                ),
+                error,
+            )
+        })?;
+    Ok(Some(MachineSshPortCleanup {
+        authority: authority.clone(),
+        request,
+        binding,
+        recovery,
+    }))
 }
 
 /// Retain the exact selected port only after gvproxy absence is confirmed.
+///
+/// A generation that never adopted a binding has no port to retain, so the
+/// same absence proof releases it.
 pub(super) fn retain_machine_ssh_port_after_confirmed_stop(
     cleanup: MachineSshPortCleanup,
 ) -> Result<(), Error> {
+    let Some(binding) = cleanup.binding else {
+        return release_dead_owner_after_confirmed_stop(
+            &cleanup.authority,
+            &cleanup.request,
+            &cleanup.recovery,
+        );
+    };
     cleanup
         .authority
         .prepare_rebind_provider_managed_batch_after_confirmed_stop(
-            &[(cleanup.request.clone(), cleanup.binding)],
+            &[(cleanup.request.clone(), binding)],
             std::slice::from_ref(&cleanup.recovery),
         )
         .map_err(|error| {
@@ -335,6 +386,58 @@ pub(super) fn retain_machine_ssh_port_after_confirmed_stop(
             )
         })?;
     Ok(())
+}
+
+/// Release a machine SSH lease whose process lifetime died before it settled
+/// the lease, such as a start that exited after a readiness timeout.
+///
+/// Owner death proves only that the Nimbus process is gone. Callers must
+/// first prove that no gvproxy process from `state.runtime` remains alive. A
+/// live owner keeps the lease fenced; a lease without a process lifetime is
+/// left for the normal confirmed-stop path.
+pub(super) fn release_dead_owner_machine_ssh_port(
+    authority: &LocalPortLeaseAuthority,
+    state: &MachineStateRecord,
+) -> Result<(), Error> {
+    let Some(runtime) = state.runtime.as_ref() else {
+        return Ok(());
+    };
+    let request = machine_ssh_request(&runtime.ssh_listener_id)?;
+    let Some(record) = authority
+        .inspect(request.lease_id())
+        .map_err(|error| network_error("failed to inspect the machine SSH lease", error))?
+    else {
+        return Ok(());
+    };
+    if record.request() != &request {
+        return Err(Error::conflict(format!(
+            "machine SSH listener {} does not match its durable lease request",
+            request.lease_id()
+        )));
+    }
+    if record.phase().is_terminal() || record.active_lifetime().is_none() {
+        return Ok(());
+    }
+    let recovery = match authority
+        .recover_dead_lifetime(&request)
+        .map_err(|error| network_error("failed to inspect the gvproxy SSH lifetime", error))?
+    {
+        PortLeaseRecoveryAttempt::Acquired(recovery) => recovery,
+        PortLeaseRecoveryAttempt::LiveOwner(_) => return Err(live_owner_error(&request)),
+        PortLeaseRecoveryAttempt::Settled(_) => return Ok(()),
+    };
+    authority
+        .mark_cleanup_pending_after_owner_death(&request, &recovery)
+        .map_err(|error| {
+            network_error(
+                &format!(
+                    "failed to quarantine dead-owner machine SSH listener {}",
+                    request.lease_id()
+                ),
+                error,
+            )
+        })?;
+    release_dead_owner_after_confirmed_stop(authority, &request, &recovery)
 }
 
 /// Release a stopped machine's retained SSH port before deleting its records.
@@ -457,6 +560,35 @@ fn exact_record(
         )));
     }
     Ok(record)
+}
+
+fn release_dead_owner_after_confirmed_stop(
+    authority: &LocalPortLeaseAuthority,
+    request: &PortLeaseRequest,
+    recovery: &PortLeaseRecoveryGuard,
+) -> Result<(), Error> {
+    authority
+        .release_provider_managed_batch_after_confirmed_stop(
+            std::slice::from_ref(request),
+            std::slice::from_ref(recovery),
+        )
+        .map_err(|error| {
+            network_error(
+                &format!(
+                    "failed to release machine SSH listener {} after confirmed provider stop",
+                    request.lease_id()
+                ),
+                error,
+            )
+        })?;
+    Ok(())
+}
+
+fn live_owner_error(request: &PortLeaseRequest) -> Error {
+    Error::conflict(format!(
+        "machine SSH listener {} remains owned by a live process lifetime",
+        request.lease_id()
+    ))
 }
 
 fn unresolved_lifecycle_error(
